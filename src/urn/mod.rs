@@ -6,6 +6,7 @@
 pub mod parser;
 
 use crate::core::{types::*, error::*};
+use crate::storage::store::Store;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -63,6 +64,68 @@ impl Urn {
     pub fn with_byte_range(mut self, range: ByteRange) -> Self {
         self.byte_range = Some(range);
         self
+    }
+
+    /// Resolve this URN to actual content using a store
+    pub fn resolve(&self, store: &Store) -> Result<Vec<u8>> {
+        // Get the full file content first
+        let file_path = self.resource_path.as_ref()
+            .ok_or_else(|| DigstoreError::invalid_urn("URN must specify a resource path for content resolution"))?;
+
+        let file_content = if let Some(root_hash) = self.root_hash {
+            store.get_file_at(file_path, Some(root_hash))?
+        } else {
+            store.get_file(file_path)?
+        };
+
+        // Apply byte range if specified
+        if let Some(byte_range) = &self.byte_range {
+            self.extract_byte_range(&file_content, byte_range)
+        } else {
+            Ok(file_content)
+        }
+    }
+
+    /// Extract a byte range from file content
+    fn extract_byte_range(&self, content: &[u8], range: &ByteRange) -> Result<Vec<u8>> {
+        let file_len = content.len() as u64;
+
+        let (start, end) = match (range.start, range.end) {
+            (Some(start), Some(end)) => {
+                if start > end {
+                    return Err(DigstoreError::InvalidByteRange { 
+                        range: format!("Start ({}) cannot be greater than end ({})", start, end)
+                    });
+                }
+                if start >= file_len {
+                    return Err(DigstoreError::InvalidByteRange { 
+                        range: format!("Start ({}) exceeds file size ({})", start, file_len)
+                    });
+                }
+                // Make end inclusive by adding 1
+                (start, (end + 1).min(file_len))
+            },
+            (Some(start), None) => {
+                if start >= file_len {
+                    return Err(DigstoreError::InvalidByteRange { 
+                        range: format!("Start ({}) exceeds file size ({})", start, file_len)
+                    });
+                }
+                (start, file_len)
+            },
+            (None, Some(count)) => {
+                // Last 'count' bytes
+                let start = file_len.saturating_sub(count);
+                (start, file_len)
+            },
+            (None, None) => (0, file_len),
+        };
+
+        if start >= file_len {
+            return Ok(Vec::new());
+        }
+
+        Ok(content[start as usize..end as usize].to_vec())
     }
 }
 
