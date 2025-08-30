@@ -296,7 +296,7 @@ impl Store {
     }
 
     /// Load a layer by its ID
-    fn load_layer(&self, layer_id: LayerId) -> Result<Layer> {
+    pub fn load_layer(&self, layer_id: LayerId) -> Result<Layer> {
         let layer_filename = format!("{}.layer", layer_id.to_hex());
         let layer_path = self.global_path.join(layer_filename);
         Layer::read_from_file(&layer_path)
