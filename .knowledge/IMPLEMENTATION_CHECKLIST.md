@@ -387,9 +387,67 @@
 - [x] Add compression optimization (per-chunk decisions)
 - [x] Create index caching and persistence optimization
 
-## Phase 10: Release Preparation ✅ COMPLETE
+## Phase 10: Security Implementation 🚧 READY FOR IMPLEMENTATION
 
-### 10.1 Build & Packaging ✅ PRODUCTION READY
+### 10.1 Data Scrambling Engine 🚧 CRITICAL PRIORITY
+- [ ] Implement `DataScrambler` with URN-based key derivation
+- [ ] Create XOR-based stream cipher with SHA-256 keystream generation  
+- [ ] Add position-dependent scrambling for byte range access
+- [ ] Implement key derivation from URN components (store_id + root_hash + path + range)
+- [ ] Add scrambling/unscrambling methods with in-place operation
+- [ ] Create `ScrambleState` for efficient stream cipher operations
+- [ ] Add performance optimization for large data scrambling (>500 MB/s target)
+
+### 10.2 Secure Layer Format Migration 🚧 CRITICAL PRIORITY
+- [ ] **BREAKING CHANGE**: Change all layer files from `.layer` to `.dig` extension
+- [ ] Remove ALL legacy `.layer` file support (no backward compatibility)
+- [ ] Update all file path construction to use `.dig` extension
+- [ ] Integrate scrambling into all layer write operations
+- [ ] Integrate unscrambling into all layer read operations  
+- [ ] Ensure all chunk data is scrambled before storage in `.dig` files
+- [ ] Scramble file metadata and directory structure information
+- [ ] Update Layer 0 (metadata layer) to use scrambled format
+
+### 10.3 URN-Based Access Control 🚧 HIGH PRIORITY
+- [ ] Implement `AccessController` for URN validation and access control
+- [ ] Add URN requirement to ALL data access operations (no exceptions)
+- [ ] Remove all direct file access methods that bypass URN validation
+- [ ] Update `Store::get_file()` to require URN for data access
+- [ ] Update `Store::get_file_at()` to use URN-based unscrambling
+- [ ] Implement path-specific and byte-range-specific access control
+- [ ] Add URN component validation (store_id, root_hash, path, range)
+
+### 10.4 CLI Security Integration 🚧 HIGH PRIORITY  
+- [ ] Update `get` command to require URN for accessing scrambled data
+- [ ] Update `cat` command to use URN-based data access
+- [ ] Update `prove` command to work with scrambled data
+- [ ] Update `verify` command to handle scrambled data verification
+- [ ] Add URN generation for newly committed content
+- [ ] Provide clear error messages for invalid URN access attempts
+- [ ] Remove any CLI access methods that bypass URN requirements
+
+### 10.5 Security Testing & Validation 🚧 HIGH PRIORITY
+- [ ] Test scrambled data is unreadable without correct URN
+- [ ] Verify URN component validation prevents unauthorized access
+- [ ] Test deterministic scrambling (same URN = same result)
+- [ ] Validate byte range access with range-specific scrambling
+- [ ] Test file path access with path-specific scrambling
+- [ ] Measure performance impact (<5% overhead target)
+- [ ] Test streaming operations with scrambling
+- [ ] Validate memory-mapped file operations with scrambling
+
+### 10.6 Legacy Removal & Migration 🚧 CRITICAL PRIORITY
+- [ ] **REMOVE ALL**: Delete all `.layer` file support code
+- [ ] **REMOVE ALL**: Delete all unscrambled data access methods
+- [ ] **REMOVE ALL**: Delete any direct file access without URN
+- [ ] Update all error messages to reference `.dig` files
+- [ ] Update all documentation to use `.dig` extension
+- [ ] Update all tests to use secure scrambled data access
+- [ ] Ensure no legacy functionality remains anywhere in codebase
+
+## Phase 11: Release Preparation ✅ COMPLETE
+
+### 11.1 Build & Packaging ✅ PRODUCTION READY
 - [x] Configure release profile in Cargo.toml (optimized release profile)
 - [x] Set up GitHub Actions CI/CD (comprehensive CI with cross-platform builds)
 - [x] Cross-platform builds (Windows, Linux, macOS, ARM64 support)
@@ -398,14 +456,14 @@
 - [x] Code coverage reporting (cargo-llvm-cov with Codecov)
 - [x] Documentation deployment (automated GitHub Pages)
 
-### 10.2 Distribution ✅ COMPLETE
+### 11.2 Distribution ✅ COMPLETE
 - [x] Create installation script (automated cross-platform installer)
 - [x] Package for cargo install (Cargo.toml properly configured)
 - [x] Create Homebrew formula (automated generation in CI)
 - [x] GitHub Releases (automated with comprehensive release notes)
 - [x] Multiple architectures (x86_64, ARM64 for Linux and macOS)
 
-### 10.3 Testing & Validation ✅ EXCEEDS REQUIREMENTS
+### 11.3 Testing & Validation ✅ EXCEEDS REQUIREMENTS
 - [x] Full test suite passes (131 tests, 100% success rate)
 - [x] Manual testing on all platforms (Windows tested, cross-platform code)
 - [x] Performance validation (benchmarks showing excellent throughput)
@@ -444,7 +502,7 @@ proptest = "1"
 criterion = "0.5"
 ```
 
-## 🏆 IMPLEMENTATION STATUS: 100% COMPLETE!
+## 🏆 IMPLEMENTATION STATUS: CORE COMPLETE, SECURITY PHASE READY!
 
 ### ✅ **COMPLETED PHASES** (Production Ready & Fully Functional)
 - **Phase 1-2: Foundation** - Complete project structure, types, errors, hashing
@@ -461,11 +519,14 @@ criterion = "0.5"
 - **Phase 9: Advanced Performance** - Complete streaming and batch processing
 - **Phase 10: Release Preparation** - CI/CD and distribution ready
 
-### 🎯 **IMPLEMENTATION COMPLETE** - All Features Working!
-- ✅ **All Core Phases**: Fully implemented and tested
+### 🎯 **CORE IMPLEMENTATION COMPLETE** - Security Phase Ready!
+- ✅ **All Core Phases**: Fully implemented and tested (Phases 1-9)
 - ✅ **Advanced Features**: Merkle proofs, URN resolution, persistent staging
 - ✅ **CLI Commands**: Complete working command set
-- ✅ **Production Ready**: All systems operational
+- ✅ **Performance Optimizations**: Streaming, batch processing, adaptive optimization
+- 🚧 **Security Phase**: Ready for implementation (Phase 10)
+- 🚧 **Data Scrambling**: URN-based access control needs implementation
+- 🚧 **File Format**: Migration from `.layer` to `.dig` extension required
 
 ### 📊 **Final Statistics**
 - **Total Tests**: 66 (all passing)
