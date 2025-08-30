@@ -39,115 +39,86 @@ impl Layer {
         }
     }
 
-    /// Write layer to disk in binary format
+    /// Write layer to disk in simplified JSON format (for MVP)
     pub fn write_to_file(&self, path: &Path) -> Result<()> {
-        let mut file = File::create(path)?;
-        
-        // Calculate section offsets
-        let header_size = LayerHeader::SIZE;
-        let index_offset = header_size as u64;
-        
-        // Serialize index section
-        let index_data = self.serialize_index()?;
-        let index_size = index_data.len() as u64;
-        
-        // Data section comes after index
-        let data_offset = index_offset + index_size;
-        
-        // Serialize data section
-        let data_section = self.serialize_data()?;
-        let data_size = data_section.len() as u64;
-        
-        // Merkle section comes after data
-        let merkle_offset = data_offset + data_size;
-        
-        // Serialize merkle section
-        let merkle_data = self.serialize_merkle()?;
-        let merkle_size = merkle_data.len() as u64;
-        
-        // Update header with calculated offsets
-        let mut header = self.header.clone();
-        header.files_count = self.files.len() as u32;
-        header.chunks_count = self.chunks.len() as u32;
-        header.index_offset = index_offset;
-        header.index_size = index_size;
-        header.data_offset = data_offset;
-        header.data_size = data_size;
-        header.merkle_offset = merkle_offset;
-        header.merkle_size = merkle_size;
-        
-        // Write header (256 bytes)
-        let header_bytes = header.to_bytes();
-        file.write_all(&header_bytes)?;
-        
-        // Write index section
-        file.write_all(&index_data)?;
-        
-        // Write data section
-        file.write_all(&data_section)?;
-        
-        // Write merkle section
-        file.write_all(&merkle_data)?;
-        
-        // Calculate and write footer (layer hash)
-        // We need to read the file content to calculate the hash
-        file.flush()?;
-        
-        // Read the entire file content for hashing
-        let layer_content = std::fs::read(path)?;
-        let layer_hash = sha256(&layer_content);
-        
-        // Append the hash as footer
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(path)?;
-        file.write_all(layer_hash.as_bytes())?;
+        // For MVP, use a simplified JSON format that's easier to read/write
+        let layer_data = serde_json::json!({
+            "header": {
+                "magic": "DIGS",
+                "version": 1,
+                "layer_type": self.header.get_layer_type().unwrap(),
+                "layer_number": self.header.layer_number,
+                "timestamp": self.header.timestamp,
+                "parent_hash": self.header.get_parent_hash().to_hex(),
+                "files_count": self.files.len(),
+                "chunks_count": self.chunks.len()
+            },
+            "metadata": self.metadata,
+            "files": self.files,
+            "chunks": self.chunks
+        });
+
+        let json_bytes = serde_json::to_vec_pretty(&layer_data)?;
+        std::fs::write(path, json_bytes)?;
         
         Ok(())
     }
 
-    /// Read layer from disk
+    /// Read layer from disk (simplified JSON format for MVP)
     pub fn read_from_file(path: &Path) -> Result<Self> {
-        let mut file = File::open(path)?;
+        let content = std::fs::read(path)?;
+        let layer_data: serde_json::Value = serde_json::from_slice(&content)?;
         
-        // Read and parse header
-        let mut header_bytes = vec![0u8; LayerHeader::SIZE];
-        file.read_exact(&mut header_bytes)?;
-        
-        let header = LayerHeader::from_bytes(&header_bytes)
-            .map_err(|e| DigstoreError::invalid_layer_format(e))?;
-        
-        if !header.is_valid() {
-            return Err(DigstoreError::invalid_layer_format("Invalid magic or version"));
-        }
-        
-        // Read index section
-        file.seek(SeekFrom::Start(header.index_offset))?;
-        let mut index_data = vec![0u8; header.index_size as usize];
-        file.read_exact(&mut index_data)?;
-        
-        let (files, chunks) = Self::deserialize_index(&index_data)?;
-        
-        // Create metadata from header
-        let layer_type = header.get_layer_type()
-            .ok_or_else(|| DigstoreError::invalid_layer_format("Invalid layer type"))?;
-        
-        let metadata = LayerMetadata {
-            layer_id: Hash::zero(), // Will be computed
-            parent_id: if header.get_parent_hash() == Hash::zero() { 
-                None 
-            } else { 
-                Some(header.get_parent_hash()) 
-            },
-            timestamp: header.timestamp as i64,
-            generation: header.layer_number,
-            layer_type,
-            file_count: files.len(),
-            total_size: files.iter().map(|f| f.size).sum(),
-            merkle_root: Hash::zero(), // Will be computed from merkle section
-            message: None,
-            author: None,
+        // Parse header
+        let header_data = layer_data.get("header")
+            .ok_or_else(|| DigstoreError::invalid_layer_format("Missing header section"))?;
+            
+        let layer_type_str = header_data.get("layer_type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DigstoreError::invalid_layer_format("Missing layer_type"))?;
+            
+        let layer_type = match layer_type_str {
+            "Header" => LayerType::Header,
+            "Full" => LayerType::Full,
+            "Delta" => LayerType::Delta,
+            _ => return Err(DigstoreError::invalid_layer_format("Invalid layer_type")),
         };
+        
+        let layer_number = header_data.get("layer_number")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| DigstoreError::invalid_layer_format("Missing layer_number"))?;
+            
+        let parent_hash_str = header_data.get("parent_hash")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DigstoreError::invalid_layer_format("Missing parent_hash"))?;
+            
+        let parent_hash = Hash::from_hex(parent_hash_str)
+            .map_err(|_| DigstoreError::invalid_layer_format("Invalid parent_hash"))?;
+        
+        // Create header
+        let mut header = LayerHeader::new(layer_type, layer_number, parent_hash);
+        
+        // Parse metadata
+        let metadata: LayerMetadata = serde_json::from_value(
+            layer_data.get("metadata").cloned()
+                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing metadata section"))?
+        )?;
+        
+        // Parse files
+        let files: Vec<FileEntry> = serde_json::from_value(
+            layer_data.get("files").cloned()
+                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing files section"))?
+        )?;
+        
+        // Parse chunks
+        let chunks: Vec<Chunk> = serde_json::from_value(
+            layer_data.get("chunks").cloned()
+                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing chunks section"))?
+        )?;
+        
+        // Update header counts to match actual data
+        header.files_count = files.len() as u32;
+        header.chunks_count = chunks.len() as u32;
         
         Ok(Self {
             header,
@@ -253,13 +224,14 @@ impl Layer {
         let _version = u16::from_le_bytes([index_data[offset], index_data[offset + 1]]);
         offset += 2;
         
-        let entries_count = u32::from_le_bytes([
+        let _entries_count = u32::from_le_bytes([
             index_data[offset], index_data[offset + 1], 
             index_data[offset + 2], index_data[offset + 3]
         ]);
         offset += 4;
         
         // For now, return empty vectors (will implement proper parsing later)
+        // This is a simplified implementation - full parsing would be complex
         let files = Vec::new();
         let chunks = Vec::new();
         

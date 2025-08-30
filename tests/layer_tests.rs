@@ -128,7 +128,7 @@ fn test_layer_with_files() -> Result<()> {
 }
 
 #[test]
-fn test_layer_binary_roundtrip() -> Result<()> {
+fn test_layer_json_roundtrip() -> Result<()> {
     let mut layer = Layer::new(LayerType::Full, 1, Hash::zero());
     
     // Add a simple file
@@ -170,6 +170,10 @@ fn test_layer_binary_roundtrip() -> Result<()> {
     // Verify basic properties
     assert_eq!(loaded_layer.header.layer_number, layer.header.layer_number);
     assert_eq!(loaded_layer.header.get_layer_type().unwrap(), LayerType::Full);
+    assert_eq!(loaded_layer.files.len(), 1);
+    assert_eq!(loaded_layer.chunks.len(), 1);
+    assert_eq!(loaded_layer.files[0].path, PathBuf::from("simple.txt"));
+    assert_eq!(loaded_layer.chunks[0].data, b"Simple content");
     assert!(loaded_layer.verify()?);
     
     Ok(())

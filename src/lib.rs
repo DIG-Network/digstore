@@ -19,7 +19,7 @@
 //! use std::path::Path;
 //!
 //! // Initialize a new repository
-//! let store = Store::init(Path::new("./my-project"))?;
+//! let mut store = Store::init(Path::new("./my-project"))?;
 //!
 //! // Add files to the repository
 //! store.add_files(&["src/main.rs", "Cargo.toml"])?;

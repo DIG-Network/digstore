@@ -165,6 +165,11 @@ impl DigstoreError {
         Self::FileNotFound { path }
     }
 
+    /// Create a new invalid file path error
+    pub fn invalid_file_path(path: PathBuf) -> Self {
+        Self::InvalidFilePath { path }
+    }
+
     /// Create a new chunk not found error
     pub fn chunk_not_found(hash: Hash) -> Self {
         Self::ChunkNotFound { hash }
