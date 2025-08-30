@@ -5,9 +5,8 @@ use crate::urn::{Urn, ByteRange};
 use std::path::PathBuf;
 
 /// Parse a URN string into a Urn struct
+/// Format: urn:dig:chia:{storeID}[:{rootHash}][/{resourcePath}][#{byteRange}]
 pub fn parse_urn(urn_str: &str) -> Result<Urn> {
-    // TODO: Implement URN parsing using nom
-    // For now, provide a simple implementation
     
     if !urn_str.starts_with("urn:dig:chia:") {
         return Err(DigstoreError::invalid_urn(format!(

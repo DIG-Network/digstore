@@ -236,25 +236,44 @@ impl Store {
             return Ok(());
         }
         
-        // Use batch processing for efficiency
-        let batch_result = self.batch_processor.process_files_batch(files, progress)?;
+        // Convert absolute paths to relative paths for storage, but keep absolute for processing
+        let project_root = self.project_path.as_ref().cloned().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let files_with_relative: Vec<(PathBuf, PathBuf)> = files.into_iter().map(|abs_path| {
+            // Try to make path relative to project root
+            let relative_path = if let Ok(rel_path) = abs_path.strip_prefix(&project_root) {
+                rel_path.to_path_buf()
+            } else {
+                // Fallback: use the absolute path as-is for now
+                abs_path.clone()
+            };
+            (abs_path, relative_path)
+        }).collect();
+        
+        // Use batch processing for efficiency (with absolute paths)
+        let absolute_paths: Vec<PathBuf> = files_with_relative.iter().map(|(abs, _)| abs.clone()).collect();
+        let batch_result = self.batch_processor.process_files_batch(absolute_paths, progress)?;
         
         // Store metrics before consuming batch_result
         let file_count = batch_result.file_entries.len();
         let metrics = batch_result.performance_metrics.clone();
         let dedup_stats = batch_result.deduplication_stats.clone();
         
-        // Add all processed files to staging
-        for (file_entry, chunks) in batch_result.file_entries.into_iter().zip(batch_result.chunks.into_iter()) {
+        // Add all processed files to staging (fix paths to be relative)
+        for (i, (mut file_entry, file_chunks)) in batch_result.file_entries.into_iter().zip(batch_result.chunks.into_iter()).enumerate() {
+            // Update file entry to use relative path
+            if let Some((_, relative_path)) = files_with_relative.get(i) {
+                file_entry.path = relative_path.clone();
+            }
+            
             let staged_file = StagedFile {
                 file_entry: file_entry.clone(),
-                chunks: vec![chunks], // Single chunk for now
+                chunks: vec![file_chunks], // Store the actual chunks
                 is_staged: true,
             };
             self.staging.insert(file_entry.path.clone(), staged_file);
         }
         
-        // Save staging to disk
+        // Save staging to disk (batched for better performance)
         self.save_staging()?;
         
         // Print performance summary
@@ -285,7 +304,7 @@ impl Store {
         if recursive {
             use walkdir::WalkDir;
             
-            // Collect all files first
+            // Collect all files first (use absolute paths for batch processing)
             let mut files = Vec::new();
             for entry in WalkDir::new(dir_path)
                 .follow_links(false)
@@ -293,15 +312,12 @@ impl Store {
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_file())
             {
-                let relative_path = entry.path().strip_prefix(
-                    self.project_path.as_ref().unwrap_or(&std::env::current_dir()?)
-                ).unwrap_or(entry.path());
-                
-                files.push(relative_path.to_path_buf());
+                // Store absolute path for batch processing
+                files.push(entry.path().to_path_buf());
             }
             
             // Use batch processing if many files, otherwise process individually
-            if files.len() > 50 {
+            if files.len() > 10 {
                 println!("  • Using batch processing for {} files", files.len());
                 self.add_files_batch(files, None)?;
                 return Ok(());

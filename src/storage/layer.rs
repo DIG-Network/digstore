@@ -147,7 +147,36 @@ impl Layer {
             }
         }
         
-        // TODO: Verify merkle tree and chunk hashes
+        // Verify chunk hashes
+        for chunk in &self.chunks {
+            let computed_hash = crate::core::hash::sha256(&chunk.data);
+            if computed_hash != chunk.hash {
+                return Ok(false);
+            }
+        }
+        
+        // Verify file hashes
+        for file_entry in &self.files {
+            // Find chunks for this file and verify file hash
+            let mut file_chunks = Vec::new();
+            for chunk_ref in &file_entry.chunks {
+                if let Some(chunk) = self.chunks.iter().find(|c| c.hash == chunk_ref.hash) {
+                    file_chunks.push(chunk.clone());
+                }
+            }
+            
+            // Reconstruct file data and verify hash
+            let mut file_data = Vec::new();
+            for chunk in file_chunks {
+                file_data.extend_from_slice(&chunk.data);
+            }
+            
+            let computed_file_hash = crate::core::hash::sha256(&file_data);
+            if computed_file_hash != file_entry.hash {
+                return Ok(false);
+            }
+        }
+        
         Ok(true)
     }
 
@@ -258,13 +287,32 @@ impl Layer {
     fn serialize_merkle(&self) -> Result<Vec<u8>> {
         let mut merkle_data = Vec::new();
         
-        // Tree header
-        merkle_data.push(0); // Depth (placeholder)
-        merkle_data.extend_from_slice(&(self.files.len() as u32).to_le_bytes()); // Leaf count
+        if self.files.is_empty() {
+            return Ok(merkle_data);
+        }
         
-        // For now, just include file hashes as leaves
+        // Calculate tree depth
+        let leaf_count = self.files.len();
+        let depth = if leaf_count <= 1 {
+            0
+        } else {
+            (leaf_count as f64).log2().ceil() as u8
+        };
+        
+        // Tree header
+        merkle_data.push(depth);
+        merkle_data.extend_from_slice(&(leaf_count as u32).to_le_bytes());
+        
+        // Include file hashes as leaves
         for file in &self.files {
             merkle_data.extend_from_slice(file.hash.as_bytes());
+        }
+        
+        // Build and include merkle tree
+        if leaf_count > 1 {
+            let file_hashes: Vec<_> = self.files.iter().map(|f| f.hash).collect();
+            let merkle_tree = crate::proofs::merkle::MerkleTree::from_hashes(&file_hashes)?;
+            merkle_data.extend_from_slice(merkle_tree.root().as_bytes());
         }
         
         Ok(merkle_data)

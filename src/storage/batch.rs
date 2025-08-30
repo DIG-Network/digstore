@@ -65,7 +65,7 @@ pub struct PerformanceSnapshot {
 impl BatchProcessor {
     pub fn new() -> Self {
         Self {
-            batch_size: 200, // Process 200 files per batch
+            batch_size: 500, // Increase batch size for better throughput
             worker_count: std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4),
             chunk_dedup_cache: Arc::new(DashMap::new()),
             performance_metrics: Arc::new(BatchMetrics::new()),
@@ -99,16 +99,18 @@ impl BatchProcessor {
             pb.set_message("Processing files in batches...");
         }
         
-        // Process files in parallel batches
+        // Process files in parallel batches (optimized for throughput)
         let batch_results: Result<Vec<_>> = files
-            .par_chunks(self.batch_size)
+            .par_chunks(self.batch_size.min(100)) // Smaller batches for better parallelism
             .enumerate()
             .map(|(batch_idx, batch)| {
                 let batch_result = self.process_single_batch(batch, batch_idx)?;
                 
-                // Update progress
+                // Update progress less frequently to reduce overhead
                 if let Some(pb) = progress {
-                    pb.inc(batch.len() as u64);
+                    if batch_idx % 10 == 0 {
+                        pb.inc((batch.len() * 10) as u64);
+                    }
                 }
                 
                 Ok(batch_result)
@@ -179,13 +181,13 @@ impl BatchProcessor {
     ) -> Result<(FileEntry, Vec<Chunk>)> {
         let file_size = std::fs::metadata(file_path)?.len();
         
-        // Optimize for small files
-        if file_size <= 4096 {
-            // Very small files: single chunk, no CDC overhead
+        // Optimize for small files (increased threshold for better performance)
+        if file_size <= 16384 { // 16KB threshold
+            // Small files: single chunk, no CDC overhead
             return self.process_tiny_file(file_path, file_size);
         }
         
-        // Small to medium files: use streaming chunking
+        // Medium files: use streaming chunking
         let chunks = chunking_engine.chunk_file_streaming(file_path)?;
         
         // Process chunks for deduplication

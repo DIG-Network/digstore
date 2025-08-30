@@ -181,7 +181,12 @@ fn output_proof(proof: &Proof, args: &ProveArgs) -> Result<()> {
         }
         "text" => format_proof_as_text(proof),
         "binary" => {
-            return Err(DigstoreError::internal("Binary format not yet implemented").into());
+            // Serialize proof to binary format using bincode
+            bincode::serialize(proof)
+                .map_err(|e| DigstoreError::Serialization(e))?
+                .into_iter()
+                .map(|b| b as char)
+                .collect::<String>()
         }
         _ => {
             return Err(DigstoreError::internal("Invalid format. Use: json, text, binary").into());
