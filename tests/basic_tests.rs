@@ -65,9 +65,9 @@ fn test_layer_header_creation() {
     
     assert_eq!(header.magic, LayerHeader::MAGIC);
     assert_eq!(header.version, LayerHeader::VERSION);
-    assert_eq!(header.layer_type, LayerType::Full);
+    assert_eq!(header.get_layer_type().unwrap(), LayerType::Full);
     assert_eq!(header.layer_number, 1);
-    assert_eq!(header.parent_hash, parent_hash);
+    assert_eq!(header.get_parent_hash(), parent_hash);
     assert!(header.is_valid());
 }
 

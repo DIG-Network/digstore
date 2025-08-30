@@ -157,23 +157,23 @@ pub struct FileMetadata {
     pub is_deleted: bool,
 }
 
-/// Layer header information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Layer header information (256 bytes fixed size)
+#[derive(Debug, Clone)]
 pub struct LayerHeader {
-    /// Magic bytes for format identification
+    /// Magic bytes for format identification: "DIGS"
     pub magic: [u8; 4],
-    /// Format version
+    /// Format version (1)
     pub version: u16,
-    /// Type of layer
-    pub layer_type: LayerType,
+    /// Type of layer (0=Header, 1=Full, 2=Delta)
+    pub layer_type: u8,
     /// Feature flags
     pub flags: u8,
     /// Sequential layer number
     pub layer_number: u64,
-    /// Creation timestamp
+    /// Creation timestamp (Unix timestamp)
     pub timestamp: u64,
-    /// Parent layer hash (zero for first layer)
-    pub parent_hash: RootHash,
+    /// Parent layer root hash (zero for first layer)
+    pub parent_hash: [u8; 32],
     /// Number of files in this layer
     pub files_count: u32,
     /// Number of chunks in this layer
@@ -190,8 +190,10 @@ pub struct LayerHeader {
     pub merkle_offset: u64,
     /// Size of merkle tree section
     pub merkle_size: u64,
-    /// Compression algorithm used
+    /// Compression algorithm used (0=None, 1=Zstd, 2=LZ4)
     pub compression: u8,
+    /// Reserved bytes for future use (143 bytes to make total 256)
+    pub reserved: [u8; 143],
 }
 
 impl LayerHeader {
@@ -207,11 +209,11 @@ impl LayerHeader {
         Self {
             magic: Self::MAGIC,
             version: Self::VERSION,
-            layer_type,
+            layer_type: layer_type.to_byte(),
             flags: 0,
             layer_number,
             timestamp: chrono::Utc::now().timestamp() as u64,
-            parent_hash,
+            parent_hash: *parent_hash.as_bytes(),
             files_count: 0,
             chunks_count: 0,
             index_offset: 0,
@@ -221,12 +223,206 @@ impl LayerHeader {
             merkle_offset: 0,
             merkle_size: 0,
             compression: 0, // No compression
+            reserved: [0u8; 143],
         }
     }
 
     /// Check if header is valid
     pub fn is_valid(&self) -> bool {
         self.magic == Self::MAGIC && self.version == Self::VERSION
+    }
+
+    /// Get the layer type
+    pub fn get_layer_type(&self) -> Option<LayerType> {
+        LayerType::from_byte(self.layer_type)
+    }
+
+    /// Get the parent hash
+    pub fn get_parent_hash(&self) -> Hash {
+        Hash::from_bytes(self.parent_hash)
+    }
+
+    /// Set the parent hash
+    pub fn set_parent_hash(&mut self, hash: &Hash) {
+        self.parent_hash = *hash.as_bytes();
+    }
+
+    /// Convert to bytes for writing to disk
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(Self::SIZE);
+        
+        // Magic (4 bytes)
+        bytes.extend_from_slice(&self.magic);
+        
+        // Version (2 bytes, little-endian)
+        bytes.extend_from_slice(&self.version.to_le_bytes());
+        
+        // Layer type (1 byte)
+        bytes.push(self.layer_type);
+        
+        // Flags (1 byte)
+        bytes.push(self.flags);
+        
+        // Layer number (8 bytes, little-endian)
+        bytes.extend_from_slice(&self.layer_number.to_le_bytes());
+        
+        // Timestamp (8 bytes, little-endian)
+        bytes.extend_from_slice(&self.timestamp.to_le_bytes());
+        
+        // Parent hash (32 bytes)
+        bytes.extend_from_slice(&self.parent_hash);
+        
+        // Files count (4 bytes, little-endian)
+        bytes.extend_from_slice(&self.files_count.to_le_bytes());
+        
+        // Chunks count (4 bytes, little-endian)
+        bytes.extend_from_slice(&self.chunks_count.to_le_bytes());
+        
+        // Index offset (8 bytes, little-endian)
+        bytes.extend_from_slice(&self.index_offset.to_le_bytes());
+        
+        // Index size (8 bytes, little-endian)
+        bytes.extend_from_slice(&self.index_size.to_le_bytes());
+        
+        // Data offset (8 bytes, little-endian)
+        bytes.extend_from_slice(&self.data_offset.to_le_bytes());
+        
+        // Data size (8 bytes, little-endian)
+        bytes.extend_from_slice(&self.data_size.to_le_bytes());
+        
+        // Merkle offset (8 bytes, little-endian)
+        bytes.extend_from_slice(&self.merkle_offset.to_le_bytes());
+        
+        // Merkle size (8 bytes, little-endian)
+        bytes.extend_from_slice(&self.merkle_size.to_le_bytes());
+        
+        // Compression (1 byte)
+        bytes.push(self.compression);
+        
+        // Reserved (143 bytes)
+        bytes.extend_from_slice(&self.reserved);
+        
+        assert_eq!(bytes.len(), Self::SIZE);
+        bytes
+    }
+
+    /// Create from bytes read from disk
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < Self::SIZE {
+            return Err(format!("Header too short: {} bytes, expected {}", bytes.len(), Self::SIZE));
+        }
+
+        let mut offset = 0;
+
+        // Magic (4 bytes)
+        let mut magic = [0u8; 4];
+        magic.copy_from_slice(&bytes[offset..offset + 4]);
+        offset += 4;
+
+        // Version (2 bytes, little-endian)
+        let version = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        offset += 2;
+
+        // Layer type (1 byte)
+        let layer_type = bytes[offset];
+        offset += 1;
+
+        // Flags (1 byte)
+        let flags = bytes[offset];
+        offset += 1;
+
+        // Layer number (8 bytes, little-endian)
+        let mut layer_number_bytes = [0u8; 8];
+        layer_number_bytes.copy_from_slice(&bytes[offset..offset + 8]);
+        let layer_number = u64::from_le_bytes(layer_number_bytes);
+        offset += 8;
+
+        // Timestamp (8 bytes, little-endian)
+        let mut timestamp_bytes = [0u8; 8];
+        timestamp_bytes.copy_from_slice(&bytes[offset..offset + 8]);
+        let timestamp = u64::from_le_bytes(timestamp_bytes);
+        offset += 8;
+
+        // Parent hash (32 bytes)
+        let mut parent_hash = [0u8; 32];
+        parent_hash.copy_from_slice(&bytes[offset..offset + 32]);
+        offset += 32;
+
+        // Files count (4 bytes, little-endian)
+        let mut files_count_bytes = [0u8; 4];
+        files_count_bytes.copy_from_slice(&bytes[offset..offset + 4]);
+        let files_count = u32::from_le_bytes(files_count_bytes);
+        offset += 4;
+
+        // Chunks count (4 bytes, little-endian)
+        let mut chunks_count_bytes = [0u8; 4];
+        chunks_count_bytes.copy_from_slice(&bytes[offset..offset + 4]);
+        let chunks_count = u32::from_le_bytes(chunks_count_bytes);
+        offset += 4;
+
+        // Index offset (8 bytes, little-endian)
+        let mut index_offset_bytes = [0u8; 8];
+        index_offset_bytes.copy_from_slice(&bytes[offset..offset + 8]);
+        let index_offset = u64::from_le_bytes(index_offset_bytes);
+        offset += 8;
+
+        // Index size (8 bytes, little-endian)
+        let mut index_size_bytes = [0u8; 8];
+        index_size_bytes.copy_from_slice(&bytes[offset..offset + 8]);
+        let index_size = u64::from_le_bytes(index_size_bytes);
+        offset += 8;
+
+        // Data offset (8 bytes, little-endian)
+        let mut data_offset_bytes = [0u8; 8];
+        data_offset_bytes.copy_from_slice(&bytes[offset..offset + 8]);
+        let data_offset = u64::from_le_bytes(data_offset_bytes);
+        offset += 8;
+
+        // Data size (8 bytes, little-endian)
+        let mut data_size_bytes = [0u8; 8];
+        data_size_bytes.copy_from_slice(&bytes[offset..offset + 8]);
+        let data_size = u64::from_le_bytes(data_size_bytes);
+        offset += 8;
+
+        // Merkle offset (8 bytes, little-endian)
+        let mut merkle_offset_bytes = [0u8; 8];
+        merkle_offset_bytes.copy_from_slice(&bytes[offset..offset + 8]);
+        let merkle_offset = u64::from_le_bytes(merkle_offset_bytes);
+        offset += 8;
+
+        // Merkle size (8 bytes, little-endian)
+        let mut merkle_size_bytes = [0u8; 8];
+        merkle_size_bytes.copy_from_slice(&bytes[offset..offset + 8]);
+        let merkle_size = u64::from_le_bytes(merkle_size_bytes);
+        offset += 8;
+
+        // Compression (1 byte)
+        let compression = bytes[offset];
+        offset += 1;
+
+        // Reserved (143 bytes)
+        let mut reserved = [0u8; 143];
+        reserved.copy_from_slice(&bytes[offset..offset + 143]);
+
+        Ok(Self {
+            magic,
+            version,
+            layer_type,
+            flags,
+            layer_number,
+            timestamp,
+            parent_hash,
+            files_count,
+            chunks_count,
+            index_offset,
+            index_size,
+            data_offset,
+            data_size,
+            merkle_offset,
+            merkle_size,
+            compression,
+            reserved,
+        })
     }
 }
 
