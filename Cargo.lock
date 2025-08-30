@@ -531,6 +531,7 @@ dependencies = [
  "directories",
  "dunce",
  "fastcdc",
+ "getrandom 0.2.16",
  "glob",
  "hex",
  "humantime",

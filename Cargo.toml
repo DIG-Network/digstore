@@ -69,6 +69,7 @@ bytesize = "1.3"
 nom = "7.1"
 once_cell = "1.19"
 indexmap = { version = "2.1", features = ["serde"] }
+getrandom = "0.2"
 
 # Logging
 tracing = "0.1"
