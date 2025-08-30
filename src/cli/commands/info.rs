@@ -34,7 +34,7 @@ pub fn execute(json: bool, layer: Option<String>) -> Result<()> {
 
 fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
     // Load Layer 0 metadata
-    let layer_zero_path = store.global_path.join("0000000000000000.layer");
+    let layer_zero_path = store.global_path.join("0000000000000000.dig");
     let content = std::fs::read(layer_zero_path)?;
     let metadata: serde_json::Value = serde_json::from_slice(&content)?;
 
@@ -44,7 +44,7 @@ fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
         .filter(|entry| {
             entry.path().extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| ext == "layer")
+                .map(|ext| ext == "dig")
                 .unwrap_or(false)
         })
         .count();

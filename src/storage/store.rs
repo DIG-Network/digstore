@@ -2,7 +2,8 @@
 
 use crate::core::{types::*, error::*, digstore_file::DigstoreFile};
 use sha2::Digest;
-use crate::storage::{chunk::ChunkingEngine, layer::Layer, streaming::StreamingChunkingEngine, batch::BatchProcessor};
+use crate::storage::{chunk::ChunkingEngine, layer::Layer, streaming::StreamingChunkingEngine, batch::BatchProcessor, secure_layer::SecureLayer};
+use crate::security::{AccessController, StoreAccessControl};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use directories::UserDirs;
@@ -401,10 +402,21 @@ impl Store {
         let layer_id = layer.compute_layer_id()?;
         layer.metadata.layer_id = layer_id;
 
-        // Write layer to disk
-        let layer_filename = format!("{}.layer", layer_id.to_hex());
+        // Write layer to disk with scrambling
+        let layer_filename = format!("{}.dig", layer_id.to_hex());
         let layer_path = self.global_path.join(layer_filename);
-        layer.write_to_file(&layer_path)?;
+        
+        // Create URN for this layer
+        let layer_urn = crate::urn::Urn {
+            store_id: self.store_id,
+            root_hash: Some(layer_id),
+            resource_path: None,
+            byte_range: None,
+        };
+        
+        // Use secure layer operations
+        let secure_layer = SecureLayer::new(layer);
+        secure_layer.write_to_file(&layer_path, &layer_urn)?;
 
         // Update root history in Layer 0
         self.update_root_history(layer_id)?;
@@ -421,11 +433,22 @@ impl Store {
         Ok(layer_id)
     }
 
-    /// Load a layer by its ID
+    /// Load a layer by its ID using secure operations
     pub fn load_layer(&self, layer_id: LayerId) -> Result<Layer> {
-        let layer_filename = format!("{}.layer", layer_id.to_hex());
+        let layer_filename = format!("{}.dig", layer_id.to_hex());
         let layer_path = self.global_path.join(layer_filename);
-        Layer::read_from_file(&layer_path)
+        
+        // Create URN for this layer
+        let layer_urn = crate::urn::Urn {
+            store_id: self.store_id,
+            root_hash: Some(layer_id),
+            resource_path: None,
+            byte_range: None,
+        };
+        
+        // Use secure layer operations for unscrambling
+        let secure_layer = SecureLayer::read_from_file(&layer_path, &layer_urn)?;
+        Ok(secure_layer.layer)
     }
 
     /// Get a file by path from the latest commit
@@ -446,15 +469,23 @@ impl Store {
         );
 
         // Find the layer containing this root hash
-        let layer_filename = format!("{}.layer", target_root.to_hex());
+        let layer_filename = format!("{}.dig", target_root.to_hex());
         let layer_path = self.global_path.join(layer_filename);
 
         if !layer_path.exists() {
             return Err(DigstoreError::layer_not_found(target_root));
         }
 
-        // Read layer
-        let layer = Layer::read_from_file(&layer_path)?;
+        // Read layer using secure operations
+        let layer_urn = crate::urn::Urn {
+            store_id: self.store_id,
+            root_hash: Some(target_root),
+            resource_path: None,
+            byte_range: None,
+        };
+        
+        let secure_layer = SecureLayer::read_from_file(&layer_path, &layer_urn)?;
+        let layer = secure_layer.layer;
 
         // Find file in layer
         for file_entry in &layer.files {
@@ -515,7 +546,7 @@ impl Store {
 
     /// Initialize Layer 0 with metadata
     fn init_layer_zero(&self) -> Result<()> {
-        let layer_zero_path = self.global_path.join("0000000000000000.layer");
+        let layer_zero_path = self.global_path.join("0000000000000000.dig");
         
         // Create initial metadata
         let metadata = serde_json::json!({
@@ -541,7 +572,7 @@ impl Store {
 
     /// Load current root hash from Layer 0
     fn load_current_root(global_path: &Path) -> Result<Option<RootHash>> {
-        let layer_zero_path = global_path.join("0000000000000000.layer");
+        let layer_zero_path = global_path.join("0000000000000000.dig");
         
         if !layer_zero_path.exists() {
             return Ok(None);
@@ -633,7 +664,7 @@ impl Store {
             let filename = entry.file_name();
             let filename_str = filename.to_string_lossy();
             
-            if filename_str.ends_with(".layer") && filename_str != "0000000000000000.layer" {
+            if filename_str.ends_with(".dig") && filename_str != "0000000000000000.dig" {
                 // Try to parse layer number from filename (this is simplified)
                 max_layer += 1;
             }
@@ -644,7 +675,7 @@ impl Store {
 
     /// Update root history in Layer 0
     fn update_root_history(&self, new_root: RootHash) -> Result<()> {
-        let layer_zero_path = self.global_path.join("0000000000000000.layer");
+        let layer_zero_path = self.global_path.join("0000000000000000.dig");
         
         // Read current Layer 0
         let content = std::fs::read(&layer_zero_path)?;

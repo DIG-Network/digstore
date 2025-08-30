@@ -11,6 +11,7 @@ mod storage;
 mod proofs;
 mod urn;
 mod cli;
+mod security;
 
 use cli::{Cli, Commands};
 

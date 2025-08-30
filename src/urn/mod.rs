@@ -26,7 +26,7 @@ pub struct Urn {
 }
 
 /// Byte range specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ByteRange {
     /// Start byte (inclusive, None means from beginning)
     pub start: Option<u64>,

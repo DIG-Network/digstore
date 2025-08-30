@@ -11,6 +11,7 @@ pub mod batch;
 pub mod optimized_staging;
 pub mod adaptive;
 pub mod cache;
+pub mod secure_layer;
 
 // Re-export commonly used items
 pub use store::{Store, StoreStatus, StagedFile};
@@ -21,3 +22,4 @@ pub use batch::{BatchProcessor, OptimizedFileScanner, BatchResult};
 pub use optimized_staging::{OptimizedStagingArea, StagingStats};
 pub use adaptive::{AdaptiveProcessor, WorkloadAnalysis, ProcessingStrategy};
 pub use cache::{ChunkCache, BufferPool, CacheConfig};
+pub use secure_layer::SecureLayer;
