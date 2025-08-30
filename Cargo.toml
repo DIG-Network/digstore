@@ -1,0 +1,135 @@
+[package]
+name = "digstore_min"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Your Name <your.email@example.com>"]
+description = "A simplified content-addressable storage system with Git-like semantics"
+repository = "https://github.com/yourusername/digstore_min"
+license = "MIT OR Apache-2.0"
+keywords = ["storage", "merkle", "content-addressable", "chunking"]
+categories = ["filesystem", "cryptography"]
+
+[dependencies]
+# CLI & Argument Parsing
+clap = { version = "4.4", features = ["derive", "env", "color", "suggestions", "wrap_help"] }
+clap_complete = "4.4"
+atty = "0.2"  # Terminal detection for pipe support
+
+# Error Handling
+thiserror = "1.0"
+anyhow = "1.0"
+color-eyre = { version = "0.6", optional = true }  # Enhanced error reporting with suggestions
+
+# Serialization
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+bincode = "1.3"
+toml = "0.8"
+
+# Cryptography & Hashing
+sha2 = "0.10"
+digest = "0.10"
+hex = "0.4"
+rs_merkle = "1.4"
+base64 = "0.21"
+
+# Content-Defined Chunking
+fastcdc = "3.1"
+
+# Compression
+zstd = { version = "0.13", features = ["arrays"] }
+
+# File System & Paths
+directories = "5.0"
+tempfile = "3.8"
+walkdir = "2.4"
+glob = "0.3"
+dunce = "1.0"
+path-clean = "1.0"
+
+# I/O & Performance
+memmap2 = "0.9"
+parking_lot = "0.12"
+rayon = "1.8"
+dashmap = "5.5"
+
+# Progress & Terminal UI
+indicatif = { version = "0.17", features = ["rayon"] }
+console = "0.15"
+tabled = "0.15"
+dialoguer = "0.11"
+colored = "2.1"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+humantime = "2.1"
+bytesize = "1.3"
+nom = "7.1"
+once_cell = "1.19"
+indexmap = { version = "2.1", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+
+# Async (optional, remove if not needed)
+tokio = { version = "1.35", features = ["rt-multi-thread", "fs", "io-util"], optional = true }
+
+[dev-dependencies]
+# Testing
+proptest = "1.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+insta = { version = "1.34", features = ["yaml", "redactions"] }
+pretty_assertions = "1.4"
+serial_test = "3.0"
+mockall = "0.12"
+rstest = "0.18"
+
+# Benchmarking support (disabled on Windows due to compatibility issues)
+# pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
+
+[features]
+default = []
+async = ["tokio"]
+unstable = []
+
+# Optimize for binary size in release builds
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# Development profile with better debugging
+[profile.dev]
+opt-level = 0
+debug = true
+
+# Profile for performance testing
+[profile.bench]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+# Benchmarks will be added later
+# [[bench]]
+# name = "chunking"
+# harness = false
+
+# Binary configuration
+[[bin]]
+name = "digstore"
+path = "src/main.rs"
+
+# Library configuration
+[lib]
+name = "digstore_min"
+path = "src/lib.rs"
+
+# Package metadata
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
