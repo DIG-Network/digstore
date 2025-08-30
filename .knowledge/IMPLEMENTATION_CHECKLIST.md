@@ -290,6 +290,32 @@
 - [x] Merkle tree construction (fast construction and proof generation)
 - [x] File operations benchmark (efficient file chunking)
 
+### 7.5 Large File Performance Optimization 🚧 READY FOR IMPLEMENTATION
+- [ ] Streaming chunking engine (never load entire files into memory)
+- [ ] Memory-mapped file support for large files (>10MB)
+- [ ] Constant memory usage regardless of file size
+- [ ] Progress feedback for large file operations
+- [ ] Backpressure handling for high-throughput operations
+- [ ] Performance target: >500 MB/s for large files (>1GB)
+- [ ] Memory target: <200MB overhead regardless of file size
+
+### 7.6 Small File Performance Optimization 🚧 READY FOR IMPLEMENTATION  
+- [ ] Batch processing for small files (process 100-500 files per batch)
+- [ ] Parallel file processing pipeline with worker threads
+- [ ] Optimized staging area with IndexMap and bulk operations
+- [ ] Lock-free concurrent processing with DashMap
+- [ ] Efficient chunk deduplication for small files
+- [ ] Performance target: 20,000 small files in <60 seconds
+- [ ] Throughput target: >300 files/second for typical source files
+
+### 7.7 Mixed Workload Optimization 🚧 READY FOR IMPLEMENTATION
+- [ ] Adaptive processing (detect small vs large files automatically)
+- [ ] Hybrid processing pipeline (batch small, stream large)
+- [ ] Memory pool management for buffers
+- [ ] Throttled progress updates (avoid terminal spam)
+- [ ] Performance monitoring and auto-tuning
+- [ ] Stress testing with mixed workloads (10k small + 5 large files)
+
 ## Phase 8: Documentation & Polish ✅ EXCELLENT COVERAGE
 
 ### 8.1 Knowledge Base (`digstore_min/.knowledge/`) ✅ COMPREHENSIVE
@@ -324,9 +350,45 @@
 - [x] Code formatting (`cargo fmt` compatible)
 - [x] Linting (`cargo clippy` clean)
 
-## Phase 9: Release Preparation 🚧 READY FOR PRODUCTION
+## Phase 9: Advanced Performance Features 🚧 READY FOR IMPLEMENTATION
 
-### 9.1 Build & Packaging ✅ PRODUCTION READY
+### 9.1 Streaming Large File Support 🚧 READY FOR IMPLEMENTATION
+- [ ] Implement streaming chunking engine that never loads full files
+- [ ] Add memory-mapped file support for efficient large file access
+- [ ] Create backpressure handling for high-throughput operations
+- [ ] Implement progress feedback for large file operations (>5 seconds)
+- [ ] Add constant memory usage guarantee (<200MB regardless of file size)
+- [ ] Achieve performance target: >500 MB/s for large files (>1GB)
+- [ ] Add support for files larger than available RAM
+
+### 9.2 Small File Batch Processing 🚧 READY FOR IMPLEMENTATION
+- [ ] Implement batch processing architecture (100-500 files per batch)
+- [ ] Create parallel file processing pipeline with worker threads
+- [ ] Optimize staging area with IndexMap and bulk persistence
+- [ ] Add lock-free concurrent processing with DashMap
+- [ ] Implement efficient chunk deduplication for small files
+- [ ] Achieve performance target: 20,000 small files in <60 seconds
+- [ ] Reach throughput target: >300 files/second for source files
+
+### 9.3 Adaptive Processing System 🚧 READY FOR IMPLEMENTATION
+- [ ] Implement workload detection (small vs large files)
+- [ ] Create hybrid processing pipeline (batch small, stream large)
+- [ ] Add memory pool management for buffer reuse
+- [ ] Implement throttled progress updates (prevent terminal spam)
+- [ ] Create performance monitoring and auto-tuning system
+- [ ] Add stress testing for mixed workloads
+
+### 9.4 Advanced Storage Optimizations 🚧 READY FOR IMPLEMENTATION
+- [ ] Implement incremental merkle tree updates
+- [ ] Add chunk cache with LRU eviction
+- [ ] Create efficient layer writing with streaming
+- [ ] Implement partial layer loading for large repositories
+- [ ] Add compression optimization (per-chunk decisions)
+- [ ] Create index caching and persistence optimization
+
+## Phase 10: Release Preparation ✅ COMPLETE
+
+### 10.1 Build & Packaging ✅ PRODUCTION READY
 - [x] Configure release profile in Cargo.toml (optimized release profile)
 - [x] Set up GitHub Actions CI/CD (comprehensive CI with cross-platform builds)
 - [x] Cross-platform builds (Windows, Linux, macOS, ARM64 support)
@@ -335,14 +397,14 @@
 - [x] Code coverage reporting (cargo-llvm-cov with Codecov)
 - [x] Documentation deployment (automated GitHub Pages)
 
-### 9.2 Distribution ✅ COMPLETE
+### 10.2 Distribution ✅ COMPLETE
 - [x] Create installation script (automated cross-platform installer)
 - [x] Package for cargo install (Cargo.toml properly configured)
 - [x] Create Homebrew formula (automated generation in CI)
 - [x] GitHub Releases (automated with comprehensive release notes)
 - [x] Multiple architectures (x86_64, ARM64 for Linux and macOS)
 
-### 9.3 Testing & Validation ✅ EXCEEDS REQUIREMENTS
+### 10.3 Testing & Validation ✅ EXCEEDS REQUIREMENTS
 - [x] Full test suite passes (131 tests, 100% success rate)
 - [x] Manual testing on all platforms (Windows tested, cross-platform code)
 - [x] Performance validation (benchmarks showing excellent throughput)
