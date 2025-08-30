@@ -89,8 +89,8 @@ fn test_commit_staged_files() -> Result<()> {
     // Staging should be cleared
     assert!(store.staging.is_empty());
     
-    // Layer file should exist
-    let layer_path = store.global_path().join(format!("{}.layer", commit_id.to_hex()));
+    // Layer file should exist (using .dig extension)
+    let layer_path = store.global_path().join(format!("{}.dig", commit_id.to_hex()));
     assert!(layer_path.exists());
 
     Ok(())

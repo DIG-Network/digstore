@@ -44,7 +44,7 @@ pub fn execute(
     println!("{}", "═".repeat(50).green());
 
     // Load Layer 0 to get root history
-    let layer_zero_path = store.global_path.join("0000000000000000.dig");
+    let layer_zero_path = store.global_path.join("0000000000000000000000000000000000000000000000000000000000000000.dig");
     if !layer_zero_path.exists() {
         println!("{}", "No commits found".yellow());
         return Ok(());

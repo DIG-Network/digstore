@@ -23,7 +23,7 @@ fn test_store_initialization() -> Result<()> {
     assert!(store.global_path().exists());
 
     // Check Layer 0 was created
-    let layer_zero_path = store.global_path().join("0000000000000000.layer");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
     assert!(layer_zero_path.exists());
 
     // Verify store properties
@@ -143,7 +143,7 @@ fn test_layer_zero_initialization() -> Result<()> {
     let store = Store::init(project_path)?;
 
     // Check Layer 0 content
-    let layer_zero_path = store.global_path().join("0000000000000000.layer");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
     let content = std::fs::read(layer_zero_path)?;
     let metadata: serde_json::Value = serde_json::from_slice(&content)?;
 

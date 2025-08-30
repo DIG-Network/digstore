@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 /// 32-byte SHA-256 hash
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Hash([u8; 32]);
 
 impl Hash {
@@ -56,6 +56,26 @@ impl fmt::Debug for Hash {
 impl From<[u8; 32]> for Hash {
     fn from(bytes: [u8; 32]) -> Self {
         Hash(bytes)
+    }
+}
+
+// Custom serialization to use hex strings instead of byte arrays
+impl Serialize for Hash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let hex_string = String::deserialize(deserializer)?;
+        Hash::from_hex(&hex_string).map_err(serde::de::Error::custom)
     }
 }
 

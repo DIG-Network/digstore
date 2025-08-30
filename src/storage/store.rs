@@ -546,7 +546,7 @@ impl Store {
 
     /// Initialize Layer 0 with metadata
     fn init_layer_zero(&self) -> Result<()> {
-        let layer_zero_path = self.global_path.join("0000000000000000.dig");
+        let layer_zero_path = self.global_path.join("0000000000000000000000000000000000000000000000000000000000000000.dig");
         
         // Create initial metadata
         let metadata = serde_json::json!({
@@ -572,7 +572,7 @@ impl Store {
 
     /// Load current root hash from Layer 0
     fn load_current_root(global_path: &Path) -> Result<Option<RootHash>> {
-        let layer_zero_path = global_path.join("0000000000000000.dig");
+        let layer_zero_path = global_path.join("0000000000000000000000000000000000000000000000000000000000000000.dig");
         
         if !layer_zero_path.exists() {
             return Ok(None);
@@ -664,7 +664,7 @@ impl Store {
             let filename = entry.file_name();
             let filename_str = filename.to_string_lossy();
             
-            if filename_str.ends_with(".dig") && filename_str != "0000000000000000.dig" {
+            if filename_str.ends_with(".dig") && filename_str != "0000000000000000000000000000000000000000000000000000000000000000.dig" {
                 // Try to parse layer number from filename (this is simplified)
                 max_layer += 1;
             }
@@ -675,7 +675,7 @@ impl Store {
 
     /// Update root history in Layer 0
     fn update_root_history(&self, new_root: RootHash) -> Result<()> {
-        let layer_zero_path = self.global_path.join("0000000000000000.dig");
+        let layer_zero_path = self.global_path.join("0000000000000000000000000000000000000000000000000000000000000000.dig");
         
         // Read current Layer 0
         let content = std::fs::read(&layer_zero_path)?;
