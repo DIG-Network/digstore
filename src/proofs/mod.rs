@@ -7,5 +7,5 @@ pub mod merkle;
 pub mod proof;
 
 // Re-export commonly used items
-pub use merkle::MerkleTree;
+pub use merkle::{MerkleTree, DigstoreProof};
 pub use proof::{Proof, ProofTarget, ProofElement};
