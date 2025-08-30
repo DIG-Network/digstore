@@ -23,7 +23,7 @@ pub struct Store {
 }
 
 /// A file in the staging area
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StagedFile {
     /// File entry with chunks
     pub file_entry: FileEntry,
@@ -97,12 +97,15 @@ impl Store {
         // Load current root hash from Layer 0
         let current_root = Self::load_current_root(&global_path)?;
 
+        // Load persistent staging
+        let staging = Self::load_staging(&global_path)?;
+
         Ok(Self {
             store_id,
             global_path,
             project_path: Some(project_path.to_path_buf()),
             current_root,
-            staging: HashMap::new(),
+            staging,
             chunking_engine: ChunkingEngine::new(),
         })
     }
@@ -118,12 +121,15 @@ impl Store {
         // Load current root hash from Layer 0
         let current_root = Self::load_current_root(&global_path)?;
 
+        // Load persistent staging
+        let staging = Self::load_staging(&global_path)?;
+
         Ok(Self {
             store_id: *store_id,
             global_path,
             project_path: None,
             current_root,
-            staging: HashMap::new(),
+            staging,
             chunking_engine: ChunkingEngine::new(),
         })
     }
@@ -136,8 +142,8 @@ impl Store {
         Ok(())
     }
 
-    /// Add a single file to staging
-    pub fn add_file(&mut self, file_path: &Path) -> Result<()> {
+    /// Add a single file to staging (internal method)
+    fn add_file_internal(&mut self, file_path: &Path) -> Result<()> {
         // Resolve relative to project directory if available
         let full_path = if let Some(project_path) = &self.project_path {
             if file_path.is_relative() {
@@ -182,6 +188,13 @@ impl Store {
         Ok(())
     }
 
+    /// Add a single file to staging (public method with persistence)
+    pub fn add_file(&mut self, file_path: &Path) -> Result<()> {
+        self.add_file_internal(file_path)?;
+        self.save_staging()?;
+        Ok(())
+    }
+
     /// Add a directory recursively
     pub fn add_directory(&mut self, dir_path: &Path, recursive: bool) -> Result<()> {
         if !dir_path.exists() {
@@ -205,7 +218,7 @@ impl Store {
                     self.project_path.as_ref().unwrap_or(&std::env::current_dir()?)
                 ).unwrap_or(entry.path());
                 
-                self.add_file(relative_path)?;
+                self.add_file_internal(relative_path)?;
             }
         } else {
             // Add only direct files in directory
@@ -218,10 +231,13 @@ impl Store {
                         self.project_path.as_ref().unwrap_or(&std::env::current_dir()?)
                     ).unwrap_or(&path);
                     
-                    self.add_file(relative_path)?;
+                    self.add_file_internal(relative_path)?;
                 }
             }
         }
+
+        // Save staging to disk
+        self.save_staging()?;
 
         Ok(())
     }
@@ -291,6 +307,9 @@ impl Store {
 
         // Clear staging
         self.staging.clear();
+        
+        // Save empty staging to disk
+        self.save_staging()?;
 
         Ok(layer_id)
     }
@@ -375,12 +394,16 @@ impl Store {
         if self.staging.remove(path).is_none() {
             return Err(DigstoreError::file_not_found(path.to_path_buf()));
         }
+        // Save staging to disk
+        self.save_staging()?;
         Ok(())
     }
 
     /// Clear all staged files
     pub fn clear_staging(&mut self) {
         self.staging.clear();
+        // Save empty staging to disk
+        let _ = self.save_staging();
     }
 
     /// Initialize Layer 0 with metadata
@@ -423,9 +446,11 @@ impl Store {
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
         
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
-            if let Some(latest_root) = root_history.last().and_then(|v| v.as_str()) {
-                return Ok(Some(Hash::from_hex(latest_root)
-                    .map_err(|_| DigstoreError::store_corrupted("Invalid root hash in Layer 0"))?));
+            if let Some(latest_entry) = root_history.last() {
+                if let Some(root_hash_str) = latest_entry.get("root_hash").and_then(|v| v.as_str()) {
+                    return Ok(Some(Hash::from_hex(root_hash_str)
+                        .map_err(|_| DigstoreError::store_corrupted("Invalid root hash in Layer 0"))?));
+                }
             }
         }
 
@@ -532,6 +557,29 @@ impl Store {
         let updated_content = serde_json::to_vec_pretty(&metadata)?;
         std::fs::write(layer_zero_path, updated_content)?;
         
+        Ok(())
+    }
+
+    /// Load staging from disk
+    fn load_staging(global_path: &Path) -> Result<HashMap<PathBuf, StagedFile>> {
+        let staging_path = global_path.join("staging.json");
+        
+        if !staging_path.exists() {
+            return Ok(HashMap::new());
+        }
+
+        let content = std::fs::read(staging_path)?;
+        let staging: HashMap<PathBuf, StagedFile> = serde_json::from_slice(&content)
+            .unwrap_or_else(|_| HashMap::new()); // If corrupted, start fresh
+        
+        Ok(staging)
+    }
+
+    /// Save staging to disk
+    fn save_staging(&self) -> Result<()> {
+        let staging_path = self.global_path.join("staging.json");
+        let content = serde_json::to_vec_pretty(&self.staging)?;
+        std::fs::write(staging_path, content)?;
         Ok(())
     }
 }
