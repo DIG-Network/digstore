@@ -6,8 +6,12 @@
 pub mod store;
 pub mod layer;
 pub mod chunk;
+pub mod streaming;
+pub mod batch;
 
 // Re-export commonly used items
 pub use store::{Store, StoreStatus, StagedFile};
 pub use layer::Layer;
 pub use chunk::{ChunkingEngine, ChunkConfig};
+pub use streaming::{StreamingChunkingEngine, StreamingFileEntry, FilePointer};
+pub use batch::{BatchProcessor, OptimizedFileScanner, BatchResult};

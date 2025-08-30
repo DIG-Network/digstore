@@ -7,10 +7,12 @@ Digstore Min must efficiently handle both large files (multi-GB) and large numbe
 ## Large File Support Requirements
 
 ### 1. Memory Efficiency
-- **Streaming I/O**: Never load entire files into memory
-- **Memory-mapped files**: Use mmap for efficient large file access
+- **File Pointers Only**: Never load entire files into memory, only store file pointers and metadata
+- **Streaming I/O**: Process files as streams with bounded buffers (64KB-1MB)
+- **Chunk References**: Store only chunk metadata (hash, offset, size), not chunk data
+- **On-demand Reconstruction**: Read chunks from original files only when needed
+- **Memory-mapped files**: Use mmap for efficient large file access when appropriate
 - **Constant memory usage**: Memory consumption should not scale with file size
-- **Chunked processing**: Process files in fixed-size chunks (64KB-1MB)
 - **Backpressure handling**: Prevent memory exhaustion during high-throughput operations
 
 ### 2. Performance Targets

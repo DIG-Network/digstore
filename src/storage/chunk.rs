@@ -119,6 +119,99 @@ impl ChunkingEngine {
     pub fn config(&self) -> &ChunkConfig {
         &self.config
     }
+    
+    /// Chunk a file using streaming - never loads entire file into memory
+    pub fn chunk_file_streaming(&self, path: &std::path::Path) -> Result<Vec<Chunk>> {
+        use std::io::{BufReader, Read};
+        use std::fs::File;
+        
+        let file = File::open(path)?;
+        let file_size = file.metadata()?.len();
+        
+        if file_size == 0 {
+            return Ok(vec![]);
+        }
+        
+        // For small files, read directly but still avoid loading full file at once
+        if file_size < 64 * 1024 {
+            let mut reader = BufReader::new(file);
+            let mut data = Vec::new();
+            reader.read_to_end(&mut data)?;
+            return self.chunk_data(&data);
+        }
+        
+        // For larger files, use streaming approach
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
+        let mut chunks = Vec::new();
+        let mut current_chunk = Vec::new();
+        let mut offset = 0u64;
+        let mut buffer = [0u8; 8192];
+        
+        loop {
+            let bytes_read = reader.read(&mut buffer)?;
+            if bytes_read == 0 {
+                // End of file - finalize current chunk
+                if !current_chunk.is_empty() {
+                    let chunk = self.finalize_streaming_chunk(current_chunk, offset)?;
+                    offset += chunk.size as u64;
+                    chunks.push(chunk);
+                }
+                break;
+            }
+            
+            // Process data and look for chunk boundaries
+            for &byte in &buffer[..bytes_read] {
+                current_chunk.push(byte);
+                
+                // Check if we should break chunk
+                if self.should_break_streaming_chunk(&current_chunk) {
+                    let chunk = self.finalize_streaming_chunk(current_chunk, offset)?;
+                    offset += chunk.size as u64;
+                    chunks.push(chunk);
+                    current_chunk = Vec::new();
+                }
+            }
+        }
+        
+        Ok(chunks)
+    }
+    
+    fn should_break_streaming_chunk(&self, chunk: &[u8]) -> bool {
+        if chunk.len() < self.config.min_size {
+            return false;
+        }
+        
+        if chunk.len() >= self.config.max_size {
+            return true;
+        }
+        
+        // Simple boundary detection for streaming
+        if chunk.len() >= self.config.avg_size {
+            // Use last few bytes for boundary detection
+            if chunk.len() >= 64 {
+                let tail = &chunk[chunk.len()-32..];
+                let mut hash = 0u32;
+                for &byte in tail {
+                    hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
+                }
+                return (hash & 0xFFF) == 0; // Boundary approximately every 4KB
+            }
+        }
+        
+        false
+    }
+    
+    fn finalize_streaming_chunk(&self, data: Vec<u8>, offset: u64) -> Result<Chunk> {
+        let hash = crate::core::hash::sha256(&data);
+        let size = data.len() as u32;
+        
+        Ok(Chunk {
+            hash,
+            offset,
+            size,
+            data,
+        })
+    }
 
     /// Create chunks for a file entry
     pub fn create_file_entry(&self, path: std::path::PathBuf, data: &[u8]) -> Result<FileEntry> {

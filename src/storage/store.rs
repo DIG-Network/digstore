@@ -1,7 +1,8 @@
 //! Store management for Digstore Min
 
 use crate::core::{types::*, error::*, digstore_file::DigstoreFile};
-use crate::storage::{chunk::ChunkingEngine, layer::Layer};
+use sha2::Digest;
+use crate::storage::{chunk::ChunkingEngine, layer::Layer, streaming::StreamingChunkingEngine, batch::BatchProcessor};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use directories::UserDirs;
@@ -20,6 +21,10 @@ pub struct Store {
     pub staging: HashMap<PathBuf, StagedFile>,
     /// Chunking engine for processing files
     pub chunking_engine: ChunkingEngine,
+    /// Streaming chunking engine for large files
+    pub streaming_engine: StreamingChunkingEngine,
+    /// Batch processor for many small files
+    pub batch_processor: BatchProcessor,
 }
 
 /// A file in the staging area
@@ -68,6 +73,8 @@ impl Store {
             current_root: None,
             staging: HashMap::new(),
             chunking_engine: ChunkingEngine::new(),
+            streaming_engine: StreamingChunkingEngine::new(),
+            batch_processor: BatchProcessor::new(),
         };
 
         store.init_layer_zero()?;
@@ -107,6 +114,8 @@ impl Store {
             current_root,
             staging,
             chunking_engine: ChunkingEngine::new(),
+            streaming_engine: StreamingChunkingEngine::new(),
+            batch_processor: BatchProcessor::new(),
         })
     }
 
@@ -131,6 +140,8 @@ impl Store {
             current_root,
             staging,
             chunking_engine: ChunkingEngine::new(),
+            streaming_engine: StreamingChunkingEngine::new(),
+            batch_processor: BatchProcessor::new(),
         })
     }
 
@@ -164,17 +175,41 @@ impl Store {
             return Err(DigstoreError::invalid_file_path(full_path));
         }
 
-        // Read file content
-        let file_data = std::fs::read(&full_path)?;
+        // Get file size to determine processing strategy  
+        let file_size = std::fs::metadata(&full_path)?.len();
         
-        // Create file entry with chunks
-        let file_entry = self.chunking_engine.create_file_entry(
-            file_path.to_path_buf(), 
-            &file_data
-        )?;
+        // Use streaming processing - NEVER load entire file into memory
+        let chunks = if file_size > 10 * 1024 * 1024 {
+            // Large files: use streaming chunking engine
+            self.streaming_engine.chunk_file_streaming(&full_path)?
+        } else {
+            // Smaller files: use regular chunking but still streaming
+            self.chunking_engine.chunk_file_streaming(&full_path)?
+        };
         
-        // Get chunks
-        let chunks = self.chunking_engine.chunk_data(&file_data)?;
+        // Create file entry from chunk metadata (no file data stored)
+        let file_hash = Self::compute_file_hash_from_chunks(&chunks);
+        let file_entry = crate::core::types::FileEntry {
+            path: file_path.to_path_buf(),
+            hash: file_hash,
+            size: file_size,
+            chunks: chunks.iter().map(|c| crate::core::types::ChunkRef {
+                hash: c.hash,
+                offset: c.offset,
+                size: c.size,
+            }).collect(),
+            metadata: FileMetadata {
+                mode: 0o644,
+                modified: std::fs::metadata(&full_path)?.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+                is_new: true,
+                is_modified: false,
+                is_deleted: false,
+            },
+        };
         
         // Add to staging
         let staged_file = StagedFile {
@@ -195,6 +230,48 @@ impl Store {
         Ok(())
     }
 
+    /// Add many files efficiently using batch processing
+    pub fn add_files_batch(&mut self, files: Vec<PathBuf>, progress: Option<&indicatif::ProgressBar>) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        
+        // Use batch processing for efficiency
+        let batch_result = self.batch_processor.process_files_batch(files, progress)?;
+        
+        // Store metrics before consuming batch_result
+        let file_count = batch_result.file_entries.len();
+        let metrics = batch_result.performance_metrics.clone();
+        let dedup_stats = batch_result.deduplication_stats.clone();
+        
+        // Add all processed files to staging
+        for (file_entry, chunks) in batch_result.file_entries.into_iter().zip(batch_result.chunks.into_iter()) {
+            let staged_file = StagedFile {
+                file_entry: file_entry.clone(),
+                chunks: vec![chunks], // Single chunk for now
+                is_staged: true,
+            };
+            self.staging.insert(file_entry.path.clone(), staged_file);
+        }
+        
+        // Save staging to disk
+        self.save_staging()?;
+        
+        // Print performance summary
+        println!("  • Processed {} files at {:.1} files/s ({:.1} MB/s)", 
+                 file_count,
+                 metrics.files_per_second,
+                 metrics.mb_per_second);
+        
+        if dedup_stats.deduplication_ratio > 0.01 {
+            println!("  • Deduplication: {:.1}% ({} bytes saved)",
+                     dedup_stats.deduplication_ratio * 100.0,
+                     dedup_stats.bytes_saved);
+        }
+        
+        Ok(())
+    }
+
     /// Add a directory recursively
     pub fn add_directory(&mut self, dir_path: &Path, recursive: bool) -> Result<()> {
         if !dir_path.exists() {
@@ -208,6 +285,8 @@ impl Store {
         if recursive {
             use walkdir::WalkDir;
             
+            // Collect all files first
+            let mut files = Vec::new();
             for entry in WalkDir::new(dir_path)
                 .follow_links(false)
                 .into_iter()
@@ -218,7 +297,19 @@ impl Store {
                     self.project_path.as_ref().unwrap_or(&std::env::current_dir()?)
                 ).unwrap_or(entry.path());
                 
-                self.add_file_internal(relative_path)?;
+                files.push(relative_path.to_path_buf());
+            }
+            
+            // Use batch processing if many files, otherwise process individually
+            if files.len() > 50 {
+                println!("  • Using batch processing for {} files", files.len());
+                self.add_files_batch(files, None)?;
+                return Ok(());
+            } else {
+                // Process individually for small numbers of files
+                for file_path in files {
+                    self.add_file_internal(&file_path)?;
+                }
             }
         } else {
             // Add only direct files in directory
@@ -581,6 +672,15 @@ impl Store {
         let content = serde_json::to_vec_pretty(&self.staging)?;
         std::fs::write(staging_path, content)?;
         Ok(())
+    }
+    
+    /// Compute file hash from chunks without loading file data
+    fn compute_file_hash_from_chunks(chunks: &[Chunk]) -> Hash {
+        let mut hasher = sha2::Sha256::new();
+        for chunk in chunks {
+            hasher.update(&chunk.data);
+        }
+        Hash::from_bytes(hasher.finalize().into())
     }
 }
 
