@@ -3,6 +3,7 @@
 pub mod init;
 pub mod add;
 pub mod commit;
+pub mod completion;
 pub mod status;
 pub mod get;
 pub mod cat;

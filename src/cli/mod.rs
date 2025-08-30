@@ -248,4 +248,11 @@ pub enum Commands {
         #[arg(long)]
         layer: Option<String>,
     },
+
+    /// Generate shell completion scripts
+    Completion {
+        /// Shell to generate completion for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }

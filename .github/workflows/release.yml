@@ -1,0 +1,252 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+    - name: Get version from tag
+      id: get_version
+      run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.version }}
+        release_name: Digstore Min ${{ steps.get_version.outputs.version }}
+        draft: false
+        prerelease: false
+        body: |
+          ## Digstore Min ${{ steps.get_version.outputs.version }}
+          
+          ### 🚀 Features
+          - Content-addressable storage with Git-like semantics
+          - Merkle proof generation and verification
+          - URN-based retrieval with byte range support
+          - Beautiful CLI with persistent staging
+          - Cross-platform compatibility
+          
+          ### 📦 Installation
+          
+          **Linux/macOS:**
+          ```bash
+          curl -L https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.version }}/digstore-linux-x86_64 -o digstore
+          chmod +x digstore
+          sudo mv digstore /usr/local/bin/
+          ```
+          
+          **Windows:**
+          Download `digstore-windows-x86_64.exe` and add to your PATH.
+          
+          **From source:**
+          ```bash
+          cargo install --git https://github.com/${{ github.repository }} --tag ${{ steps.get_version.outputs.version }}
+          ```
+          
+          ### 🎯 Quick Start
+          ```bash
+          # Initialize repository
+          digstore init --name "my-project"
+          
+          # Add files
+          digstore add README.md src/
+          
+          # Create commit
+          digstore commit -m "Initial commit"
+          
+          # Generate completion
+          digstore completion bash > ~/.local/share/bash-completion/completions/digstore
+          ```
+          
+          See the [documentation](.knowledge/) for comprehensive usage instructions.
+
+  build-release:
+    name: Build Release
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: digstore-linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: digstore-windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: digstore-macos-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: digstore-linux-aarch64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: digstore-macos-aarch64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install cross (for cross-compilation)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: cargo install cross
+
+    - name: Build release
+      run: |
+        if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+          cross build --release --target ${{ matrix.target }}
+        else
+          cargo build --release --target ${{ matrix.target }}
+        fi
+
+    - name: Rename binary (Unix)
+      if: matrix.os != 'windows-latest'
+      run: |
+        cp target/${{ matrix.target }}/release/digstore ${{ matrix.artifact_name }}
+
+    - name: Rename binary (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        copy target\${{ matrix.target }}\release\digstore.exe ${{ matrix.artifact_name }}
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./${{ matrix.artifact_name }}
+        asset_name: ${{ matrix.artifact_name }}
+        asset_content_type: application/octet-stream
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: [create-release, build-release]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Publish to crates.io
+      run: cargo publish --token ${{ secrets.CRATES_TOKEN }}
+
+  create-packages:
+    name: Create Distribution Packages
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Build for packaging
+      run: cargo build --release
+
+    - name: Create Homebrew formula
+      run: |
+        mkdir -p packaging/homebrew
+        cat > packaging/homebrew/digstore.rb << 'EOF'
+        class Digstore < Formula
+          desc "Content-addressable storage system with Git-like semantics"
+          homepage "https://github.com/${{ github.repository }}"
+          url "https://github.com/${{ github.repository }}/archive/${{ needs.create-release.outputs.version }}.tar.gz"
+          license "MIT OR Apache-2.0"
+          
+          depends_on "rust" => :build
+          
+          def install
+            system "cargo", "install", "--locked", "--root", prefix, "--path", "."
+          end
+          
+          test do
+            system "#{bin}/digstore", "--version"
+          end
+        end
+        EOF
+
+    - name: Create installation script
+      run: |
+        mkdir -p packaging/install
+        cat > packaging/install/install.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        # Digstore Min Installation Script
+        
+        REPO="${{ github.repository }}"
+        VERSION="${{ needs.create-release.outputs.version }}"
+        
+        # Detect OS and architecture
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        
+        case $OS in
+          linux)
+            case $ARCH in
+              x86_64) BINARY="digstore-linux-x86_64" ;;
+              aarch64) BINARY="digstore-linux-aarch64" ;;
+              *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+            esac
+            ;;
+          darwin)
+            case $ARCH in
+              x86_64) BINARY="digstore-macos-x86_64" ;;
+              arm64) BINARY="digstore-macos-aarch64" ;;
+              *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+            esac
+            ;;
+          *)
+            echo "Unsupported OS: $OS"
+            exit 1
+            ;;
+        esac
+        
+        # Download and install
+        URL="https://github.com/$REPO/releases/download/$VERSION/$BINARY"
+        echo "Downloading $URL..."
+        
+        curl -L "$URL" -o digstore
+        chmod +x digstore
+        
+        # Install to /usr/local/bin if possible, otherwise current directory
+        if [ -w /usr/local/bin ]; then
+          sudo mv digstore /usr/local/bin/
+          echo "✓ Digstore installed to /usr/local/bin/digstore"
+        else
+          echo "✓ Digstore downloaded to ./digstore"
+          echo "  Move to a directory in your PATH to use globally"
+        fi
+        
+        # Generate completion if bash is available
+        if command -v bash >/dev/null; then
+          echo "Generating bash completion..."
+          ./digstore completion bash > ~/.local/share/bash-completion/completions/digstore 2>/dev/null || true
+        fi
+        
+        echo ""
+        echo "🎉 Installation complete!"
+        echo "Run 'digstore --help' to get started"
+        EOF
+        chmod +x packaging/install/install.sh
+
+    - name: Upload packaging artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: packaging
+        path: packaging/

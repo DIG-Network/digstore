@@ -8,4 +8,4 @@ pub mod proof;
 
 // Re-export commonly used items
 pub use merkle::{MerkleTree, DigstoreProof};
-pub use proof::{Proof, ProofTarget, ProofElement, ProofGenerator};
+pub use proof::{Proof, ProofTarget, ProofElement, ProofGenerator, ProofPosition, ProofMetadata};

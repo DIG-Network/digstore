@@ -58,5 +58,8 @@ fn main() -> Result<()> {
         Commands::Info { json, layer } => {
             cli::commands::info::execute(json, layer)
         }
+        Commands::Completion { shell } => {
+            cli::commands::completion::execute(shell)
+        }
     }
 }

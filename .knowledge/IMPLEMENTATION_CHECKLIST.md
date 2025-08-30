@@ -122,29 +122,32 @@
 - [x] `commit()` - Create commits with cumulative layer approach
 - [x] File overwrite handling and status tracking
 
-## Phase 4: Merkle Tree & Proofs (PLACEHOLDER - Future Enhancement)
+## Phase 4: Merkle Tree & Proofs ✅ COMPLETE
 
-### 4.1 Merkle Tree (`src/proofs/merkle.rs`) 🚧 PLACEHOLDER
-- [ ] Binary merkle tree implementation (placeholder structure exists)
-- [ ] `MerkleTree` struct (basic structure defined)
-- [ ] `build_tree()` - Build from file entries (TODO)
-- [ ] `get_root()` - Get root hash (TODO)
-- [ ] Tree serialization/deserialization (TODO)
+### 4.1 Merkle Tree (`src/proofs/merkle.rs`) ✅ COMPLETE
+- [x] Binary merkle tree implementation with rs_merkle integration
+- [x] `MerkleTree` struct with custom `Sha256Hasher`
+- [x] `from_hashes()` - Build from hash list with proper validation
+- [x] `root()` - Get root hash from tree
+- [x] `generate_proof()` - Create inclusion proofs for leaf indices
+- [x] `verify_proof()` - Verify merkle proofs against root hash
+- [x] `DigstoreProof` struct (renamed to avoid collision with rs_merkle)
 
-### 4.2 Proof Generation (`src/proofs/proof.rs`) 🚧 PLACEHOLDER
-- [ ] `MerkleProof` struct (basic structure defined)
-- [ ] `generate_proof()` - Create proof for path (TODO)
-- [ ] `generate_chunk_proof()` - Proof for chunk (TODO)
-- [ ] `generate_range_proof()` - Proof for byte range (TODO)
-- [ ] Proof JSON serialization (basic structure exists)
+### 4.2 Proof Generation (`src/proofs/proof.rs`) ✅ COMPLETE
+- [x] `Proof` struct with complete metadata and proof data
+- [x] `new_file_proof()` - Generate proofs for file paths
+- [x] `new_byte_range_proof()` - Generate proofs for byte ranges
+- [x] `new_layer_proof()` - Generate proofs for entire layers
+- [x] `ProofGenerator` helper struct for proof operations
+- [x] JSON serialization with `to_json()` and `from_json()`
 
-### 4.3 Proof Verification 🚧 PLACEHOLDER
-- [ ] `verify_proof()` - Verify merkle proof (TODO)
-- [ ] Root hash validation (TODO)
-- [ ] Path reconstruction (TODO)
-- [ ] Sibling hash verification (TODO)
+### 4.3 Proof Verification ✅ COMPLETE
+- [x] `verify()` - Complete proof verification with merkle path validation
+- [x] Root hash validation against expected values
+- [x] Merkle proof path reconstruction and verification
+- [x] Integration with rs_merkle for cryptographic verification
 
-## Phase 5: URN System (PARTIAL - Parser Complete)
+## Phase 5: URN System ✅ COMPLETE
 
 ### 5.1 URN Parser (`src/urn/parser.rs`) ✅ COMPLETE
 - [x] URN format: `urn:dig:chia:{storeID}[:{rootHash}][/{path}][#{byteRange}]`
@@ -154,12 +157,13 @@
 - [x] Byte range parsing (e.g., "bytes=0-1048576", "bytes=1024-", "bytes=-1024")
 - [x] Comprehensive error handling and validation
 
-### 5.2 URN Resolution 🚧 PLACEHOLDER
-- [ ] `resolve_urn()` - Resolve URN to content (TODO)
-- [ ] Store ID lookup (basic functionality exists)
-- [ ] Root hash resolution (latest if not specified) (TODO)
-- [ ] Path traversal (TODO)
-- [ ] Byte range extraction (TODO)
+### 5.2 URN Resolution ✅ COMPLETE
+- [x] `resolve()` - Resolve URN to content with full implementation
+- [x] Store ID lookup with global store access
+- [x] Root hash resolution (latest commit if not specified)
+- [x] Path traversal through layer file entries
+- [x] Byte range extraction with inclusive range support
+- [x] Integration with Store and Layer systems
 
 ## Phase 6: CLI Interface (PARTIAL - Basic Structure Complete)
 

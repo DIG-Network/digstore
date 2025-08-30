@@ -70,7 +70,7 @@ pub fn parse_urn(urn_str: &str) -> Result<Urn> {
 }
 
 /// Parse byte range specification
-fn parse_byte_range(range_str: &str) -> Result<ByteRange> {
+pub fn parse_byte_range(range_str: &str) -> Result<ByteRange> {
     if !range_str.starts_with("#bytes=") {
         return Err(DigstoreError::invalid_urn(format!(
             "Invalid byte range format: {}", range_str

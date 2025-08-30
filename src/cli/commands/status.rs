@@ -4,6 +4,7 @@ use anyhow::Result;
 use crate::storage::store::Store;
 use crate::cli::commands::find_repository_root;
 use colored::Colorize;
+use tabled::{Table, Tabled};
 
 /// Execute the status command
 pub fn execute(
@@ -56,21 +57,70 @@ pub fn execute(
 
     if !status.staged_files.is_empty() {
         println!("{}", "Changes to be committed:".green());
-        for file_path in &status.staged_files {
-            println!("  {} {}", "new file:".green(), file_path.display());
+        
+        if show_chunks {
+            // Enhanced table view with chunk information
+            #[derive(Tabled)]
+            struct FileStatus {
+                #[tabled(rename = "Status")]
+                status: String,
+                #[tabled(rename = "File")]
+                file: String,
+                #[tabled(rename = "Size")]
+                size: String,
+                #[tabled(rename = "Chunks")]
+                chunks: String,
+            }
+            
+            let mut file_statuses = Vec::new();
+            for file_path in &status.staged_files {
+                // Try to get file size
+                let size = std::fs::metadata(file_path)
+                    .map(|m| format_bytes(m.len()))
+                    .unwrap_or_else(|_| "unknown".to_string());
+                
+                file_statuses.push(FileStatus {
+                    status: "new file".to_string(),
+                    file: file_path.display().to_string(),
+                    size,
+                    chunks: "pending".to_string(), // Would calculate during actual chunking
+                });
+            }
+            
+            let table = Table::new(file_statuses);
+            println!("{}", table);
+        } else {
+            // Simple list view
+            for file_path in &status.staged_files {
+                println!("  {} {}", "new file:".green(), file_path.display());
+            }
         }
+        
         println!();
         println!("Summary:");
         println!("  Files staged: {}", status.staged_files.len());
         println!("  Total size: {} bytes", status.total_staged_size);
-        
-        if show_chunks {
-            println!("  {} Chunk information not yet implemented", "!".yellow());
-        }
     } else {
         println!("{}", "No changes staged for commit".dimmed());
         println!("  {} Use 'digstore add <files>' to stage files", "→".cyan());
     }
 
     Ok(())
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit_index = 0;
+    
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+    
+    if unit_index == 0 {
+        format!("{} {}", size as u64, UNITS[unit_index])
+    } else {
+        format!("{:.1} {}", size, UNITS[unit_index])
+    }
 }

@@ -5,6 +5,7 @@ use crate::storage::store::Store;
 use crate::cli::commands::{find_repository_root};
 use std::path::PathBuf;
 use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 
 /// Execute the add command
 pub fn execute(
@@ -22,6 +23,20 @@ pub fn execute(
     // Open the store
     let mut store = Store::open(&repo_root)?;
 
+    let multi_progress = MultiProgress::new();
+    let main_progress = if !dry_run {
+        let progress = multi_progress.add(ProgressBar::new(0));
+        progress.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} {msg}")
+                .unwrap()
+        );
+        progress.set_message("Adding files to staging...");
+        Some(progress)
+    } else {
+        None
+    };
+    
     if dry_run {
         println!("{}", "Files that would be added:".bright_blue());
     } else {
@@ -86,6 +101,11 @@ pub fn execute(
     let final_status = store.status();
     files_added = final_status.staged_files.len();
     total_size = final_status.total_staged_size;
+
+    if let Some(progress) = main_progress {
+        progress.finish_with_message("Files added to staging");
+        multi_progress.clear()?;
+    }
 
     println!();
     if dry_run {
