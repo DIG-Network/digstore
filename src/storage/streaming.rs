@@ -8,11 +8,13 @@ use std::fs::File;
 use std::path::Path;
 use sha2::{Sha256, Digest};
 use crate::core::error::Result;
+use memmap2::{Mmap, MmapOptions};
 
 /// Streaming chunking engine that processes files without loading them entirely
 pub struct StreamingChunkingEngine {
     config: ChunkConfig,
     buffer_size: usize,
+    mmap_threshold: u64, // Use memory mapping for files larger than this
 }
 
 impl StreamingChunkingEngine {
@@ -20,6 +22,7 @@ impl StreamingChunkingEngine {
         Self {
             config: ChunkConfig::default(),
             buffer_size: 64 * 1024, // 64KB buffer
+            mmap_threshold: 10 * 1024 * 1024, // 10MB threshold for memory mapping
         }
     }
     
@@ -27,6 +30,7 @@ impl StreamingChunkingEngine {
         Self {
             config,
             buffer_size: 64 * 1024,
+            mmap_threshold: 10 * 1024 * 1024,
         }
     }
     
@@ -43,8 +47,11 @@ impl StreamingChunkingEngine {
         if file_size < 64 * 1024 {
             // Very small files: read directly (but still streaming)
             self.chunk_small_file_streaming(file)
+        } else if file_size > self.mmap_threshold {
+            // Very large files: use memory mapping for efficiency
+            self.chunk_mmap_file(file_path, file_size)
         } else {
-            // Larger files: use content-defined chunking with streaming
+            // Medium files: use content-defined chunking with streaming
             self.chunk_large_file_streaming(file, file_size)
         }
     }
@@ -128,6 +135,33 @@ impl StreamingChunkingEngine {
         Ok(chunks)
     }
     
+    /// Process very large files using memory mapping for efficiency
+    fn chunk_mmap_file(&self, file_path: &Path, file_size: u64) -> Result<Vec<Chunk>> {
+        let file = File::open(file_path)?;
+        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        
+        let mut chunks = Vec::new();
+        let chunk_size = 1024 * 1024; // 1MB chunks for large files
+        let mut offset = 0u64;
+        
+        // Process memory-mapped data in chunks
+        for chunk_data in mmap.chunks(chunk_size) {
+            let hash = crate::core::hash::sha256(chunk_data);
+            let size = chunk_data.len() as u32;
+            
+            chunks.push(Chunk {
+                hash,
+                offset,
+                size,
+                data: chunk_data.to_vec(),
+            });
+            
+            offset += size as u64;
+        }
+        
+        Ok(chunks)
+    }
+    
     fn should_break_chunk(&self, chunk: &[u8], rolling_window: &[u8], rolling_hash: &mut RollingHash) -> bool {
         if chunk.len() < self.config.min_size {
             return false;
@@ -183,9 +217,11 @@ impl RollingHash {
 
 /// File pointer that tracks position without loading data
 pub struct FilePointer {
-    file: File,
+    file: Option<File>,
+    mmap: Option<Mmap>,
     current_position: u64,
     file_size: u64,
+    use_mmap: bool,
 }
 
 impl FilePointer {
@@ -193,35 +229,71 @@ impl FilePointer {
         let file = File::open(file_path)?;
         let file_size = file.metadata()?.len();
         
-        Ok(Self {
-            file,
-            current_position: 0,
-            file_size,
-        })
+        // Use memory mapping for large files
+        let mmap_threshold = 10 * 1024 * 1024; // 10MB
+        let use_mmap = file_size > mmap_threshold;
+        
+        if use_mmap {
+            let mmap = unsafe { MmapOptions::new().map(&file)? };
+            Ok(Self {
+                file: None,
+                mmap: Some(mmap),
+                current_position: 0,
+                file_size,
+                use_mmap: true,
+            })
+        } else {
+            Ok(Self {
+                file: Some(file),
+                mmap: None,
+                current_position: 0,
+                file_size,
+                use_mmap: false,
+            })
+        }
     }
     
     /// Read a chunk of data at current position
     pub fn read_chunk(&mut self, size: usize) -> Result<Vec<u8>> {
-        let mut buffer = vec![0u8; size];
-        let bytes_read = self.file.read(&mut buffer)?;
-        buffer.truncate(bytes_read);
-        self.current_position += bytes_read as u64;
-        Ok(buffer)
+        if self.use_mmap {
+            // Memory-mapped access
+            let start = self.current_position as usize;
+            let end = (start + size).min(self.file_size as usize);
+            let data = &self.mmap.as_ref().unwrap()[start..end];
+            self.current_position += (end - start) as u64;
+            Ok(data.to_vec())
+        } else {
+            // Regular file access
+            let mut buffer = vec![0u8; size];
+            let bytes_read = self.file.as_mut().unwrap().read(&mut buffer)?;
+            buffer.truncate(bytes_read);
+            self.current_position += bytes_read as u64;
+            Ok(buffer)
+        }
     }
     
     /// Read data at specific offset without changing current position
     pub fn read_at_offset(&mut self, offset: u64, size: usize) -> Result<Vec<u8>> {
-        let original_pos = self.current_position;
-        self.file.seek(SeekFrom::Start(offset))?;
-        
-        let mut buffer = vec![0u8; size];
-        let bytes_read = self.file.read(&mut buffer)?;
-        buffer.truncate(bytes_read);
-        
-        // Restore original position
-        self.file.seek(SeekFrom::Start(original_pos))?;
-        
-        Ok(buffer)
+        if self.use_mmap {
+            // Memory-mapped access (very efficient for random access)
+            let start = offset as usize;
+            let end = (start + size).min(self.file_size as usize);
+            let data = &self.mmap.as_ref().unwrap()[start..end];
+            Ok(data.to_vec())
+        } else {
+            // Regular file access
+            let original_pos = self.current_position;
+            self.file.as_mut().unwrap().seek(SeekFrom::Start(offset))?;
+            
+            let mut buffer = vec![0u8; size];
+            let bytes_read = self.file.as_mut().unwrap().read(&mut buffer)?;
+            buffer.truncate(bytes_read);
+            
+            // Restore original position
+            self.file.as_mut().unwrap().seek(SeekFrom::Start(original_pos))?;
+            
+            Ok(buffer)
+        }
     }
     
     /// Get current position in file
