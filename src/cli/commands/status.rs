@@ -14,7 +14,7 @@ pub fn execute(
 ) -> Result<()> {
     // Find repository root
     let repo_root = find_repository_root()?
-        .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .layerstore file found)"))?;
+        .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
 
     // Open the store
     let store = Store::open(&repo_root)?;

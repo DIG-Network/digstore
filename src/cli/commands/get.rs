@@ -39,7 +39,7 @@ pub fn execute(
     } else {
         // Simple path - find repository and resolve
         let repo_root = find_repository_root()?
-            .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .layerstore file found)"))?;
+            .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
 
         let store = Store::open(&repo_root)?;
         let file_path = PathBuf::from(&path);

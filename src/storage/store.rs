@@ -746,30 +746,39 @@ pub struct StoreStatus {
 impl Store {
     /// Get the next layer number
     fn get_next_layer_number(&self) -> Result<u64> {
-        // For now, just count existing layer files
-        let mut max_layer = 0u64;
+        // Count layers in archive (excluding Layer 0)
+        let layer_count = self.archive.list_layers()
+            .into_iter()
+            .filter(|(hash, _)| *hash != Hash::zero()) // Exclude Layer 0
+            .count();
         
-        for entry in std::fs::read_dir(&self.global_path())? {
-            let entry = entry?;
-            let filename = entry.file_name();
-            let filename_str = filename.to_string_lossy();
-            
-            if filename_str.ends_with(".layer") && filename_str != "0000000000000000000000000000000000000000000000000000000000000000.layer" {
-                // Try to parse layer number from filename (this is simplified)
-                max_layer += 1;
-            }
-        }
-        
-        Ok(max_layer + 1)
+        Ok(layer_count as u64 + 1)
     }
 
     /// Update root history in Layer 0
-    fn update_root_history(&self, new_root: RootHash) -> Result<()> {
-        let layer_zero_path = self.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
+    fn update_root_history(&mut self, new_root: RootHash) -> Result<()> {
+        let layer_zero_hash = Hash::zero();
         
-        // Read current Layer 0
-        let content = std::fs::read(&layer_zero_path)?;
-        let mut metadata: serde_json::Value = serde_json::from_slice(&content)?;
+        // Get current Layer 0 metadata
+        let mut metadata: serde_json::Value = if self.archive.has_layer(&layer_zero_hash) {
+            let content = self.archive.get_layer_data(&layer_zero_hash)?;
+            serde_json::from_slice(&content)?
+        } else {
+            // Create new metadata if Layer 0 doesn't exist
+            serde_json::json!({
+                "store_id": self.store_id.to_hex(),
+                "created_at": chrono::Utc::now().timestamp(),
+                "format_version": "1.0",
+                "protocol_version": "1.0", 
+                "digstore_version": env!("CARGO_PKG_VERSION"),
+                "root_history": [],
+                "config": {
+                    "chunk_size": 65536,
+                    "compression": "zstd",
+                    "delta_chain_limit": 10
+                }
+            })
+        };
         
         // Add new root to history
         if let Some(root_history) = metadata.get_mut("root_history").and_then(|v| v.as_array_mut()) {
@@ -781,9 +790,9 @@ impl Store {
             }));
         }
         
-        // Write back to Layer 0
+        // Update Layer 0 in archive
         let updated_content = serde_json::to_vec_pretty(&metadata)?;
-        std::fs::write(layer_zero_path, updated_content)?;
+        self.archive.add_layer(layer_zero_hash, &updated_content)?;
         
         Ok(())
     }

@@ -42,7 +42,29 @@ impl Layer {
 
     /// Serialize layer to bytes
     pub fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
-        let layer_json = serde_json::to_vec_pretty(self)?;
+        // Use the same JSON format as write_to_file
+        let layer_data = serde_json::json!({
+            "header": {
+                "magic": "DIGS",
+                "version": 1,
+                "layer_type": match self.header.layer_type {
+                    0 => "Header",
+                    1 => "Full",
+                    2 => "Delta",
+                    _ => "Unknown",
+                },
+                "parent_hash": hex::encode(self.header.parent_hash),
+                "timestamp": self.header.timestamp,
+                "layer_number": self.header.layer_number,
+                "files_count": self.header.files_count,
+                "chunks_count": self.header.chunks_count,
+            },
+            "metadata": self.metadata,
+            "files": self.files,
+            "chunks": self.chunks,
+        });
+        
+        let layer_json = serde_json::to_vec_pretty(&layer_data)?;
         Ok(layer_json)
     }
 

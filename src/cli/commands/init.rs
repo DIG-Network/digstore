@@ -38,7 +38,7 @@ pub fn execute(
         "✓".green(), 
         store.store_id().to_hex().bright_cyan());
     
-    println!("  {} Created .layerstore file", "✓".green());
+    println!("  {} Created .digstore file", "✓".green());
     println!("  {} Initialized empty repository", "✓".green());
     
     if let Some(repo_name) = name {

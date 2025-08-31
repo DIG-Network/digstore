@@ -261,13 +261,22 @@ impl DigArchive {
         hasher.update(layer_data);
         let checksum = hasher.finalize();
 
-        // Append layer data to archive
+        // If this is the first layer, we need to write after the header
+        let offset = if self.index.is_empty() {
+            ArchiveHeader::SIZE as u64
+        } else {
+            // Append after existing data
+            let mut file = File::open(&self.archive_path)?;
+            file.metadata()?.len()
+        };
+
+        // Write layer data to archive
         let mut file = OpenOptions::new()
             .create(true)
-            .append(true)
+            .write(true)
             .open(&self.archive_path)?;
-
-        let offset = file.metadata()?.len();
+        
+        file.seek(SeekFrom::Start(offset))?;
         file.write_all(layer_data)?;
         file.sync_all()?;
         drop(file);
@@ -286,6 +295,9 @@ impl DigArchive {
         self.index.insert(layer_hash, entry);
         self.header.layer_count = self.index.len() as u32;
         self.dirty = true;
+
+        // Immediately flush to update header and index
+        self.flush()?;
 
         Ok(())
     }
@@ -317,7 +329,25 @@ impl DigArchive {
                 Err(DigstoreError::internal("Layer data extends beyond archive"))
             }
         } else {
-            Err(DigstoreError::internal("Archive not memory-mapped"))
+            // Fallback: read from file directly
+            let mut file = File::open(&self.archive_path)?;
+            file.seek(SeekFrom::Start(entry.offset))?;
+            let mut buffer = vec![0u8; entry.size as usize];
+            file.read_exact(&mut buffer)?;
+            
+            // Verify checksum
+            let mut hasher = Crc32Hasher::new();
+            hasher.update(&buffer);
+            let calculated_checksum = hasher.finalize();
+            
+            if calculated_checksum != entry.checksum {
+                return Err(DigstoreError::ChecksumMismatch {
+                    expected: entry.checksum.to_string(),
+                    actual: calculated_checksum.to_string(),
+                });
+            }
+            
+            Ok(buffer)
         }
     }
 

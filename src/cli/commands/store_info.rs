@@ -89,7 +89,7 @@ fn show_store_info_human(store: &Store, args: &StoreInfoArgs) -> Result<()> {
         
         if let Some(project_path) = store.project_path() {
             println!("  • Project Path: {}", project_path.display().to_string().cyan());
-            println!("  • .layerstore File: {}", project_path.join(".layerstore").display().to_string().dimmed());
+            println!("  • .digstore File: {}", project_path.join(".digstore").display().to_string().dimmed());
         }
     }
     
