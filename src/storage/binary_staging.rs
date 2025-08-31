@@ -418,8 +418,8 @@ impl BinaryStagingArea {
         
         self.dirty = true;
         
-        // Refresh memory map to include new data
-        self.refresh_memory_map()?;
+        // Don't refresh memory map for batch operations to avoid corruption
+        // Individual operations will handle the refresh
         
         Ok(())
     }

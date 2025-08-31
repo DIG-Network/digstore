@@ -1,6 +1,6 @@
 version = "1.0.0"
-store_id = "ab8011c56f4c1bb06ca7cc2113b07bc0d2af765d530dd81252c6847c37a35518"
+store_id = "e27dbd62c5a3f64bdc9bee2e829e322d0cdc1a9ed2ef37fdfaad987fefa47de9"
 encrypted = false
-created_at = "2025-08-31T22:24:04.101686+00:00"
-last_accessed = "2025-08-31T22:24:25.822877900+00:00"
+created_at = "2025-08-31T22:30:10.234494600+00:00"
+last_accessed = "2025-08-31T22:30:50.514284+00:00"
 repository_name = "digstore_min"
