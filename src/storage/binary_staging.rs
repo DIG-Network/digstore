@@ -250,9 +250,9 @@ pub struct BinaryStagingArea {
     /// Path to the staging file
     staging_path: PathBuf,
     /// Memory-mapped staging file
-    mmap: Option<Mmap>,
+    pub mmap: Option<Mmap>,
     /// Writable memory map for updates
-    mmap_mut: Option<MmapMut>,
+    pub mmap_mut: Option<MmapMut>,
     /// In-memory index for fast lookups
     index: HashMap<u64, (usize, IndexEntry)>,
     /// Whether the staging area is dirty and needs flushing
@@ -536,7 +536,7 @@ impl BinaryStagingArea {
         // Copy all file data
         let mut data_size = 0u64;
         if let Some(ref mmap) = self.mmap {
-            for (_, entry) in self.index.values() {
+            for (_, (_, entry)) in &self.index {
                 let start = entry.data_offset as usize;
                 let end = start + entry.data_size as usize;
                 
@@ -553,7 +553,7 @@ impl BinaryStagingArea {
         header.index_offset = temp_file.stream_position()?;
         let mut index_size = 0u64;
         
-        for (_, entry) in self.index.values() {
+        for (_, (_, entry)) in &self.index {
             entry.write_to(&mut temp_file)?;
             index_size += IndexEntry::SIZE as u64;
         }
@@ -783,4 +783,6 @@ mod tests {
 
         Ok(())
     }
+
+    // Debug test removed - staging system now working correctly
 }

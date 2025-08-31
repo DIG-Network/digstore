@@ -547,11 +547,12 @@ impl Store {
         // Update current root
         self.current_root = Some(layer_id);
 
+        // Close memory maps before clearing (Windows file locking fix)
+        self.staging.mmap = None;
+        self.staging.mmap_mut = None;
+        
         // Clear binary staging
         self.staging.clear()?;
-        
-        // Save empty staging to disk
-        self.staging.flush()?;
 
         Ok(layer_id)
     }
