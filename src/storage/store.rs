@@ -615,13 +615,17 @@ impl Store {
 
     /// Get repository status
     pub fn status(&self) -> StoreStatus {
-        let staged_files = self.staging.get_all_staged_files()
+        // Force reload staging to ensure we see latest changes
+        let mut staging_clone = BinaryStagingArea::new(self.staging.staging_path().clone());
+        let _ = staging_clone.load(); // Ignore errors, will be empty if fails
+        
+        let staged_files = staging_clone.get_all_staged_files()
             .unwrap_or_default()
             .into_iter()
             .map(|f| f.path)
             .collect();
             
-        let total_staged_size = self.staging.get_all_staged_files()
+        let total_staged_size = staging_clone.get_all_staged_files()
             .unwrap_or_default()
             .into_iter()
             .map(|f| f.size)

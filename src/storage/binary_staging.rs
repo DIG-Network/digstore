@@ -485,6 +485,11 @@ impl BinaryStagingArea {
     pub fn staged_count(&self) -> usize {
         self.index.len()
     }
+    
+    /// Get the staging file path
+    pub fn staging_path(&self) -> &PathBuf {
+        &self.staging_path
+    }
 
     /// Clear all staged files
     pub fn clear(&mut self) -> Result<()> {
