@@ -1,0 +1,220 @@
+//! List staged files command
+
+use anyhow::Result;
+use crate::storage::Store;
+use crate::cli::commands::find_repository_root;
+use colored::Colorize;
+use tabled::{Table, Tabled};
+use serde_json::json;
+
+/// Arguments for the staged command
+#[derive(Debug)]
+pub struct StagedArgs {
+    pub limit: usize,
+    pub page: usize,
+    pub detailed: bool,
+    pub json: bool,
+    pub all: bool,
+}
+
+/// Staged file information for display
+#[derive(Tabled, serde::Serialize)]
+struct StagedFileInfo {
+    #[tabled(rename = "File")]
+    file: String,
+    #[tabled(rename = "Size")]
+    size: String,
+    #[tabled(rename = "Hash")]
+    hash: String,
+    #[tabled(rename = "Chunks")]
+    chunks: usize,
+}
+
+/// Execute the staged command
+pub fn execute(
+    limit: usize,
+    page: usize,
+    detailed: bool,
+    json: bool,
+    all: bool,
+) -> Result<()> {
+    // Find repository root
+    let repo_root = find_repository_root()?
+        .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
+
+    // Open the store
+    let mut store = Store::open(&repo_root)?;
+
+    // Get all staged files
+    let staged_files = store.staging.get_all_staged_files()?;
+    
+    if staged_files.is_empty() {
+        if json {
+            println!("{}", json!({
+                "staged_files": [],
+                "total_count": 0,
+                "page": page,
+                "limit": limit,
+                "total_pages": 0
+            }));
+        } else {
+            println!("{}", "No files staged for commit".yellow());
+            println!("  → Use 'digstore add <files>' to stage files");
+        }
+        return Ok(());
+    }
+
+    let total_count = staged_files.len();
+    let total_pages = if all { 1 } else { (total_count + limit - 1) / limit };
+
+    // Validate page number
+    if page < 1 || (!all && page > total_pages) {
+        return Err(anyhow::anyhow!("Invalid page number: {} (valid range: 1-{})", page, total_pages));
+    }
+
+    // Calculate pagination
+    let (start_idx, end_idx) = if all {
+        (0, total_count)
+    } else {
+        let start = (page - 1) * limit;
+        let end = (start + limit).min(total_count);
+        (start, end)
+    };
+
+    let page_files = &staged_files[start_idx..end_idx];
+
+    if json {
+        // JSON output
+        let file_data: Vec<_> = page_files.iter().map(|f| {
+            if detailed {
+                json!({
+                    "path": f.path.display().to_string(),
+                    "size": f.size,
+                    "hash": f.hash.to_hex(),
+                    "chunks": f.chunks.len(),
+                    "modified_time": f.modified_time.map(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())).flatten()
+                })
+            } else {
+                json!(f.path.display().to_string())
+            }
+        }).collect();
+
+        println!("{}", json!({
+            "staged_files": file_data,
+            "total_count": total_count,
+            "page": page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "showing": format!("{}-{}", start_idx + 1, end_idx)
+        }));
+    } else {
+        // Human-readable output
+        println!();
+        println!("{}", "Staged Files".bold());
+        println!("{}", "════════════".bold());
+        println!();
+
+        if detailed {
+            // Detailed table view
+            let table_data: Vec<StagedFileInfo> = page_files.iter().map(|f| {
+                StagedFileInfo {
+                    file: f.path.display().to_string(),
+                    size: format_size(f.size),
+                    hash: f.hash.to_hex()[..8].to_string() + "...",
+                    chunks: f.chunks.len(),
+                }
+            }).collect();
+
+            let table = Table::new(table_data);
+            println!("{}", table);
+        } else {
+            // Simple list view
+            for file in page_files {
+                println!("  {}", file.path.display().to_string().green());
+            }
+        }
+
+        println!();
+        if !all && total_pages > 1 {
+            println!("{}", format!("Page {} of {} ({} files total)", 
+                                 page, total_pages, total_count).cyan());
+            
+            if page < total_pages {
+                println!("  → Use 'digstore staged --page {}' for next page", page + 1);
+            }
+            if page > 1 {
+                println!("  → Use 'digstore staged --page {}' for previous page", page - 1);
+            }
+            println!("  → Use 'digstore staged --all' to show all files");
+        } else {
+            println!("{}", format!("Showing {} staged files", page_files.len()).cyan());
+        }
+        
+        let total_size: u64 = staged_files.iter().map(|f| f.size).sum();
+        println!("  → Total size: {}", format_size(total_size));
+        println!("  → Use 'digstore commit -m \"message\"' to create a commit");
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Format file size in human-readable format
+fn format_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    const THRESHOLD: f64 = 1024.0;
+
+    if bytes == 0 {
+        return "0 B".to_string();
+    }
+
+    let bytes_f = bytes as f64;
+    let unit_index = (bytes_f.log10() / THRESHOLD.log10()).floor() as usize;
+    let unit_index = unit_index.min(UNITS.len() - 1);
+    
+    let size = bytes_f / THRESHOLD.powi(unit_index as i32);
+    
+    if size >= 100.0 {
+        format!("{:.0} {}", size, UNITS[unit_index])
+    } else if size >= 10.0 {
+        format!("{:.1} {}", size, UNITS[unit_index])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_index])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1024), "1.00 KB");
+        assert_eq!(format_size(1536), "1.50 KB");
+        assert_eq!(format_size(1048576), "1.00 MB");
+        assert_eq!(format_size(1073741824), "1.00 GB");
+    }
+
+    #[test]
+    fn test_pagination_calculation() {
+        // Test pagination logic
+        let total = 100;
+        let limit = 20;
+        let total_pages = (total + limit - 1) / limit; // 5 pages
+        assert_eq!(total_pages, 5);
+
+        // Page 1: 0-19 (20 items)
+        let page = 1;
+        let start = (page - 1) * limit; // 0
+        let end = (start + limit).min(total); // 20
+        assert_eq!((start, end), (0, 20));
+
+        // Page 5: 80-99 (20 items)  
+        let page = 5;
+        let start = (page - 1) * limit; // 80
+        let end = (start + limit).min(total); // 100
+        assert_eq!((start, end), (80, 100));
+    }
+}

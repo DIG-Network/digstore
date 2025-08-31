@@ -403,4 +403,23 @@ pub enum Commands {
         #[arg(long)]
         verify: bool,
     },
+
+    /// List staged files
+    Staged {
+        /// Number of files to show per page
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Page number (1-based)
+        #[arg(short, long, default_value = "1")]
+        page: usize,
+        /// Show detailed information (file sizes, hashes)
+        #[arg(short, long)]
+        detailed: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Show all files (no pagination)
+        #[arg(short, long)]
+        all: bool,
+    },
 }

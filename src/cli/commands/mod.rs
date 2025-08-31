@@ -18,6 +18,7 @@ pub mod store_info;
 pub mod stats;
 pub mod layers;
 pub mod inspect;
+pub mod staged;
 
 // Common utilities for commands
 use anyhow::Result;

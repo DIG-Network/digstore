@@ -84,5 +84,9 @@ fn main() -> Result<()> {
         Commands::Inspect { layer_hash, json, header, merkle, chunks, verify } => {
             cli::commands::inspect::execute(layer_hash, json, header, merkle, chunks, verify)
         }
+
+        Commands::Staged { limit, page, detailed, json, all } => {
+            cli::commands::staged::execute(limit, page, detailed, json, all)
+        }
     }
 }
