@@ -255,4 +255,61 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+
+    /// Show current root information
+    Root {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show detailed information
+        #[arg(short, long)]
+        verbose: bool,
+        
+        /// Show only the root hash
+        #[arg(long)]
+        hash_only: bool,
+    },
+
+    /// Show root history analysis
+    History {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Limit number of entries
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+        
+        /// Show statistics
+        #[arg(long)]
+        stats: bool,
+        
+        /// Show ASCII graph
+        #[arg(long)]
+        graph: bool,
+        
+        /// Show entries since date
+        #[arg(long)]
+        since: Option<String>,
+    },
+
+    /// Show storage analytics
+    Size {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show detailed breakdown
+        #[arg(long)]
+        breakdown: bool,
+        
+        /// Show deduplication metrics
+        #[arg(long)]
+        efficiency: bool,
+        
+        /// Show per-layer analysis
+        #[arg(long)]
+        layers: bool,
+    },
 }

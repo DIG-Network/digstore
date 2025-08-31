@@ -62,5 +62,14 @@ fn main() -> Result<()> {
         Commands::Completion { shell } => {
             cli::commands::completion::execute(shell)
         }
+        Commands::Root { json, verbose, hash_only } => {
+            cli::commands::root::execute(json, verbose, hash_only)
+        }
+        Commands::History { json, limit, stats, graph, since } => {
+            cli::commands::history::execute(json, limit, stats, graph, since)
+        }
+        Commands::Size { json, breakdown, efficiency, layers } => {
+            cli::commands::size::execute(json, breakdown, efficiency, layers)
+        }
     }
 }

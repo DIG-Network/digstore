@@ -11,6 +11,9 @@ pub mod prove;
 pub mod verify;
 pub mod log;
 pub mod info;
+pub mod root;
+pub mod history;
+pub mod size;
 
 // Common utilities for commands
 use anyhow::Result;
