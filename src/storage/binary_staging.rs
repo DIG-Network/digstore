@@ -380,8 +380,8 @@ impl BinaryStagingArea {
             self.stage_file_streaming(staged_file)?;
         }
         
-        // Final flush to ensure all data is persisted
-        self.flush()?;
+        // Don't flush here - let the caller handle flushing to prevent corruption
+        // The individual stage_file_streaming calls already handle memory map refresh
         
         Ok(())
     }

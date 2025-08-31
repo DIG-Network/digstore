@@ -60,8 +60,8 @@ pub fn execute(
             // Use high-performance parallel processing
             let stats = add_all_parallel(&repo_root, &mut store.staging, &multi_progress)?;
             
-            // Ensure staging area is flushed to disk
-            store.staging.flush()?;
+            // Don't flush here - individual staging operations already handle persistence
+            // Flushing large staging areas can cause corruption
             
             // Use the actual stats from parallel processing
             files_added = stats.processed_files;
