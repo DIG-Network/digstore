@@ -17,8 +17,8 @@ pub fn execute(
         .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
 
     // Open the store
-    let store = Store::open(&repo_root)?;
-    let status = store.status();
+       let mut store = Store::open(&repo_root)?;
+   let status = store.status();
 
     if porcelain {
         // Machine-readable output

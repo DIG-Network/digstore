@@ -292,7 +292,7 @@ impl BinaryStagingArea {
     }
 
     /// Reload staging area from disk
-    fn reload(&mut self) -> Result<()> {
+    pub fn reload(&mut self) -> Result<()> {
         // Close existing mappings
         self.mmap = None;
         self.mmap_mut = None;
@@ -356,12 +356,14 @@ impl BinaryStagingArea {
         // Write data
         file.write_all(&buffer)?;
         file.sync_all()?;
+        drop(file); // Close file before remapping
 
         // Update in-memory index
         self.index.insert(path_hash, (self.index.len(), entry));
         self.dirty = true;
 
-        // Don't reload immediately - keep in-memory index
+        // Refresh memory map to include new data
+        self.refresh_memory_map()?;
 
         Ok(())
     }
@@ -416,7 +418,8 @@ impl BinaryStagingArea {
         
         self.dirty = true;
         
-        // Don't reload immediately - keep in-memory index
+        // Refresh memory map to include new data
+        self.refresh_memory_map()?;
         
         Ok(())
     }
@@ -453,7 +456,7 @@ impl BinaryStagingArea {
         let mut files = Vec::with_capacity(self.index.len());
         
         if let Some(ref mmap) = self.mmap {
-            for (_, entry) in self.index.values() {
+            for (_, (_, entry)) in &self.index {
                 let start = entry.data_offset as usize;
                 let end = start + entry.data_size as usize;
                 
@@ -489,6 +492,21 @@ impl BinaryStagingArea {
     /// Get the staging file path
     pub fn staging_path(&self) -> &PathBuf {
         &self.staging_path
+    }
+    
+    /// Refresh the memory map after writes
+    fn refresh_memory_map(&mut self) -> Result<()> {
+        // Close existing memory map
+        self.mmap = None;
+        self.mmap_mut = None;
+        
+        // Reopen with updated file
+        if self.staging_path.exists() {
+            let file = File::open(&self.staging_path)?;
+            self.mmap = Some(unsafe { MmapOptions::new().map(&file)? });
+        }
+        
+        Ok(())
     }
 
     /// Clear all staged files
