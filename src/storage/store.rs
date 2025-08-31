@@ -3,6 +3,7 @@
 use crate::core::{types::*, error::*, digstore_file::DigstoreFile};
 use sha2::Digest;
 use crate::storage::{chunk::ChunkingEngine, layer::Layer, streaming::StreamingChunkingEngine, batch::BatchProcessor, binary_staging::{BinaryStagingArea, BinaryStagedFile}, dig_archive::{DigArchive, get_archive_path}};
+use colored::Colorize;
 use crate::security::{AccessController, StoreAccessControl};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
@@ -96,6 +97,16 @@ impl Store {
     pub fn open(project_path: &Path) -> Result<Self> {
         let digstore_path = project_path.join(".digstore");
         if !digstore_path.exists() {
+            // No .digstore file found - provide helpful guidance
+            eprintln!("{}", "No repository found!".red().bold());
+            eprintln!("  Looking for: {}", digstore_path.display().to_string().yellow());
+            eprintln!();
+            eprintln!("{}", "This directory is not a Digstore repository.".blue());
+            eprintln!();
+            eprintln!("{}", "To create a new repository:".green().bold());
+            eprintln!("  {}", "digstore init --name \"my-project\"".cyan());
+            eprintln!();
+            
             return Err(DigstoreError::store_not_found(project_path.to_path_buf()));
         }
 
@@ -119,6 +130,21 @@ impl Store {
             
             archive
         } else {
+            // Store archive not found - provide helpful recovery message
+            eprintln!("{}", "Store not found!".red().bold());
+            eprintln!("  Archive file: {}", archive_path.display().to_string().yellow());
+            eprintln!();
+            eprintln!("{}", "Possible solutions:".blue().bold());
+            eprintln!("  1. {} Initialize a new repository:", "Re-initialize:".green());
+            eprintln!("     {}", "digstore init --name \"my-project\"".cyan());
+            eprintln!();
+            eprintln!("  2. {} Check if you're in the right directory", "Location:".green());
+            eprintln!("     {}", "cd /path/to/your/project".cyan());
+            eprintln!();
+            eprintln!("  3. {} The store may have been deleted or moved", "Missing:".green());
+            eprintln!("     {}", "You may need to recreate it".cyan());
+            eprintln!();
+            
             return Err(DigstoreError::store_not_found(archive_path.clone()));
         };
 
@@ -160,6 +186,19 @@ impl Store {
             std::fs::remove_dir_all(&old_global_path)?;
             archive
         } else {
+            // Store archive not found - provide helpful recovery message
+            eprintln!("{}", "Store not found!".red().bold());
+            eprintln!("  Archive file: {}", archive_path.display().to_string().yellow());
+            eprintln!("  Store ID: {}", store_id.to_hex().cyan());
+            eprintln!();
+            eprintln!("{}", "Possible solutions:".blue().bold());
+            eprintln!("  1. {} Create a new repository:", "Initialize:".green());
+            eprintln!("     {}", "digstore init --name \"my-project\"".cyan());
+            eprintln!();
+            eprintln!("  2. {} The store may have been deleted", "Missing:".green());
+            eprintln!("     {}", "You may need to recreate it".cyan());
+            eprintln!();
+            
             return Err(DigstoreError::store_not_found(archive_path.clone()));
         };
 
