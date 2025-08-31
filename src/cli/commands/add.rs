@@ -3,9 +3,13 @@
 use anyhow::Result;
 use crate::storage::store::Store;
 use crate::cli::commands::{find_repository_root};
+use crate::ignore::scanner::{FilteredFileScanner, ScanPhase};
+use crate::storage::parallel_processor::add_all_parallel;
 use std::path::PathBuf;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Execute the add command
 pub fn execute(
@@ -45,16 +49,52 @@ pub fn execute(
 
     let mut files_added = 0;
     let mut total_size = 0u64;
+    let mut files_ignored = 0;
 
     if all {
-        // Add all files in repository
-        println!("  {} Adding all files in repository...", "•".cyan());
+        // Add all files in repository with maximum parallelism
+        println!("  {} Adding all files in repository with parallel processing...", "•".cyan());
+        
         if !dry_run {
-            store.add_directory(&repo_root, true)?;
+            // Use high-performance parallel processing
+            let stats = add_all_parallel(&repo_root, &mut store.staging, &multi_progress)?;
+            
+            files_added = stats.processed_files;
+            total_size = stats.total_bytes;
+            
+            multi_progress.clear()?;
+            
+            // Print comprehensive performance summary
+            println!();
+            println!("{}", "High-Performance Add All Summary:".bold());
+            println!("  • Total files processed: {}", stats.total_files);
+            println!("  • Successfully staged: {}", stats.processed_files);
+            println!("  • Total data processed: {:.2} MB", stats.total_bytes as f64 / 1024.0 / 1024.0);
+            println!("  • Processing time: {:.2}s", stats.processing_time.as_secs_f64());
+            println!("  • Processing rate: {:.1} files/s", stats.files_per_second);
+            println!("  • Throughput: {:.1} MB/s", stats.bytes_per_second / 1024.0 / 1024.0);
+            println!("  • Parallel efficiency: {:.1}%", stats.parallel_efficiency * 100.0);
+            
+            if stats.files_per_second > 1000.0 {
+                println!("  {} High-performance processing achieved!", "🚀".bright_green());
+            } else if stats.files_per_second > 500.0 {
+                println!("  {} Good performance achieved!", "✨".bright_blue());
+            }
+        } else {
+            // Dry run: just discover and filter files
+            let mut scanner = FilteredFileScanner::new(&repo_root)?;
+            let scan_result = scanner.scan_directory(&repo_root)?;
+            
+            files_added = scan_result.filtered_files.len();
+            files_ignored = scan_result.ignored_files.len();
+            
+            println!();
+            println!("{}", "Dry Run Summary:".bold());
+            println!("  • Would process: {} files", scan_result.stats.total_filtered);
+            println!("  • Would ignore: {} files ({:.1}%)", 
+                     scan_result.stats.total_ignored,
+                     scan_result.stats.filtering_efficiency);
         }
-        let status = store.status();
-        files_added = status.staged_files.len();
-        total_size = status.total_staged_size;
     } else if from_stdin {
         // Read file list from stdin
         println!("  {} Reading file list from stdin...", "•".cyan());

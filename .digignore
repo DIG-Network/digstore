@@ -1,0 +1,25 @@
+# Digstore Min .digignore file
+# Ignore build artifacts
+target/
+*.exe
+*.dll
+
+# Ignore temporary files
+*.tmp
+*.temp
+*.bak
+
+# Ignore IDE files
+.vscode/
+.idea/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore logs
+*.log
+
+# But keep important files
+!important.log
+!keep.tmp

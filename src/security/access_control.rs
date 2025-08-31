@@ -143,7 +143,7 @@ impl StoreAccessControl for Store {
         }
         
         // Check in staging (unscrambled)
-        self.staging.contains_key(path)
+        self.staging.is_staged(path)
     }
     
     /// Get file with URN-based access control and unscrambling

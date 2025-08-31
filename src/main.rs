@@ -12,6 +12,7 @@ mod proofs;
 mod urn;
 mod cli;
 mod security;
+mod ignore;
 
 use cli::{Cli, Commands};
 

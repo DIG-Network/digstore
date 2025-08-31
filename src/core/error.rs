@@ -121,6 +121,12 @@ pub enum DigstoreError {
     /// Generic error for unexpected conditions
     #[error("Internal error: {message}")]
     Internal { message: String },
+
+    #[error("Invalid format for {format}: {reason}")]
+    InvalidFormat { format: String, reason: String },
+
+    #[error("Unsupported version {version}, supported: {supported}")]
+    UnsupportedVersion { version: u32, supported: u32 },
 }
 
 impl DigstoreError {
