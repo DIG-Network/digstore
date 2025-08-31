@@ -36,7 +36,7 @@ pub fn execute(
                 .template("{spinner:.green} {msg}")
                 .unwrap()
         );
-        progress.set_message("Adding files to staging...");
+        progress.set_message("Processing files...");
         Some(progress)
     } else {
         None
@@ -44,8 +44,6 @@ pub fn execute(
     
     if dry_run {
         println!("{}", "Files that would be added:".bright_blue());
-    } else {
-        println!("{}", "Adding files to staging...".bright_blue());
     }
 
     let mut files_added = 0;

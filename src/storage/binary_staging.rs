@@ -495,30 +495,50 @@ impl BinaryStagingArea {
         let data_start = temp_file.stream_position()?;
         header.data_offset = data_start;
         
-        // Copy all file data
+        // Copy all file data and update index entries with new offsets
         let mut data_size = 0u64;
+        let mut updated_index = HashMap::new();
+        
         if let Some(ref mmap) = self.mmap {
-            for (_, (_, entry)) in &self.index {
+            for (path_hash, (index_pos, entry)) in &self.index {
                 let start = entry.data_offset as usize;
                 let end = start + entry.data_size as usize;
                 
                 if end <= mmap.len() {
+                    // Get new offset in temp file
+                    let new_offset = temp_file.stream_position()?;
+                    
+                    // Copy data to new location
                     temp_file.write_all(&mmap[start..end])?;
                     data_size += entry.data_size as u64;
+                    
+                    // Create updated index entry with new offset
+                    let updated_entry = IndexEntry {
+                        path_hash: entry.path_hash,
+                        data_offset: new_offset,
+                        data_size: entry.data_size,
+                        path_length: entry.path_length,
+                        flags: entry.flags,
+                    };
+                    
+                    updated_index.insert(*path_hash, (*index_pos, updated_entry));
                 }
             }
         }
         
         header.data_size = data_size;
         
-        // Write index
+        // Write index with updated offsets
         header.index_offset = temp_file.stream_position()?;
         let mut index_size = 0u64;
         
-        for (_, (_, entry)) in &self.index {
+        for (_, (_, entry)) in &updated_index {
             entry.write_to(&mut temp_file)?;
             index_size += IndexEntry::SIZE as u64;
         }
+        
+        // Update in-memory index with new offsets
+        self.index = updated_index;
         
         header.index_size = index_size;
         
