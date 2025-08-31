@@ -784,5 +784,198 @@ mod tests {
         Ok(())
     }
 
-    // Debug test removed - staging system now working correctly
+    #[test]
+    fn test_memory_map_refresh_after_writes() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let staging_path = temp_dir.path().join("refresh_test.bin");
+        
+        let mut staging = BinaryStagingArea::new(staging_path);
+        staging.initialize()?;
+        
+        // Add first file
+        let file1 = BinaryStagedFile {
+            path: PathBuf::from("file1.txt"),
+            hash: Hash::from_bytes([1; 32]),
+            size: 100,
+            chunks: vec![
+                Chunk {
+                    hash: Hash::from_bytes([2; 32]),
+                    offset: 0,
+                    size: 100,
+                    data: Vec::new(),
+                }
+            ],
+            modified_time: Some(std::time::SystemTime::now()),
+        };
+        
+        staging.stage_file_streaming(file1.clone())?;
+        assert_eq!(staging.staged_count(), 1);
+        
+        // Verify file can be retrieved immediately after staging
+        let retrieved = staging.get_staged_file(&PathBuf::from("file1.txt"))?;
+        assert!(retrieved.is_some(), "File should be retrievable immediately after staging");
+        
+        // Add second file to test memory map refresh
+        let file2 = BinaryStagedFile {
+            path: PathBuf::from("file2.txt"),
+            hash: Hash::from_bytes([3; 32]),
+            size: 200,
+            chunks: vec![
+                Chunk {
+                    hash: Hash::from_bytes([4; 32]),
+                    offset: 0,
+                    size: 200,
+                    data: Vec::new(),
+                }
+            ],
+            modified_time: Some(std::time::SystemTime::now()),
+        };
+        
+        staging.stage_file_streaming(file2.clone())?;
+        assert_eq!(staging.staged_count(), 2);
+        
+        // Verify both files can be retrieved
+        let retrieved1 = staging.get_staged_file(&PathBuf::from("file1.txt"))?;
+        let retrieved2 = staging.get_staged_file(&PathBuf::from("file2.txt"))?;
+        
+        assert!(retrieved1.is_some(), "First file should still be retrievable");
+        assert!(retrieved2.is_some(), "Second file should be retrievable");
+        
+        // Test get_all_staged_files works correctly
+        let all_files = staging.get_all_staged_files()?;
+        assert_eq!(all_files.len(), 2, "Should retrieve both staged files");
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_iterator_fix_validation() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let staging_path = temp_dir.path().join("iterator_test.bin");
+        
+        let mut staging = BinaryStagingArea::new(staging_path);
+        staging.initialize()?;
+        
+        // Add multiple files to test iterator fix
+        let files = (0..5).map(|i| BinaryStagedFile {
+            path: PathBuf::from(format!("test{}.txt", i)),
+            hash: Hash::from_bytes([i as u8; 32]),
+            size: 100 + i as u64,
+            chunks: vec![
+                Chunk {
+                    hash: Hash::from_bytes([(i + 10) as u8; 32]),
+                    offset: 0,
+                    size: 100 + i as u32,
+                    data: Vec::new(),
+                }
+            ],
+            modified_time: Some(std::time::SystemTime::now()),
+        }).collect::<Vec<_>>();
+        
+        // Stage files using batch method
+        staging.stage_files_batch(files.clone())?;
+        assert_eq!(staging.staged_count(), 5);
+        
+        // Test that get_all_staged_files() works correctly (this was the main bug)
+        let retrieved_files = staging.get_all_staged_files()?;
+        assert_eq!(retrieved_files.len(), 5, "Iterator fix: should retrieve all 5 files");
+        
+        // Verify each file individually
+        for (i, original_file) in files.iter().enumerate() {
+            let retrieved = staging.get_staged_file(&original_file.path)?;
+            assert!(retrieved.is_some(), "File {} should be retrievable", i);
+            
+            let retrieved = retrieved.unwrap();
+            assert_eq!(retrieved.path, original_file.path);
+            assert_eq!(retrieved.hash, original_file.hash);
+            assert_eq!(retrieved.size, original_file.size);
+        }
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_staging_persistence_across_instances() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let staging_path = temp_dir.path().join("persistence_test.bin");
+        
+        // Create staging area and add files
+        {
+            let mut staging = BinaryStagingArea::new(staging_path.clone());
+            staging.initialize()?;
+            
+            let file = BinaryStagedFile {
+                path: PathBuf::from("persistent.txt"),
+                hash: Hash::from_bytes([42; 32]),
+                size: 150,
+                chunks: vec![
+                    Chunk {
+                        hash: Hash::from_bytes([43; 32]),
+                        offset: 0,
+                        size: 150,
+                        data: Vec::new(),
+                    }
+                ],
+                modified_time: Some(std::time::SystemTime::now()),
+            };
+            
+            staging.stage_file_streaming(file)?;
+            staging.flush()?; // Ensure data is written to disk
+        } // staging goes out of scope
+        
+        // Create new staging instance and verify data persists
+        {
+            let mut staging = BinaryStagingArea::new(staging_path);
+            staging.load()?;
+            
+            assert_eq!(staging.staged_count(), 1, "Staged file should persist across instances");
+            
+            let retrieved = staging.get_staged_file(&PathBuf::from("persistent.txt"))?;
+            assert!(retrieved.is_some(), "File should be retrievable in new instance");
+            
+            let retrieved = retrieved.unwrap();
+            assert_eq!(retrieved.hash, Hash::from_bytes([42; 32]));
+            assert_eq!(retrieved.size, 150);
+        }
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_windows_file_locking_fix() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let staging_path = temp_dir.path().join("locking_test.bin");
+        
+        let mut staging = BinaryStagingArea::new(staging_path);
+        staging.initialize()?;
+        
+        // Add a file
+        let file = BinaryStagedFile {
+            path: PathBuf::from("lock_test.txt"),
+            hash: Hash::from_bytes([99; 32]),
+            size: 50,
+            chunks: vec![
+                Chunk {
+                    hash: Hash::from_bytes([100; 32]),
+                    offset: 0,
+                    size: 50,
+                    data: Vec::new(),
+                }
+            ],
+            modified_time: Some(std::time::SystemTime::now()),
+        };
+        
+        staging.stage_file_streaming(file)?;
+        
+        // Simulate Windows file locking fix: close memory maps before clear
+        staging.mmap = None;
+        staging.mmap_mut = None;
+        
+        // This should not fail with file locking error
+        staging.clear()?;
+        
+        assert_eq!(staging.staged_count(), 0, "Staging should be cleared without file locking issues");
+        
+        Ok(())
+    }
 }

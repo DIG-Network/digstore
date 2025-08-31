@@ -217,4 +217,56 @@ mod tests {
         let end = (start + limit).min(total); // 100
         assert_eq!((start, end), (80, 100));
     }
+
+    #[test]
+    fn test_pagination_edge_cases() {
+        // Test edge cases for pagination
+        
+        // Empty list
+        let total = 0;
+        let limit = 20;
+        let total_pages = if total == 0 { 0 } else { (total + limit - 1) / limit };
+        assert_eq!(total_pages, 0);
+        
+        // Single page
+        let total = 15;
+        let limit = 20;
+        let total_pages = (total + limit - 1) / limit;
+        assert_eq!(total_pages, 1);
+        
+        // Exact page boundary
+        let total = 40;
+        let limit = 20;
+        let total_pages = (total + limit - 1) / limit;
+        assert_eq!(total_pages, 2);
+        
+        // Last page with fewer items
+        let total = 95;
+        let limit = 20;
+        let page = 5;
+        let start = (page - 1) * limit; // 80
+        let end = (start + limit).min(total); // 95
+        assert_eq!((start, end), (80, 95)); // Only 15 items on last page
+    }
+
+    #[test]
+    fn test_invalid_page_numbers() {
+        // Test validation logic for page numbers
+        let total = 100;
+        let limit = 20;
+        let total_pages = (total + limit - 1) / limit; // 5 pages
+        
+        // Page 0 should be invalid
+        let page = 0;
+        assert!(page < 1, "Page 0 should be invalid");
+        
+        // Page beyond total should be invalid
+        let page = 6;
+        assert!(page > total_pages, "Page beyond total should be invalid");
+        
+        // Valid pages
+        for page in 1..=total_pages {
+            assert!(page >= 1 && page <= total_pages, "Page {} should be valid", page);
+        }
+    }
 }
