@@ -361,6 +361,8 @@ impl BinaryStagingArea {
         self.index.insert(path_hash, (self.index.len(), entry));
         self.dirty = true;
 
+        // Don't reload immediately - keep in-memory index
+
         Ok(())
     }
 
@@ -413,6 +415,9 @@ impl BinaryStagingArea {
         }
         
         self.dirty = true;
+        
+        // Don't reload immediately - keep in-memory index
+        
         Ok(())
     }
 
