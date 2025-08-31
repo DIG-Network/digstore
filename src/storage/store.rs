@@ -43,10 +43,28 @@ pub struct StagedFile {
 impl Store {
     /// Initialize a new store in the current directory
     pub fn init(project_path: &Path) -> Result<Self> {
+        Self::init_with_options(project_path, false)
+    }
+
+    /// Initialize a new store with options
+    pub fn init_with_options(project_path: &Path, auto_yes: bool) -> Result<Self> {
         // Check if already initialized
         let digstore_path = project_path.join(".digstore");
         if digstore_path.exists() {
-            return Err(DigstoreError::store_already_exists(project_path.to_path_buf()));
+            // Ask for confirmation to overwrite
+            use crate::cli::interactive;
+            
+            if !interactive::ask_overwrite_digstore(&digstore_path, auto_yes)
+                .map_err(|e| DigstoreError::internal(format!("Interactive prompt failed: {}", e)))? {
+                println!();
+                println!("{}", "Initialization cancelled".yellow());
+                return Err(DigstoreError::store_already_exists(project_path.to_path_buf()));
+            }
+            
+            // Remove existing .digstore file to proceed with new initialization
+            std::fs::remove_file(&digstore_path)?;
+            println!();
+            println!("{}", "Existing repository file removed".yellow());
         }
 
         // Generate new store ID
@@ -95,6 +113,11 @@ impl Store {
 
     /// Open an existing store from project directory
     pub fn open(project_path: &Path) -> Result<Self> {
+        Self::open_with_options(project_path, false)
+    }
+
+    /// Open an existing store with options
+    pub fn open_with_options(project_path: &Path, auto_yes: bool) -> Result<Self> {
         let digstore_path = project_path.join(".digstore");
         if !digstore_path.exists() {
             // No .digstore file found - provide helpful guidance
@@ -130,22 +153,14 @@ impl Store {
             
             archive
         } else {
-            // Store archive not found - provide helpful recovery message
-            eprintln!("{}", "Store not found!".red().bold());
-            eprintln!("  Archive file: {}", archive_path.display().to_string().yellow());
-            eprintln!();
-            eprintln!("{}", "Possible solutions:".blue().bold());
-            eprintln!("  1. {} Initialize a new repository:", "Re-initialize:".green());
-            eprintln!("     {}", "digstore init --name \"my-project\"".cyan());
-            eprintln!();
-            eprintln!("  2. {} Check if you're in the right directory", "Location:".green());
-            eprintln!("     {}", "cd /path/to/your/project".cyan());
-            eprintln!();
-            eprintln!("  3. {} The store may have been deleted or moved", "Missing:".green());
-            eprintln!("     {}", "You may need to recreate it".cyan());
-            eprintln!();
+            // Store archive not found - offer interactive recreation
+            use crate::cli::interactive;
             
-            return Err(DigstoreError::store_not_found(archive_path.clone()));
+            match interactive::handle_missing_store(&archive_path, &store_id.to_hex(), project_path, auto_yes)
+                .map_err(|e| DigstoreError::internal(format!("Interactive prompt failed: {}", e))) {
+                Ok(new_store) => return Ok(new_store),
+                Err(e) => return Err(e),
+            }
         };
 
         // Update last accessed time
@@ -186,17 +201,13 @@ impl Store {
             std::fs::remove_dir_all(&old_global_path)?;
             archive
         } else {
-            // Store archive not found - provide helpful recovery message
+            // Store archive not found - for global access, just show error (no project context)
             eprintln!("{}", "Store not found!".red().bold());
             eprintln!("  Archive file: {}", archive_path.display().to_string().yellow());
             eprintln!("  Store ID: {}", store_id.to_hex().cyan());
             eprintln!();
-            eprintln!("{}", "Possible solutions:".blue().bold());
-            eprintln!("  1. {} Create a new repository:", "Initialize:".green());
-            eprintln!("     {}", "digstore init --name \"my-project\"".cyan());
-            eprintln!();
-            eprintln!("  2. {} The store may have been deleted", "Missing:".green());
-            eprintln!("     {}", "You may need to recreate it".cyan());
+            eprintln!("{}", "This store does not exist or has been deleted.".blue());
+            eprintln!("{}", "Use 'digstore init' in a project directory to create a new store.".green());
             eprintln!();
             
             return Err(DigstoreError::store_not_found(archive_path.clone()));

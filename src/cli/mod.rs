@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 pub mod commands;
+pub mod interactive;
 
 /// Digstore Min - Content-addressable storage system
 #[derive(Parser)]
@@ -29,6 +30,10 @@ pub struct Cli {
     /// Color output: auto, always, never
     #[arg(long, default_value = "auto", global = true)]
     pub color: String,
+
+    /// Auto-answer yes to all prompts
+    #[arg(short = 'y', long, global = true)]
+    pub yes: bool,
 
     /// Path to store directory
     #[arg(long, global = true)]

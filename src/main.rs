@@ -34,7 +34,7 @@ fn main() -> Result<()> {
             cli::commands::init::execute(store_id, name, no_compression, chunk_size)
         }
         Commands::Add { paths, recursive, all, force, dry_run, from_stdin } => {
-            cli::commands::add::execute(paths, recursive, all, force, dry_run, from_stdin)
+            cli::commands::add::execute(paths, recursive, all, force, dry_run, from_stdin, cli.yes)
         }
         Commands::Commit { message, full_layer, author, date, edit } => {
             cli::commands::commit::execute(message, full_layer, author, date, edit)

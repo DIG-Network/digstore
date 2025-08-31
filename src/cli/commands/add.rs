@@ -19,13 +19,14 @@ pub fn execute(
     force: bool,
     dry_run: bool,
     from_stdin: bool,
+    auto_yes: bool,
 ) -> Result<()> {
     // Find repository root
     let repo_root = find_repository_root()?
         .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
 
     // Open the store
-    let mut store = Store::open(&repo_root)?;
+    let mut store = Store::open_with_options(&repo_root, auto_yes)?;
 
     let multi_progress = MultiProgress::new();
     let main_progress = if !dry_run {
@@ -59,8 +60,13 @@ pub fn execute(
             // Use high-performance parallel processing
             let stats = add_all_parallel(&repo_root, &mut store.staging, &multi_progress)?;
             
-            files_added = stats.processed_files;
-            total_size = stats.total_bytes;
+            // Ensure staging area is flushed to disk
+            store.staging.flush()?;
+            
+            // Get actual staging status from store
+            let status = store.status();
+            files_added = status.staged_files.len();
+            total_size = status.total_staged_size;
             
             multi_progress.clear()?;
             
