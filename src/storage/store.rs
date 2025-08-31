@@ -521,19 +521,7 @@ impl Store {
         let layer_id = layer.compute_layer_id()?;
         layer.metadata.layer_id = layer_id;
 
-        // Write layer to disk with scrambling
-        let layer_filename = format!("{}.layer", layer_id.to_hex());
-        let layer_path = self.archive.path().parent()
-            .ok_or_else(|| DigstoreError::internal("Invalid archive path"))?
-            .join(layer_filename);
-        
-        // Create URN for this layer
-        let layer_urn = crate::urn::Urn {
-            store_id: self.store_id,
-            root_hash: Some(layer_id),
-            resource_path: None,
-            byte_range: None,
-        };
+        // Layer will be stored inside the archive file (not as separate .layer file)
         
         // Serialize layer to bytes
         let layer_data = layer.serialize_to_bytes()?;

@@ -61,9 +61,9 @@ pub fn execute(
     println!("  {} Files: {}", "→".cyan(), status.staged_files.len());
     println!("  {} Size: {} bytes", "→".cyan(), status.total_staged_size);
 
-    // Show layer file location
-    let layer_path = store.global_path().join(format!("{}.layer", commit_id.to_hex()));
-    println!("  {} Layer file: {}", "→".cyan(), layer_path.display().to_string().dimmed());
+    // Show archive file location (layers are stored inside the archive)
+    println!("  {} Archive file: {}", "→".cyan(), store.archive.path().display().to_string().dimmed());
+    println!("  {} Layer ID: {}", "→".cyan(), commit_id.to_hex().dimmed());
 
     Ok(())
 }
