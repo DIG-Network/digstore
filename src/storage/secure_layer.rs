@@ -18,7 +18,7 @@ impl SecureLayer {
         Self { layer }
     }
     
-    /// Write layer to .dig file with URN-based scrambling
+    /// Write layer to .layer file with URN-based scrambling
     pub fn write_to_file(&self, path: &Path, urn: &Urn) -> Result<()> {
         // First serialize the layer to JSON (existing method)
         let layer_data = serde_json::json!({
@@ -44,15 +44,15 @@ impl SecureLayer {
         scrambler.scramble(&mut json_bytes)
             .map_err(|e| DigstoreError::internal(format!("Failed to scramble layer data: {}", e)))?;
         
-        // Write scrambled data to .dig file
+        // Write scrambled data to .layer file
         std::fs::write(path, json_bytes)?;
         
         Ok(())
     }
     
-    /// Read layer from .dig file with URN-based unscrambling
+    /// Read layer from .layer file with URN-based unscrambling
     pub fn read_from_file(path: &Path, urn: &Urn) -> Result<Self> {
-        // Read scrambled data from .dig file
+        // Read scrambled data from .layer file
         let mut scrambled_data = std::fs::read(path)?;
         
         // Unscramble the data using URN-based key derivation

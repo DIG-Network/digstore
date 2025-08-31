@@ -34,12 +34,12 @@ pub fn execute(json: bool, layer: Option<String>) -> Result<()> {
 
 fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
     // Load Layer 0 metadata
-    let layer_zero_path = store.global_path.join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     let content = std::fs::read(layer_zero_path)?;
     let metadata: serde_json::Value = serde_json::from_slice(&content)?;
 
     // Count layer files
-    let layer_count = std::fs::read_dir(&store.global_path)?
+    let layer_count = std::fs::read_dir(&store.global_path())?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
             entry.path().extension()
@@ -50,7 +50,7 @@ fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
         .count();
 
     // Calculate total size
-    let total_size = std::fs::read_dir(&store.global_path)?
+    let total_size = std::fs::read_dir(&store.global_path())?
         .filter_map(|entry| entry.ok())
         .filter_map(|entry| entry.metadata().ok())
         .map(|metadata| metadata.len())
@@ -59,7 +59,7 @@ fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
     if json_output {
         let info = json!({
             "store_id": store.store_id.to_hex(),
-            "global_path": store.global_path.display().to_string(),
+            "global_path": store.global_path().display().to_string(),
             "project_path": store.project_path().map(|p| p.display().to_string()),
             "current_root": store.current_root().map(|h| h.to_hex()),
             "layer_count": layer_count,
@@ -77,7 +77,7 @@ fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
         println!("{}", "═".repeat(50).green());
         
         println!("{}: {}", "Store ID".bold(), store.store_id.to_hex().cyan());
-        println!("{}: {}", "Global Path".bold(), store.global_path.display());
+        println!("{}: {}", "Global Path".bold(), store.global_path().display());
         
         if let Some(project_path) = store.project_path() {
             println!("{}: {}", "Project Path".bold(), project_path.display());

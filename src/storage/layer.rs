@@ -6,6 +6,7 @@ use std::io::{Write, Read, Seek, SeekFrom};
 use std::fs::File;
 
 /// Layer structure with binary format support
+// Removed Serialize/Deserialize - using simpler archive format
 pub struct Layer {
     /// Layer header (256 bytes)
     pub header: LayerHeader,
@@ -39,6 +40,12 @@ impl Layer {
         }
     }
 
+    /// Serialize layer to bytes
+    pub fn serialize_to_bytes(&self) -> Result<Vec<u8>> {
+        let layer_json = serde_json::to_vec_pretty(self)?;
+        Ok(layer_json)
+    }
+
     /// Write layer to disk in simplified JSON format (for MVP)
     pub fn write_to_file(&self, path: &Path) -> Result<()> {
         // For MVP, use a simplified JSON format that's easier to read/write
@@ -65,9 +72,22 @@ impl Layer {
     }
 
     /// Read layer from disk (simplified JSON format for MVP)
+    /// Read layer from a reader
+    pub fn read_from_reader<R: Read>(reader: &mut R) -> Result<Self> {
+        let mut content = Vec::new();
+        reader.read_to_end(&mut content)?;
+        Self::read_from_content(&content)
+    }
+
+    /// Read layer from file
     pub fn read_from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read(path)?;
-        let layer_data: serde_json::Value = serde_json::from_slice(&content)?;
+        Self::read_from_content(&content)
+    }
+    
+    /// Read layer from content bytes
+    fn read_from_content(content: &[u8]) -> Result<Self> {
+        let layer_data: serde_json::Value = serde_json::from_slice(content)?;
         
         // Parse header
         let header_data = layer_data.get("header")

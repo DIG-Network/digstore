@@ -88,7 +88,7 @@ fn analyze_storage(store: &Store) -> Result<StorageAnalysis> {
     let mut all_chunks = HashMap::new();
     let mut total_file_size = 0u64;
 
-    // Analyze all .dig files in store
+    // Analyze all .layer files in store
     for entry in std::fs::read_dir(store.global_path())? {
         let entry = entry?;
         let path = entry.path();

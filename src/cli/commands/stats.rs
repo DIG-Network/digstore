@@ -92,7 +92,7 @@ pub fn execute(json: bool, detailed: bool, performance: bool, security: bool) ->
 
 fn calculate_repository_stats(store: &Store) -> Result<RepositoryStats> {
     // Load Layer 0 for history
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     let mut total_commits = 0;
     let mut repository_age_days = 0;
     let mut current_generation = 0;

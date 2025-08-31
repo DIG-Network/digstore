@@ -145,7 +145,7 @@ fn perform_deep_inspection(store: &Store, layer_hash: crate::core::types::Hash, 
     let layer = store.load_layer(layer_hash)?;
     
     // Get layer file info
-    let layer_path = store.global_path().join(format!("{}.dig", layer_hash.to_hex()));
+    let layer_path = store.global_path().join(format!("{}.layer", layer_hash.to_hex()));
     let layer_file_size = if layer_path.exists() {
         std::fs::metadata(layer_path)?.len()
     } else {

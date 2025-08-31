@@ -612,8 +612,8 @@ mod tests {
             fs::write(root.join(format!("test_{}.txt", i)), format!("content {}", i))?;
         }
         
-        // Create .digignore to test filtering
-        fs::write(root.join(".digignore"), "*.tmp\n")?;
+        // Create .layerignore to test filtering
+        fs::write(root.join(".layerignore"), "*.tmp\n")?;
         fs::write(root.join("ignored.tmp"), "ignored content")?;
         
         // Create staging area

@@ -127,6 +127,9 @@ pub enum DigstoreError {
 
     #[error("Unsupported version {version}, supported: {supported}")]
     UnsupportedVersion { version: u32, supported: u32 },
+
+    #[error("Checksum mismatch: expected {expected}, got {actual}")]
+    ChecksumMismatch { expected: String, actual: String },
 }
 
 impl DigstoreError {

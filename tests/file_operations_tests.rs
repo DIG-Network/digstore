@@ -89,8 +89,8 @@ fn test_commit_staged_files() -> Result<()> {
     // Staging should be cleared
     assert!(store.staging.is_empty());
     
-    // Layer file should exist (using .dig extension)
-    let layer_path = store.global_path().join(format!("{}.dig", commit_id.to_hex()));
+    // Layer file should exist (using .layer extension)
+    let layer_path = store.global_path().join(format!("{}.layer", commit_id.to_hex()));
     assert!(layer_path.exists());
 
     Ok(())
@@ -227,14 +227,14 @@ fn test_add_directory_recursive() -> Result<()> {
     // Should include both files (check by filename since paths may be absolute)
     let has_root_file = status.staged_files.iter().any(|p| p.file_name().and_then(|n| n.to_str()) == Some("root_file.txt"));
     let has_sub_file = status.staged_files.iter().any(|p| p.file_name().and_then(|n| n.to_str()) == Some("sub_file.txt"));
-    let has_digstore = status.staged_files.iter().any(|p| p.file_name().and_then(|n| n.to_str()) == Some(".digstore"));
+    let has_digstore = status.staged_files.iter().any(|p| p.file_name().and_then(|n| n.to_str()) == Some(".layerstore"));
     
     assert!(has_root_file, "root_file.txt should be staged");
     assert!(has_sub_file, "sub_file.txt should be staged");
     
-    // Should have at least 2 files (excluding .digstore)
-    let non_digstore_files = status.staged_files.iter().filter(|p| !p.to_string_lossy().ends_with(".digstore")).count();
-    assert_eq!(non_digstore_files, 2, "Should have 2 non-.digstore files");
+    // Should have at least 2 files (excluding .layerstore)
+    let non_digstore_files = status.staged_files.iter().filter(|p| !p.to_string_lossy().ends_with(".layerstore")).count();
+    assert_eq!(non_digstore_files, 2, "Should have 2 non-.layerstore files");
 
     Ok(())
 }

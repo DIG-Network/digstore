@@ -178,7 +178,7 @@ pub struct FileMetadata {
 }
 
 /// Layer header information (256 bytes fixed size)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LayerHeader {
     /// Magic bytes for format identification: "DIGS"
     pub magic: [u8; 4],

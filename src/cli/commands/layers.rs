@@ -90,7 +90,7 @@ fn analyze_specific_layer(store: &Store, layer_hash: crate::core::types::Hash, a
     let layer = store.load_layer(layer_hash)?;
     
     // Get layer file size
-    let layer_path = store.global_path().join(format!("{}.dig", layer_hash.to_hex()));
+    let layer_path = store.global_path().join(format!("{}.layer", layer_hash.to_hex()));
     let file_size = if layer_path.exists() {
         std::fs::metadata(layer_path)?.len()
     } else {
@@ -123,7 +123,7 @@ fn analyze_specific_layer(store: &Store, layer_hash: crate::core::types::Hash, a
 fn list_all_layers(store: &Store, args: &LayersArgs) -> Result<()> {
     let mut layers = Vec::new();
     
-    // Scan for all .dig files
+    // Scan for all .layer files
     for entry in std::fs::read_dir(store.global_path())? {
         let entry = entry?;
         let path = entry.path();

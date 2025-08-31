@@ -42,7 +42,7 @@ fn show_store_info_human(store: &Store, args: &StoreInfoArgs) -> Result<()> {
     println!("{}: {}", "Store ID".bold(), store.store_id().to_hex().cyan());
     
     // Load Layer 0 metadata
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     if layer_zero_path.exists() {
         let content = std::fs::read(layer_zero_path)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
@@ -89,7 +89,7 @@ fn show_store_info_human(store: &Store, args: &StoreInfoArgs) -> Result<()> {
         
         if let Some(project_path) = store.project_path() {
             println!("  • Project Path: {}", project_path.display().to_string().cyan());
-            println!("  • .digstore File: {}", project_path.join(".digstore").display().to_string().dimmed());
+            println!("  • .layerstore File: {}", project_path.join(".layerstore").display().to_string().dimmed());
         }
     }
     
@@ -134,7 +134,7 @@ fn show_store_info_json(store: &Store, args: &StoreInfoArgs) -> Result<()> {
     });
     
     // Load Layer 0 metadata
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     if layer_zero_path.exists() {
         let content = std::fs::read(layer_zero_path)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;

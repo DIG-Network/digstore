@@ -14,6 +14,7 @@ pub mod cache;
 pub mod secure_layer;
 pub mod binary_staging;
 pub mod parallel_processor;
+pub mod dig_archive;
 
 // Re-export commonly used items
 pub use store::{Store, StoreStatus, StagedFile};
@@ -21,6 +22,7 @@ pub use layer::Layer;
 pub use chunk::{ChunkingEngine, ChunkConfig};
 pub use binary_staging::{BinaryStagingArea, BinaryStagedFile, StagingStats};
 pub use parallel_processor::{add_all_parallel, ParallelConfig, ProcessingStats};
+pub use dig_archive::{DigArchive, ArchiveStats, get_archive_path};
 pub use streaming::{StreamingChunkingEngine, StreamingFileEntry, FilePointer};
 pub use batch::{BatchProcessor, OptimizedFileScanner, BatchResult};
 pub use optimized_staging::{OptimizedStagingArea};

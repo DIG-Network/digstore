@@ -43,7 +43,7 @@ pub fn execute(
     let store = Store::open(&current_dir)?;
 
     // Load Layer 0 to get root history
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     if !layer_zero_path.exists() {
         if args.json {
             println!("{}", json!({"error": "No commits found", "history": []}));
@@ -187,7 +187,7 @@ fn show_history_json(store: &Store, root_history: &[serde_json::Value], args: &H
         // Add layer details if available
         if let Some(root_hash_str) = entry.get("root_hash").and_then(|h| h.as_str()) {
             if let Ok(layer_hash) = crate::core::types::Hash::from_hex(root_hash_str) {
-                let layer_path = store.global_path().join(format!("{}.dig", layer_hash.to_hex()));
+                let layer_path = store.global_path().join(format!("{}.layer", layer_hash.to_hex()));
                 if layer_path.exists() {
                     if let Ok(metadata) = std::fs::metadata(&layer_path) {
                         json_entry["layer_file_size"] = json!(metadata.len());

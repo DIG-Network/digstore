@@ -2,7 +2,7 @@
 
 use crate::core::{types::*, error::*, digstore_file::DigstoreFile};
 use sha2::Digest;
-use crate::storage::{chunk::ChunkingEngine, layer::Layer, streaming::StreamingChunkingEngine, batch::BatchProcessor, secure_layer::SecureLayer, binary_staging::{BinaryStagingArea, BinaryStagedFile}};
+use crate::storage::{chunk::ChunkingEngine, layer::Layer, streaming::StreamingChunkingEngine, batch::BatchProcessor, binary_staging::{BinaryStagingArea, BinaryStagedFile}, dig_archive::{DigArchive, get_archive_path}};
 use crate::security::{AccessController, StoreAccessControl};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
@@ -12,8 +12,8 @@ use directories::UserDirs;
 pub struct Store {
     /// Store identifier
     pub store_id: StoreId,
-    /// Path to the global store directory
-    pub global_path: PathBuf,
+    /// Archive file for storing layers
+    pub archive: DigArchive,
     /// Path to the project directory (if in project context)
     pub project_path: Option<PathBuf>,
     /// Current root hash (latest generation)
@@ -51,12 +51,13 @@ impl Store {
         // Generate new store ID
         let store_id = generate_store_id();
         
-        // Get global store directory
-        let global_path = get_global_store_path(&store_id)?;
+        // Get archive path
+        let archive_path = get_archive_path(&store_id)?;
         
-        // Create global store directory
-        std::fs::create_dir_all(&global_path)
-            .map_err(|e| DigstoreError::Io(e))?;
+        // Create parent directory for .dig files
+        if let Some(parent) = archive_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         // Create .digstore file
         let repository_name = project_path.file_name()
@@ -66,15 +67,18 @@ impl Store {
         let digstore_file = DigstoreFile::new(store_id, repository_name);
         digstore_file.save(&digstore_path)?;
 
-        // Initialize binary staging area
-        let staging_path = global_path.join("staging.bin");
+        // Create archive
+        let archive = DigArchive::create(archive_path.clone())?;
+        
+        // Initialize binary staging area (in same directory as archive)
+        let staging_path = archive_path.with_extension("staging.bin");
         let mut staging = BinaryStagingArea::new(staging_path);
         staging.initialize()?;
 
         // Initialize Layer 0 (metadata layer)
-        let store = Self {
+        let mut store = Self {
             store_id,
-            global_path,
+            archive,
             project_path: Some(project_path.to_path_buf()),
             current_root: None,
             staging,
@@ -97,27 +101,42 @@ impl Store {
 
         let mut digstore_file = DigstoreFile::load(&digstore_path)?;
         let store_id = digstore_file.get_store_id()?;
-        let global_path = get_global_store_path(&store_id)?;
+        let archive_path = get_archive_path(&store_id)?;
 
-        if !global_path.exists() {
-            return Err(DigstoreError::store_not_found(global_path));
-        }
+        // Check for migration from old directory format
+        let old_global_path = get_global_store_path(&store_id)?;
+        let archive = if archive_path.exists() {
+            // Open existing archive
+            DigArchive::open(archive_path.clone())?
+        } else if old_global_path.exists() {
+            // Migrate from old directory format
+            println!("Migrating store from directory to archive format...");
+            let archive = DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
+            
+            // Clean up old directory after successful migration
+            std::fs::remove_dir_all(&old_global_path)?;
+            println!("✓ Migration completed successfully");
+            
+            archive
+        } else {
+            return Err(DigstoreError::store_not_found(archive_path.clone()));
+        };
 
         // Update last accessed time
         digstore_file.update_last_accessed();
         digstore_file.save(&digstore_path)?;
 
-        // Load current root hash from Layer 0
-        let current_root = Self::load_current_root(&global_path)?;
+        // Load current root hash from Layer 0 in archive
+        let current_root = Self::load_current_root_from_archive(&archive)?;
 
         // Load persistent binary staging
-        let staging_path = global_path.join("staging.bin");
+        let staging_path = archive_path.with_extension("staging.bin");
         let mut staging = BinaryStagingArea::new(staging_path);
         staging.load()?;
 
         Ok(Self {
             store_id,
-            global_path,
+            archive,
             project_path: Some(project_path.to_path_buf()),
             current_root,
             staging,
@@ -129,23 +148,32 @@ impl Store {
 
     /// Open a store by ID directly (without project context)
     pub fn open_global(store_id: &StoreId) -> Result<Self> {
-        let global_path = get_global_store_path(store_id)?;
+        let archive_path = get_archive_path(store_id)?;
         
-        if !global_path.exists() {
-            return Err(DigstoreError::store_not_found(global_path));
-        }
+        // Check for migration from old directory format
+        let old_global_path = get_global_store_path(store_id)?;
+        let archive = if archive_path.exists() {
+            DigArchive::open(archive_path.clone())?
+        } else if old_global_path.exists() {
+            // Migrate from old directory format
+            let archive = DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
+            std::fs::remove_dir_all(&old_global_path)?;
+            archive
+        } else {
+            return Err(DigstoreError::store_not_found(archive_path.clone()));
+        };
 
-        // Load current root hash from Layer 0
-        let current_root = Self::load_current_root(&global_path)?;
+        // Load current root hash from Layer 0 in archive
+        let current_root = Self::load_current_root_from_archive(&archive)?;
 
         // Load persistent binary staging
-        let staging_path = global_path.join("staging.bin");
+        let staging_path = archive_path.with_extension("staging.bin");
         let mut staging = BinaryStagingArea::new(staging_path);
         staging.load()?;
 
         Ok(Self {
             store_id: *store_id,
-            global_path,
+            archive,
             project_path: None,
             current_root,
             staging,
@@ -444,8 +472,10 @@ impl Store {
         layer.metadata.layer_id = layer_id;
 
         // Write layer to disk with scrambling
-        let layer_filename = format!("{}.dig", layer_id.to_hex());
-        let layer_path = self.global_path.join(layer_filename);
+        let layer_filename = format!("{}.layer", layer_id.to_hex());
+        let layer_path = self.archive.path().parent()
+            .ok_or_else(|| DigstoreError::internal("Invalid archive path"))?
+            .join(layer_filename);
         
         // Create URN for this layer
         let layer_urn = crate::urn::Urn {
@@ -455,9 +485,11 @@ impl Store {
             byte_range: None,
         };
         
-        // Use secure layer operations
-        let secure_layer = SecureLayer::new(layer);
-        secure_layer.write_to_file(&layer_path, &layer_urn)?;
+        // Serialize layer to bytes
+        let layer_data = layer.serialize_to_bytes()?;
+        
+        // Add layer to archive
+        self.archive.add_layer(layer_id, &layer_data)?;
 
         // Update root history in Layer 0
         self.update_root_history(layer_id)?;
@@ -476,20 +508,8 @@ impl Store {
 
     /// Load a layer by its ID using secure operations
     pub fn load_layer(&self, layer_id: LayerId) -> Result<Layer> {
-        let layer_filename = format!("{}.dig", layer_id.to_hex());
-        let layer_path = self.global_path.join(layer_filename);
-        
-        // Create URN for this layer
-        let layer_urn = crate::urn::Urn {
-            store_id: self.store_id,
-            root_hash: Some(layer_id),
-            resource_path: None,
-            byte_range: None,
-        };
-        
-        // Use secure layer operations for unscrambling
-        let secure_layer = SecureLayer::read_from_file(&layer_path, &layer_urn)?;
-        Ok(secure_layer.layer)
+        // Load layer from archive
+        self.archive.get_layer(&layer_id)
     }
 
     /// Get a file by path from the latest commit
@@ -517,24 +537,8 @@ impl Store {
             self.current_root.ok_or_else(|| DigstoreError::file_not_found(file_path.to_path_buf()))?
         );
 
-        // Find the layer containing this root hash
-        let layer_filename = format!("{}.dig", target_root.to_hex());
-        let layer_path = self.global_path.join(layer_filename);
-
-        if !layer_path.exists() {
-            return Err(DigstoreError::layer_not_found(target_root));
-        }
-
-        // Read layer using secure operations
-        let layer_urn = crate::urn::Urn {
-            store_id: self.store_id,
-            root_hash: Some(target_root),
-            resource_path: None,
-            byte_range: None,
-        };
-        
-        let secure_layer = SecureLayer::read_from_file(&layer_path, &layer_urn)?;
-        let layer = secure_layer.layer;
+        // Load layer from archive
+        let layer = self.archive.get_layer(&target_root)?;
 
         // Find file in layer
         for file_entry in &layer.files {
@@ -586,6 +590,13 @@ impl Store {
         self.staging.is_staged(path)
     }
 
+    /// Get the global path (archive directory) for backward compatibility
+    pub fn global_path(&self) -> PathBuf {
+        self.archive.path().parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+    }
+
     /// Remove a file from staging
     /// Note: Binary staging doesn't support individual file removal efficiently
     /// For now, this is not implemented - use clear_staging() to remove all files
@@ -601,9 +612,7 @@ impl Store {
     }
 
     /// Initialize Layer 0 with metadata
-    fn init_layer_zero(&self) -> Result<()> {
-        let layer_zero_path = self.global_path.join("0000000000000000000000000000000000000000000000000000000000000000.dig");
-        
+    fn init_layer_zero(&mut self) -> Result<()> {
         // Create initial metadata
         let metadata = serde_json::json!({
             "store_id": self.store_id.to_hex(),
@@ -620,15 +629,42 @@ impl Store {
         });
 
         let metadata_bytes = serde_json::to_vec_pretty(&metadata)?;
-        std::fs::write(layer_zero_path, metadata_bytes)
-            .map_err(|e| DigstoreError::Io(e))?;
-
+        
+        // Add Layer 0 to archive
+        let layer_zero_hash = Hash::zero(); // Use all zeros for Layer 0
+        self.archive.add_layer(layer_zero_hash, &metadata_bytes)?;
+        
         Ok(())
     }
 
-    /// Load current root hash from Layer 0
+    /// Load current root hash from Layer 0 in archive
+    fn load_current_root_from_archive(archive: &DigArchive) -> Result<Option<RootHash>> {
+        let layer_zero_hash = Hash::zero();
+        
+        if !archive.has_layer(&layer_zero_hash) {
+            return Ok(None);
+        }
+        
+        // Get Layer 0 metadata
+        let metadata_bytes = archive.get_layer_data(&layer_zero_hash)?;
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)?;
+        
+        if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
+            if let Some(latest_root) = root_history.last() {
+                if let Some(root_str) = latest_root.as_str() {
+                    if let Ok(root_hash) = Hash::from_hex(root_str) {
+                        return Ok(Some(root_hash));
+                    }
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+
+    /// Load current root hash from Layer 0 (legacy directory format)
     fn load_current_root(global_path: &Path) -> Result<Option<RootHash>> {
-        let layer_zero_path = global_path.join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+        let layer_zero_path = global_path.join("0000000000000000000000000000000000000000000000000000000000000000.layer");
         
         if !layer_zero_path.exists() {
             return Ok(None);
@@ -657,9 +693,7 @@ impl Store {
     }
 
     /// Get the global store path
-    pub fn global_path(&self) -> &Path {
-        &self.global_path
-    }
+    // Removed duplicate global_path method - using the one that returns PathBuf
 
     /// Get the project path (if in project context)
     pub fn project_path(&self) -> Option<&Path> {
@@ -684,16 +718,16 @@ fn get_global_store_path(store_id: &StoreId) -> Result<PathBuf> {
     let user_dirs = UserDirs::new()
         .ok_or(DigstoreError::HomeDirectoryNotFound)?;
     
-    let dig_dir = user_dirs.home_dir().join(".dig");
+    let dig_dir = user_dirs.home_dir().join(".layer");
     Ok(dig_dir.join(store_id.to_hex()))
 }
 
-/// Get the global .dig directory
+/// Get the global .layer directory
 pub fn get_global_dig_directory() -> Result<PathBuf> {
     let user_dirs = UserDirs::new()
         .ok_or(DigstoreError::HomeDirectoryNotFound)?;
     
-    Ok(user_dirs.home_dir().join(".dig"))
+    Ok(user_dirs.home_dir().join(".layer"))
 }
 
 /// Repository status information
@@ -715,12 +749,12 @@ impl Store {
         // For now, just count existing layer files
         let mut max_layer = 0u64;
         
-        for entry in std::fs::read_dir(&self.global_path)? {
+        for entry in std::fs::read_dir(&self.global_path())? {
             let entry = entry?;
             let filename = entry.file_name();
             let filename_str = filename.to_string_lossy();
             
-            if filename_str.ends_with(".dig") && filename_str != "0000000000000000000000000000000000000000000000000000000000000000.dig" {
+            if filename_str.ends_with(".layer") && filename_str != "0000000000000000000000000000000000000000000000000000000000000000.layer" {
                 // Try to parse layer number from filename (this is simplified)
                 max_layer += 1;
             }
@@ -731,7 +765,7 @@ impl Store {
 
     /// Update root history in Layer 0
     fn update_root_history(&self, new_root: RootHash) -> Result<()> {
-        let layer_zero_path = self.global_path.join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+        let layer_zero_path = self.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
         
         // Read current Layer 0
         let content = std::fs::read(&layer_zero_path)?;

@@ -58,7 +58,7 @@ fn show_root_human(store: &Store, root_hash: crate::core::types::Hash, verbose: 
     println!("{}: {}", "Root Hash".bold(), root_hash.to_hex().cyan());
     
     // Load Layer 0 to get generation info
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     if layer_zero_path.exists() {
         let content = std::fs::read(layer_zero_path)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
@@ -83,7 +83,7 @@ fn show_root_human(store: &Store, root_hash: crate::core::types::Hash, verbose: 
     }
     
     // Get layer file information
-    let layer_path = store.global_path().join(format!("{}.dig", root_hash.to_hex()));
+    let layer_path = store.global_path().join(format!("{}.layer", root_hash.to_hex()));
     if layer_path.exists() {
         if let Ok(metadata) = std::fs::metadata(&layer_path) {
             println!("{}: {}", "Layer File Size".bold(), format_bytes(metadata.len()));
@@ -112,7 +112,7 @@ fn show_root_human(store: &Store, root_hash: crate::core::types::Hash, verbose: 
     }
     
     println!();
-    println!("{}: {}", "Layer File".bold(), format!("{}.dig", root_hash.to_hex()).dimmed());
+    println!("{}: {}", "Layer File".bold(), format!("{}.layer", root_hash.to_hex()).dimmed());
 
     Ok(())
 }
@@ -124,11 +124,11 @@ fn show_root_json(store: &Store, root_hash: crate::core::types::Hash, verbose: b
         "timestamp": null,
         "layer_count": null,
         "layer_file_size": null,
-        "layer_file_path": format!("{}.dig", root_hash.to_hex())
+        "layer_file_path": format!("{}.layer", root_hash.to_hex())
     });
     
     // Load Layer 0 for generation info
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     if layer_zero_path.exists() {
         let content = std::fs::read(layer_zero_path)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
@@ -145,7 +145,7 @@ fn show_root_json(store: &Store, root_hash: crate::core::types::Hash, verbose: b
     }
     
     // Get layer file size
-    let layer_path = store.global_path().join(format!("{}.dig", root_hash.to_hex()));
+    let layer_path = store.global_path().join(format!("{}.layer", root_hash.to_hex()));
     if layer_path.exists() {
         if let Ok(metadata) = std::fs::metadata(&layer_path) {
             root_info["layer_file_size"] = json!(metadata.len());

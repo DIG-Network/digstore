@@ -24,12 +24,12 @@ use anyhow::Result;
 use std::path::Path;
 use crate::core::error::DigstoreError;
 
-/// Check if we're in a repository directory (has .digstore file)
+/// Check if we're in a repository directory (has .layerstore file)
 pub fn find_repository_root() -> Result<Option<std::path::PathBuf>> {
     let mut current_dir = std::env::current_dir()?;
     
     loop {
-        let digstore_file = current_dir.join(".digstore");
+        let digstore_file = current_dir.join(".layerstore");
         if digstore_file.exists() {
             return Ok(Some(current_dir));
         }
@@ -44,9 +44,9 @@ pub fn find_repository_root() -> Result<Option<std::path::PathBuf>> {
     Ok(None)
 }
 
-/// Load store ID from .digstore file
+/// Load store ID from .layerstore file
 pub fn load_store_id_from_digstore(repo_root: &Path) -> Result<crate::core::types::StoreId> {
-    let digstore_file = repo_root.join(".digstore");
+    let digstore_file = repo_root.join(".layerstore");
     let content = std::fs::read_to_string(digstore_file)?;
     
     // Parse TOML content
@@ -54,8 +54,8 @@ pub fn load_store_id_from_digstore(repo_root: &Path) -> Result<crate::core::type
     
     if let Some(store_id_str) = parsed.get("store_id").and_then(|v| v.as_str()) {
         crate::core::types::Hash::from_hex(store_id_str)
-            .map_err(|e| DigstoreError::invalid_store_id(format!("Invalid store ID in .digstore: {}", e)).into())
+            .map_err(|e| DigstoreError::invalid_store_id(format!("Invalid store ID in .layerstore: {}", e)).into())
     } else {
-        Err(DigstoreError::invalid_store_id("No store_id found in .digstore file").into())
+        Err(DigstoreError::invalid_store_id("No store_id found in .layerstore file").into())
     }
 }

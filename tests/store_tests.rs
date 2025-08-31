@@ -15,15 +15,15 @@ fn test_store_initialization() -> Result<()> {
     // Initialize store
     let store = Store::init(project_path)?;
 
-    // Check that .digstore file was created
-    let digstore_path = project_path.join(".digstore");
+    // Check that .layerstore file was created
+    let digstore_path = project_path.join(".layerstore");
     assert!(digstore_path.exists());
 
     // Check that global store directory was created
     assert!(store.global_path().exists());
 
     // Check Layer 0 was created
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     assert!(layer_zero_path.exists());
 
     // Verify store properties
@@ -118,8 +118,8 @@ fn test_digstore_file_creation() -> Result<()> {
     // Initialize store
     Store::init(project_path)?;
 
-    // Load and verify .digstore file
-    let digstore_path = project_path.join(".digstore");
+    // Load and verify .layerstore file
+    let digstore_path = project_path.join(".layerstore");
     let digstore_file = DigstoreFile::load(&digstore_path)?;
 
     assert_eq!(digstore_file.version, "1.0.0");
@@ -143,7 +143,7 @@ fn test_layer_zero_initialization() -> Result<()> {
     let store = Store::init(project_path)?;
 
     // Check Layer 0 content
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.dig");
+    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     let content = std::fs::read(layer_zero_path)?;
     let metadata: serde_json::Value = serde_json::from_slice(&content)?;
 
@@ -163,7 +163,7 @@ fn test_global_dig_directory() -> Result<()> {
     let dig_dir = get_global_dig_directory()?;
     
     // Should be in user's home directory
-    assert!(dig_dir.ends_with(".dig"));
+    assert!(dig_dir.ends_with(".layer"));
     assert!(dig_dir.is_absolute());
 
     Ok(())
@@ -177,8 +177,8 @@ fn test_store_with_custom_name() -> Result<()> {
     // Initialize store
     Store::init(project_path)?;
 
-    // Load .digstore file and check name
-    let digstore_path = project_path.join(".digstore");
+    // Load .layerstore file and check name
+    let digstore_path = project_path.join(".layerstore");
     let digstore_file = DigstoreFile::load(&digstore_path)?;
 
     // Should use directory name as repository name

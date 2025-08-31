@@ -62,18 +62,18 @@ fn get_global_store_path(store_id: &digstore_min::core::types::StoreId) -> anyho
     let user_dirs = UserDirs::new()
         .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
     
-    let dig_dir = user_dirs.home_dir().join(".dig");
+    let dig_dir = user_dirs.home_dir().join(".layer");
     Ok(dig_dir.join(store_id.to_hex()))
 }
 
-/// Clean up all test stores in ~/.dig/ (for emergency cleanup)
+/// Clean up all test stores in ~/.layer/ (for emergency cleanup)
 pub fn cleanup_all_test_stores() -> anyhow::Result<()> {
     use directories::UserDirs;
     
     let user_dirs = UserDirs::new()
         .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
     
-    let dig_dir = user_dirs.home_dir().join(".dig");
+    let dig_dir = user_dirs.home_dir().join(".layer");
     
     if dig_dir.exists() {
         // Only remove directories that look like test stores (recent creation)

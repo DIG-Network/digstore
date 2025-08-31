@@ -15,7 +15,7 @@ pub fn execute(
 ) -> Result<()> {
     // Find repository root
     let repo_root = find_repository_root()?
-        .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
+        .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .layerstore file found)"))?;
 
     // Open the store
     let mut store = Store::open(&repo_root)?;
@@ -62,7 +62,7 @@ pub fn execute(
     println!("  {} Size: {} bytes", "→".cyan(), status.total_staged_size);
 
     // Show layer file location
-    let layer_path = store.global_path().join(format!("{}.dig", commit_id.to_hex()));
+    let layer_path = store.global_path().join(format!("{}.layer", commit_id.to_hex()));
     println!("  {} Layer file: {}", "→".cyan(), layer_path.display().to_string().dimmed());
 
     Ok(())

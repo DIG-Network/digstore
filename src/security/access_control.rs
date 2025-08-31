@@ -126,9 +126,9 @@ pub trait StoreAccessControl {
 }
 
 impl StoreAccessControl for Store {
-    /// Check if commit exists (uses .dig extension)
+    /// Check if commit exists (uses .layer extension)
     fn has_commit(&self, root_hash: Hash) -> bool {
-        let layer_path = self.global_path().join(format!("{}.dig", root_hash.to_hex()));
+        let layer_path = self.global_path().join(format!("{}.layer", root_hash.to_hex()));
         layer_path.exists()
     }
     
