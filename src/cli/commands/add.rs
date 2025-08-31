@@ -63,10 +63,9 @@ pub fn execute(
             // Ensure staging area is flushed to disk
             store.staging.flush()?;
             
-            // Get actual staging status from store
-            let status = store.status();
-            files_added = status.staged_files.len();
-            total_size = status.total_staged_size;
+            // Use the actual stats from parallel processing
+            files_added = stats.processed_files;
+            total_size = stats.total_bytes;
             
             multi_progress.clear()?;
             
@@ -139,10 +138,8 @@ pub fn execute(
         }
     }
 
-    // Get final status
-    let final_status = store.status();
-    files_added = final_status.staged_files.len();
-    total_size = final_status.total_staged_size;
+    // Keep the values from parallel processing - don't override with store status
+    // (Store status may not reflect the latest changes due to binary staging implementation)
 
     if let Some(progress) = main_progress {
         progress.finish_with_message("Files added to staging");
