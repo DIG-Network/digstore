@@ -69,18 +69,12 @@ pub fn execute(
             
             multi_progress.clear()?;
             
-            // Print comprehensive performance summary
-            println!();
-            println!("{}", "High-Performance Add All Summary:".bold());
-            println!("  • Total files processed: {}", stats.total_files);
-            println!("  • Successfully staged: {}", stats.processed_files);
-            println!("  • Total data processed: {:.2} MB", stats.total_bytes as f64 / 1024.0 / 1024.0);
+            // Print technical processing statistics
+            println!("  • Files processed: {}", stats.processed_files);
+            println!("  • Data processed: {:.2} MB", stats.total_bytes as f64 / 1024.0 / 1024.0);
             println!("  • Processing time: {:.2}s", stats.processing_time.as_secs_f64());
             println!("  • Processing rate: {:.1} files/s", stats.files_per_second);
             println!("  • Throughput: {:.1} MB/s", stats.bytes_per_second / 1024.0 / 1024.0);
-            println!("  • Parallel efficiency: {:.1}%", stats.parallel_efficiency * 100.0);
-            
-            // Performance feedback removed - keeping output clean
         } else {
             // Dry run: just discover and filter files
             let mut scanner = FilteredFileScanner::new(&repo_root)?;
@@ -89,8 +83,6 @@ pub fn execute(
             files_added = scan_result.filtered_files.len();
             files_ignored = scan_result.ignored_files.len();
             
-            println!();
-            println!("{}", "Dry Run Summary:".bold());
             println!("  • Would process: {} files", scan_result.stats.total_filtered);
             println!("  • Would ignore: {} files ({:.1}%)", 
                      scan_result.stats.total_ignored,
