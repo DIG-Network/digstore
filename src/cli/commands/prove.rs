@@ -118,7 +118,7 @@ fn handle_path_prove(store: &Store, args: &ProveArgs) -> Result<()> {
     // Output the proof
     output_proof(&proof, args)?;
 
-    println!("{}", "✓ Proof generated successfully!".green());
+    println!("{}", "✓ Proof generated".green());
 
     Ok(())
 }
@@ -166,7 +166,7 @@ fn handle_urn_prove(args: &ProveArgs) -> Result<()> {
     // Output the proof
     output_proof(&proof, args)?;
 
-    println!("{}", "✓ Proof generated successfully!".green());
+    println!("{}", "✓ Proof generated".green());
     Ok(())
 }
 

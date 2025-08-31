@@ -453,19 +453,33 @@ impl DigArchive {
         let data_start = temp_file.stream_position()?;
         self.header.data_offset = data_start;
         
-        // Copy all layer data
+        // Copy all layer data and update offsets
         let mut data_size = 0u64;
-        if let Some(ref mmap) = self.mmap {
-            for entry in self.index.values() {
-                let start = entry.offset as usize;
-                let end = start + entry.size as usize;
-                
-                if end <= mmap.len() {
-                    temp_file.write_all(&mmap[start..end])?;
-                    data_size += entry.size;
-                }
-            }
+        let mut updated_index = HashMap::new();
+        
+        // Read from the original file instead of stale memory map
+        let mut source_file = File::open(&self.archive_path)?;
+        
+        for (layer_hash, entry) in &self.index {
+            let new_offset = temp_file.stream_position()?;
+            
+            // Read layer data from source file
+            source_file.seek(SeekFrom::Start(entry.offset))?;
+            let mut buffer = vec![0u8; entry.size as usize];
+            source_file.read_exact(&mut buffer)?;
+            
+            // Write to temp file
+            temp_file.write_all(&buffer)?;
+            data_size += entry.size;
+            
+            // Create updated index entry
+            let mut updated_entry = entry.clone();
+            updated_entry.offset = new_offset;
+            updated_index.insert(*layer_hash, updated_entry);
         }
+        
+        // Update our index with new offsets
+        self.index = updated_index;
         
         self.header.data_size = data_size;
         
@@ -734,6 +748,57 @@ mod tests {
         assert!(stats.total_size > 0); // Archive should have some size
         assert_eq!(stats.data_size, 5120); // Exactly 5KB of layer data
         assert!(stats.compression_ratio <= 1.0);
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_layer_additions_after_creation() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let archive_path = temp_dir.path().join("multi_layer.dig");
+        
+        let mut archive = DigArchive::create(archive_path.clone())?;
+        
+        // Add Layer 0 (metadata) first
+        let layer_zero_hash = Hash::zero();
+        let metadata = serde_json::json!({
+            "store_id": "test_store",
+            "root_history": []
+        });
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata)?;
+        archive.add_layer(layer_zero_hash, &metadata_bytes)?;
+        
+        // Add multiple regular layers one by one
+        for i in 1..=5 {
+            let layer_hash = Hash::from_bytes([i; 32]);
+            let layer_data = format!("Layer {} data content", i);
+            archive.add_layer(layer_hash, layer_data.as_bytes())?;
+            
+            // Verify we can read the layer back immediately
+            let retrieved_data = archive.get_layer_data(&layer_hash)?;
+            assert_eq!(retrieved_data, layer_data.as_bytes());
+        }
+        
+        // Verify all layers are accessible
+        assert_eq!(archive.layer_count(), 6); // Layer 0 + 5 regular layers
+        
+        // Verify Layer 0 is still accessible
+        let layer_zero_data = archive.get_layer_data(&layer_zero_hash)?;
+        let parsed_metadata: serde_json::Value = serde_json::from_slice(&layer_zero_data)?;
+        assert_eq!(parsed_metadata["store_id"], "test_store");
+        
+        // Test reopening the archive
+        drop(archive);
+        let archive = DigArchive::open(archive_path)?;
+        assert_eq!(archive.layer_count(), 6);
+        
+        // Verify all layers are still accessible after reopen
+        for i in 1..=5 {
+            let layer_hash = Hash::from_bytes([i; 32]);
+            let retrieved_data = archive.get_layer_data(&layer_hash)?;
+            let expected_data = format!("Layer {} data content", i);
+            assert_eq!(retrieved_data, expected_data.as_bytes());
+        }
         
         Ok(())
     }

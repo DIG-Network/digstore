@@ -75,11 +75,7 @@ pub fn execute(
             println!("  • Throughput: {:.1} MB/s", stats.bytes_per_second / 1024.0 / 1024.0);
             println!("  • Parallel efficiency: {:.1}%", stats.parallel_efficiency * 100.0);
             
-            if stats.files_per_second > 1000.0 {
-                println!("  {} High-performance processing achieved!", "🚀".bright_green());
-            } else if stats.files_per_second > 500.0 {
-                println!("  {} Good performance achieved!", "✨".bright_blue());
-            }
+            // Performance feedback removed - keeping output clean
         } else {
             // Dry run: just discover and filter files
             let mut scanner = FilteredFileScanner::new(&repo_root)?;

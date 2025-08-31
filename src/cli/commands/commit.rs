@@ -55,7 +55,7 @@ pub fn execute(
     let commit_id = store.commit(&final_message)?;
 
     println!();
-    println!("{} Commit created successfully!", "✓".green().bold());
+    println!("{} Commit created", "✓".green());
     println!("  {} Commit ID: {}", "→".cyan(), commit_id.to_hex().bright_cyan());
     println!("  {} Message: {}", "→".cyan(), final_message.bright_white());
     println!("  {} Files: {}", "→".cyan(), status.staged_files.len());

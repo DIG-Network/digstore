@@ -54,7 +54,7 @@ pub fn execute(
     println!("  {} Chunk size: {}KB", "•".cyan(), chunk_size);
     
     println!();
-    println!("{}", "Repository initialized successfully!".bright_green().bold());
+    println!("{}", "Repository initialized".green());
     println!("Store ID: {}", store.store_id().to_hex().bright_cyan());
     println!("Location: {}", store.global_path().display().to_string().dimmed());
     
