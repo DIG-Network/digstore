@@ -14,6 +14,10 @@ pub mod info;
 pub mod root;
 pub mod history;
 pub mod size;
+pub mod store_info;
+pub mod stats;
+pub mod layers;
+pub mod inspect;
 
 // Common utilities for commands
 use anyhow::Result;

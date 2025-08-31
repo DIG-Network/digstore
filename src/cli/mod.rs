@@ -312,4 +312,90 @@ pub enum Commands {
         #[arg(long)]
         layers: bool,
     },
+
+    /// Show comprehensive store information
+    StoreInfo {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show configuration details
+        #[arg(long)]
+        config: bool,
+        
+        /// Show all paths
+        #[arg(long)]
+        paths: bool,
+    },
+
+    /// Show repository statistics
+    Stats {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show detailed statistics
+        #[arg(long)]
+        detailed: bool,
+        
+        /// Show performance metrics
+        #[arg(long)]
+        performance: bool,
+        
+        /// Show security metrics
+        #[arg(long)]
+        security: bool,
+    },
+
+    /// Analyze layers
+    Layers {
+        /// Layer hash to analyze
+        layer_hash: Option<String>,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// List all layers
+        #[arg(long)]
+        list: bool,
+        
+        /// Show size information
+        #[arg(long)]
+        size: bool,
+        
+        /// Show file details
+        #[arg(long)]
+        files: bool,
+        
+        /// Show chunk details
+        #[arg(long)]
+        chunks: bool,
+    },
+
+    /// Deep layer inspection
+    Inspect {
+        /// Layer hash to inspect
+        layer_hash: String,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show layer header details
+        #[arg(long)]
+        header: bool,
+        
+        /// Show merkle tree information
+        #[arg(long)]
+        merkle: bool,
+        
+        /// Show chunk analysis
+        #[arg(long)]
+        chunks: bool,
+        
+        /// Verify layer integrity
+        #[arg(long)]
+        verify: bool,
+    },
 }

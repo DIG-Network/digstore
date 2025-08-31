@@ -71,5 +71,17 @@ fn main() -> Result<()> {
         Commands::Size { json, breakdown, efficiency, layers } => {
             cli::commands::size::execute(json, breakdown, efficiency, layers)
         }
+        Commands::StoreInfo { json, config, paths } => {
+            cli::commands::store_info::execute(json, config, paths)
+        }
+        Commands::Stats { json, detailed, performance, security } => {
+            cli::commands::stats::execute(json, detailed, performance, security)
+        }
+        Commands::Layers { layer_hash, json, list, size, files, chunks } => {
+            cli::commands::layers::execute(layer_hash, json, list, size, files, chunks)
+        }
+        Commands::Inspect { layer_hash, json, header, merkle, chunks, verify } => {
+            cli::commands::inspect::execute(layer_hash, json, header, merkle, chunks, verify)
+        }
     }
 }
