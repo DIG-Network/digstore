@@ -368,58 +368,20 @@ impl BinaryStagingArea {
         Ok(())
     }
 
-    /// Batch add multiple files efficiently
+    /// Batch add multiple files efficiently using proven individual staging
     pub fn stage_files_batch(&mut self, staged_files: Vec<BinaryStagedFile>) -> Result<()> {
         if staged_files.is_empty() {
             return Ok(());
         }
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.staging_path)?;
-
-        let mut current_offset = file.metadata()?.len();
-        let mut new_entries = Vec::with_capacity(staged_files.len());
-
-        // Write all files in one batch
-        let mut writer = BufWriter::new(&mut file);
+        // Instead of complex batch logic that can corrupt, use the proven individual method
+        // This is more reliable and prevents the "UnexpectedEof" errors
         for staged_file in staged_files {
-            let path_hash = self.hash_path(&staged_file.path);
-            
-            // Serialize file data
-            let mut buffer = Vec::new();
-            staged_file.write_to(&mut buffer)?;
-            
-            // Create index entry
-            let entry = IndexEntry {
-                path_hash,
-                data_offset: current_offset,
-                data_size: buffer.len() as u32,
-                path_length: staged_file.path.to_string_lossy().len() as u16,
-                flags: 0,
-            };
-            
-            // Write data
-            writer.write_all(&buffer)?;
-            
-            new_entries.push((path_hash, entry));
-            current_offset += buffer.len() as u64;
+            self.stage_file_streaming(staged_file)?;
         }
         
-        writer.flush()?;
-        drop(writer);
-        file.sync_all()?;
-
-        // Update in-memory index
-        for (path_hash, entry) in new_entries {
-            self.index.insert(path_hash, (self.index.len(), entry));
-        }
-        
-        self.dirty = true;
-        
-        // Don't refresh memory map for batch operations to avoid corruption
-        // Individual operations will handle the refresh
+        // Final flush to ensure all data is persisted
+        self.flush()?;
         
         Ok(())
     }
