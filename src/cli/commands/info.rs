@@ -33,28 +33,16 @@ pub fn execute(json: bool, layer: Option<String>) -> Result<()> {
 }
 
 fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
-    // Load Layer 0 metadata
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
-    let content = std::fs::read(layer_zero_path)?;
+    // Load Layer 0 metadata from archive
+    let layer_zero_hash = crate::core::types::Hash::zero();
+    let content = store.archive.get_layer_data(&layer_zero_hash)?;
     let metadata: serde_json::Value = serde_json::from_slice(&content)?;
 
-    // Count layer files
-    let layer_count = std::fs::read_dir(&store.global_path())?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry.path().extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == "dig")
-                .unwrap_or(false)
-        })
-        .count();
+    // Count layers in archive
+    let layer_count = store.archive.list_layers().len();
 
-    // Calculate total size
-    let total_size = std::fs::read_dir(&store.global_path())?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| entry.metadata().ok())
-        .map(|metadata| metadata.len())
-        .sum::<u64>();
+    // Get archive file size
+    let total_size = store.archive.path().metadata()?.len();
 
     if json_output {
         let info = json!({

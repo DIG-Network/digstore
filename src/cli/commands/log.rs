@@ -43,14 +43,14 @@ pub fn execute(
     println!("{}", "Commit History".green().bold());
     println!("{}", "═".repeat(50).green());
 
-    // Load Layer 0 to get root history
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
-    if !layer_zero_path.exists() {
+    // Load Layer 0 from archive to get root history
+    let layer_zero_hash = crate::core::types::Hash::zero();
+    if !store.archive.has_layer(&layer_zero_hash) {
         println!("{}", "No commits found".yellow());
         return Ok(());
     }
 
-    let content = std::fs::read(layer_zero_path)?;
+    let content = store.archive.get_layer_data(&layer_zero_hash)?;
     let metadata: serde_json::Value = serde_json::from_slice(&content)?;
 
     if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
