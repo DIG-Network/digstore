@@ -145,11 +145,11 @@ fn test_has_file_changed_method() -> Result<()> {
 
 #[test]
 fn test_stage_diff_with_no_changes() -> Result<()> {
-    let mut test = SmartStagingTest::new()?;
-    std::env::set_current_dir(test.temp_dir.path())?;
+    let temp_dir = TempDir::new()?;
+    std::env::set_current_dir(temp_dir.path())?;
     
-    // Create repository with no staged files
-    let _store = Store::init(test.temp_dir.path())?;
+    // Create fresh repository with no staged files
+    let _store = Store::init(temp_dir.path())?;
     
     // Stage diff should handle empty staging gracefully
     let result = digstore_min::cli::commands::stage_diff::execute(false, false, false, 3, None);

@@ -569,14 +569,22 @@ impl Store {
         // First check if file is in staging
         if let Some(staged_file) = self.staging.get_staged_file(file_path)? {
             // For binary staging, we need to reconstruct the file from chunks
-            // This is a simplified version - in practice, chunks would be stored separately
-            let mut file_data = Vec::with_capacity(staged_file.size as usize);
-            for chunk in &staged_file.chunks {
-                // In real implementation, we'd read chunk data from storage
-                // For now, return empty data as placeholder
-                file_data.extend_from_slice(&vec![0u8; chunk.size as usize]);
+            // Read the actual file from disk since staging only stores metadata
+            let full_path = if let Some(project_path) = &self.project_path {
+                if staged_file.path.is_relative() {
+                    project_path.join(&staged_file.path)
+                } else {
+                    staged_file.path.clone()
+                }
+            } else {
+                staged_file.path.clone()
+            };
+            
+            if full_path.exists() {
+                return Ok(std::fs::read(full_path)?);
+            } else {
+                return Err(DigstoreError::file_not_found(full_path));
             }
-            return Ok(file_data);
         }
 
         // Get from committed layers
@@ -653,11 +661,26 @@ impl Store {
     }
 
     /// Remove a file from staging
-    /// Note: Binary staging doesn't support individual file removal efficiently
-    /// For now, this is not implemented - use clear_staging() to remove all files
-    pub fn unstage_file(&mut self, _path: &Path) -> Result<()> {
-        // TODO: Implement efficient individual file removal for binary staging
-        Err(DigstoreError::internal("Individual file unstaging not yet implemented for binary staging. Use clear_staging() to remove all files."))
+    /// Note: For binary staging, this rebuilds the staging file without the specified file
+    pub fn unstage_file(&mut self, path: &Path) -> Result<()> {
+        // Get all staged files
+        let mut all_staged = self.staging.get_all_staged_files()?;
+        
+        // Remove the specified file
+        let original_count = all_staged.len();
+        all_staged.retain(|f| f.path != path);
+        
+        if all_staged.len() == original_count {
+            return Err(DigstoreError::file_not_found(path.to_path_buf()));
+        }
+        
+        // Clear staging and re-add remaining files
+        self.staging.clear()?;
+        if !all_staged.is_empty() {
+            self.staging.stage_files_batch(all_staged)?;
+        }
+        
+        Ok(())
     }
 
     /// Clear all staged files

@@ -191,9 +191,40 @@ impl Proof {
 
     /// Verify the merkle proof path by reconstructing the root
     fn verify_merkle_proof_path(&self) -> Result<bool> {
-        // For simplified verification, just check that we have a valid proof structure
-        // In a production system, this would do full merkle path verification
-        Ok(!self.proof_path.is_empty() && self.root != Hash::zero())
+        if self.proof_path.is_empty() {
+            return Ok(false);
+        }
+        
+        // Start with the target hash (we need to extract this from the target)
+        let mut current_hash = match &self.target {
+            ProofTarget::File { path, .. } => {
+                // For file proofs, we'd need the file hash - simplified for now
+                self.root // Use root as placeholder
+            }
+            ProofTarget::ByteRange { path, .. } => {
+                // For byte range proofs, similar issue
+                self.root // Use root as placeholder  
+            }
+            ProofTarget::Layer { layer_id } => *layer_id,
+            ProofTarget::Chunk { chunk_hash } => *chunk_hash,
+        };
+        
+        // Walk up the proof path
+        for element in &self.proof_path {
+            current_hash = match element.position {
+                ProofPosition::Left => {
+                    // Sibling is on left, current is on right
+                    crate::core::hash::hash_pair(&element.hash, &current_hash)
+                }
+                ProofPosition::Right => {
+                    // Sibling is on right, current is on left
+                    crate::core::hash::hash_pair(&current_hash, &element.hash)
+                }
+            };
+        }
+        
+        // Check if we reconstructed the expected root
+        Ok(current_hash == self.root)
     }
 
     /// Convert a DigstoreProof to ProofElements
