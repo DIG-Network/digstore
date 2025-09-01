@@ -88,5 +88,9 @@ fn main() -> Result<()> {
         Commands::Staged { limit, page, detailed, json, all } => {
             cli::commands::staged::execute(limit, page, detailed, json, all)
         }
+
+        Commands::StageDiff { name_only, json, stat, unified, file } => {
+            cli::commands::stage_diff::execute(name_only, json, stat, unified, file)
+        }
     }
 }

@@ -41,10 +41,10 @@ fn show_store_info_human(store: &Store, args: &StoreInfoArgs) -> Result<()> {
     
     println!("{}: {}", "Store ID".bold(), store.store_id().to_hex().cyan());
     
-    // Load Layer 0 metadata
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
-    if layer_zero_path.exists() {
-        let content = std::fs::read(layer_zero_path)?;
+    // Load Layer 0 metadata from archive
+    let layer_zero_hash = crate::core::types::Hash::zero();
+    if store.archive.has_layer(&layer_zero_hash) {
+        let content = store.archive.get_layer_data(&layer_zero_hash)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
         
         if let Some(version) = metadata.get("digstore_version").and_then(|v| v.as_str()) {
@@ -133,10 +133,10 @@ fn show_store_info_json(store: &Store, args: &StoreInfoArgs) -> Result<()> {
         "current_root": store.current_root().map(|h| h.to_hex())
     });
     
-    // Load Layer 0 metadata
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
-    if layer_zero_path.exists() {
-        let content = std::fs::read(layer_zero_path)?;
+    // Load Layer 0 metadata from archive
+    let layer_zero_hash = crate::core::types::Hash::zero();
+    if store.archive.has_layer(&layer_zero_hash) {
+        let content = store.archive.get_layer_data(&layer_zero_hash)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
         
         store_info["digstore_version"] = metadata.get("digstore_version").cloned().unwrap_or(json!(null));

@@ -34,7 +34,7 @@ pub fn execute(
         progress.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner:.green} {msg}")
-                .unwrap()
+                .unwrap_or_else(|_| ProgressStyle::default_spinner())
         );
         progress.set_message("Processing files...");
         Some(progress)

@@ -88,47 +88,38 @@ fn analyze_storage(store: &Store) -> Result<StorageAnalysis> {
     let mut all_chunks = HashMap::new();
     let mut total_file_size = 0u64;
 
-    // Analyze all .layer files in store
-    for entry in std::fs::read_dir(store.global_path())? {
-        let entry = entry?;
-        let path = entry.path();
-        
-        if path.extension().and_then(|ext| ext.to_str()) == Some("dig") {
-            let file_size = entry.metadata()?.len();
-            total_size += file_size;
-            layer_files_size += file_size;
-            
-            // Skip Layer 0 for layer analysis
-            if !path.file_name().unwrap().to_str().unwrap().starts_with("0000000000000000000000000000000000000000000000000000000000000000") {
-                // Try to parse layer hash and load layer
-                let filename = path.file_stem().unwrap().to_str().unwrap();
-                if let Ok(layer_hash) = crate::core::types::Hash::from_hex(filename) {
-                    if let Ok(layer) = store.load_layer(layer_hash) {
-                        let layer_total_file_size: u64 = layer.files.iter().map(|f| f.size).sum();
-                        total_file_size += layer_total_file_size;
-                        
-                        // Collect chunks for deduplication analysis
-                        for chunk in &layer.chunks {
-                            *all_chunks.entry(chunk.hash).or_insert(0) += 1;
-                        }
-                        
-                        layer_breakdown.push(LayerInfo {
-                            hash: layer_hash.to_hex(),
-                            size: file_size,
-                            files_count: layer.files.len(),
-                            chunks_count: layer.chunks.len(),
-                            total_file_size: layer_total_file_size,
-                            layer_type: format!("{:?}", layer.header.get_layer_type().unwrap_or(crate::core::types::LayerType::Full)),
-                            generation: layer.header.layer_number,
-                        });
-                    }
+    // Analyze all layers in archive
+    let archive_layers = store.archive.list_layers();
+    total_size = store.archive.path().metadata()?.len();
+    layer_files_size = total_size;
+    
+    for (layer_hash, entry) in archive_layers {
+        // Skip Layer 0 for layer analysis
+        if layer_hash != crate::core::types::Hash::zero() {
+            if let Ok(layer) = store.load_layer(layer_hash) {
+                let layer_total_file_size: u64 = layer.files.iter().map(|f| f.size).sum();
+                total_file_size += layer_total_file_size;
+                
+                // Collect chunks for deduplication analysis
+                for chunk in &layer.chunks {
+                    *all_chunks.entry(chunk.hash).or_insert(0) += 1;
                 }
+                
+                layer_breakdown.push(LayerInfo {
+                    hash: layer_hash.to_hex(),
+                    size: entry.size,
+                    files_count: layer.files.len(),
+                    chunks_count: layer.chunks.len(),
+                    total_file_size: layer_total_file_size,
+                    layer_type: format!("{:?}", layer.header.get_layer_type().unwrap_or(crate::core::types::LayerType::Full)),
+                    generation: layer.header.layer_number,
+                });
             }
         }
     }
 
-    // Calculate staging size
-    let staging_path = store.global_path().join("staging.json");
+    // Calculate staging size (binary staging format)
+    let staging_path = store.archive.path().with_extension("staging.bin");
     let staging_size = if staging_path.exists() {
         std::fs::metadata(staging_path)?.len()
     } else {

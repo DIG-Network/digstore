@@ -241,7 +241,7 @@ impl Store {
         Ok(())
     }
 
-    /// Add a single file to staging (internal method)
+    /// Add a single file to staging (internal method) with smart change detection
     fn add_file_internal(&mut self, file_path: &Path) -> Result<()> {
         // Resolve relative to project directory if available
         let full_path = if let Some(project_path) = &self.project_path {
@@ -261,6 +261,19 @@ impl Store {
 
         if !full_path.is_file() {
             return Err(DigstoreError::invalid_file_path(full_path));
+        }
+
+        // Smart staging: Check if file has changed since last commit
+        if let Some(current_root) = self.current_root {
+            if let Ok(committed_hash) = self.get_committed_file_hash(file_path, current_root) {
+                // Compute current file hash to compare
+                let current_hash = crate::core::hash::hash_file(&full_path)?;
+                
+                if current_hash == committed_hash {
+                    // File hasn't changed - skip staging
+                    return Ok(());
+                }
+            }
         }
 
         // Get file size to determine processing strategy  
@@ -746,12 +759,77 @@ impl Store {
     pub fn current_root(&self) -> Option<RootHash> {
         self.current_root
     }
+
+    /// Get the hash of a file in a specific commit (for change detection)
+    pub fn get_committed_file_hash(&self, file_path: &Path, root_hash: RootHash) -> Result<Hash> {
+        // Load the layer for this commit
+        let layer = self.archive.get_layer(&root_hash)?;
+        
+        // Find the file in the layer
+        for file_entry in &layer.files {
+            if file_entry.path == file_path {
+                return Ok(file_entry.hash);
+            }
+        }
+        
+        // File not found in this commit
+        Err(DigstoreError::file_not_found(file_path.to_path_buf()))
+    }
+
+    /// Check if a file has changed since the last commit
+    pub fn has_file_changed(&self, file_path: &Path) -> Result<bool> {
+        // If no current root, file is new
+        let current_root = match self.current_root {
+            Some(root) => root,
+            None => return Ok(true), // No commits yet, so file is new
+        };
+
+        // Get current file hash
+        let full_path = if let Some(project_path) = &self.project_path {
+            if file_path.is_relative() {
+                project_path.join(file_path)
+            } else {
+                file_path.to_path_buf()
+            }
+        } else {
+            file_path.to_path_buf()
+        };
+
+        if !full_path.exists() {
+            return Err(DigstoreError::file_not_found(full_path));
+        }
+
+        let current_hash = crate::core::hash::hash_file(&full_path)?;
+
+        // Compare with committed hash
+        match self.get_committed_file_hash(file_path, current_root) {
+            Ok(committed_hash) => Ok(current_hash != committed_hash),
+            Err(_) => Ok(true), // File not in last commit, so it's new/changed
+        }
+    }
 }
 
 /// Generate a new random store ID
 pub fn generate_store_id() -> StoreId {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).expect("Failed to generate random bytes");
+    getrandom::getrandom(&mut bytes).unwrap_or_else(|_| {
+        // Fallback to system time + process ID if getrandom fails
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+        let pid = std::process::id() as u64;
+        let combined = timestamp.wrapping_mul(pid);
+        
+        for (i, chunk) in combined.to_le_bytes().iter().enumerate() {
+            if i < 32 {
+                bytes[i] = *chunk;
+            }
+        }
+        
+        // Fill remaining bytes with a simple pattern
+        for i in 8..32 {
+            bytes[i] = ((i * 7) % 256) as u8;
+        }
+    });
     Hash::from_bytes(bytes)
 }
 
@@ -760,16 +838,16 @@ fn get_global_store_path(store_id: &StoreId) -> Result<PathBuf> {
     let user_dirs = UserDirs::new()
         .ok_or(DigstoreError::HomeDirectoryNotFound)?;
     
-    let dig_dir = user_dirs.home_dir().join(".layer");
+    let dig_dir = user_dirs.home_dir().join(".dig");
     Ok(dig_dir.join(store_id.to_hex()))
 }
 
-/// Get the global .layer directory
+/// Get the global .dig directory
 pub fn get_global_dig_directory() -> Result<PathBuf> {
     let user_dirs = UserDirs::new()
         .ok_or(DigstoreError::HomeDirectoryNotFound)?;
     
-    Ok(user_dirs.home_dir().join(".layer"))
+    Ok(user_dirs.home_dir().join(".dig"))
 }
 
 /// Repository status information

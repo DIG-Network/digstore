@@ -91,14 +91,14 @@ pub fn execute(json: bool, detailed: bool, performance: bool, security: bool) ->
 }
 
 fn calculate_repository_stats(store: &Store) -> Result<RepositoryStats> {
-    // Load Layer 0 for history
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
+    // Load Layer 0 from archive for history
+    let layer_zero_hash = crate::core::types::Hash::zero();
     let mut total_commits = 0;
     let mut repository_age_days = 0;
     let mut current_generation = 0;
     
-    if layer_zero_path.exists() {
-        let content = std::fs::read(layer_zero_path)?;
+    if store.archive.has_layer(&layer_zero_hash) {
+        let content = store.archive.get_layer_data(&layer_zero_hash)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
         
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {

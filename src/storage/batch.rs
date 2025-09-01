@@ -414,7 +414,7 @@ impl OptimizedFileScanner {
         Self {
             ignore_patterns: vec![
                 ".git".to_string(),
-                ".layerstore".to_string(),
+                ".digstore".to_string(),
                 "node_modules".to_string(),
                 "target".to_string(),
                 ".DS_Store".to_string(),

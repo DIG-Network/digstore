@@ -89,10 +89,9 @@ pub fn execute(
 fn analyze_specific_layer(store: &Store, layer_hash: crate::core::types::Hash, args: &LayersArgs) -> Result<()> {
     let layer = store.load_layer(layer_hash)?;
     
-    // Get layer file size
-    let layer_path = store.global_path().join(format!("{}.layer", layer_hash.to_hex()));
-    let file_size = if layer_path.exists() {
-        std::fs::metadata(layer_path)?.len()
+    // Get layer file size from archive
+    let file_size = if let Some(entry) = store.archive.list_layers().iter().find(|(hash, _)| *hash == layer_hash) {
+        entry.1.size
     } else {
         0
     };

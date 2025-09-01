@@ -57,10 +57,10 @@ fn show_root_human(store: &Store, root_hash: crate::core::types::Hash, verbose: 
     
     println!("{}: {}", "Root Hash".bold(), root_hash.to_hex().cyan());
     
-    // Load Layer 0 to get generation info
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
-    if layer_zero_path.exists() {
-        let content = std::fs::read(layer_zero_path)?;
+    // Load Layer 0 from archive to get generation info
+    let layer_zero_hash = crate::core::types::Hash::zero();
+    if store.archive.has_layer(&layer_zero_hash) {
+        let content = store.archive.get_layer_data(&layer_zero_hash)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
         
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
@@ -82,12 +82,9 @@ fn show_root_human(store: &Store, root_hash: crate::core::types::Hash, verbose: 
         }
     }
     
-    // Get layer file information
-    let layer_path = store.global_path().join(format!("{}.layer", root_hash.to_hex()));
-    if layer_path.exists() {
-        if let Ok(metadata) = std::fs::metadata(&layer_path) {
-            println!("{}: {}", "Layer File Size".bold(), format_bytes(metadata.len()));
-        }
+    // Get layer file size from archive
+    if let Some(entry) = store.archive.list_layers().iter().find(|(hash, _)| *hash == root_hash) {
+        println!("{}: {}", "Layer File Size".bold(), format_bytes(entry.1.size));
         
         if verbose {
             // Load layer to get detailed information
@@ -109,10 +106,12 @@ fn show_root_human(store: &Store, root_hash: crate::core::types::Hash, verbose: 
                 }
             }
         }
+    } else {
+        println!("{}: {}", "Layer File Size".bold(), "Not found".yellow());
     }
     
     println!();
-    println!("{}: {}", "Layer File".bold(), format!("{}.layer", root_hash.to_hex()).dimmed());
+    println!("{}: {}", "Archive File".bold(), store.archive.path().display().to_string().dimmed());
 
     Ok(())
 }
@@ -124,13 +123,13 @@ fn show_root_json(store: &Store, root_hash: crate::core::types::Hash, verbose: b
         "timestamp": null,
         "layer_count": null,
         "layer_file_size": null,
-        "layer_file_path": format!("{}.layer", root_hash.to_hex())
+        "archive_file_path": store.archive.path().display().to_string()
     });
     
-    // Load Layer 0 for generation info
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
-    if layer_zero_path.exists() {
-        let content = std::fs::read(layer_zero_path)?;
+    // Load Layer 0 from archive for generation info
+    let layer_zero_hash = crate::core::types::Hash::zero();
+    if store.archive.has_layer(&layer_zero_hash) {
+        let content = store.archive.get_layer_data(&layer_zero_hash)?;
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
         
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
@@ -144,12 +143,9 @@ fn show_root_json(store: &Store, root_hash: crate::core::types::Hash, verbose: b
         }
     }
     
-    // Get layer file size
-    let layer_path = store.global_path().join(format!("{}.layer", root_hash.to_hex()));
-    if layer_path.exists() {
-        if let Ok(metadata) = std::fs::metadata(&layer_path) {
-            root_info["layer_file_size"] = json!(metadata.len());
-        }
+    // Get layer file size from archive
+    if let Some(entry) = store.archive.list_layers().iter().find(|(hash, _)| *hash == root_hash) {
+        root_info["layer_file_size"] = json!(entry.1.size);
         
         if verbose {
             // Load layer for detailed information

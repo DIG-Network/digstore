@@ -422,4 +422,22 @@ pub enum Commands {
         #[arg(short, long)]
         all: bool,
     },
+
+    /// Show differences between staged files and last commit
+    StageDiff {
+        /// Show only file names (no content diff)
+        #[arg(long)]
+        name_only: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Show statistics summary
+        #[arg(long)]
+        stat: bool,
+        /// Number of context lines for content diff
+        #[arg(short = 'U', long, default_value = "3")]
+        unified: usize,
+        /// Specific file to diff (default: all staged files)
+        file: Option<String>,
+    },
 }

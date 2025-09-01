@@ -101,12 +101,14 @@ pub fn execute(
                         }
                         
                         // Try to load the layer to get commit message
-                        if let Ok(layer) = store.load_layer(crate::core::types::Hash::from_hex(root_hash).unwrap()) {
-                            if let Some(message) = &layer.metadata.message {
-                                println!("Message: {}", message);
-                            }
-                            if let Some(author) = &layer.metadata.author {
-                                println!("Author: {}", author);
+                        if let Ok(root_hash_parsed) = crate::core::types::Hash::from_hex(root_hash) {
+                            if let Ok(layer) = store.load_layer(root_hash_parsed) {
+                                if let Some(message) = &layer.metadata.message {
+                                    println!("Message: {}", message);
+                                }
+                                if let Some(author) = &layer.metadata.author {
+                                    println!("Author: {}", author);
+                                }
                             }
                         }
                     }

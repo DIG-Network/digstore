@@ -75,7 +75,7 @@ impl Layer {
             "header": {
                 "magic": "DIGS",
                 "version": 1,
-                "layer_type": self.header.get_layer_type().unwrap(),
+                "layer_type": self.header.get_layer_type().unwrap_or(LayerType::Full),
                 "layer_number": self.header.layer_number,
                 "timestamp": self.header.timestamp,
                 "parent_hash": self.header.get_parent_hash().to_hex(),

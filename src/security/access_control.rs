@@ -126,10 +126,9 @@ pub trait StoreAccessControl {
 }
 
 impl StoreAccessControl for Store {
-    /// Check if commit exists (uses .layer extension)
+    /// Check if commit exists (uses archive format)
     fn has_commit(&self, root_hash: Hash) -> bool {
-        let layer_path = self.global_path().join(format!("{}.layer", root_hash.to_hex()));
-        layer_path.exists()
+        self.archive.has_layer(&root_hash)
     }
     
     /// Check if file exists at path in specific commit
