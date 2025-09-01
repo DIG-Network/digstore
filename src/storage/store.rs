@@ -693,7 +693,7 @@ impl Store {
         
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
             if let Some(latest_root) = root_history.last() {
-                if let Some(root_str) = latest_root.as_str() {
+                if let Some(root_str) = latest_root.get("root_hash").and_then(|v| v.as_str()) {
                     if let Ok(root_hash) = Hash::from_hex(root_str) {
                         return Ok(Some(root_hash));
                     }
