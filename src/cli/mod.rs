@@ -164,6 +164,10 @@ pub enum Commands {
         /// Force show progress even when piping
         #[arg(long)]
         progress: bool,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Display file contents from repository
@@ -186,6 +190,10 @@ pub enum Commands {
         /// Display specific byte range
         #[arg(long)]
         bytes: Option<String>,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
 

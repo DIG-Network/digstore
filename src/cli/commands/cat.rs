@@ -27,7 +27,7 @@ pub struct CatArgs {
     pub at: Option<String>,
 }
 
-pub fn execute(path: String, at: Option<String>, number: bool, no_pager: bool, bytes: Option<String>) -> Result<()> {
+pub fn execute(path: String, at: Option<String>, number: bool, no_pager: bool, bytes: Option<String>, json: bool) -> Result<()> {
     let args = CatArgs {
         target: path,
         number,
@@ -42,7 +42,7 @@ pub fn execute(path: String, at: Option<String>, number: bool, no_pager: bool, b
         Err(_) => {
             // If no local store, try to parse as URN
             if args.target.starts_with("urn:dig:") {
-                return handle_urn_cat(&args, &bytes);
+                return handle_urn_cat(&args, &bytes, json);
             } else {
                 return Err(DigstoreError::store_not_found(current_dir).into());
             }
@@ -51,14 +51,14 @@ pub fn execute(path: String, at: Option<String>, number: bool, no_pager: bool, b
 
     // Check if target is a URN
     if args.target.starts_with("urn:dig:") {
-        return handle_urn_cat(&args, &bytes);
+        return handle_urn_cat(&args, &bytes, json);
     }
 
     // Handle as file path
-    handle_path_cat(&store, &args, &bytes)
+    handle_path_cat(&store, &args, &bytes, json)
 }
 
-fn handle_path_cat(store: &Store, args: &CatArgs, bytes: &Option<String>) -> Result<()> {
+fn handle_path_cat(store: &Store, args: &CatArgs, bytes: &Option<String>, json: bool) -> Result<()> {
     let file_path = Path::new(&args.target);
     
     // Retrieve file content
@@ -81,10 +81,10 @@ fn handle_path_cat(store: &Store, args: &CatArgs, bytes: &Option<String>) -> Res
         content = content[start..end].to_vec();
     }
 
-    output_content(&content, args)
+    output_content(&content, args, json)
 }
 
-fn handle_urn_cat(args: &CatArgs, bytes: &Option<String>) -> Result<()> {
+fn handle_urn_cat(args: &CatArgs, bytes: &Option<String>, json: bool) -> Result<()> {
     let mut urn = parse_urn(&args.target)?;
     
     // Add byte range if specified
@@ -103,10 +103,26 @@ fn handle_urn_cat(args: &CatArgs, bytes: &Option<String>) -> Result<()> {
         })?;
     
     let content = urn.resolve(&store)?;
-    output_content(&content, args)
+    output_content(&content, args, json)
 }
 
-fn output_content(content: &[u8], args: &CatArgs) -> Result<()> {
+fn output_content(content: &[u8], args: &CatArgs, json: bool) -> Result<()> {
+    if json {
+        // JSON metadata to stderr, content to stdout
+        let metadata = serde_json::json!({
+            "action": "content_displayed",
+            "size": content.len(),
+            "line_numbers": args.number,
+            "pager_disabled": args.no_pager,
+            "at_root": args.at.as_ref()
+        });
+        eprintln!("{}", serde_json::to_string_pretty(&metadata)?);
+        
+        // Stream content to stdout
+        std::io::stdout().write_all(content)?;
+        return Ok(());
+    }
+    
     // Convert to string for processing
     let text = String::from_utf8_lossy(content);
     

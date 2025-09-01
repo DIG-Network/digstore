@@ -43,11 +43,11 @@ fn main() -> Result<()> {
         Commands::Status { short, porcelain, show_chunks, json } => {
             cli::commands::status::execute(short, porcelain, show_chunks, json)
         }
-        Commands::Get { path, output, verify, metadata, at, progress } => {
-            cli::commands::get::execute(path, output, verify, metadata, at, progress)
+        Commands::Get { path, output, verify, metadata, at, progress, json } => {
+            cli::commands::get::execute(path, output, verify, metadata, at, progress, json)
         }
-        Commands::Cat { path, at, number, no_pager, bytes } => {
-            cli::commands::cat::execute(path, at, number, no_pager, bytes)
+        Commands::Cat { path, at, number, no_pager, bytes, json } => {
+            cli::commands::cat::execute(path, at, number, no_pager, bytes, json)
         }
         Commands::Completion { shell } => {
             cli::commands::completion::execute(shell)

@@ -8,6 +8,7 @@ use crate::core::types::Hash;
 use std::path::PathBuf;
 use std::io::Write;
 use colored::Colorize;
+use base64;
 
 /// Execute the get command
 pub fn execute(
@@ -17,6 +18,7 @@ pub fn execute(
     metadata: bool,
     at: Option<String>,
     progress: bool,
+    json: bool,
 ) -> Result<()> {
     println!("{}", "Retrieving content...".bright_blue());
 
@@ -58,24 +60,53 @@ pub fn execute(
     }
 
     // Handle output
-    if let Some(output_path) = output {
-        // Write to file
-        std::fs::write(&output_path, &content)?;
-        println!("{} Content written to: {}", 
-            "✓".green().bold(), 
-            output_path.display().to_string().bright_white());
+    if let Some(output_path) = &output {
+        // Write to file (-o flag)
+        std::fs::write(output_path, &content)?;
         
-        if metadata {
-            println!("  {} Size: {} bytes", "→".cyan(), content.len());
-            if verify {
-                println!("  {} Content verified", "✓".green());
+        if json {
+            // JSON metadata about the file operation
+            let output_info = serde_json::json!({
+                "action": "file_written",
+                "path": path,
+                "output_file": output_path.display().to_string(),
+                "size": content.len(),
+                "verified": verify,
+                "at_root": at_root.map(|h| h.to_hex()),
+                "metadata_included": metadata
+            });
+            println!("{}", serde_json::to_string_pretty(&output_info)?);
+        } else {
+            println!("{} Content written to: {}", 
+                "✓".green().bold(), 
+                output_path.display().to_string().bright_white());
+            
+            if metadata {
+                println!("  {} Size: {} bytes", "→".cyan(), content.len());
+                if verify {
+                    println!("  {} Content verified", "✓".green());
+                }
             }
         }
     } else {
-        // Write to stdout
+        // Stream to stdout (default behavior)
+        if json {
+            // JSON metadata to stderr, content to stdout
+            let output_info = serde_json::json!({
+                "action": "content_streamed",
+                "path": path,
+                "size": content.len(),
+                "verified": verify,
+                "at_root": at_root.map(|h| h.to_hex()),
+                "metadata_included": metadata
+            });
+            eprintln!("{}", serde_json::to_string_pretty(&output_info)?);
+        }
+        
+        // Always stream content to stdout
         std::io::stdout().write_all(&content)?;
         
-        if metadata {
+        if metadata && !json {
             eprintln!("{} Size: {} bytes", "→".cyan(), content.len());
             if verify {
                 eprintln!("  {} Content verified", "✓".green());
