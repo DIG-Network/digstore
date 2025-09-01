@@ -88,6 +88,10 @@ pub enum Commands {
         /// Read file list from stdin
         #[arg(long)]
         from_stdin: bool,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Create a new commit
@@ -111,6 +115,10 @@ pub enum Commands {
         /// Open editor for message
         #[arg(short, long)]
         edit: bool,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show repository status
@@ -126,6 +134,10 @@ pub enum Commands {
         /// Display chunk statistics
         #[arg(long)]
         show_chunks: bool,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Retrieve files from the repository

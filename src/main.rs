@@ -33,14 +33,14 @@ fn main() -> Result<()> {
         Commands::Init { store_id, name, no_compression, chunk_size } => {
             cli::commands::init::execute(store_id, name, no_compression, chunk_size)
         }
-        Commands::Add { paths, recursive, all, force, dry_run, from_stdin } => {
-            cli::commands::add::execute(paths, recursive, all, force, dry_run, from_stdin, cli.yes)
+        Commands::Add { paths, recursive, all, force, dry_run, from_stdin, json } => {
+            cli::commands::add::execute(paths, recursive, all, force, dry_run, from_stdin, cli.yes, json)
         }
-        Commands::Commit { message, full_layer, author, date, edit } => {
-            cli::commands::commit::execute(message, full_layer, author, date, edit)
+        Commands::Commit { message, full_layer, author, date, edit, json } => {
+            cli::commands::commit::execute(message, full_layer, author, date, edit, json)
         }
-        Commands::Status { short, porcelain, show_chunks } => {
-            cli::commands::status::execute(short, porcelain, show_chunks)
+        Commands::Status { short, porcelain, show_chunks, json } => {
+            cli::commands::status::execute(short, porcelain, show_chunks, json)
         }
         Commands::Get { path, output, verify, metadata, at, progress } => {
             cli::commands::get::execute(path, output, verify, metadata, at, progress)

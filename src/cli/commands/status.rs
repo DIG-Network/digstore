@@ -11,6 +11,7 @@ pub fn execute(
     short: bool,
     porcelain: bool,
     show_chunks: bool,
+    json: bool,
 ) -> Result<()> {
     // Find repository root
     let repo_root = find_repository_root()?
@@ -19,6 +20,19 @@ pub fn execute(
     // Open the store
        let mut store = Store::open(&repo_root)?;
    let status = store.status();
+
+    if json {
+        // JSON output
+        let output = serde_json::json!({
+            "store_id": status.store_id.to_hex(),
+            "current_root": status.current_root.map(|h| h.to_hex()),
+            "staged_files": status.staged_files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+            "total_staged_size": status.total_staged_size,
+            "files_count": status.staged_files.len()
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
 
     if porcelain {
         // Machine-readable output

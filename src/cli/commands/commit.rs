@@ -12,6 +12,7 @@ pub fn execute(
     author: Option<String>,
     date: Option<String>,
     edit: bool,
+    json: bool,
 ) -> Result<()> {
     // Find repository root
     let repo_root = find_repository_root()?
@@ -55,15 +56,31 @@ pub fn execute(
     let commit_id = store.commit(&final_message)?;
 
     println!();
-    println!("{} Commit created", "✓".green());
-    println!("  {} Commit ID: {}", "→".cyan(), commit_id.to_hex().bright_cyan());
-    println!("  {} Message: {}", "→".cyan(), final_message.bright_white());
-    println!("  {} Files: {}", "→".cyan(), status.staged_files.len());
-    println!("  {} Size: {} bytes", "→".cyan(), status.total_staged_size);
+    if json {
+        // JSON output
+        let output = serde_json::json!({
+            "commit_id": commit_id.to_hex(),
+            "message": final_message,
+            "files": status.staged_files.len(),
+            "size": status.total_staged_size,
+            "archive_file": store.archive.path().display().to_string(),
+            "layer_id": commit_id.to_hex(),
+            "author": author,
+            "date": date,
+            "full_layer": full_layer
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("{} Commit created", "✓".green());
+        println!("  {} Commit ID: {}", "→".cyan(), commit_id.to_hex().bright_cyan());
+        println!("  {} Message: {}", "→".cyan(), final_message.bright_white());
+        println!("  {} Files: {}", "→".cyan(), status.staged_files.len());
+        println!("  {} Size: {} bytes", "→".cyan(), status.total_staged_size);
 
-    // Show archive file location (layers are stored inside the archive)
-    println!("  {} Archive file: {}", "→".cyan(), store.archive.path().display().to_string().dimmed());
-    println!("  {} Layer ID: {}", "→".cyan(), commit_id.to_hex().dimmed());
+        // Show archive file location (layers are stored inside the archive)
+        println!("  {} Archive file: {}", "→".cyan(), store.archive.path().display().to_string().dimmed());
+        println!("  {} Layer ID: {}", "→".cyan(), commit_id.to_hex().dimmed());
+    }
 
     Ok(())
 }

@@ -20,6 +20,7 @@ pub fn execute(
     dry_run: bool,
     from_stdin: bool,
     auto_yes: bool,
+    json: bool,
 ) -> Result<()> {
     // Find repository root
     let repo_root = find_repository_root()?
@@ -137,7 +138,16 @@ pub fn execute(
     }
 
     println!();
-    if dry_run {
+    if json {
+        // JSON output
+        let output = serde_json::json!({
+            "files_added": files_added,
+            "total_size": total_size,
+            "dry_run": dry_run,
+            "status": if dry_run { "would_add" } else { "added" }
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if dry_run {
         println!("{} {} files would be added ({} bytes)", 
             "Would add:".bright_green().bold(), 
             files_added, 
