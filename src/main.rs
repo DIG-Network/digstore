@@ -13,6 +13,7 @@ mod urn;
 mod cli;
 mod security;
 mod ignore;
+mod config;
 
 use cli::{Cli, Commands};
 
@@ -91,6 +92,10 @@ fn main() -> Result<()> {
 
         Commands::StageDiff { name_only, json, stat, unified, file } => {
             cli::commands::stage_diff::execute(name_only, json, stat, unified, file)
+        }
+
+        Commands::Config { key, value, list, unset, show_origin, edit, json } => {
+            cli::commands::config::execute(key, value, list, unset, show_origin, edit, json)
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::storage::Store;
+use crate::core::types::Hash;
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
@@ -126,26 +127,38 @@ fn list_all_layers(store: &Store, args: &LayersArgs) -> Result<()> {
     let archive_layers = store.archive.list_layers();
     
     for (layer_hash, entry) in archive_layers {
-        // Skip Layer 0 (metadata layer)
         if layer_hash == crate::core::types::Hash::zero() {
-            continue;
-        }
-        
-        // Load layer to get detailed information
-        if let Ok(layer) = store.load_layer(layer_hash) {
+            // Special handling for Layer 0 (metadata layer)
             layers.push(LayerInfo {
                 hash: layer_hash.to_hex(),
-                layer_type: format!("{:?}", layer.header.get_layer_type().unwrap_or(crate::core::types::LayerType::Full)),
-                generation: layer.header.layer_number,
-                parent_hash: layer.header.get_parent_hash().to_hex(),
-                timestamp: layer.header.timestamp as i64,
+                layer_type: "Metadata".to_string(),
+                generation: 0,
+                parent_hash: Hash::zero().to_hex(),
+                timestamp: chrono::Utc::now().timestamp(),
                 file_size: entry.size,
-                files_count: layer.files.len(),
-                chunks_count: layer.chunks.len(),
-                total_file_size: layer.files.iter().map(|f| f.size).sum(),
-                commit_message: layer.metadata.message.clone(),
-                author: layer.metadata.author.clone(),
+                files_count: 0,
+                chunks_count: 0,
+                total_file_size: 0,
+                commit_message: Some("Repository metadata".to_string()),
+                author: Some("System".to_string()),
             });
+        } else {
+            // Load regular layer to get detailed information
+            if let Ok(layer) = store.load_layer(layer_hash) {
+                layers.push(LayerInfo {
+                    hash: layer_hash.to_hex(),
+                    layer_type: format!("{:?}", layer.header.get_layer_type().unwrap_or(crate::core::types::LayerType::Full)),
+                    generation: layer.header.layer_number,
+                    parent_hash: layer.header.get_parent_hash().to_hex(),
+                    timestamp: layer.header.timestamp as i64,
+                    file_size: entry.size,
+                    files_count: layer.files.len(),
+                    chunks_count: layer.chunks.len(),
+                    total_file_size: layer.files.iter().map(|f| f.size).sum(),
+                    commit_message: layer.metadata.message.clone(),
+                    author: layer.metadata.author.clone(),
+                });
+            }
         }
     }
     

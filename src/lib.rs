@@ -39,6 +39,7 @@ pub mod urn;
 pub mod cli;
 pub mod security;
 pub mod ignore;
+pub mod config;
 
 // Re-export commonly used types
 pub use core::{

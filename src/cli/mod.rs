@@ -452,4 +452,27 @@ pub enum Commands {
         /// Specific file to diff (default: all staged files)
         file: Option<String>,
     },
+
+    /// Manage global configuration
+    Config {
+        /// Configuration key to get/set
+        key: Option<String>,
+        /// Configuration value to set
+        value: Option<String>,
+        /// List all configuration values
+        #[arg(short, long)]
+        list: bool,
+        /// Unset a configuration value
+        #[arg(long)]
+        unset: bool,
+        /// Show global configuration file location
+        #[arg(long)]
+        show_origin: bool,
+        /// Edit configuration file in editor
+        #[arg(short, long)]
+        edit: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }

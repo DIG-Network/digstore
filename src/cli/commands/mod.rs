@@ -20,6 +20,7 @@ pub mod layers;
 pub mod inspect;
 pub mod staged;
 pub mod stage_diff;
+pub mod config;
 
 // Common utilities for commands
 use anyhow::Result;

@@ -528,7 +528,21 @@ impl Store {
 
         // Set commit message in metadata
         layer.metadata.message = Some(message.to_string());
-        layer.metadata.author = Some(get_default_author());
+        
+        // Get author from global config
+        let mut global_config = crate::config::GlobalConfig::load()?;
+        global_config.ensure_user_configured()?;
+        
+        let author_name = global_config.get_author_name();
+        let author_email = global_config.get_author_email();
+        
+        let author_string = if let Some(email) = author_email {
+            format!("{} <{}>", author_name, email)
+        } else {
+            author_name
+        };
+        
+        layer.metadata.author = Some(author_string);
 
         // Compute layer ID
         let layer_id = layer.compute_layer_id()?;
@@ -952,9 +966,4 @@ impl Store {
     }
 }
 
-/// Get default author name
-fn get_default_author() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "Unknown".to_string())
-}
+
