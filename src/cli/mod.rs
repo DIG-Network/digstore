@@ -188,8 +188,308 @@ pub enum Commands {
         bytes: Option<String>,
     },
 
+
+
+    /// Generate shell completion scripts
+    Completion {
+        /// Shell to generate completion for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
+    /// Store management and information
+    Store {
+        #[command(subcommand)]
+        command: StoreCommands,
+    },
+
+    /// Proof system
+    Proof {
+        #[command(subcommand)]
+        command: ProofCommands,
+    },
+
+    /// Layer management
+    Layer {
+        #[command(subcommand)]
+        command: LayerCommands,
+    },
+
+    /// Staging area management
+    Staged {
+        #[command(subcommand)]
+        command: StagedCommands,
+    },
+
+    /// Manage global configuration
+    Config {
+        /// Configuration key to get/set
+        key: Option<String>,
+        /// Configuration value to set
+        value: Option<String>,
+        /// List all configuration values
+        #[arg(short, long)]
+        list: bool,
+        /// Unset a configuration value
+        #[arg(long)]
+        unset: bool,
+        /// Show global configuration file location
+        #[arg(long)]
+        show_origin: bool,
+        /// Edit configuration file in editor
+        #[arg(short, long)]
+        edit: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// Staging area subcommands
+#[derive(Subcommand)]
+pub enum StagedCommands {
+    /// List staged files
+    List {
+        /// Number of files to show per page
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Page number (1-based)
+        #[arg(short, long, default_value = "1")]
+        page: usize,
+        /// Show detailed information (file sizes, hashes)
+        #[arg(short, long)]
+        detailed: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Show all files (no pagination)
+        #[arg(short, long)]
+        all: bool,
+    },
+
+    /// Show differences between staged files and last commit
+    Diff {
+        /// Show only file names (no content diff)
+        #[arg(long)]
+        name_only: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Show statistics summary
+        #[arg(long)]
+        stat: bool,
+        /// Number of context lines for content diff
+        #[arg(short = 'U', long, default_value = "3")]
+        unified: usize,
+        /// Specific file to diff (default: all staged files)
+        file: Option<String>,
+    },
+
+    /// Clear all staged files
+    Clear {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Force clear without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+/// Layer management subcommands
+#[derive(Subcommand)]
+pub enum LayerCommands {
+    /// List all layers
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show size information
+        #[arg(long)]
+        size: bool,
+        
+        /// Show file details
+        #[arg(long)]
+        files: bool,
+        
+        /// Show chunk details
+        #[arg(long)]
+        chunks: bool,
+    },
+
+    /// Analyze specific layer
+    Analyze {
+        /// Layer hash to analyze
+        layer_hash: String,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show size information
+        #[arg(long)]
+        size: bool,
+        
+        /// Show file details
+        #[arg(long)]
+        files: bool,
+        
+        /// Show chunk details
+        #[arg(long)]
+        chunks: bool,
+    },
+
+    /// Deep layer inspection
+    Inspect {
+        /// Layer hash to inspect
+        layer_hash: String,
+        
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show layer header details
+        #[arg(long)]
+        header: bool,
+        
+        /// Show merkle tree information
+        #[arg(long)]
+        merkle: bool,
+        
+        /// Show chunk analysis
+        #[arg(long)]
+        chunks: bool,
+        
+        /// Verify layer integrity
+        #[arg(long)]
+        verify: bool,
+    },
+}
+
+/// Store management subcommands
+#[derive(Subcommand)]
+pub enum StoreCommands {
+    /// Show store information
+    Info {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show configuration details
+        #[arg(long)]
+        config: bool,
+        
+        /// Show all paths
+        #[arg(long)]
+        paths: bool,
+        
+        /// Show specific layer info
+        #[arg(long)]
+        layer: Option<String>,
+    },
+
+    /// Show commit history
+    Log {
+        /// Limit number of entries
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+        
+        /// One line per layer
+        #[arg(long)]
+        oneline: bool,
+        
+        /// Show ASCII graph
+        #[arg(long)]
+        graph: bool,
+        
+        /// Show layers since date
+        #[arg(long)]
+        since: Option<String>,
+    },
+
+    /// Show root history analysis
+    History {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Limit number of entries
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+        
+        /// Show statistics
+        #[arg(long)]
+        stats: bool,
+        
+        /// Show ASCII graph
+        #[arg(long)]
+        graph: bool,
+        
+        /// Show entries since date
+        #[arg(long)]
+        since: Option<String>,
+    },
+
+    /// Show current root information
+    Root {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show detailed information
+        #[arg(short, long)]
+        verbose: bool,
+        
+        /// Show only the root hash
+        #[arg(long)]
+        hash_only: bool,
+    },
+
+    /// Show storage analytics
+    Size {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show detailed breakdown
+        #[arg(long)]
+        breakdown: bool,
+        
+        /// Show deduplication metrics
+        #[arg(long)]
+        efficiency: bool,
+        
+        /// Show per-layer analysis
+        #[arg(long)]
+        layers: bool,
+    },
+
+    /// Show store statistics
+    Stats {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        
+        /// Show detailed statistics
+        #[arg(long)]
+        detailed: bool,
+        
+        /// Show performance metrics
+        #[arg(long)]
+        performance: bool,
+        
+        /// Show security metrics
+        #[arg(long)]
+        security: bool,
+    },
+}
+
+/// Proof system subcommands
+#[derive(Subcommand)]
+pub enum ProofCommands {
     /// Generate merkle proof for content
-    Prove {
+    Generate {
         /// Target to prove
         target: String,
         
@@ -234,245 +534,5 @@ pub enum Commands {
         /// Read proof from stdin
         #[arg(long)]
         from_stdin: bool,
-    },
-
-    /// Show commit history
-    Log {
-        /// Limit number of entries
-        #[arg(short = 'n', long)]
-        limit: Option<usize>,
-        
-        /// One line per layer
-        #[arg(long)]
-        oneline: bool,
-        
-        /// Show ASCII graph
-        #[arg(long)]
-        graph: bool,
-        
-        /// Show layers since date
-        #[arg(long)]
-        since: Option<String>,
-    },
-
-    /// Display repository information
-    Info {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        
-        /// Show specific layer info
-        #[arg(long)]
-        layer: Option<String>,
-    },
-
-    /// Generate shell completion scripts
-    Completion {
-        /// Shell to generate completion for
-        #[arg(value_enum)]
-        shell: clap_complete::Shell,
-    },
-
-    /// Show current root information
-    Root {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        
-        /// Show detailed information
-        #[arg(short, long)]
-        verbose: bool,
-        
-        /// Show only the root hash
-        #[arg(long)]
-        hash_only: bool,
-    },
-
-    /// Show root history analysis
-    History {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        
-        /// Limit number of entries
-        #[arg(short = 'n', long)]
-        limit: Option<usize>,
-        
-        /// Show statistics
-        #[arg(long)]
-        stats: bool,
-        
-        /// Show ASCII graph
-        #[arg(long)]
-        graph: bool,
-        
-        /// Show entries since date
-        #[arg(long)]
-        since: Option<String>,
-    },
-
-    /// Show storage analytics
-    Size {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        
-        /// Show detailed breakdown
-        #[arg(long)]
-        breakdown: bool,
-        
-        /// Show deduplication metrics
-        #[arg(long)]
-        efficiency: bool,
-        
-        /// Show per-layer analysis
-        #[arg(long)]
-        layers: bool,
-    },
-
-    /// Show comprehensive store information
-    StoreInfo {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        
-        /// Show configuration details
-        #[arg(long)]
-        config: bool,
-        
-        /// Show all paths
-        #[arg(long)]
-        paths: bool,
-    },
-
-    /// Show repository statistics
-    Stats {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        
-        /// Show detailed statistics
-        #[arg(long)]
-        detailed: bool,
-        
-        /// Show performance metrics
-        #[arg(long)]
-        performance: bool,
-        
-        /// Show security metrics
-        #[arg(long)]
-        security: bool,
-    },
-
-    /// Analyze layers
-    Layers {
-        /// Layer hash to analyze
-        layer_hash: Option<String>,
-        
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        
-        /// List all layers
-        #[arg(long)]
-        list: bool,
-        
-        /// Show size information
-        #[arg(long)]
-        size: bool,
-        
-        /// Show file details
-        #[arg(long)]
-        files: bool,
-        
-        /// Show chunk details
-        #[arg(long)]
-        chunks: bool,
-    },
-
-    /// Deep layer inspection
-    Inspect {
-        /// Layer hash to inspect
-        layer_hash: String,
-        
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        
-        /// Show layer header details
-        #[arg(long)]
-        header: bool,
-        
-        /// Show merkle tree information
-        #[arg(long)]
-        merkle: bool,
-        
-        /// Show chunk analysis
-        #[arg(long)]
-        chunks: bool,
-        
-        /// Verify layer integrity
-        #[arg(long)]
-        verify: bool,
-    },
-
-    /// List staged files
-    Staged {
-        /// Number of files to show per page
-        #[arg(short, long, default_value = "20")]
-        limit: usize,
-        /// Page number (1-based)
-        #[arg(short, long, default_value = "1")]
-        page: usize,
-        /// Show detailed information (file sizes, hashes)
-        #[arg(short, long)]
-        detailed: bool,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        /// Show all files (no pagination)
-        #[arg(short, long)]
-        all: bool,
-    },
-
-    /// Show differences between staged files and last commit
-    StageDiff {
-        /// Show only file names (no content diff)
-        #[arg(long)]
-        name_only: bool,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-        /// Show statistics summary
-        #[arg(long)]
-        stat: bool,
-        /// Number of context lines for content diff
-        #[arg(short = 'U', long, default_value = "3")]
-        unified: usize,
-        /// Specific file to diff (default: all staged files)
-        file: Option<String>,
-    },
-
-    /// Manage global configuration
-    Config {
-        /// Configuration key to get/set
-        key: Option<String>,
-        /// Configuration value to set
-        value: Option<String>,
-        /// List all configuration values
-        #[arg(short, long)]
-        list: bool,
-        /// Unset a configuration value
-        #[arg(long)]
-        unset: bool,
-        /// Show global configuration file location
-        #[arg(long)]
-        show_origin: bool,
-        /// Edit configuration file in editor
-        #[arg(short, long)]
-        edit: bool,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
     },
 }

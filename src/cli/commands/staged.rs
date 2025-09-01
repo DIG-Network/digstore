@@ -159,6 +159,76 @@ pub fn execute(
     Ok(())
 }
 
+/// Clear all staged files
+pub fn clear_staged(json: bool, force: bool) -> Result<()> {
+    use crate::cli::commands::find_repository_root;
+    
+    // Find repository root
+    let repo_root = find_repository_root()?
+        .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
+
+    // Open the store
+    let mut store = crate::storage::Store::open(&repo_root)?;
+
+    // Check if there are staged files
+    let staged_files = store.staging.get_all_staged_files()?;
+    
+    if staged_files.is_empty() {
+        if json {
+            println!("{}", serde_json::json!({
+                "message": "No files staged",
+                "cleared": 0
+            }));
+        } else {
+            println!("{}", "No files staged".yellow());
+        }
+        return Ok(());
+    }
+
+    let file_count = staged_files.len();
+
+    // Ask for confirmation unless force is used
+    if !force {
+        use dialoguer::Confirm;
+        use colored::Colorize;
+        
+        println!();
+        println!("{}", format!("About to clear {} staged files", file_count).yellow().bold());
+        println!();
+        
+        let confirmed = Confirm::new()
+            .with_prompt("Are you sure you want to clear all staged files?")
+            .default(false)
+            .interact()?;
+            
+        if !confirmed {
+            if json {
+                println!("{}", serde_json::json!({
+                    "message": "Operation cancelled",
+                    "cleared": 0
+                }));
+            } else {
+                println!("{}", "Operation cancelled".yellow());
+            }
+            return Ok(());
+        }
+    }
+
+    // Clear staging
+    store.clear_staging()?;
+
+    if json {
+        println!("{}", serde_json::json!({
+            "message": "Staging cleared",
+            "cleared": file_count
+        }));
+    } else {
+        println!("{} Cleared {} staged files", "✓".green().bold(), file_count);
+    }
+
+    Ok(())
+}
+
 /// Format file size in human-readable format
 fn format_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];

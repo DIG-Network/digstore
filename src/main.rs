@@ -15,7 +15,7 @@ mod security;
 mod ignore;
 mod config;
 
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, StagedCommands, LayerCommands, StoreCommands, ProofCommands};
 
 fn main() -> Result<()> {
     // Initialize logging
@@ -49,49 +49,74 @@ fn main() -> Result<()> {
         Commands::Cat { path, at, number, no_pager, bytes } => {
             cli::commands::cat::execute(path, at, number, no_pager, bytes)
         }
-        Commands::Prove { target, output, format, at, bytes, compact } => {
-            cli::commands::prove::execute(target, output, format, at, bytes, compact)
-        }
-        Commands::Verify { proof, target, root, verbose, from_stdin } => {
-            cli::commands::verify::execute(proof, target, root, verbose, from_stdin)
-        }
-        Commands::Log { limit, oneline, graph, since } => {
-            cli::commands::log::execute(limit, oneline, graph, since)
-        }
-        Commands::Info { json, layer } => {
-            cli::commands::info::execute(json, layer)
-        }
         Commands::Completion { shell } => {
             cli::commands::completion::execute(shell)
         }
-        Commands::Root { json, verbose, hash_only } => {
-            cli::commands::root::execute(json, verbose, hash_only)
-        }
-        Commands::History { json, limit, stats, graph, since } => {
-            cli::commands::history::execute(json, limit, stats, graph, since)
-        }
-        Commands::Size { json, breakdown, efficiency, layers } => {
-            cli::commands::size::execute(json, breakdown, efficiency, layers)
-        }
-        Commands::StoreInfo { json, config, paths } => {
-            cli::commands::store_info::execute(json, config, paths)
-        }
-        Commands::Stats { json, detailed, performance, security } => {
-            cli::commands::stats::execute(json, detailed, performance, security)
-        }
-        Commands::Layers { layer_hash, json, list, size, files, chunks } => {
-            cli::commands::layers::execute(layer_hash, json, list, size, files, chunks)
-        }
-        Commands::Inspect { layer_hash, json, header, merkle, chunks, verify } => {
-            cli::commands::inspect::execute(layer_hash, json, header, merkle, chunks, verify)
+
+        Commands::Staged { command } => {
+            match command {
+                StagedCommands::List { limit, page, detailed, json, all } => {
+                    cli::commands::staged::execute(limit, page, detailed, json, all)
+                }
+                StagedCommands::Diff { name_only, json, stat, unified, file } => {
+                    cli::commands::stage_diff::execute(name_only, json, stat, unified, file)
+                }
+                StagedCommands::Clear { json, force } => {
+                    cli::commands::staged::clear_staged(json, force)
+                }
+            }
         }
 
-        Commands::Staged { limit, page, detailed, json, all } => {
-            cli::commands::staged::execute(limit, page, detailed, json, all)
+        Commands::Layer { command } => {
+            match command {
+                LayerCommands::List { json, size, files, chunks } => {
+                    cli::commands::layers::execute(None, json, true, size, files, chunks)
+                }
+                LayerCommands::Analyze { layer_hash, json, size, files, chunks } => {
+                    cli::commands::layers::execute(Some(layer_hash), json, false, size, files, chunks)
+                }
+                LayerCommands::Inspect { layer_hash, json, header, merkle, chunks, verify } => {
+                    cli::commands::inspect::execute(layer_hash, json, header, merkle, chunks, verify)
+                }
+            }
         }
 
-        Commands::StageDiff { name_only, json, stat, unified, file } => {
-            cli::commands::stage_diff::execute(name_only, json, stat, unified, file)
+        Commands::Store { command } => {
+            match command {
+                StoreCommands::Info { json, config, paths, layer } => {
+                    if layer.is_some() {
+                        cli::commands::info::execute(json, layer)
+                    } else {
+                        cli::commands::store_info::execute(json, config, paths)
+                    }
+                }
+                StoreCommands::Log { limit, oneline, graph, since } => {
+                    cli::commands::log::execute(limit, oneline, graph, since)
+                }
+                StoreCommands::History { json, limit, stats, graph, since } => {
+                    cli::commands::history::execute(json, limit, stats, graph, since)
+                }
+                StoreCommands::Root { json, verbose, hash_only } => {
+                    cli::commands::root::execute(json, verbose, hash_only)
+                }
+                StoreCommands::Size { json, breakdown, efficiency, layers } => {
+                    cli::commands::size::execute(json, breakdown, efficiency, layers)
+                }
+                StoreCommands::Stats { json, detailed, performance, security } => {
+                    cli::commands::stats::execute(json, detailed, performance, security)
+                }
+            }
+        }
+
+        Commands::Proof { command } => {
+            match command {
+                ProofCommands::Generate { target, output, format, at, bytes, compact } => {
+                    cli::commands::prove::execute(target, output, format, at, bytes, compact)
+                }
+                ProofCommands::Verify { proof, target, root, verbose, from_stdin } => {
+                    cli::commands::verify::execute(proof, target, root, verbose, from_stdin)
+                }
+            }
         }
 
         Commands::Config { key, value, list, unset, show_origin, edit, json } => {
