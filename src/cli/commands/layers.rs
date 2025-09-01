@@ -123,36 +123,30 @@ fn analyze_specific_layer(store: &Store, layer_hash: crate::core::types::Hash, a
 fn list_all_layers(store: &Store, args: &LayersArgs) -> Result<()> {
     let mut layers = Vec::new();
     
-    // Scan for all .layer files
-    for entry in std::fs::read_dir(store.global_path())? {
-        let entry = entry?;
-        let path = entry.path();
+    // Get all layers from archive
+    let archive_layers = store.archive.list_layers();
+    
+    for (layer_hash, entry) in archive_layers {
+        // Skip Layer 0 (metadata layer)
+        if layer_hash == crate::core::types::Hash::zero() {
+            continue;
+        }
         
-        if path.extension().and_then(|ext| ext.to_str()) == Some("dig") {
-            let filename = path.file_stem().unwrap().to_str().unwrap();
-            
-            // Skip Layer 0
-            if filename != "0000000000000000000000000000000000000000000000000000000000000000" {
-                if let Ok(layer_hash) = crate::core::types::Hash::from_hex(filename) {
-                    if let Ok(layer) = store.load_layer(layer_hash) {
-                        let file_size = entry.metadata()?.len();
-                        
-                        layers.push(LayerInfo {
-                            hash: layer_hash.to_hex(),
-                            layer_type: format!("{:?}", layer.header.get_layer_type().unwrap_or(crate::core::types::LayerType::Full)),
-                            generation: layer.header.layer_number,
-                            parent_hash: layer.header.get_parent_hash().to_hex(),
-                            timestamp: layer.header.timestamp as i64,
-                            file_size,
-                            files_count: layer.files.len(),
-                            chunks_count: layer.chunks.len(),
-                            total_file_size: layer.files.iter().map(|f| f.size).sum(),
-                            commit_message: layer.metadata.message.clone(),
-                            author: layer.metadata.author.clone(),
-                        });
-                    }
-                }
-            }
+        // Load layer to get detailed information
+        if let Ok(layer) = store.load_layer(layer_hash) {
+            layers.push(LayerInfo {
+                hash: layer_hash.to_hex(),
+                layer_type: format!("{:?}", layer.header.get_layer_type().unwrap_or(crate::core::types::LayerType::Full)),
+                generation: layer.header.layer_number,
+                parent_hash: layer.header.get_parent_hash().to_hex(),
+                timestamp: layer.header.timestamp as i64,
+                file_size: entry.size,
+                files_count: layer.files.len(),
+                chunks_count: layer.chunks.len(),
+                total_file_size: layer.files.iter().map(|f| f.size).sum(),
+                commit_message: layer.metadata.message.clone(),
+                author: layer.metadata.author.clone(),
+            });
         }
     }
     

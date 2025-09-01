@@ -171,14 +171,38 @@ fn show_layer_info(store: &Store, layer_hash: &str, json_output: bool) -> Result
 }
 
 fn format_timestamp(timestamp: i64) -> String {
+    if timestamp <= 0 {
+        return "Not set".to_string();
+    }
+    
     use std::time::{UNIX_EPOCH, Duration};
-    use std::time::SystemTime;
     
-    let datetime = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
-    let system_time = SystemTime::from(datetime);
-    
-    // Simple formatting - in a real implementation you might use chrono
-    format!("{:?}", system_time).split_once('.').map(|(s, _)| s).unwrap_or("Unknown").to_string()
+    match UNIX_EPOCH.checked_add(Duration::from_secs(timestamp as u64)) {
+        Some(datetime) => {
+            // Format as readable date/time
+            match datetime.duration_since(UNIX_EPOCH) {
+                Ok(duration) => {
+                    let secs = duration.as_secs();
+                    let days = secs / 86400;
+                    let hours = (secs % 86400) / 3600;
+                    let minutes = (secs % 3600) / 60;
+                    let seconds = secs % 60;
+                    
+                    if days > 0 {
+                        format!("{} days ago", days)
+                    } else if hours > 0 {
+                        format!("{} hours ago", hours)
+                    } else if minutes > 0 {
+                        format!("{} minutes ago", minutes)
+                    } else {
+                        format!("{} seconds ago", seconds)
+                    }
+                }
+                Err(_) => format!("Timestamp: {}", timestamp)
+            }
+        }
+        None => format!("Invalid timestamp: {}", timestamp)
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {
