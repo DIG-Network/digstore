@@ -1,5 +1,6 @@
 //! CLI command implementations
 
+// Core commands (top-level)
 pub mod init;
 pub mod add;
 pub mod commit;
@@ -7,20 +8,13 @@ pub mod completion;
 pub mod status;
 pub mod get;
 pub mod cat;
-pub mod prove;
-pub mod verify;
-pub mod log;
-pub mod info;
-pub mod root;
-pub mod history;
-pub mod size;
-pub mod store_info;
-pub mod stats;
-pub mod layers;
-pub mod inspect;
-pub mod staged;
-pub mod stage_diff;
 pub mod config;
+
+// Command subtrees
+pub mod staged;
+pub mod layer;
+pub mod store;
+pub mod proof;
 
 // Common utilities for commands
 use anyhow::Result;

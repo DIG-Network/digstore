@@ -56,10 +56,10 @@ fn main() -> Result<()> {
         Commands::Staged { command } => {
             match command {
                 StagedCommands::List { limit, page, detailed, json, all } => {
-                    cli::commands::staged::execute(limit, page, detailed, json, all)
+                    cli::commands::staged::execute_list(limit, page, detailed, json, all)
                 }
                 StagedCommands::Diff { name_only, json, stat, unified, file } => {
-                    cli::commands::stage_diff::execute(name_only, json, stat, unified, file)
+                    cli::commands::staged::execute_diff(name_only, json, stat, unified, file)
                 }
                 StagedCommands::Clear { json, force } => {
                     cli::commands::staged::clear_staged(json, force)
@@ -70,13 +70,13 @@ fn main() -> Result<()> {
         Commands::Layer { command } => {
             match command {
                 LayerCommands::List { json, size, files, chunks } => {
-                    cli::commands::layers::execute(None, json, true, size, files, chunks)
+                    cli::commands::layer::execute_list(None, json, true, size, files, chunks)
                 }
                 LayerCommands::Analyze { layer_hash, json, size, files, chunks } => {
-                    cli::commands::layers::execute(Some(layer_hash), json, false, size, files, chunks)
+                    cli::commands::layer::execute_list(Some(layer_hash), json, false, size, files, chunks)
                 }
                 LayerCommands::Inspect { layer_hash, json, header, merkle, chunks, verify } => {
-                    cli::commands::inspect::execute(layer_hash, json, header, merkle, chunks, verify)
+                    cli::commands::layer::execute_inspect(layer_hash, json, header, merkle, chunks, verify)
                 }
             }
         }
@@ -85,25 +85,25 @@ fn main() -> Result<()> {
             match command {
                 StoreCommands::Info { json, config, paths, layer } => {
                     if layer.is_some() {
-                        cli::commands::info::execute(json, layer)
+                        cli::commands::store::execute_info(json, layer)
                     } else {
-                        cli::commands::store_info::execute(json, config, paths)
+                        cli::commands::store::execute_store_info(json, config, paths)
                     }
                 }
                 StoreCommands::Log { limit, oneline, graph, since } => {
-                    cli::commands::log::execute(limit, oneline, graph, since)
+                    cli::commands::store::execute_log(limit, oneline, graph, since)
                 }
                 StoreCommands::History { json, limit, stats, graph, since } => {
-                    cli::commands::history::execute(json, limit, stats, graph, since)
+                    cli::commands::store::execute_history(json, limit, stats, graph, since)
                 }
                 StoreCommands::Root { json, verbose, hash_only } => {
-                    cli::commands::root::execute(json, verbose, hash_only)
+                    cli::commands::store::execute_root(json, verbose, hash_only)
                 }
                 StoreCommands::Size { json, breakdown, efficiency, layers } => {
-                    cli::commands::size::execute(json, breakdown, efficiency, layers)
+                    cli::commands::store::execute_size(json, breakdown, efficiency, layers)
                 }
                 StoreCommands::Stats { json, detailed, performance, security } => {
-                    cli::commands::stats::execute(json, detailed, performance, security)
+                    cli::commands::store::execute_stats(json, detailed, performance, security)
                 }
             }
         }
@@ -111,10 +111,10 @@ fn main() -> Result<()> {
         Commands::Proof { command } => {
             match command {
                 ProofCommands::Generate { target, output, format, at, bytes, compact } => {
-                    cli::commands::prove::execute(target, output, format, at, bytes, compact)
+                    cli::commands::proof::execute_generate(target, output, format, at, bytes, compact)
                 }
                 ProofCommands::Verify { proof, target, root, verbose, from_stdin } => {
-                    cli::commands::verify::execute(proof, target, root, verbose, from_stdin)
+                    cli::commands::proof::execute_verify(proof, target, root, verbose, from_stdin)
                 }
             }
         }
