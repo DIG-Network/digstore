@@ -180,7 +180,7 @@ fn list_all_layers(store: &Store, args: &LayersArgs) -> Result<()> {
         }
         
         for layer in &layers {
-            println!("\n{} {}", "Layer".bold(), layer.hash[..16].cyan());
+            println!("\n{} {}", "Layer".bold(), layer.hash.cyan());
             println!("  Type: {}", layer.layer_type);
             println!("  Generation: {}", layer.generation);
             println!("  Size: {}", format_bytes(layer.file_size));
