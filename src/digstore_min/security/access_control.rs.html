@@ -70,7 +70,7 @@
 <a href=#70 id=70 data-nosnippet>70</a>                <span class="kw">if </span>urn.root_hash.is_none() {
 <a href=#71 id=71 data-nosnippet>71</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SecurityError::missing_urn_component(<span class="string">"root_hash"</span>));
 <a href=#72 id=72 data-nosnippet>72</a>                }
-<a href=#73 id=73 data-nosnippet>73</a>            }
+<a href=#73 id=73 data-nosnippet>73</a>            },
 <a href=#74 id=74 data-nosnippet>74</a>            <span class="string">"byte_range_access" </span>=&gt; {
 <a href=#75 id=75 data-nosnippet>75</a>                <span class="kw">if </span>urn.resource_path.is_none() {
 <a href=#76 id=76 data-nosnippet>76</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SecurityError::missing_urn_component(<span class="string">"resource_path"</span>));
@@ -81,16 +81,16 @@
 <a href=#81 id=81 data-nosnippet>81</a>                <span class="kw">if </span>urn.root_hash.is_none() {
 <a href=#82 id=82 data-nosnippet>82</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SecurityError::missing_urn_component(<span class="string">"root_hash"</span>));
 <a href=#83 id=83 data-nosnippet>83</a>                }
-<a href=#84 id=84 data-nosnippet>84</a>            }
+<a href=#84 id=84 data-nosnippet>84</a>            },
 <a href=#85 id=85 data-nosnippet>85</a>            <span class="string">"layer_access" </span>=&gt; {
 <a href=#86 id=86 data-nosnippet>86</a>                <span class="kw">if </span>urn.root_hash.is_none() {
 <a href=#87 id=87 data-nosnippet>87</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SecurityError::missing_urn_component(<span class="string">"root_hash"</span>));
 <a href=#88 id=88 data-nosnippet>88</a>                }
-<a href=#89 id=89 data-nosnippet>89</a>            }
+<a href=#89 id=89 data-nosnippet>89</a>            },
 <a href=#90 id=90 data-nosnippet>90</a>            <span class="kw">_ </span>=&gt; {
 <a href=#91 id=91 data-nosnippet>91</a>                <span class="comment">// Unknown operation - require at least store_id
 <a href=#92 id=92 data-nosnippet>92</a>                // store_id is always present in URN, so no additional validation needed
-<a href=#93 id=93 data-nosnippet>93</a>            </span>}
+<a href=#93 id=93 data-nosnippet>93</a>            </span>},
 <a href=#94 id=94 data-nosnippet>94</a>        }
 <a href=#95 id=95 data-nosnippet>95</a>
 <a href=#96 id=96 data-nosnippet>96</a>        <span class="prelude-val">Ok</span>(())
@@ -152,10 +152,10 @@
 <a href=#152 id=152 data-nosnippet>152</a>        <span class="comment">// Validate access
 <a href=#153 id=153 data-nosnippet>153</a>        </span><span class="kw">let </span>access_controller = AccessController::new(<span class="self">self</span>);
 <a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">match </span>access_controller.validate_access(urn)<span class="question-mark">? </span>{
-<a href=#155 id=155 data-nosnippet>155</a>            AccessPermission::Granted =&gt; {}
+<a href=#155 id=155 data-nosnippet>155</a>            AccessPermission::Granted =&gt; {},
 <a href=#156 id=156 data-nosnippet>156</a>            AccessPermission::Denied(reason) =&gt; {
 <a href=#157 id=157 data-nosnippet>157</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SecurityError::access_denied(reason));
-<a href=#158 id=158 data-nosnippet>158</a>            }
+<a href=#158 id=158 data-nosnippet>158</a>            },
 <a href=#159 id=159 data-nosnippet>159</a>        }
 <a href=#160 id=160 data-nosnippet>160</a>
 <a href=#161 id=161 data-nosnippet>161</a>        <span class="comment">// Validate URN completeness for file access
@@ -174,10 +174,10 @@
 <a href=#174 id=174 data-nosnippet>174</a>        <span class="comment">// Validate access
 <a href=#175 id=175 data-nosnippet>175</a>        </span><span class="kw">let </span>access_controller = AccessController::new(<span class="self">self</span>);
 <a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">match </span>access_controller.validate_access(urn)<span class="question-mark">? </span>{
-<a href=#177 id=177 data-nosnippet>177</a>            AccessPermission::Granted =&gt; {}
+<a href=#177 id=177 data-nosnippet>177</a>            AccessPermission::Granted =&gt; {},
 <a href=#178 id=178 data-nosnippet>178</a>            AccessPermission::Denied(reason) =&gt; {
 <a href=#179 id=179 data-nosnippet>179</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SecurityError::access_denied(reason));
-<a href=#180 id=180 data-nosnippet>180</a>            }
+<a href=#180 id=180 data-nosnippet>180</a>            },
 <a href=#181 id=181 data-nosnippet>181</a>        }
 <a href=#182 id=182 data-nosnippet>182</a>
 <a href=#183 id=183 data-nosnippet>183</a>        <span class="comment">// Validate URN completeness for byte range access

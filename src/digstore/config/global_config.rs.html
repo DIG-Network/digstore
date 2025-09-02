@@ -172,7 +172,7 @@
 <a href=#172 id=172 data-nosnippet>172</a>                        reason: <span class="string">"user.name must be a string"</span>.to_string(),
 <a href=#173 id=173 data-nosnippet>173</a>                    });
 <a href=#174 id=174 data-nosnippet>174</a>                }
-<a href=#175 id=175 data-nosnippet>175</a>            }
+<a href=#175 id=175 data-nosnippet>175</a>            },
 <a href=#176 id=176 data-nosnippet>176</a>            ConfigKey::UserEmail =&gt; {
 <a href=#177 id=177 data-nosnippet>177</a>                <span class="kw">if let </span>ConfigValue::String(email) = value {
 <a href=#178 id=178 data-nosnippet>178</a>                    <span class="self">self</span>.user.email = <span class="prelude-val">Some</span>(email);
@@ -181,7 +181,7 @@
 <a href=#181 id=181 data-nosnippet>181</a>                        reason: <span class="string">"user.email must be a string"</span>.to_string(),
 <a href=#182 id=182 data-nosnippet>182</a>                    });
 <a href=#183 id=183 data-nosnippet>183</a>                }
-<a href=#184 id=184 data-nosnippet>184</a>            }
+<a href=#184 id=184 data-nosnippet>184</a>            },
 <a href=#185 id=185 data-nosnippet>185</a>            ConfigKey::CoreEditor =&gt; {
 <a href=#186 id=186 data-nosnippet>186</a>                <span class="kw">if let </span>ConfigValue::String(editor) = value {
 <a href=#187 id=187 data-nosnippet>187</a>                    <span class="self">self</span>.core.editor = <span class="prelude-val">Some</span>(editor);
@@ -190,7 +190,7 @@
 <a href=#190 id=190 data-nosnippet>190</a>                        reason: <span class="string">"core.editor must be a string"</span>.to_string(),
 <a href=#191 id=191 data-nosnippet>191</a>                    });
 <a href=#192 id=192 data-nosnippet>192</a>                }
-<a href=#193 id=193 data-nosnippet>193</a>            }
+<a href=#193 id=193 data-nosnippet>193</a>            },
 <a href=#194 id=194 data-nosnippet>194</a>            ConfigKey::CoreChunkSize =&gt; {
 <a href=#195 id=195 data-nosnippet>195</a>                <span class="kw">if let </span>ConfigValue::Number(size) = value {
 <a href=#196 id=196 data-nosnippet>196</a>                    <span class="self">self</span>.core.chunk_size = <span class="prelude-val">Some</span>(size <span class="kw">as </span>u32);
@@ -199,7 +199,7 @@
 <a href=#199 id=199 data-nosnippet>199</a>                        reason: <span class="string">"core.chunk_size must be a number"</span>.to_string(),
 <a href=#200 id=200 data-nosnippet>200</a>                    });
 <a href=#201 id=201 data-nosnippet>201</a>                }
-<a href=#202 id=202 data-nosnippet>202</a>            }
+<a href=#202 id=202 data-nosnippet>202</a>            },
 <a href=#203 id=203 data-nosnippet>203</a>            ConfigKey::CoreCompression =&gt; {
 <a href=#204 id=204 data-nosnippet>204</a>                <span class="kw">if let </span>ConfigValue::String(compression) = value {
 <a href=#205 id=205 data-nosnippet>205</a>                    <span class="self">self</span>.core.compression = <span class="prelude-val">Some</span>(compression);
@@ -208,10 +208,10 @@
 <a href=#208 id=208 data-nosnippet>208</a>                        reason: <span class="string">"core.compression must be a string"</span>.to_string(),
 <a href=#209 id=209 data-nosnippet>209</a>                    });
 <a href=#210 id=210 data-nosnippet>210</a>                }
-<a href=#211 id=211 data-nosnippet>211</a>            }
+<a href=#211 id=211 data-nosnippet>211</a>            },
 <a href=#212 id=212 data-nosnippet>212</a>            ConfigKey::Custom(key_name) =&gt; {
 <a href=#213 id=213 data-nosnippet>213</a>                <span class="self">self</span>.custom.insert(key_name, value);
-<a href=#214 id=214 data-nosnippet>214</a>            }
+<a href=#214 id=214 data-nosnippet>214</a>            },
 <a href=#215 id=215 data-nosnippet>215</a>        }
 <a href=#216 id=216 data-nosnippet>216</a>        <span class="prelude-val">Ok</span>(())
 <a href=#217 id=217 data-nosnippet>217</a>    }
@@ -226,7 +226,7 @@
 <a href=#226 id=226 data-nosnippet>226</a>            ConfigKey::CoreCompression =&gt; <span class="self">self</span>.core.compression = <span class="prelude-val">None</span>,
 <a href=#227 id=227 data-nosnippet>227</a>            ConfigKey::Custom(key_name) =&gt; {
 <a href=#228 id=228 data-nosnippet>228</a>                <span class="self">self</span>.custom.remove(key_name);
-<a href=#229 id=229 data-nosnippet>229</a>            }
+<a href=#229 id=229 data-nosnippet>229</a>            },
 <a href=#230 id=230 data-nosnippet>230</a>        }
 <a href=#231 id=231 data-nosnippet>231</a>    }
 <a href=#232 id=232 data-nosnippet>232</a>

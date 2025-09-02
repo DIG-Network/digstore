@@ -63,7 +63,7 @@
 <a href=#63 id=63 data-nosnippet>63</a>            } <span class="kw">else </span>{
 <a href=#64 id=64 data-nosnippet>64</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(DigstoreError::store_not_found(current_dir).into());
 <a href=#65 id=65 data-nosnippet>65</a>            }
-<a href=#66 id=66 data-nosnippet>66</a>        }
+<a href=#66 id=66 data-nosnippet>66</a>        },
 <a href=#67 id=67 data-nosnippet>67</a>    };
 <a href=#68 id=68 data-nosnippet>68</a>
 <a href=#69 id=69 data-nosnippet>69</a>    <span class="comment">// Check if target is a URN
@@ -197,7 +197,7 @@
 <a href=#197 id=197 data-nosnippet>197</a>            </span>} <span class="kw">else </span>{
 <a href=#198 id=198 data-nosnippet>198</a>                proof.to_json()<span class="question-mark">?
 <a href=#199 id=199 data-nosnippet>199</a>            </span>}
-<a href=#200 id=200 data-nosnippet>200</a>        }
+<a href=#200 id=200 data-nosnippet>200</a>        },
 <a href=#201 id=201 data-nosnippet>201</a>        <span class="string">"text" </span>=&gt; format_proof_as_text(proof),
 <a href=#202 id=202 data-nosnippet>202</a>        <span class="string">"binary" </span>=&gt; {
 <a href=#203 id=203 data-nosnippet>203</a>            <span class="comment">// Serialize proof to binary format using bincode
@@ -206,10 +206,10 @@
 <a href=#206 id=206 data-nosnippet>206</a>                </span>.into_iter()
 <a href=#207 id=207 data-nosnippet>207</a>                .map(|b| b <span class="kw">as </span>char)
 <a href=#208 id=208 data-nosnippet>208</a>                .collect::&lt;String&gt;()
-<a href=#209 id=209 data-nosnippet>209</a>        }
+<a href=#209 id=209 data-nosnippet>209</a>        },
 <a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">_ </span>=&gt; {
 <a href=#211 id=211 data-nosnippet>211</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(DigstoreError::internal(<span class="string">"Invalid format. Use: json, text, binary"</span>).into());
-<a href=#212 id=212 data-nosnippet>212</a>        }
+<a href=#212 id=212 data-nosnippet>212</a>        },
 <a href=#213 id=213 data-nosnippet>213</a>    };
 <a href=#214 id=214 data-nosnippet>214</a>
 <a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(output_path) = <span class="kw-2">&amp;</span>args.output {

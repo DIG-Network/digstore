@@ -272,10 +272,10 @@
 <a href=#272 id=272 data-nosnippet>272</a>                            <span class="self">self</span>.report_progress(progress);
 <a href=#273 id=273 data-nosnippet>273</a>                        }
 <a href=#274 id=274 data-nosnippet>274</a>                    }
-<a href=#275 id=275 data-nosnippet>275</a>                }
+<a href=#275 id=275 data-nosnippet>275</a>                },
 <a href=#276 id=276 data-nosnippet>276</a>                <span class="prelude-val">Err</span>(e) =&gt; {
 <a href=#277 id=277 data-nosnippet>277</a>                    <span class="macro">eprintln!</span>(<span class="string">"Warning: Error accessing file: {}"</span>, e);
-<a href=#278 id=278 data-nosnippet>278</a>                }
+<a href=#278 id=278 data-nosnippet>278</a>                },
 <a href=#279 id=279 data-nosnippet>279</a>            }
 <a href=#280 id=280 data-nosnippet>280</a>        }
 <a href=#281 id=281 data-nosnippet>281</a>
@@ -298,14 +298,14 @@
 <a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">match </span><span class="self">self</span>.ignore_checker.is_ignored(<span class="kw-2">&amp;</span>file_path) {
 <a href=#299 id=299 data-nosnippet>299</a>                IgnoreResult::Included =&gt; {
 <a href=#300 id=300 data-nosnippet>300</a>                    filtered_files.push(file_path);
-<a href=#301 id=301 data-nosnippet>301</a>                }
+<a href=#301 id=301 data-nosnippet>301</a>                },
 <a href=#302 id=302 data-nosnippet>302</a>                IgnoreResult::Ignored(reason) =&gt; {
 <a href=#303 id=303 data-nosnippet>303</a>                    ignored_files.push((file_path, reason));
 <a href=#304 id=304 data-nosnippet>304</a>                    progress.files_ignored += <span class="number">1</span>;
-<a href=#305 id=305 data-nosnippet>305</a>                }
+<a href=#305 id=305 data-nosnippet>305</a>                },
 <a href=#306 id=306 data-nosnippet>306</a>                IgnoreResult::IncludedByNegation(_reason) =&gt; {
 <a href=#307 id=307 data-nosnippet>307</a>                    filtered_files.push(file_path);
-<a href=#308 id=308 data-nosnippet>308</a>                }
+<a href=#308 id=308 data-nosnippet>308</a>                },
 <a href=#309 id=309 data-nosnippet>309</a>            }
 <a href=#310 id=310 data-nosnippet>310</a>
 <a href=#311 id=311 data-nosnippet>311</a>            <span class="comment">// Report progress every 50 files during filtering

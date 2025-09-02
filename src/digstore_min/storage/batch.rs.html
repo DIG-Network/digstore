@@ -170,10 +170,10 @@
 <a href=#170 id=170 data-nosnippet>170</a>
 <a href=#171 id=171 data-nosnippet>171</a>                    file_entries.push(file_entry);
 <a href=#172 id=172 data-nosnippet>172</a>                    chunks.extend(file_chunks);
-<a href=#173 id=173 data-nosnippet>173</a>                }
+<a href=#173 id=173 data-nosnippet>173</a>                },
 <a href=#174 id=174 data-nosnippet>174</a>                <span class="prelude-val">Err</span>(e) =&gt; {
 <a href=#175 id=175 data-nosnippet>175</a>                    <span class="macro">eprintln!</span>(<span class="string">"Warning: Failed to process {}: {}"</span>, file_path.display(), e);
-<a href=#176 id=176 data-nosnippet>176</a>                }
+<a href=#176 id=176 data-nosnippet>176</a>                },
 <a href=#177 id=177 data-nosnippet>177</a>            }
 <a href=#178 id=178 data-nosnippet>178</a>        }
 <a href=#179 id=179 data-nosnippet>179</a>
@@ -300,7 +300,7 @@
 <a href=#300 id=300 data-nosnippet>300</a>
 <a href=#301 id=301 data-nosnippet>301</a>                    <span class="comment">// Still add to result (needed for file reconstruction)
 <a href=#302 id=302 data-nosnippet>302</a>                    </span>result_chunks.push(chunk);
-<a href=#303 id=303 data-nosnippet>303</a>                }
+<a href=#303 id=303 data-nosnippet>303</a>                },
 <a href=#304 id=304 data-nosnippet>304</a>                dashmap::mapref::entry::Entry::Vacant(entry) =&gt; {
 <a href=#305 id=305 data-nosnippet>305</a>                    <span class="comment">// New chunk
 <a href=#306 id=306 data-nosnippet>306</a>                    </span>entry.insert(ChunkInfo {
@@ -310,7 +310,7 @@
 <a href=#310 id=310 data-nosnippet>310</a>                    });
 <a href=#311 id=311 data-nosnippet>311</a>
 <a href=#312 id=312 data-nosnippet>312</a>                    result_chunks.push(chunk);
-<a href=#313 id=313 data-nosnippet>313</a>                }
+<a href=#313 id=313 data-nosnippet>313</a>                },
 <a href=#314 id=314 data-nosnippet>314</a>            }
 <a href=#315 id=315 data-nosnippet>315</a>        }
 <a href=#316 id=316 data-nosnippet>316</a>
