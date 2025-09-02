@@ -24,3 +24,9 @@ Thumbs.db
 .env
 .env.local
 target
+
+# Local test scripts
+test-windows-installer.ps1
+test-windows-installer.bat
+test-wix-only.ps1
+installer/
