@@ -1,0 +1,15 @@
+#!/bin/sh
+# Pre-commit hook to run rustfmt check
+
+# Run rustfmt check
+echo "Running rustfmt check..."
+cargo fmt -- --check
+
+if [ $? -ne 0 ]; then
+    echo "❌ Code formatting issues detected!"
+    echo "Please run 'cargo fmt' to fix formatting before committing."
+    exit 1
+fi
+
+echo "✅ Code formatting check passed!"
+exit 0
