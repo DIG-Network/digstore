@@ -91,7 +91,7 @@ jobs:
         light -ext WixUIExtension digstore.wixobj -o digstore-windows-x64.msi
 
     - name: Upload Windows Installer
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: digstore-windows-installer
         path: installer/windows/digstore-windows-x64.msi
@@ -166,7 +166,7 @@ jobs:
         hdiutil create -volname "Digstore Min" -srcfolder "Digstore Min.app" -ov -format UDZO digstore-macos.dmg
 
     - name: Upload macOS Installer
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: digstore-macos-installer
         path: installer/macos/digstore-macos.dmg
@@ -269,7 +269,7 @@ jobs:
         mv Digstore*.AppImage installer/linux/digstore-linux-x86_64.AppImage
 
     - name: Upload Linux Packages
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: digstore-linux-installers
         path: |
@@ -356,7 +356,7 @@ jobs:
         chmod +x installer/install.sh
 
     - name: Upload Install Script
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: universal-install-script
         path: installer/install.sh
