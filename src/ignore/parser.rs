@@ -57,7 +57,7 @@ impl DigignoreParser {
         for (line_num, line) in content.lines().enumerate() {
             match parse_line(line) {
                 Ok(Some(pattern)) => patterns.push(pattern),
-                Ok(None) => {} // Empty line or comment
+                Ok(None) => {}, // Empty line or comment
                 Err(e) => {
                     eprintln!(
                         "Warning: Invalid pattern on line {}: {} ({})",
@@ -65,7 +65,7 @@ impl DigignoreParser {
                         line,
                         e
                     );
-                }
+                },
             }
         }
 

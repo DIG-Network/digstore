@@ -205,7 +205,7 @@ fn test_proof_self_containment() -> Result<()> {
                 *file_hash, computed_hash,
                 "Proof contains correct file hash"
             );
-        }
+        },
         _ => panic!("Expected file proof"),
     }
 

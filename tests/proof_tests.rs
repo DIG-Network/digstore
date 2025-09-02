@@ -33,7 +33,7 @@ fn test_file_proof_generation() -> Result<()> {
         ProofTarget::File { path, at } => {
             assert_eq!(path, &Path::new("test.txt"));
             assert_eq!(at, &Some(commit_id));
-        }
+        },
         _ => panic!("Expected File target"),
     }
 
@@ -74,7 +74,7 @@ fn test_byte_range_proof_generation() -> Result<()> {
             assert_eq!(*start, 0);
             assert_eq!(*end, 50);
             assert_eq!(at, &Some(commit_id));
-        }
+        },
         _ => panic!("Expected ByteRange target"),
     }
 
@@ -109,7 +109,7 @@ fn test_layer_proof_generation() -> Result<()> {
             layer_id: target_layer,
         } => {
             assert_eq!(*target_layer, layer_id);
-        }
+        },
         _ => panic!("Expected Layer target"),
     }
 

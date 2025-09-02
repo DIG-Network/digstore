@@ -264,12 +264,12 @@ fn edit_config_file() -> Result<()> {
     match GlobalConfig::load() {
         Ok(_) => {
             println!("{} Configuration updated successfully", "✓".green());
-        }
+        },
         Err(e) => {
             eprintln!("{} Configuration file has errors: {}", "✗".red(), e);
             eprintln!("Please fix the configuration file manually or run 'digstore config --list' to reset");
             return Err(anyhow::anyhow!("Invalid configuration file"));
-        }
+        },
     }
 
     Ok(())
@@ -286,7 +286,7 @@ fn parse_config_value(value_str: &str) -> ConfigValue {
     match value_str.to_lowercase().as_str() {
         "true" | "yes" | "on" | "1" => return ConfigValue::Boolean(true),
         "false" | "no" | "off" | "0" => return ConfigValue::Boolean(false),
-        _ => {}
+        _ => {},
     }
 
     // Default to string

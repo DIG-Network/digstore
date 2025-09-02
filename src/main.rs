@@ -98,7 +98,7 @@ fn main() -> Result<()> {
             } => cli::commands::staged::execute_diff(name_only, json, stat, unified, file),
             StagedCommands::Clear { json, force } => {
                 cli::commands::staged::clear_staged(json, force)
-            }
+            },
         },
 
         Commands::Layer { command } => match command {
@@ -146,7 +146,7 @@ fn main() -> Result<()> {
                 } else {
                     cli::commands::store::execute_store_info(json, config, paths)
                 }
-            }
+            },
             StoreCommands::Log {
                 limit,
                 oneline,

@@ -329,10 +329,10 @@ fn test_unwrap_safety_in_critical_paths() -> Result<()> {
                 commit_result.is_ok() || commit_result.is_err(),
                 "Should not panic"
             );
-        }
+        },
         Err(_) => {
             // Failure case - should be handled gracefully without panic
-        }
+        },
     }
 
     // Test that operations with potentially problematic paths don't panic

@@ -172,7 +172,7 @@ impl GlobalConfig {
                         reason: "user.name must be a string".to_string(),
                     });
                 }
-            }
+            },
             ConfigKey::UserEmail => {
                 if let ConfigValue::String(email) = value {
                     self.user.email = Some(email);
@@ -181,7 +181,7 @@ impl GlobalConfig {
                         reason: "user.email must be a string".to_string(),
                     });
                 }
-            }
+            },
             ConfigKey::CoreEditor => {
                 if let ConfigValue::String(editor) = value {
                     self.core.editor = Some(editor);
@@ -190,7 +190,7 @@ impl GlobalConfig {
                         reason: "core.editor must be a string".to_string(),
                     });
                 }
-            }
+            },
             ConfigKey::CoreChunkSize => {
                 if let ConfigValue::Number(size) = value {
                     self.core.chunk_size = Some(size as u32);
@@ -199,7 +199,7 @@ impl GlobalConfig {
                         reason: "core.chunk_size must be a number".to_string(),
                     });
                 }
-            }
+            },
             ConfigKey::CoreCompression => {
                 if let ConfigValue::String(compression) = value {
                     self.core.compression = Some(compression);
@@ -208,10 +208,10 @@ impl GlobalConfig {
                         reason: "core.compression must be a string".to_string(),
                     });
                 }
-            }
+            },
             ConfigKey::Custom(key_name) => {
                 self.custom.insert(key_name, value);
-            }
+            },
         }
         Ok(())
     }
@@ -226,7 +226,7 @@ impl GlobalConfig {
             ConfigKey::CoreCompression => self.core.compression = None,
             ConfigKey::Custom(key_name) => {
                 self.custom.remove(key_name);
-            }
+            },
         }
     }
 

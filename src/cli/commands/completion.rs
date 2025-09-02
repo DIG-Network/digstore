@@ -30,7 +30,7 @@ pub fn execute(shell: Shell) -> Result<()> {
                 "digstore completion bash > ~/.local/share/bash-completion/completions/digstore"
                     .cyan()
             );
-        }
+        },
         Shell::Zsh => {
             println!("  Add the following to your ~/.zshrc:");
             println!("  {}", "eval \"$(digstore completion zsh)\"".cyan());
@@ -39,14 +39,14 @@ pub fn execute(shell: Shell) -> Result<()> {
                 "  {}",
                 "digstore completion zsh > ~/.local/share/zsh/site-functions/_digstore".cyan()
             );
-        }
+        },
         Shell::Fish => {
             println!("  Save the completion script:");
             println!(
                 "  {}",
                 "digstore completion fish > ~/.config/fish/completions/digstore.fish".cyan()
             );
-        }
+        },
         Shell::PowerShell => {
             println!("  Add the following to your PowerShell profile:");
             println!(
@@ -59,19 +59,19 @@ pub fn execute(shell: Shell) -> Result<()> {
                 "digstore completion powershell > $PROFILE\\..\\Modules\\digstore\\digstore.psm1"
                     .cyan()
             );
-        }
+        },
         Shell::Elvish => {
             println!("  Save the completion script:");
             println!(
                 "  {}",
                 "digstore completion elvish > ~/.config/elvish/completions/digstore.elv".cyan()
             );
-        }
+        },
         _ => {
             println!(
                 "  Please refer to your shell's documentation for installing completion scripts."
             );
-        }
+        },
     }
 
     println!("\n{}", "Features enabled by completion:".bold());

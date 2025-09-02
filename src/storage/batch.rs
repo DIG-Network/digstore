@@ -170,10 +170,10 @@ impl BatchProcessor {
 
                     file_entries.push(file_entry);
                     chunks.extend(file_chunks);
-                }
+                },
                 Err(e) => {
                     eprintln!("Warning: Failed to process {}: {}", file_path.display(), e);
-                }
+                },
             }
         }
 
@@ -300,7 +300,7 @@ impl BatchProcessor {
 
                     // Still add to result (needed for file reconstruction)
                     result_chunks.push(chunk);
-                }
+                },
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
                     // New chunk
                     entry.insert(ChunkInfo {
@@ -310,7 +310,7 @@ impl BatchProcessor {
                     });
 
                     result_chunks.push(chunk);
-                }
+                },
             }
         }
 

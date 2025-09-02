@@ -176,10 +176,10 @@ impl BinaryStagedFile {
                     .unwrap_or_default();
                 writer.write_u64::<LittleEndian>(duration.as_secs())?;
                 writer.write_u32::<LittleEndian>(duration.subsec_nanos())?;
-            }
+            },
             None => {
                 writer.write_u8(0)?; // no time
-            }
+            },
         }
 
         // Write chunks

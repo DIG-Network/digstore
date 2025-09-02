@@ -164,10 +164,10 @@ fn format_timestamp(timestamp: i64) -> String {
                     } else {
                         format!("{} seconds ago", seconds)
                     }
-                }
+                },
                 Err(_) => format!("Timestamp: {}", timestamp),
             }
-        }
+        },
         None => format!("Invalid timestamp: {}", timestamp),
     }
 }

@@ -53,7 +53,7 @@ pub fn execute(
             } else {
                 return Err(DigstoreError::store_not_found(current_dir).into());
             }
-        }
+        },
     };
 
     // Check if target is a URN
@@ -175,7 +175,7 @@ fn output_with_pager(content: &str, args: &CatArgs) -> Result<()> {
         Err(_) => {
             // Fallback to direct output if pager fails
             return output_direct(content, args);
-        }
+        },
     };
 
     if let Some(stdin) = pager.stdin.as_mut() {

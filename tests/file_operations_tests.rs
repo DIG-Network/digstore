@@ -63,7 +63,7 @@ fn test_add_nonexistent_file() -> Result<()> {
 
     // Should be a FileNotFound error
     match result.unwrap_err() {
-        DigstoreError::FileNotFound { .. } => {} // Expected
+        DigstoreError::FileNotFound { .. } => {}, // Expected
         e => panic!("Expected FileNotFound, got: {:?}", e),
     }
 

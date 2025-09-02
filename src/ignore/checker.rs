@@ -50,13 +50,13 @@ impl IgnoreChecker {
             match DigignoreParser::from_file(&global_digignore) {
                 Ok(parser) => {
                     self.parsers.insert(self.repo_root.clone(), parser);
-                }
+                },
                 Err(e) => {
                     eprintln!(
                         "Warning: Failed to parse .digignore in repository root: {}",
                         e
                     );
-                }
+                },
             }
         }
 
@@ -94,14 +94,14 @@ impl IgnoreChecker {
                         crate::ignore::parser::PatternType::Ignore => {
                             final_result = IgnoreResult::Ignored(pattern_info.0.clone());
                             last_ignore_reason = Some(pattern_info.0);
-                        }
+                        },
                         crate::ignore::parser::PatternType::Include => {
                             final_result = if last_ignore_reason.is_some() {
                                 IgnoreResult::IncludedByNegation(pattern_info.0)
                             } else {
                                 IgnoreResult::Included
                             };
-                        }
+                        },
                     }
                 }
             }
@@ -211,14 +211,14 @@ impl IgnoreChecker {
                 match DigignoreParser::from_file(path) {
                     Ok(parser) => {
                         self.parsers.insert(dir.to_path_buf(), parser);
-                    }
+                    },
                     Err(e) => {
                         eprintln!(
                             "Warning: Failed to parse .digignore at {}: {}",
                             path.display(),
                             e
                         );
-                    }
+                    },
                 }
             }
         }

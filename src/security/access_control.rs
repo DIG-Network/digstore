@@ -70,7 +70,7 @@ impl<'a> AccessController<'a> {
                 if urn.root_hash.is_none() {
                     return Err(SecurityError::missing_urn_component("root_hash"));
                 }
-            }
+            },
             "byte_range_access" => {
                 if urn.resource_path.is_none() {
                     return Err(SecurityError::missing_urn_component("resource_path"));
@@ -81,16 +81,16 @@ impl<'a> AccessController<'a> {
                 if urn.root_hash.is_none() {
                     return Err(SecurityError::missing_urn_component("root_hash"));
                 }
-            }
+            },
             "layer_access" => {
                 if urn.root_hash.is_none() {
                     return Err(SecurityError::missing_urn_component("root_hash"));
                 }
-            }
+            },
             _ => {
                 // Unknown operation - require at least store_id
                 // store_id is always present in URN, so no additional validation needed
-            }
+            },
         }
 
         Ok(())
@@ -152,10 +152,10 @@ impl StoreAccessControl for Store {
         // Validate access
         let access_controller = AccessController::new(self);
         match access_controller.validate_access(urn)? {
-            AccessPermission::Granted => {}
+            AccessPermission::Granted => {},
             AccessPermission::Denied(reason) => {
                 return Err(SecurityError::access_denied(reason));
-            }
+            },
         }
 
         // Validate URN completeness for file access
@@ -174,10 +174,10 @@ impl StoreAccessControl for Store {
         // Validate access
         let access_controller = AccessController::new(self);
         match access_controller.validate_access(urn)? {
-            AccessPermission::Granted => {}
+            AccessPermission::Granted => {},
             AccessPermission::Denied(reason) => {
                 return Err(SecurityError::access_denied(reason));
-            }
+            },
         }
 
         // Validate URN completeness for byte range access

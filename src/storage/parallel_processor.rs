@@ -290,7 +290,7 @@ impl ParallelFileProcessor {
                                     ))
                                 })?;
                             }
-                        }
+                        },
                         Err(e) => return Err(e),
                     }
 

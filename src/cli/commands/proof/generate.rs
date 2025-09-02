@@ -63,7 +63,7 @@ pub fn execute(
             } else {
                 return Err(DigstoreError::store_not_found(current_dir).into());
             }
-        }
+        },
     };
 
     // Check if target is a URN
@@ -197,7 +197,7 @@ fn output_proof(proof: &Proof, args: &ProveArgs) -> Result<()> {
             } else {
                 proof.to_json()?
             }
-        }
+        },
         "text" => format_proof_as_text(proof),
         "binary" => {
             // Serialize proof to binary format using bincode
@@ -206,10 +206,10 @@ fn output_proof(proof: &Proof, args: &ProveArgs) -> Result<()> {
                 .into_iter()
                 .map(|b| b as char)
                 .collect::<String>()
-        }
+        },
         _ => {
             return Err(DigstoreError::internal("Invalid format. Use: json, text, binary").into());
-        }
+        },
     };
 
     if let Some(output_path) = &args.output {

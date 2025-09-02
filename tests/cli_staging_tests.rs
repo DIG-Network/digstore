@@ -24,7 +24,7 @@ fn test_staged_command_with_no_files() -> Result<()> {
     match result {
         Ok(()) => {
             // Success case - command handled empty staging correctly
-        }
+        },
         Err(e) => {
             // Expected error if not in proper repository context
             assert!(
@@ -33,7 +33,7 @@ fn test_staged_command_with_no_files() -> Result<()> {
                 "Should get expected error message, got: {}",
                 e
             );
-        }
+        },
     }
 
     Ok(())

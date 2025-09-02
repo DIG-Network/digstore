@@ -167,7 +167,7 @@ fn calculate_single_file_diff(
                     committed_size,
                     content_diff: None, // Will be populated later if needed
                 })
-            }
+            },
             Err(_) => {
                 // File not in last commit - it's new
                 Ok(FileDiff {
@@ -179,7 +179,7 @@ fn calculate_single_file_diff(
                     committed_size: None,
                     content_diff: None,
                 })
-            }
+            },
         }
     } else {
         // No previous commit - all files are new

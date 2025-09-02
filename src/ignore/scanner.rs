@@ -272,10 +272,10 @@ impl FilteredFileScanner {
                             self.report_progress(progress);
                         }
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!("Warning: Error accessing file: {}", e);
-                }
+                },
             }
         }
 
@@ -298,14 +298,14 @@ impl FilteredFileScanner {
             match self.ignore_checker.is_ignored(&file_path) {
                 IgnoreResult::Included => {
                     filtered_files.push(file_path);
-                }
+                },
                 IgnoreResult::Ignored(reason) => {
                     ignored_files.push((file_path, reason));
                     progress.files_ignored += 1;
-                }
+                },
                 IgnoreResult::IncludedByNegation(_reason) => {
                     filtered_files.push(file_path);
-                }
+                },
             }
 
             // Report progress every 50 files during filtering

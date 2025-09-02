@@ -105,7 +105,7 @@ impl Urn {
                 }
                 // Make end inclusive by adding 1
                 (start, (end + 1).min(file_len))
-            }
+            },
             (Some(start), None) => {
                 if start >= file_len {
                     return Err(DigstoreError::InvalidByteRange {
@@ -113,12 +113,12 @@ impl Urn {
                     });
                 }
                 (start, file_len)
-            }
+            },
             (None, Some(count)) => {
                 // Last 'count' bytes
                 let start = file_len.saturating_sub(count);
                 (start, file_len)
-            }
+            },
             (None, None) => (0, file_len),
         };
 

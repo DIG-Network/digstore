@@ -216,11 +216,11 @@ impl Proof {
             ProofTarget::File { file_hash, .. } => {
                 // Use the actual file hash included in the proof
                 *file_hash
-            }
+            },
             ProofTarget::ByteRange { range_hash, .. } => {
                 // Use the actual range hash included in the proof
                 *range_hash
-            }
+            },
             ProofTarget::Layer { layer_id } => *layer_id,
             ProofTarget::Chunk { chunk_hash } => *chunk_hash,
         };
@@ -231,11 +231,11 @@ impl Proof {
                 ProofPosition::Left => {
                     // Sibling is on left, current is on right
                     crate::core::hash::hash_pair(&element.hash, &current_hash)
-                }
+                },
                 ProofPosition::Right => {
                     // Sibling is on right, current is on left
                     crate::core::hash::hash_pair(&current_hash, &element.hash)
-                }
+                },
             };
         }
 
@@ -305,11 +305,11 @@ impl Proof {
                 ProofPosition::Left => {
                     // Sibling is on left, current is on right
                     crate::core::hash::hash_pair(&element.hash, &current_hash)
-                }
+                },
                 ProofPosition::Right => {
                     // Sibling is on right, current is on left
                     crate::core::hash::hash_pair(&current_hash, &element.hash)
-                }
+                },
             };
         }
 

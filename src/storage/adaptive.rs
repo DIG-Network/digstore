@@ -120,10 +120,10 @@ impl AdaptiveProcessor {
         let result = match analysis.recommended_strategy {
             ProcessingStrategy::BatchParallel => {
                 self.process_batch_parallel(&files, progress, &analysis)
-            }
+            },
             ProcessingStrategy::StreamingLarge => {
                 self.process_streaming_large(&files, progress, &analysis)
-            }
+            },
             ProcessingStrategy::Hybrid => self.process_hybrid(&files, progress, &analysis),
             ProcessingStrategy::Individual => self.process_individual(&files, progress),
         }?;
@@ -480,10 +480,10 @@ impl WorkloadAnalyzer {
         let recommended_strategy = match workload_type {
             WorkloadType::ManySmallFiles if total_files >= self.batch_threshold => {
                 ProcessingStrategy::BatchParallel
-            }
+            },
             WorkloadType::FewLargeFiles | WorkloadType::SingleLargeFile => {
                 ProcessingStrategy::StreamingLarge
-            }
+            },
             WorkloadType::Mixed => ProcessingStrategy::Hybrid,
             _ => ProcessingStrategy::Individual,
         };
@@ -513,19 +513,19 @@ impl WorkloadAnalyzer {
             WorkloadType::ManySmallFiles => {
                 // Assume 100 files/second for small files
                 file_count as f64 / 100.0
-            }
+            },
             WorkloadType::FewLargeFiles => {
                 // Assume 500 MB/s for large files
                 total_size as f64 / (500.0 * 1024.0 * 1024.0)
-            }
+            },
             WorkloadType::Mixed => {
                 // Conservative estimate
                 file_count as f64 / 50.0
-            }
+            },
             WorkloadType::SingleLargeFile => {
                 // Optimistic for single large file
                 total_size as f64 / (800.0 * 1024.0 * 1024.0)
-            }
+            },
         };
 
         Duration::from_secs_f64(estimated_seconds.max(1.0))
@@ -578,13 +578,13 @@ impl PerformanceMonitor {
                 // Increase batch size if performance was good
                 self.current_config.batch_size =
                     (self.current_config.batch_size * 110 / 100).min(1000);
-            }
+            },
             ProcessingStrategy::StreamingLarge => {
                 // Adjust memory mapping threshold
                 self.current_config.mmap_threshold =
                     (self.current_config.mmap_threshold * 90 / 100).max(1024 * 1024);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
