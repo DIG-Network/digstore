@@ -50,11 +50,15 @@ jobs:
             <Feature Id="ProductFeature" Title="Digstore Min" Level="1">
               <ComponentGroupRef Id="ProductComponents" />
               <ComponentRef Id="Path" />
+              <ComponentRef Id="ProgramMenuDir" />
             </Feature>
             
             <Directory Id="TARGETDIR" Name="SourceDir">
               <Directory Id="ProgramFilesFolder">
                 <Directory Id="INSTALLFOLDER" Name="Digstore" />
+              </Directory>
+              <Directory Id="ProgramMenuFolder" Name="Programs">
+                <Directory Id="ProgramMenuDir" Name="Digstore Min" />
               </Directory>
             </Directory>
             
@@ -62,23 +66,19 @@ jobs:
               <Component Id="MainExecutable">
                 <File Id="digstore.exe" Source="..\..\target\release\digstore.exe" KeyPath="yes">
                   <Shortcut Id="startmenuDigstore" Directory="ProgramMenuDir" Name="Digstore Min" 
-                            WorkingDirectory="INSTALLDIR" Icon="digstore.exe" IconIndex="0" Advertise="yes" />
+                            WorkingDirectory="INSTALLFOLDER" Icon="digstore.exe" IconIndex="0" Advertise="yes" />
                 </File>
               </Component>
             </ComponentGroup>
             
-            <Component Id="Path" Guid="B3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D5" Directory="TARGETDIR">
+            <Component Id="Path" Guid="B3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D5" Directory="INSTALLFOLDER">
               <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
             </Component>
             
-            <Directory Id="ProgramMenuFolder" Name="Programs">
-              <Directory Id="ProgramMenuDir" Name="Digstore Min">
-                <Component Id="ProgramMenuDir" Guid="C3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D6">
-                  <RemoveFolder Id="ProgramMenuDir" On="uninstall" />
-                  <RegistryValue Root="HKCU" Key="Software\[Manufacturer]\[ProductName]" Type="string" Value="" KeyPath="yes" />
-                </Component>
-              </Directory>
-            </Directory>
+            <Component Id="ProgramMenuDir" Guid="C3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D6" Directory="ProgramMenuDir">
+              <RemoveFolder Id="ProgramMenuDir" On="uninstall" />
+              <RegistryValue Root="HKCU" Key="Software\[Manufacturer]\[ProductName]" Type="string" Value="" KeyPath="yes" />
+            </Component>
             
             <Icon Id="digstore.exe" SourceFile="..\..\target\release\digstore.exe" />
           </Product>
