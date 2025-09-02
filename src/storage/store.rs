@@ -546,6 +546,7 @@ impl Store {
                             // Check if this chunk belongs to this file
                             for chunk_ref in &file_entry.chunks {
                                 if chunk_ref.hash == chunk.hash {
+                                    // Ensure chunk has data when copying from previous layer
                                     layer.add_chunk(chunk.clone());
                                     break;
                                 }
@@ -588,8 +589,41 @@ impl Store {
 
             layer.add_file(file_entry);
 
-            for chunk in &staged_file.chunks {
-                layer.add_chunk(chunk.clone());
+            // Read actual chunk data from the file
+            let full_path = if let Some(project_path) = &self.project_path {
+                if staged_file.path.is_relative() {
+                    project_path.join(&staged_file.path)
+                } else {
+                    staged_file.path.clone()
+                }
+            } else {
+                staged_file.path.clone()
+            };
+
+            if full_path.exists() {
+                use std::fs::File;
+                use std::io::{Read, Seek, SeekFrom};
+                
+                let mut file = File::open(&full_path)?;
+                
+                for chunk in &staged_file.chunks {
+                    // Read chunk data from the file at the specified offset
+                    file.seek(SeekFrom::Start(chunk.offset))?;
+                    let mut chunk_data = vec![0u8; chunk.size as usize];
+                    file.read_exact(&mut chunk_data)?;
+                    
+                    // Create chunk with actual data
+                    let chunk_with_data = Chunk {
+                        hash: chunk.hash,
+                        offset: chunk.offset,
+                        size: chunk.size,
+                        data: chunk_data,
+                    };
+                    
+                    layer.add_chunk(chunk_with_data);
+                }
+            } else {
+                return Err(DigstoreError::file_not_found(full_path));
             }
         }
 
