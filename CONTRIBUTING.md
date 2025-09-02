@@ -4,7 +4,7 @@ Thank you for your interest in contributing to Digstore!
 
 ## Code Formatting
 
-We use `rustfmt` to maintain consistent code formatting across the project. 
+We use `rustfmt` to maintain consistent code formatting across the project. Our configuration uses only stable features to ensure compatibility with stable, beta, and nightly Rust channels.
 
 ### Before Submitting
 
