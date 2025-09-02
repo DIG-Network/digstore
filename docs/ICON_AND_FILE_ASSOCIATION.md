@@ -2,8 +2,7 @@
 
 ## Icon Configuration
 
-Digstore uses `DIG-Token-450.ico` as its application icon. This icon:
-- Features a purple gradient circular design with a white refresh/cycle symbol
+Digstore uses `DIG.ico` as its application icon. This icon:
 - Is embedded in the Windows executable during build
 - Is used for the application in Windows Explorer and Start Menu
 - Is associated with .dig files
@@ -14,7 +13,7 @@ The Windows installer configures .dig file association automatically:
 
 ### What it does:
 1. Associates `.dig` files with Digstore
-2. Sets the DIG-Token-450.ico as the icon for .dig files
+2. Sets the DIG.ico as the icon for .dig files
 3. Configures double-click to open .dig files with Digstore
 4. Adds "Open with Digstore" to right-click context menu
 
@@ -34,7 +33,7 @@ Where %1 is the path to the .dig file.
 ## Icon Requirements
 
 ### Windows (.ico)
-- Current icon: `DIG-Token-450.ico`
+- Current icon: `DIG.ico`
 - Should contain multiple sizes for best appearance
 - Common sizes: 16x16, 32x32, 48x48, 256x256
 
@@ -55,7 +54,7 @@ After installation:
 ## Troubleshooting
 
 ### Icon not showing on .exe:
-- Ensure `DIG-Token-450.ico` exists in project root
+- Ensure `DIG.ico` exists in project root
 - Check that `winres` is in `[build-dependencies]`
 - Rebuild with `cargo clean && cargo build --release`
 

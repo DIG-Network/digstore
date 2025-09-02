@@ -29,11 +29,11 @@ jobs:
 
     - name: Copy Icon File
       run: |
-        if (Test-Path "DIG-Token-450.ico") {
+        if (Test-Path "DIG.ico") {
           Write-Host "Icon file found in repository"
           # Icon is already in the right place, no need to copy
         } else {
-          Write-Host "Warning: DIG-Token-450.ico not found" -ForegroundColor Yellow
+          Write-Host "Warning: DIG.ico not found" -ForegroundColor Yellow
         }
 
     - name: Install WiX Toolset
@@ -102,17 +102,18 @@ jobs:
             </Component>
             
             <Icon Id="digstore.exe" SourceFile="..\..\target\release\digstore.exe" />
-            <Icon Id="digstore.ico" SourceFile="..\..\DIG-Token-450.ico" />
+            <Icon Id="digstore.ico" SourceFile="..\..\DIG.ico" />
             
             <!-- File Association for .dig files -->
             <DirectoryRef Id="INSTALLFOLDER">
               <Component Id="FileAssociation" Guid="D3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D7">
-                <ProgId Id="Digstore.DigFile" Description="DIG Archive File" Icon="digstore.ico" IconIndex="0">
-                  <Extension Id="dig" ContentType="application/x-dig">
-                    <Verb Id="open" Command="Open" TargetFile="[INSTALLFOLDER]digstore.exe" Argument='"%1"' />
-                  </Extension>
-                </ProgId>
-                <RegistryValue Root="HKCU" Key="Software\[Manufacturer]\[ProductName]" Name="FileAssociation" Type="integer" Value="1" KeyPath="yes" />
+                <RegistryValue Root="HKCR" Key=".dig" Type="string" Value="Digstore.DigFile" KeyPath="yes" />
+                <RegistryValue Root="HKCR" Key=".dig" Name="Content Type" Type="string" Value="application/x-dig" />
+                <RegistryValue Root="HKCR" Key="Digstore.DigFile" Type="string" Value="DIG Archive File" />
+                <RegistryValue Root="HKCR" Key="Digstore.DigFile\DefaultIcon" Type="string" Value="[INSTALLFOLDER]digstore.exe,0" />
+                <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell" Type="string" Value="open" />
+                <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell\open" Type="string" Value="&amp;Open" />
+                <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]digstore.exe&quot; &quot;%1&quot;" />
               </Component>
             </DirectoryRef>
           </Product>

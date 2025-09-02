@@ -7,7 +7,7 @@ fn main() {
         let mut res = winres::WindowsResource::new();
         
         // Set the icon - this embeds it in the .exe
-        res.set_icon("DIG-Token-450.ico");
+        res.set_icon("DIG.ico");
         
         // Set version info
         res.set("ProductName", "Digstore");

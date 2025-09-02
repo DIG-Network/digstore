@@ -14,7 +14,7 @@
 Thumbs.db
 
 # Include icon file
-!DIG-Token-450.ico
+!DIG.ico
 
 # Test artifacts
 *.tmp
