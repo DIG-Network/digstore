@@ -1,0 +1,400 @@
+name: Build Installers
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  PROJECT_NAME: digstore
+  PROJECT_DESC: "Content-addressable storage system with Git-like semantics"
+  PROJECT_AUTH: "Digstore Contributors"
+  PROJECT_HOMEPAGE: "https://github.com/${{ github.repository }}"
+
+jobs:
+  build-windows-installer:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Release Binary
+      run: cargo build --release
+
+    - name: Install WiX Toolset
+      run: |
+        # Download and install WiX v3.11.2
+        curl -L https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311-binaries.zip -o wix.zip
+        Expand-Archive -Path wix.zip -DestinationPath C:\wix
+        echo "C:\wix" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Create Windows Installer
+      run: |
+        mkdir -p installer\windows
+        
+        # Create WiX source file
+        @"
+        <?xml version="1.0" encoding="UTF-8"?>
+        <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+          <Product Id="*" Name="Digstore Min" Language="1033" Version="0.1.0" Manufacturer="$env:PROJECT_AUTH" UpgradeCode="A3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D4">
+            <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+            <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+            <MediaTemplate EmbedCab="yes" />
+            
+            <Feature Id="ProductFeature" Title="Digstore Min" Level="1">
+              <ComponentGroupRef Id="ProductComponents" />
+              <ComponentRef Id="Path" />
+            </Feature>
+            
+            <Directory Id="TARGETDIR" Name="SourceDir">
+              <Directory Id="ProgramFilesFolder">
+                <Directory Id="INSTALLFOLDER" Name="Digstore" />
+              </Directory>
+            </Directory>
+            
+            <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+              <Component Id="MainExecutable">
+                <File Id="digstore.exe" Source="..\..\target\release\digstore.exe" KeyPath="yes">
+                  <Shortcut Id="startmenuDigstore" Directory="ProgramMenuDir" Name="Digstore Min" 
+                            WorkingDirectory="INSTALLDIR" Icon="digstore.exe" IconIndex="0" Advertise="yes" />
+                </File>
+              </Component>
+            </ComponentGroup>
+            
+            <Component Id="Path" Guid="B3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D5" Directory="TARGETDIR">
+              <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+            </Component>
+            
+            <Directory Id="ProgramMenuFolder" Name="Programs">
+              <Directory Id="ProgramMenuDir" Name="Digstore Min">
+                <Component Id="ProgramMenuDir" Guid="C3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D6">
+                  <RemoveFolder Id="ProgramMenuDir" On="uninstall" />
+                  <RegistryValue Root="HKCU" Key="Software\[Manufacturer]\[ProductName]" Type="string" Value="" KeyPath="yes" />
+                </Component>
+              </Directory>
+            </Directory>
+            
+            <Icon Id="digstore.exe" SourceFile="..\..\target\release\digstore.exe" />
+          </Product>
+        </Wix>
+        "@ | Out-File -FilePath installer\windows\digstore.wxs -Encoding utf8
+        
+        # Build MSI installer
+        cd installer\windows
+        candle digstore.wxs
+        light -ext WixUIExtension digstore.wixobj -o digstore-windows-x64.msi
+
+    - name: Upload Windows Installer
+      uses: actions/upload-artifact@v3
+      with:
+        name: digstore-windows-installer
+        path: installer/windows/digstore-windows-x64.msi
+
+  build-macos-installer:
+    name: Build macOS Installer
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Universal Binary
+      run: |
+        # Add ARM64 target
+        rustup target add aarch64-apple-darwin
+        
+        # Build for both architectures
+        cargo build --release --target x86_64-apple-darwin
+        cargo build --release --target aarch64-apple-darwin
+        
+        # Create universal binary
+        mkdir -p target/release
+        lipo -create -output target/release/digstore \
+          target/x86_64-apple-darwin/release/digstore \
+          target/aarch64-apple-darwin/release/digstore
+
+    - name: Create macOS App Bundle
+      run: |
+        mkdir -p installer/macos
+        APP_NAME="Digstore Min.app"
+        APP_DIR="installer/macos/$APP_NAME"
+        
+        # Create app bundle structure
+        mkdir -p "$APP_DIR/Contents/MacOS"
+        mkdir -p "$APP_DIR/Contents/Resources"
+        
+        # Copy binary
+        cp target/release/digstore "$APP_DIR/Contents/MacOS/"
+        chmod +x "$APP_DIR/Contents/MacOS/digstore"
+        
+        # Create Info.plist
+        cat > "$APP_DIR/Contents/Info.plist" << EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleExecutable</key>
+          <string>digstore</string>
+          <key>CFBundleIdentifier</key>
+          <string>com.digstore.min</string>
+          <key>CFBundleName</key>
+          <string>Digstore Min</string>
+          <key>CFBundlePackageType</key>
+          <string>APPL</string>
+          <key>CFBundleShortVersionString</key>
+          <string>0.1.0</string>
+          <key>LSMinimumSystemVersion</key>
+          <string>10.12</string>
+          <key>NSHighResolutionCapable</key>
+          <true/>
+        </dict>
+        </plist>
+        EOF
+
+    - name: Create DMG Installer
+      run: |
+        cd installer/macos
+        
+        # Create a temporary disk image
+        hdiutil create -volname "Digstore Min" -srcfolder "Digstore Min.app" -ov -format UDZO digstore-macos.dmg
+
+    - name: Upload macOS Installer
+      uses: actions/upload-artifact@v3
+      with:
+        name: digstore-macos-installer
+        path: installer/macos/digstore-macos.dmg
+
+  build-linux-packages:
+    name: Build Linux Packages
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install Packaging Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y dpkg-dev rpm ruby ruby-dev rubygems build-essential
+        sudo gem install --no-document fpm
+
+    - name: Build Release Binary
+      run: cargo build --release
+
+    - name: Create DEB Package
+      run: |
+        mkdir -p installer/linux/deb
+        
+        # Create directory structure
+        mkdir -p installer/linux/deb/usr/bin
+        mkdir -p installer/linux/deb/usr/share/man/man1
+        mkdir -p installer/linux/deb/usr/share/bash-completion/completions
+        
+        # Copy binary
+        cp target/release/digstore installer/linux/deb/usr/bin/
+        chmod 755 installer/linux/deb/usr/bin/digstore
+        
+        # Generate man page
+        help2man target/release/digstore > installer/linux/deb/usr/share/man/man1/digstore.1 || true
+        
+        # Generate completion
+        target/release/digstore completion bash > installer/linux/deb/usr/share/bash-completion/completions/digstore || true
+        
+        # Create DEB package using fpm
+        fpm -s dir -t deb \
+          --name digstore \
+          --version 0.1.0 \
+          --architecture amd64 \
+          --depends "libc6 (>= 2.17)" \
+          --maintainer "${{ env.PROJECT_AUTH }}" \
+          --description "${{ env.PROJECT_DESC }}" \
+          --url "${{ env.PROJECT_HOMEPAGE }}" \
+          --license "MIT OR Apache-2.0" \
+          -C installer/linux/deb \
+          -p installer/linux/digstore_0.1.0_amd64.deb \
+          usr
+
+    - name: Create RPM Package
+      run: |
+        # Create RPM package using fpm
+        fpm -s dir -t rpm \
+          --name digstore \
+          --version 0.1.0 \
+          --architecture x86_64 \
+          --depends "glibc >= 2.17" \
+          --maintainer "${{ env.PROJECT_AUTH }}" \
+          --description "${{ env.PROJECT_DESC }}" \
+          --url "${{ env.PROJECT_HOMEPAGE }}" \
+          --license "MIT OR Apache-2.0" \
+          -C installer/linux/deb \
+          -p installer/linux/digstore-0.1.0-1.x86_64.rpm \
+          usr
+
+    - name: Create AppImage
+      run: |
+        # Download AppImage tools
+        wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+        chmod +x linuxdeploy-x86_64.AppImage
+        
+        # Create AppDir structure
+        mkdir -p installer/linux/AppDir/usr/bin
+        cp target/release/digstore installer/linux/AppDir/usr/bin/
+        
+        # Create desktop file
+        mkdir -p installer/linux/AppDir/usr/share/applications
+        cat > installer/linux/AppDir/usr/share/applications/digstore.desktop << EOF
+        [Desktop Entry]
+        Type=Application
+        Name=Digstore Min
+        Exec=digstore
+        Icon=digstore
+        Categories=Development;Utility;
+        Terminal=true
+        EOF
+        
+        # Create a simple icon (1x1 PNG as placeholder)
+        mkdir -p installer/linux/AppDir/usr/share/icons/hicolor/256x256/apps
+        echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" | base64 -d > installer/linux/AppDir/usr/share/icons/hicolor/256x256/apps/digstore.png
+        
+        # Build AppImage
+        ./linuxdeploy-x86_64.AppImage --appdir installer/linux/AppDir --output appimage
+        mv Digstore*.AppImage installer/linux/digstore-linux-x86_64.AppImage
+
+    - name: Upload Linux Packages
+      uses: actions/upload-artifact@v3
+      with:
+        name: digstore-linux-installers
+        path: |
+          installer/linux/digstore_0.1.0_amd64.deb
+          installer/linux/digstore-0.1.0-1.x86_64.rpm
+          installer/linux/digstore-linux-x86_64.AppImage
+
+  create-universal-install-script:
+    name: Create Universal Install Script
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Create Install Script
+      run: |
+        mkdir -p installer
+        cat > installer/install.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        # Digstore Min Universal Installer
+        VERSION="0.1.0"
+        REPO="${{ github.repository }}"
+        
+        echo "Digstore Min Installer v$VERSION"
+        echo "================================"
+        echo ""
+        
+        # Detect OS and architecture
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        
+        case $OS in
+          linux)
+            echo "Detected Linux system"
+            
+            # Check for package managers
+            if command -v apt-get >/dev/null; then
+              echo "Debian/Ubuntu system detected"
+              echo "Download the .deb package from:"
+              echo "https://github.com/$REPO/releases/latest/download/digstore_${VERSION}_amd64.deb"
+              echo ""
+              echo "Install with: sudo dpkg -i digstore_${VERSION}_amd64.deb"
+            elif command -v yum >/dev/null || command -v dnf >/dev/null; then
+              echo "RedHat/Fedora system detected"
+              echo "Download the .rpm package from:"
+              echo "https://github.com/$REPO/releases/latest/download/digstore-${VERSION}-1.x86_64.rpm"
+              echo ""
+              echo "Install with: sudo rpm -i digstore-${VERSION}-1.x86_64.rpm"
+            else
+              echo "Generic Linux system detected"
+              echo "Download the AppImage from:"
+              echo "https://github.com/$REPO/releases/latest/download/digstore-linux-x86_64.AppImage"
+              echo ""
+              echo "Make executable with: chmod +x digstore-linux-x86_64.AppImage"
+            fi
+            ;;
+          darwin)
+            echo "macOS system detected"
+            echo "Download the .dmg installer from:"
+            echo "https://github.com/$REPO/releases/latest/download/digstore-macos.dmg"
+            echo ""
+            echo "Open the DMG and drag Digstore Min to Applications"
+            ;;
+          mingw*|msys*|cygwin*)
+            echo "Windows system detected"
+            echo "Download the .msi installer from:"
+            echo "https://github.com/$REPO/releases/latest/download/digstore-windows-x64.msi"
+            echo ""
+            echo "Run the MSI installer to install Digstore Min"
+            ;;
+          *)
+            echo "Unsupported OS: $OS"
+            echo "Please build from source:"
+            echo "cargo install --git https://github.com/$REPO"
+            exit 1
+            ;;
+        esac
+        
+        echo ""
+        echo "After installation, run 'digstore --help' to get started!"
+        EOF
+        
+        chmod +x installer/install.sh
+
+    - name: Upload Install Script
+      uses: actions/upload-artifact@v3
+      with:
+        name: universal-install-script
+        path: installer/install.sh
+
+  summary:
+    name: Build Summary
+    needs: [build-windows-installer, build-macos-installer, build-linux-packages, create-universal-install-script]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Summary
+      run: |
+        echo "# Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 📦 Installers Built Successfully" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Platform | Installer Type | Artifact Name |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|----------------|---------------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Windows | MSI | digstore-windows-x64.msi |" >> $GITHUB_STEP_SUMMARY
+        echo "| macOS | DMG | digstore-macos.dmg |" >> $GITHUB_STEP_SUMMARY
+        echo "| Linux | DEB | digstore_0.1.0_amd64.deb |" >> $GITHUB_STEP_SUMMARY
+        echo "| Linux | RPM | digstore-0.1.0-1.x86_64.rpm |" >> $GITHUB_STEP_SUMMARY
+        echo "| Linux | AppImage | digstore-linux-x86_64.AppImage |" >> $GITHUB_STEP_SUMMARY
+        echo "| All | Script | install.sh |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 🚀 Installation Methods" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Windows" >> $GITHUB_STEP_SUMMARY
+        echo "Run the MSI installer which will:" >> $GITHUB_STEP_SUMMARY
+        echo "- Install to Program Files" >> $GITHUB_STEP_SUMMARY
+        echo "- Add to PATH automatically" >> $GITHUB_STEP_SUMMARY
+        echo "- Create Start Menu shortcuts" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### macOS" >> $GITHUB_STEP_SUMMARY
+        echo "1. Mount the DMG file" >> $GITHUB_STEP_SUMMARY
+        echo "2. Drag Digstore Min to Applications" >> $GITHUB_STEP_SUMMARY
+        echo "3. Add /Applications/Digstore Min.app/Contents/MacOS to PATH" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Linux" >> $GITHUB_STEP_SUMMARY
+        echo "- **Debian/Ubuntu**: \`sudo dpkg -i digstore_0.1.0_amd64.deb\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Fedora/RHEL**: \`sudo rpm -i digstore-0.1.0-1.x86_64.rpm\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Any Linux**: \`chmod +x digstore-linux-x86_64.AppImage && ./digstore-linux-x86_64.AppImage\`" >> $GITHUB_STEP_SUMMARY
