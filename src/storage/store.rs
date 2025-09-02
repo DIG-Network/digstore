@@ -1,13 +1,20 @@
 //! Store management for Digstore Min
 
-use crate::core::{types::*, error::*, digstore_file::DigstoreFile};
-use sha2::Digest;
-use crate::storage::{chunk::ChunkingEngine, layer::Layer, streaming::StreamingChunkingEngine, batch::BatchProcessor, binary_staging::{BinaryStagingArea, BinaryStagedFile}, dig_archive::{DigArchive, get_archive_path}};
-use colored::Colorize;
+use crate::core::{digstore_file::DigstoreFile, error::*, types::*};
 use crate::security::{AccessController, StoreAccessControl};
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use crate::storage::{
+    batch::BatchProcessor,
+    binary_staging::{BinaryStagedFile, BinaryStagingArea},
+    chunk::ChunkingEngine,
+    dig_archive::{get_archive_path, DigArchive},
+    layer::Layer,
+    streaming::StreamingChunkingEngine,
+};
+use colored::Colorize;
 use directories::UserDirs;
+use sha2::Digest;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// Main store structure
 pub struct Store {
@@ -53,14 +60,17 @@ impl Store {
         if digstore_path.exists() {
             // Ask for confirmation to overwrite
             use crate::cli::interactive;
-            
+
             if !interactive::ask_overwrite_digstore(&digstore_path, auto_yes)
-                .map_err(|e| DigstoreError::internal(format!("Interactive prompt failed: {}", e)))? {
+                .map_err(|e| DigstoreError::internal(format!("Interactive prompt failed: {}", e)))?
+            {
                 println!();
                 println!("{}", "Initialization cancelled".yellow());
-                return Err(DigstoreError::store_already_exists(project_path.to_path_buf()));
+                return Err(DigstoreError::store_already_exists(
+                    project_path.to_path_buf(),
+                ));
             }
-            
+
             // Remove existing .digstore file to proceed with new initialization
             std::fs::remove_file(&digstore_path)?;
             println!();
@@ -69,26 +79,27 @@ impl Store {
 
         // Generate new store ID
         let store_id = generate_store_id();
-        
+
         // Get archive path
         let archive_path = get_archive_path(&store_id)?;
-        
+
         // Create parent directory for .dig files
         if let Some(parent) = archive_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
         // Create .digstore file
-        let repository_name = project_path.file_name()
+        let repository_name = project_path
+            .file_name()
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
-        
+
         let digstore_file = DigstoreFile::new(store_id, repository_name);
         digstore_file.save(&digstore_path)?;
 
         // Create archive
         let archive = DigArchive::create(archive_path.clone())?;
-        
+
         // Initialize binary staging area (in same directory as archive)
         let staging_path = archive_path.with_extension("staging.bin");
         let mut staging = BinaryStagingArea::new(staging_path);
@@ -122,14 +133,17 @@ impl Store {
         if !digstore_path.exists() {
             // No .digstore file found - provide helpful guidance
             eprintln!("{}", "No repository found!".red().bold());
-            eprintln!("  Looking for: {}", digstore_path.display().to_string().yellow());
+            eprintln!(
+                "  Looking for: {}",
+                digstore_path.display().to_string().yellow()
+            );
             eprintln!();
             eprintln!("{}", "This directory is not a Digstore repository.".blue());
             eprintln!();
             eprintln!("{}", "To create a new repository:".green().bold());
             eprintln!("  {}", "digstore init --name \"my-project\"".cyan());
             eprintln!();
-            
+
             return Err(DigstoreError::store_not_found(project_path.to_path_buf()));
         }
 
@@ -145,19 +159,26 @@ impl Store {
         } else if old_global_path.exists() {
             // Migrate from old directory format
             println!("Migrating store from directory to archive format...");
-            let archive = DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
-            
+            let archive =
+                DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
+
             // Clean up old directory after successful migration
             std::fs::remove_dir_all(&old_global_path)?;
             println!("✓ Migration completed successfully");
-            
+
             archive
         } else {
             // Store archive not found - offer interactive recreation
             use crate::cli::interactive;
-            
-            match interactive::handle_missing_store(&archive_path, &store_id.to_hex(), project_path, auto_yes)
-                .map_err(|e| DigstoreError::internal(format!("Interactive prompt failed: {}", e))) {
+
+            match interactive::handle_missing_store(
+                &archive_path,
+                &store_id.to_hex(),
+                project_path,
+                auto_yes,
+            )
+            .map_err(|e| DigstoreError::internal(format!("Interactive prompt failed: {}", e)))
+            {
                 Ok(new_store) => return Ok(new_store),
                 Err(e) => return Err(e),
             }
@@ -190,26 +211,36 @@ impl Store {
     /// Open a store by ID directly (without project context)
     pub fn open_global(store_id: &StoreId) -> Result<Self> {
         let archive_path = get_archive_path(store_id)?;
-        
+
         // Check for migration from old directory format
         let old_global_path = get_global_store_path(store_id)?;
         let archive = if archive_path.exists() {
             DigArchive::open(archive_path.clone())?
         } else if old_global_path.exists() {
             // Migrate from old directory format
-            let archive = DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
+            let archive =
+                DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
             std::fs::remove_dir_all(&old_global_path)?;
             archive
         } else {
             // Store archive not found - for global access, just show error (no project context)
             eprintln!("{}", "Store not found!".red().bold());
-            eprintln!("  Archive file: {}", archive_path.display().to_string().yellow());
+            eprintln!(
+                "  Archive file: {}",
+                archive_path.display().to_string().yellow()
+            );
             eprintln!("  Store ID: {}", store_id.to_hex().cyan());
             eprintln!();
-            eprintln!("{}", "This store does not exist or has been deleted.".blue());
-            eprintln!("{}", "Use 'digstore init' in a project directory to create a new store.".green());
+            eprintln!(
+                "{}",
+                "This store does not exist or has been deleted.".blue()
+            );
+            eprintln!(
+                "{}",
+                "Use 'digstore init' in a project directory to create a new store.".green()
+            );
             eprintln!();
-            
+
             return Err(DigstoreError::store_not_found(archive_path.clone()));
         };
 
@@ -268,7 +299,7 @@ impl Store {
             if let Ok(committed_hash) = self.get_committed_file_hash(file_path, current_root) {
                 // Compute current file hash to compare
                 let current_hash = crate::core::hash::hash_file(&full_path)?;
-                
+
                 if current_hash == committed_hash {
                     // File hasn't changed - skip staging
                     return Ok(());
@@ -276,9 +307,9 @@ impl Store {
             }
         }
 
-        // Get file size to determine processing strategy  
+        // Get file size to determine processing strategy
         let file_size = std::fs::metadata(&full_path)?.len();
-        
+
         // Use streaming processing - NEVER load entire file into memory
         let chunks = if file_size > 10 * 1024 * 1024 {
             // Large files: use streaming chunking engine
@@ -287,21 +318,25 @@ impl Store {
             // Smaller files: use regular chunking but still streaming
             self.chunking_engine.chunk_file_streaming(&full_path)?
         };
-        
+
         // Create file entry from chunk metadata (no file data stored)
         let file_hash = Self::compute_file_hash_from_chunks(&chunks);
         let file_entry = crate::core::types::FileEntry {
             path: file_path.to_path_buf(),
             hash: file_hash,
             size: file_size,
-            chunks: chunks.iter().map(|c| crate::core::types::ChunkRef {
-                hash: c.hash,
-                offset: c.offset,
-                size: c.size,
-            }).collect(),
+            chunks: chunks
+                .iter()
+                .map(|c| crate::core::types::ChunkRef {
+                    hash: c.hash,
+                    offset: c.offset,
+                    size: c.size,
+                })
+                .collect(),
             metadata: FileMetadata {
                 mode: 0o644,
-                modified: std::fs::metadata(&full_path)?.modified()
+                modified: std::fs::metadata(&full_path)?
+                    .modified()
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs() as i64)
@@ -311,7 +346,7 @@ impl Store {
                 is_deleted: false,
             },
         };
-        
+
         // Convert to binary staged file format
         let binary_staged_file = BinaryStagedFile {
             path: file_path.to_path_buf(),
@@ -320,10 +355,10 @@ impl Store {
             chunks,
             modified_time: std::fs::metadata(&full_path)?.modified().ok(),
         };
-        
+
         // Add to binary staging area
         self.staging.stage_file_streaming(binary_staged_file)?;
-        
+
         Ok(())
     }
 
@@ -335,44 +370,65 @@ impl Store {
     }
 
     /// Add many files efficiently using batch processing
-    pub fn add_files_batch(&mut self, files: Vec<PathBuf>, progress: Option<&indicatif::ProgressBar>) -> Result<()> {
+    pub fn add_files_batch(
+        &mut self,
+        files: Vec<PathBuf>,
+        progress: Option<&indicatif::ProgressBar>,
+    ) -> Result<()> {
         if files.is_empty() {
             return Ok(());
         }
-        
+
         // Convert absolute paths to relative paths for storage, but keep absolute for processing
-        let project_root = self.project_path.as_ref().cloned().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        let files_with_relative: Vec<(PathBuf, PathBuf)> = files.into_iter().map(|abs_path| {
-            // Try to make path relative to project root
-            let relative_path = if let Ok(rel_path) = abs_path.strip_prefix(&project_root) {
-                rel_path.to_path_buf()
-            } else {
-                // Fallback: use the absolute path as-is for now
-                abs_path.clone()
-            };
-            (abs_path, relative_path)
-        }).collect();
-        
+        let project_root = self
+            .project_path
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let files_with_relative: Vec<(PathBuf, PathBuf)> = files
+            .into_iter()
+            .map(|abs_path| {
+                // Try to make path relative to project root
+                let relative_path = if let Ok(rel_path) = abs_path.strip_prefix(&project_root) {
+                    rel_path.to_path_buf()
+                } else {
+                    // Fallback: use the absolute path as-is for now
+                    abs_path.clone()
+                };
+                (abs_path, relative_path)
+            })
+            .collect();
+
         // Use batch processing for efficiency (with absolute paths)
-        let absolute_paths: Vec<PathBuf> = files_with_relative.iter().map(|(abs, _)| abs.clone()).collect();
-        let batch_result = self.batch_processor.process_files_batch(absolute_paths, progress)?;
-        
+        let absolute_paths: Vec<PathBuf> = files_with_relative
+            .iter()
+            .map(|(abs, _)| abs.clone())
+            .collect();
+        let batch_result = self
+            .batch_processor
+            .process_files_batch(absolute_paths, progress)?;
+
         // Store metrics before consuming batch_result
         let file_count = batch_result.file_entries.len();
         let metrics = batch_result.performance_metrics.clone();
         let dedup_stats = batch_result.deduplication_stats.clone();
-        
+
         // Convert to binary staged files and add in batch
         let mut binary_staged_files = Vec::with_capacity(batch_result.file_entries.len());
-        
-        for (i, (mut file_entry, file_chunks)) in batch_result.file_entries.into_iter().zip(batch_result.chunks.into_iter()).enumerate() {
+
+        for (i, (mut file_entry, file_chunks)) in batch_result
+            .file_entries
+            .into_iter()
+            .zip(batch_result.chunks.into_iter())
+            .enumerate()
+        {
             // Update file entry to use relative path
             if let Some((abs_path, relative_path)) = files_with_relative.get(i) {
                 file_entry.path = relative_path.clone();
-                
+
                 // Get file metadata
                 let modified_time = std::fs::metadata(abs_path)?.modified().ok();
-                
+
                 binary_staged_files.push(BinaryStagedFile {
                     path: relative_path.clone(),
                     hash: file_entry.hash,
@@ -382,22 +438,24 @@ impl Store {
                 });
             }
         }
-        
+
         // Add all files to binary staging in one batch operation
         self.staging.stage_files_batch(binary_staged_files)?;
-        
+
         // Print performance summary
-        println!("  • Processed {} files at {:.1} files/s ({:.1} MB/s)", 
-                 file_count,
-                 metrics.files_per_second,
-                 metrics.mb_per_second);
-        
+        println!(
+            "  • Processed {} files at {:.1} files/s ({:.1} MB/s)",
+            file_count, metrics.files_per_second, metrics.mb_per_second
+        );
+
         if dedup_stats.deduplication_ratio > 0.01 {
-            println!("  • Deduplication: {:.1}% ({} bytes saved)",
-                     dedup_stats.deduplication_ratio * 100.0,
-                     dedup_stats.bytes_saved);
+            println!(
+                "  • Deduplication: {:.1}% ({} bytes saved)",
+                dedup_stats.deduplication_ratio * 100.0,
+                dedup_stats.bytes_saved
+            );
         }
-        
+
         Ok(())
     }
 
@@ -413,7 +471,7 @@ impl Store {
 
         if recursive {
             use walkdir::WalkDir;
-            
+
             // Collect all files first (use absolute paths for batch processing)
             let mut files = Vec::new();
             for entry in WalkDir::new(dir_path)
@@ -425,7 +483,7 @@ impl Store {
                 // Store absolute path for batch processing
                 files.push(entry.path().to_path_buf());
             }
-            
+
             // Use batch processing if many files, otherwise process individually
             if files.len() > 10 {
                 println!("  • Using batch processing for {} files", files.len());
@@ -442,12 +500,16 @@ impl Store {
             for entry in std::fs::read_dir(dir_path)? {
                 let entry = entry?;
                 let path = entry.path();
-                
+
                 if path.is_file() {
-                    let relative_path = path.strip_prefix(
-                        self.project_path.as_ref().unwrap_or(&std::env::current_dir()?)
-                    ).unwrap_or(&path);
-                    
+                    let relative_path = path
+                        .strip_prefix(
+                            self.project_path
+                                .as_ref()
+                                .unwrap_or(&std::env::current_dir()?),
+                        )
+                        .unwrap_or(&path);
+
                     self.add_file_internal(relative_path)?;
                 }
             }
@@ -469,7 +531,7 @@ impl Store {
         let layer_number = self.get_next_layer_number()?;
         let parent_hash = self.current_root.unwrap_or(Hash::zero());
         let mut layer = Layer::new(LayerType::Full, layer_number, parent_hash);
-        
+
         // For MVP: Create cumulative layers that include all files from previous commits
         // First, add all files from the previous layer (if any)
         if let Some(current_root) = self.current_root {
@@ -478,7 +540,7 @@ impl Store {
                     // Only add if not being replaced by staged version
                     if !self.staging.is_staged(&file_entry.path) {
                         layer.add_file(file_entry.clone());
-                        
+
                         // Add chunks for this file
                         for chunk in &previous_layer.chunks {
                             // Check if this chunk belongs to this file
@@ -493,7 +555,7 @@ impl Store {
                 }
             }
         }
-        
+
         // Add all staged files and chunks to layer
         let staged_files = self.staging.get_all_staged_files()?;
         for staged_file in &staged_files {
@@ -502,14 +564,19 @@ impl Store {
                 path: staged_file.path.clone(),
                 hash: staged_file.hash,
                 size: staged_file.size,
-                chunks: staged_file.chunks.iter().map(|c| ChunkRef {
-                    hash: c.hash,
-                    offset: c.offset,
-                    size: c.size,
-                }).collect(),
+                chunks: staged_file
+                    .chunks
+                    .iter()
+                    .map(|c| ChunkRef {
+                        hash: c.hash,
+                        offset: c.offset,
+                        size: c.size,
+                    })
+                    .collect(),
                 metadata: FileMetadata {
                     mode: 0o644,
-                    modified: staged_file.modified_time
+                    modified: staged_file
+                        .modified_time
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0),
@@ -518,9 +585,9 @@ impl Store {
                     is_deleted: false,
                 },
             };
-            
+
             layer.add_file(file_entry);
-            
+
             for chunk in &staged_file.chunks {
                 layer.add_chunk(chunk.clone());
             }
@@ -528,20 +595,20 @@ impl Store {
 
         // Set commit message in metadata
         layer.metadata.message = Some(message.to_string());
-        
+
         // Get author from global config
         let mut global_config = crate::config::GlobalConfig::load()?;
         global_config.ensure_user_configured()?;
-        
+
         let author_name = global_config.get_author_name();
         let author_email = global_config.get_author_email();
-        
+
         let author_string = if let Some(email) = author_email {
             format!("{} <{}>", author_name, email)
         } else {
             author_name
         };
-        
+
         layer.metadata.author = Some(author_string);
 
         // Compute layer ID
@@ -549,10 +616,10 @@ impl Store {
         layer.metadata.layer_id = layer_id;
 
         // Layer will be stored inside the archive file (not as separate .layer file)
-        
+
         // Serialize layer to bytes
         let layer_data = layer.serialize_to_bytes()?;
-        
+
         // Add layer to archive
         self.archive.add_layer(layer_id, &layer_data)?;
 
@@ -565,7 +632,7 @@ impl Store {
         // Close memory maps before clearing (Windows file locking fix)
         self.staging.mmap = None;
         self.staging.mmap_mut = None;
-        
+
         // Clear binary staging
         self.staging.clear()?;
 
@@ -593,7 +660,7 @@ impl Store {
             } else {
                 staged_file.path.clone()
             };
-            
+
             if full_path.exists() {
                 return Ok(std::fs::read(full_path)?);
             } else {
@@ -608,7 +675,8 @@ impl Store {
     /// Get a file at a specific root hash
     pub fn get_file_at(&self, file_path: &Path, root_hash: Option<RootHash>) -> Result<Vec<u8>> {
         let target_root = root_hash.unwrap_or(
-            self.current_root.ok_or_else(|| DigstoreError::file_not_found(file_path.to_path_buf()))?
+            self.current_root
+                .ok_or_else(|| DigstoreError::file_not_found(file_path.to_path_buf()))?,
         );
 
         // Load layer from archive
@@ -619,7 +687,7 @@ impl Store {
             if file_entry.path == file_path {
                 // Reconstruct file from chunks
                 let mut file_chunks = Vec::new();
-                
+
                 for chunk_ref in &file_entry.chunks {
                     // Find chunk in layer
                     for chunk in &layer.chunks {
@@ -641,19 +709,23 @@ impl Store {
     pub fn status(&mut self) -> StoreStatus {
         // Ensure staging area is reloaded to see latest changes
         let _ = self.staging.reload();
-        
-        let staged_files = self.staging.get_all_staged_files()
+
+        let staged_files = self
+            .staging
+            .get_all_staged_files()
             .unwrap_or_default()
             .into_iter()
             .map(|f| f.path)
             .collect();
-            
-        let total_staged_size = self.staging.get_all_staged_files()
+
+        let total_staged_size = self
+            .staging
+            .get_all_staged_files()
             .unwrap_or_default()
             .into_iter()
             .map(|f| f.size)
             .sum();
-            
+
         StoreStatus {
             store_id: self.store_id,
             current_root: self.current_root,
@@ -669,7 +741,9 @@ impl Store {
 
     /// Get the global path (archive directory) for backward compatibility
     pub fn global_path(&self) -> PathBuf {
-        self.archive.path().parent()
+        self.archive
+            .path()
+            .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf()
     }
@@ -679,21 +753,21 @@ impl Store {
     pub fn unstage_file(&mut self, path: &Path) -> Result<()> {
         // Get all staged files
         let mut all_staged = self.staging.get_all_staged_files()?;
-        
+
         // Remove the specified file
         let original_count = all_staged.len();
         all_staged.retain(|f| f.path != path);
-        
+
         if all_staged.len() == original_count {
             return Err(DigstoreError::file_not_found(path.to_path_buf()));
         }
-        
+
         // Clear staging and re-add remaining files
         self.staging.clear()?;
         if !all_staged.is_empty() {
             self.staging.stage_files_batch(all_staged)?;
         }
-        
+
         Ok(())
     }
 
@@ -710,7 +784,7 @@ impl Store {
             "store_id": self.store_id.to_hex(),
             "created_at": chrono::Utc::now().timestamp(),
             "format_version": "1.0",
-            "protocol_version": "1.0", 
+            "protocol_version": "1.0",
             "digstore_version": env!("CARGO_PKG_VERSION"),
             "root_history": [],
             "config": {
@@ -721,26 +795,26 @@ impl Store {
         });
 
         let metadata_bytes = serde_json::to_vec_pretty(&metadata)?;
-        
+
         // Add Layer 0 to archive
         let layer_zero_hash = Hash::zero(); // Use all zeros for Layer 0
         self.archive.add_layer(layer_zero_hash, &metadata_bytes)?;
-        
+
         Ok(())
     }
 
     /// Load current root hash from Layer 0 in archive
     fn load_current_root_from_archive(archive: &DigArchive) -> Result<Option<RootHash>> {
         let layer_zero_hash = Hash::zero();
-        
+
         if !archive.has_layer(&layer_zero_hash) {
             return Ok(None);
         }
-        
+
         // Get Layer 0 metadata
         let metadata_bytes = archive.get_layer_data(&layer_zero_hash)?;
         let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)?;
-        
+
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
             if let Some(latest_root) = root_history.last() {
                 if let Some(root_str) = latest_root.get("root_hash").and_then(|v| v.as_str()) {
@@ -750,28 +824,30 @@ impl Store {
                 }
             }
         }
-        
+
         Ok(None)
     }
 
     /// Load current root hash from Layer 0 (legacy directory format)
     fn load_current_root(global_path: &Path) -> Result<Option<RootHash>> {
-        let layer_zero_path = global_path.join("0000000000000000000000000000000000000000000000000000000000000000.layer");
-        
+        let layer_zero_path = global_path
+            .join("0000000000000000000000000000000000000000000000000000000000000000.layer");
+
         if !layer_zero_path.exists() {
             return Ok(None);
         }
 
-        let content = std::fs::read(layer_zero_path)
-            .map_err(|e| DigstoreError::Io(e))?;
-        
+        let content = std::fs::read(layer_zero_path).map_err(|e| DigstoreError::Io(e))?;
+
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
-        
+
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
             if let Some(latest_entry) = root_history.last() {
-                if let Some(root_hash_str) = latest_entry.get("root_hash").and_then(|v| v.as_str()) {
-                    return Ok(Some(Hash::from_hex(root_hash_str)
-                        .map_err(|_| DigstoreError::store_corrupted("Invalid root hash in Layer 0"))?));
+                if let Some(root_hash_str) = latest_entry.get("root_hash").and_then(|v| v.as_str())
+                {
+                    return Ok(Some(Hash::from_hex(root_hash_str).map_err(|_| {
+                        DigstoreError::store_corrupted("Invalid root hash in Layer 0")
+                    })?));
                 }
             }
         }
@@ -801,14 +877,14 @@ impl Store {
     pub fn get_committed_file_hash(&self, file_path: &Path, root_hash: RootHash) -> Result<Hash> {
         // Load the layer for this commit
         let layer = self.archive.get_layer(&root_hash)?;
-        
+
         // Find the file in the layer
         for file_entry in &layer.files {
             if file_entry.path == file_path {
                 return Ok(file_entry.hash);
             }
         }
-        
+
         // File not found in this commit
         Err(DigstoreError::file_not_found(file_path.to_path_buf()))
     }
@@ -852,16 +928,19 @@ pub fn generate_store_id() -> StoreId {
     getrandom::getrandom(&mut bytes).unwrap_or_else(|_| {
         // Fallback to system time + process ID if getrandom fails
         use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
         let pid = std::process::id() as u64;
         let combined = timestamp.wrapping_mul(pid);
-        
+
         for (i, chunk) in combined.to_le_bytes().iter().enumerate() {
             if i < 32 {
                 bytes[i] = *chunk;
             }
         }
-        
+
         // Fill remaining bytes with a simple pattern
         for i in 8..32 {
             bytes[i] = ((i * 7) % 256) as u8;
@@ -872,18 +951,16 @@ pub fn generate_store_id() -> StoreId {
 
 /// Get the path to the global store directory for a store ID
 fn get_global_store_path(store_id: &StoreId) -> Result<PathBuf> {
-    let user_dirs = UserDirs::new()
-        .ok_or(DigstoreError::HomeDirectoryNotFound)?;
-    
+    let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
+
     let dig_dir = user_dirs.home_dir().join(".dig");
     Ok(dig_dir.join(store_id.to_hex()))
 }
 
 /// Get the global .dig directory
 pub fn get_global_dig_directory() -> Result<PathBuf> {
-    let user_dirs = UserDirs::new()
-        .ok_or(DigstoreError::HomeDirectoryNotFound)?;
-    
+    let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
+
     Ok(user_dirs.home_dir().join(".dig"))
 }
 
@@ -904,18 +981,20 @@ impl Store {
     /// Get the next layer number
     fn get_next_layer_number(&self) -> Result<u64> {
         // Count layers in archive (excluding Layer 0)
-        let layer_count = self.archive.list_layers()
+        let layer_count = self
+            .archive
+            .list_layers()
             .into_iter()
             .filter(|(hash, _)| *hash != Hash::zero()) // Exclude Layer 0
             .count();
-        
+
         Ok(layer_count as u64 + 1)
     }
 
     /// Update root history in Layer 0
     fn update_root_history(&mut self, new_root: RootHash) -> Result<()> {
         let layer_zero_hash = Hash::zero();
-        
+
         // Get current Layer 0 metadata
         let mut metadata: serde_json::Value = if self.archive.has_layer(&layer_zero_hash) {
             let content = self.archive.get_layer_data(&layer_zero_hash)?;
@@ -926,7 +1005,7 @@ impl Store {
                 "store_id": self.store_id.to_hex(),
                 "created_at": chrono::Utc::now().timestamp(),
                 "format_version": "1.0",
-                "protocol_version": "1.0", 
+                "protocol_version": "1.0",
                 "digstore_version": env!("CARGO_PKG_VERSION"),
                 "root_history": [],
                 "config": {
@@ -936,9 +1015,12 @@ impl Store {
                 }
             })
         };
-        
+
         // Add new root to history
-        if let Some(root_history) = metadata.get_mut("root_history").and_then(|v| v.as_array_mut()) {
+        if let Some(root_history) = metadata
+            .get_mut("root_history")
+            .and_then(|v| v.as_array_mut())
+        {
             root_history.push(serde_json::json!({
                 "generation": root_history.len(),
                 "root_hash": new_root.to_hex(),
@@ -946,16 +1028,16 @@ impl Store {
                 "layer_count": root_history.len() + 1
             }));
         }
-        
+
         // Update Layer 0 in archive
         let updated_content = serde_json::to_vec_pretty(&metadata)?;
         self.archive.add_layer(layer_zero_hash, &updated_content)?;
-        
+
         Ok(())
     }
 
     // Binary staging methods removed - now handled by BinaryStagingArea
-    
+
     /// Compute file hash from chunks without loading file data
     fn compute_file_hash_from_chunks(chunks: &[Chunk]) -> Hash {
         let mut hasher = sha2::Sha256::new();
@@ -965,5 +1047,3 @@ impl Store {
         Hash::from_bytes(hasher.finalize().into())
     }
 }
-
-

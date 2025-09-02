@@ -1,11 +1,11 @@
 //! Store management tests
 
+use anyhow::Result;
 use digstore_min::{
-    storage::store::{Store, get_global_dig_directory, generate_store_id},
-    core::{types::*, digstore_file::DigstoreFile, error::DigstoreError}
+    core::{digstore_file::DigstoreFile, error::DigstoreError, types::*},
+    storage::store::{generate_store_id, get_global_dig_directory, Store},
 };
 use tempfile::TempDir;
-use anyhow::Result;
 
 #[test]
 fn test_store_initialization() -> Result<()> {
@@ -23,7 +23,9 @@ fn test_store_initialization() -> Result<()> {
     assert!(store.global_path().exists());
 
     // Check Layer 0 was created
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
+    let layer_zero_path = store
+        .global_path()
+        .join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     assert!(layer_zero_path.exists());
 
     // Verify store properties
@@ -44,7 +46,7 @@ fn test_store_already_exists() -> Result<()> {
     // Try to initialize again - should fail
     let result = Store::init(project_path);
     assert!(result.is_err());
-    
+
     if let Err(DigstoreError::StoreAlreadyExists { path }) = result {
         assert_eq!(path, project_path);
     } else {
@@ -82,7 +84,7 @@ fn test_store_open_nonexistent() {
     // Try to open store that doesn't exist
     let result = Store::open(project_path);
     assert!(result.is_err());
-    
+
     if let Err(DigstoreError::StoreNotFound { path }) = result {
         assert_eq!(path, project_path);
     } else {
@@ -143,7 +145,9 @@ fn test_layer_zero_initialization() -> Result<()> {
     let store = Store::init(project_path)?;
 
     // Check Layer 0 content
-    let layer_zero_path = store.global_path().join("0000000000000000000000000000000000000000000000000000000000000000.layer");
+    let layer_zero_path = store
+        .global_path()
+        .join("0000000000000000000000000000000000000000000000000000000000000000.layer");
     let content = std::fs::read(layer_zero_path)?;
     let metadata: serde_json::Value = serde_json::from_slice(&content)?;
 
@@ -161,7 +165,7 @@ fn test_layer_zero_initialization() -> Result<()> {
 #[test]
 fn test_global_dig_directory() -> Result<()> {
     let dig_dir = get_global_dig_directory()?;
-    
+
     // Should be in user's home directory
     assert!(dig_dir.ends_with(".layer"));
     assert!(dig_dir.is_absolute());
@@ -183,7 +187,10 @@ fn test_store_with_custom_name() -> Result<()> {
 
     // Should use directory name as repository name
     let expected_name = project_path.file_name().unwrap().to_str().unwrap();
-    assert_eq!(digstore_file.repository_name, Some(expected_name.to_string()));
+    assert_eq!(
+        digstore_file.repository_name,
+        Some(expected_name.to_string())
+    );
 
     Ok(())
 }

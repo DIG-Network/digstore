@@ -1,15 +1,15 @@
 //! Add command implementation
 
-use anyhow::Result;
-use crate::storage::store::Store;
-use crate::cli::commands::{find_repository_root};
+use crate::cli::commands::find_repository_root;
 use crate::ignore::scanner::{FilteredFileScanner, ScanPhase};
 use crate::storage::parallel_processor::add_all_parallel;
-use std::path::PathBuf;
+use crate::storage::store::Store;
+use anyhow::Result;
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
-use std::sync::Arc;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// Execute the add command
 pub fn execute(
@@ -35,14 +35,14 @@ pub fn execute(
         progress.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner:.green} {msg}")
-                .unwrap_or_else(|_| ProgressStyle::default_spinner())
+                .unwrap_or_else(|_| ProgressStyle::default_spinner()),
         );
         progress.set_message("Processing files...");
         Some(progress)
     } else {
         None
     };
-    
+
     if dry_run {
         println!("{}", "Files that would be added:".bright_blue());
     }
@@ -53,39 +53,55 @@ pub fn execute(
 
     if all {
         // Add all files in repository with maximum parallelism
-        println!("  {} Adding all files in repository with parallel processing...", "•".cyan());
-        
+        println!(
+            "  {} Adding all files in repository with parallel processing...",
+            "•".cyan()
+        );
+
         if !dry_run {
             // Use high-performance parallel processing
             let stats = add_all_parallel(&repo_root, &mut store.staging, &multi_progress)?;
-            
+
             // Don't flush here - individual staging operations already handle persistence
             // Flushing large staging areas can cause corruption
-            
+
             // Use the actual stats from parallel processing
             files_added = stats.processed_files;
             total_size = stats.total_bytes;
-            
+
             multi_progress.clear()?;
-            
+
             // Print technical processing statistics
             println!("  • Files processed: {}", stats.processed_files);
-            println!("  • Data processed: {:.2} MB", stats.total_bytes as f64 / 1024.0 / 1024.0);
-            println!("  • Processing time: {:.2}s", stats.processing_time.as_secs_f64());
+            println!(
+                "  • Data processed: {:.2} MB",
+                stats.total_bytes as f64 / 1024.0 / 1024.0
+            );
+            println!(
+                "  • Processing time: {:.2}s",
+                stats.processing_time.as_secs_f64()
+            );
             println!("  • Processing rate: {:.1} files/s", stats.files_per_second);
-            println!("  • Throughput: {:.1} MB/s", stats.bytes_per_second / 1024.0 / 1024.0);
+            println!(
+                "  • Throughput: {:.1} MB/s",
+                stats.bytes_per_second / 1024.0 / 1024.0
+            );
         } else {
             // Dry run: just discover and filter files
             let mut scanner = FilteredFileScanner::new(&repo_root)?;
             let scan_result = scanner.scan_directory(&repo_root)?;
-            
+
             files_added = scan_result.filtered_files.len();
             files_ignored = scan_result.ignored_files.len();
-            
-            println!("  • Would process: {} files", scan_result.stats.total_filtered);
-            println!("  • Would ignore: {} files ({:.1}%)", 
-                     scan_result.stats.total_ignored,
-                     scan_result.stats.filtering_efficiency);
+
+            println!(
+                "  • Would process: {} files",
+                scan_result.stats.total_filtered
+            );
+            println!(
+                "  • Would ignore: {} files ({:.1}%)",
+                scan_result.stats.total_ignored, scan_result.stats.filtering_efficiency
+            );
         }
     } else if from_stdin {
         // Read file list from stdin
@@ -104,12 +120,20 @@ pub fn execute(
         // Add specified paths
         for path in &paths {
             if path.is_dir() && recursive {
-                println!("  {} Adding directory: {} (recursive)", "•".cyan(), path.display());
+                println!(
+                    "  {} Adding directory: {} (recursive)",
+                    "•".cyan(),
+                    path.display()
+                );
                 if !dry_run {
                     store.add_directory(path, true)?;
                 }
             } else if path.is_dir() && !recursive {
-                println!("  {} Skipping directory: {} (use -r for recursive)", "!".yellow(), path.display());
+                println!(
+                    "  {} Skipping directory: {} (use -r for recursive)",
+                    "!".yellow(),
+                    path.display()
+                );
                 continue;
             } else if path.is_file() {
                 println!("  {} Adding file: {}", "•".cyan(), path.display());
@@ -148,18 +172,25 @@ pub fn execute(
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else if dry_run {
-        println!("{} {} files would be added ({} bytes)", 
-            "Would add:".bright_green().bold(), 
-            files_added, 
-            total_size);
+        println!(
+            "{} {} files would be added ({} bytes)",
+            "Would add:".bright_green().bold(),
+            files_added,
+            total_size
+        );
     } else {
-        println!("{} {} files added to staging ({} bytes)", 
-            "✓".green().bold(), 
-            files_added, 
-            total_size);
-        
+        println!(
+            "{} {} files added to staging ({} bytes)",
+            "✓".green().bold(),
+            files_added,
+            total_size
+        );
+
         if files_added > 0 {
-            println!("  {} Use 'digstore commit -m \"message\"' to create a commit", "→".cyan());
+            println!(
+                "  {} Use 'digstore commit -m \"message\"' to create a commit",
+                "→".cyan()
+            );
         }
     }
 

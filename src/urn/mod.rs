@@ -5,7 +5,7 @@
 
 pub mod parser;
 
-use crate::core::{types::*, error::*};
+use crate::core::{error::*, types::*};
 use crate::storage::store::Store;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -43,20 +43,20 @@ impl Urn {
     /// Convert URN back to string representation
     pub fn to_string(&self) -> String {
         let mut result = format!("urn:dig:chia:{}", self.store_id.to_hex());
-        
+
         if let Some(root_hash) = &self.root_hash {
             result.push_str(&format!(":{}", root_hash.to_hex()));
         }
-        
+
         if let Some(path) = &self.resource_path {
             result.push('/');
             result.push_str(&path.to_string_lossy());
         }
-        
+
         if let Some(byte_range) = &self.byte_range {
             result.push_str(&byte_range.to_string());
         }
-        
+
         result
     }
 
@@ -69,8 +69,9 @@ impl Urn {
     /// Resolve this URN to actual content using a store
     pub fn resolve(&self, store: &Store) -> Result<Vec<u8>> {
         // Get the full file content first
-        let file_path = self.resource_path.as_ref()
-            .ok_or_else(|| DigstoreError::invalid_urn("URN must specify a resource path for content resolution"))?;
+        let file_path = self.resource_path.as_ref().ok_or_else(|| {
+            DigstoreError::invalid_urn("URN must specify a resource path for content resolution")
+        })?;
 
         let file_content = if let Some(root_hash) = self.root_hash {
             store.get_file_at(file_path, Some(root_hash))?
@@ -93,31 +94,31 @@ impl Urn {
         let (start, end) = match (range.start, range.end) {
             (Some(start), Some(end)) => {
                 if start > end {
-                    return Err(DigstoreError::InvalidByteRange { 
-                        range: format!("Start ({}) cannot be greater than end ({})", start, end)
+                    return Err(DigstoreError::InvalidByteRange {
+                        range: format!("Start ({}) cannot be greater than end ({})", start, end),
                     });
                 }
                 if start >= file_len {
-                    return Err(DigstoreError::InvalidByteRange { 
-                        range: format!("Start ({}) exceeds file size ({})", start, file_len)
+                    return Err(DigstoreError::InvalidByteRange {
+                        range: format!("Start ({}) exceeds file size ({})", start, file_len),
                     });
                 }
                 // Make end inclusive by adding 1
                 (start, (end + 1).min(file_len))
-            },
+            }
             (Some(start), None) => {
                 if start >= file_len {
-                    return Err(DigstoreError::InvalidByteRange { 
-                        range: format!("Start ({}) exceeds file size ({})", start, file_len)
+                    return Err(DigstoreError::InvalidByteRange {
+                        range: format!("Start ({}) exceeds file size ({})", start, file_len),
                     });
                 }
                 (start, file_len)
-            },
+            }
             (None, Some(count)) => {
                 // Last 'count' bytes
                 let start = file_len.saturating_sub(count);
                 (start, file_len)
-            },
+            }
             (None, None) => (0, file_len),
         };
 

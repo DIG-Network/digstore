@@ -270,58 +270,58 @@ impl LayerHeader {
     /// Convert to bytes for writing to disk
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(Self::SIZE);
-        
+
         // Magic (4 bytes)
         bytes.extend_from_slice(&self.magic);
-        
+
         // Version (2 bytes, little-endian)
         bytes.extend_from_slice(&self.version.to_le_bytes());
-        
+
         // Layer type (1 byte)
         bytes.push(self.layer_type);
-        
+
         // Flags (1 byte)
         bytes.push(self.flags);
-        
+
         // Layer number (8 bytes, little-endian)
         bytes.extend_from_slice(&self.layer_number.to_le_bytes());
-        
+
         // Timestamp (8 bytes, little-endian)
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
-        
+
         // Parent hash (32 bytes)
         bytes.extend_from_slice(&self.parent_hash);
-        
+
         // Files count (4 bytes, little-endian)
         bytes.extend_from_slice(&self.files_count.to_le_bytes());
-        
+
         // Chunks count (4 bytes, little-endian)
         bytes.extend_from_slice(&self.chunks_count.to_le_bytes());
-        
+
         // Index offset (8 bytes, little-endian)
         bytes.extend_from_slice(&self.index_offset.to_le_bytes());
-        
+
         // Index size (8 bytes, little-endian)
         bytes.extend_from_slice(&self.index_size.to_le_bytes());
-        
+
         // Data offset (8 bytes, little-endian)
         bytes.extend_from_slice(&self.data_offset.to_le_bytes());
-        
+
         // Data size (8 bytes, little-endian)
         bytes.extend_from_slice(&self.data_size.to_le_bytes());
-        
+
         // Merkle offset (8 bytes, little-endian)
         bytes.extend_from_slice(&self.merkle_offset.to_le_bytes());
-        
+
         // Merkle size (8 bytes, little-endian)
         bytes.extend_from_slice(&self.merkle_size.to_le_bytes());
-        
+
         // Compression (1 byte)
         bytes.push(self.compression);
-        
+
         // Reserved (143 bytes)
         bytes.extend_from_slice(&self.reserved);
-        
+
         assert_eq!(bytes.len(), Self::SIZE);
         bytes
     }
@@ -329,7 +329,11 @@ impl LayerHeader {
     /// Create from bytes read from disk
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() < Self::SIZE {
-            return Err(format!("Header too short: {} bytes, expected {}", bytes.len(), Self::SIZE));
+            return Err(format!(
+                "Header too short: {} bytes, expected {}",
+                bytes.len(),
+                Self::SIZE
+            ));
         }
 
         let mut offset = 0;

@@ -4,11 +4,11 @@
 //! All data stored in .dig files is scrambled using deterministic algorithms that
 //! can only be reversed with the correct URN components.
 
-pub mod scrambler;
 pub mod access_control;
 pub mod error;
+pub mod scrambler;
 
 // Re-export commonly used items
-pub use scrambler::{DataScrambler, ScrambleState};
 pub use access_control::{AccessController, AccessPermission, StoreAccessControl};
 pub use error::{SecurityError, SecurityResult};
+pub use scrambler::{DataScrambler, ScrambleState};

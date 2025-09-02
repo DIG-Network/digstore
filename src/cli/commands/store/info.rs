@@ -63,31 +63,39 @@ fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
     } else {
         println!("{}", "Repository Information".green().bold());
         println!("{}", "═".repeat(50).green());
-        
+
         println!("{}: {}", "Store ID".bold(), store.store_id.to_hex().cyan());
-        println!("{}: {}", "Global Path".bold(), store.global_path().display());
-        
+        println!(
+            "{}: {}",
+            "Global Path".bold(),
+            store.global_path().display()
+        );
+
         if let Some(project_path) = store.project_path() {
             println!("{}: {}", "Project Path".bold(), project_path.display());
         }
-        
+
         if let Some(current_root) = store.current_root() {
-            println!("{}: {}", "Current Root".bold(), current_root.to_hex().cyan());
+            println!(
+                "{}: {}",
+                "Current Root".bold(),
+                current_root.to_hex().cyan()
+            );
         } else {
             println!("{}: {}", "Current Root".bold(), "none".yellow());
         }
-        
+
         println!("{}: {}", "Layer Count".bold(), layer_count);
         println!("{}: {}", "Total Size".bold(), format_bytes(total_size));
-        
+
         if let Some(version) = metadata.get("digstore_version").and_then(|v| v.as_str()) {
             println!("{}: {}", "Digstore Version".bold(), version);
         }
-        
+
         if let Some(created_at) = metadata.get("created_at").and_then(|v| v.as_i64()) {
             println!("{}: {}", "Created".bold(), format_timestamp(created_at));
         }
-        
+
         if let Some(config) = metadata.get("config") {
             println!("\n{}", "Configuration:".bold());
             if let Some(chunk_size) = config.get("chunk_size").and_then(|v| v.as_u64()) {
@@ -97,7 +105,7 @@ fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
                 println!("  • Compression: {}", compression);
             }
         }
-        
+
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
             println!("  • Commits: {}", root_history.len());
         }
@@ -109,9 +117,9 @@ fn show_store_info(store: &Store, json_output: bool) -> Result<()> {
 fn show_layer_info(store: &Store, layer_hash: &str, json_output: bool) -> Result<()> {
     let hash = crate::core::types::Hash::from_hex(layer_hash)
         .map_err(|_| DigstoreError::internal("Invalid layer hash format"))?;
-    
+
     let layer = store.load_layer(hash)?;
-    
+
     if json_output {
         let info = json!({
             "layer_id": hash.to_hex(),
@@ -134,35 +142,49 @@ fn show_layer_info(store: &Store, layer_hash: &str, json_output: bool) -> Result
     } else {
         println!("{}", "Layer Information".green().bold());
         println!("{}", "═".repeat(50).green());
-        
+
         println!("{}: {}", "Layer ID".bold(), hash.to_hex().cyan());
-        println!("{}: {:?}", "Layer Type".bold(), layer.header.get_layer_type());
+        println!(
+            "{}: {:?}",
+            "Layer Type".bold(),
+            layer.header.get_layer_type()
+        );
         println!("{}: {}", "Layer Number".bold(), layer.header.layer_number);
-        println!("{}: {}", "Parent Hash".bold(), layer.header.get_parent_hash().to_hex().cyan());
-        println!("{}: {}", "Timestamp".bold(), format_timestamp(layer.header.timestamp as i64));
-        
+        println!(
+            "{}: {}",
+            "Parent Hash".bold(),
+            layer.header.get_parent_hash().to_hex().cyan()
+        );
+        println!(
+            "{}: {}",
+            "Timestamp".bold(),
+            format_timestamp(layer.header.timestamp as i64)
+        );
+
         if let Some(message) = &layer.metadata.message {
             println!("{}: {}", "Message".bold(), message);
         }
-        
+
         if let Some(author) = &layer.metadata.author {
             println!("{}: {}", "Author".bold(), author);
         }
-        
+
         println!("\n{}", "Layer Contents:".bold());
         println!("  • Files: {}", layer.files.len());
         println!("  • Chunks: {}", layer.chunks.len());
-        
+
         let total_file_size: u64 = layer.files.iter().map(|f| f.size).sum();
         println!("  • Total file size: {}", format_bytes(total_file_size));
-        
+
         if !layer.files.is_empty() {
             println!("\n{}", "Files:".bold());
             for file in &layer.files {
-                println!("  • {} ({}, {} chunks)", 
-                         file.path.display().to_string().cyan(),
-                         format_bytes(file.size),
-                         file.chunks.len());
+                println!(
+                    "  • {} ({}, {} chunks)",
+                    file.path.display().to_string().cyan(),
+                    format_bytes(file.size),
+                    file.chunks.len()
+                );
             }
         }
     }
@@ -174,9 +196,9 @@ fn format_timestamp(timestamp: i64) -> String {
     if timestamp <= 0 {
         return "Not set".to_string();
     }
-    
-    use std::time::{UNIX_EPOCH, Duration};
-    
+
+    use std::time::{Duration, UNIX_EPOCH};
+
     match UNIX_EPOCH.checked_add(Duration::from_secs(timestamp as u64)) {
         Some(datetime) => {
             // Format as readable date/time
@@ -187,7 +209,7 @@ fn format_timestamp(timestamp: i64) -> String {
                     let hours = (secs % 86400) / 3600;
                     let minutes = (secs % 3600) / 60;
                     let seconds = secs % 60;
-                    
+
                     if days > 0 {
                         format!("{} days ago", days)
                     } else if hours > 0 {
@@ -198,10 +220,10 @@ fn format_timestamp(timestamp: i64) -> String {
                         format!("{} seconds ago", seconds)
                     }
                 }
-                Err(_) => format!("Timestamp: {}", timestamp)
+                Err(_) => format!("Timestamp: {}", timestamp),
             }
         }
-        None => format!("Invalid timestamp: {}", timestamp)
+        None => format!("Invalid timestamp: {}", timestamp),
     }
 }
 
@@ -209,12 +231,12 @@ fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
     } else {

@@ -7,7 +7,7 @@
 //! - The expected merkle root hash
 
 use anyhow::Result;
-use digstore_min::{Store, Hash};
+use digstore_min::{Hash, Store};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -34,9 +34,9 @@ fn test_independent_proof_verification() -> Result<()> {
 
     // Generate a proof for the file
     let proof = digstore_min::proofs::Proof::new_file_proof(
-        &store, 
-        Path::new("test.txt"), 
-        Some(commit_hash)
+        &store,
+        Path::new("test.txt"),
+        Some(commit_hash),
     )?;
 
     // Serialize the proof to JSON (this is what would be shared)
@@ -62,7 +62,7 @@ fn test_independent_proof_verification() -> Result<()> {
     let is_valid = parsed_proof.verify_independently(&data_hash, &expected_root)?;
 
     assert!(is_valid, "Proof should be independently verifiable");
-    
+
     println!("✅ INDEPENDENT VERIFICATION SUCCESSFUL!");
     println!("  • Data hash: {}", data_hash.to_hex());
     println!("  • Root hash: {}", expected_root.to_hex());
@@ -89,9 +89,9 @@ fn test_independent_verification_with_wrong_data() -> Result<()> {
 
     // Generate proof for original content
     let proof = digstore_min::proofs::Proof::new_file_proof(
-        &store, 
-        Path::new("test.txt"), 
-        Some(commit_hash)
+        &store,
+        Path::new("test.txt"),
+        Some(commit_hash),
     )?;
 
     // Try to verify with different data (should fail)
@@ -102,7 +102,7 @@ fn test_independent_verification_with_wrong_data() -> Result<()> {
     let is_valid = proof.verify_independently(&wrong_data_hash, &expected_root)?;
 
     assert!(!is_valid, "Proof should fail with wrong data");
-    
+
     println!("✅ TAMPER DETECTION SUCCESSFUL!");
     println!("  • Proof correctly rejected tampered data");
 
@@ -132,11 +132,11 @@ fn test_independent_byte_range_verification() -> Result<()> {
 
     // Generate proof for byte range (bytes 10-19: "ABCDEFGHIJ")
     let proof = digstore_min::proofs::Proof::new_byte_range_proof(
-        &store, 
-        Path::new("test.txt"), 
-        10, 
-        19, 
-        Some(commit_hash)
+        &store,
+        Path::new("test.txt"),
+        10,
+        19,
+        Some(commit_hash),
     )?;
 
     // Independent verification
@@ -146,10 +146,16 @@ fn test_independent_byte_range_verification() -> Result<()> {
 
     let is_valid = proof.verify_independently(&range_hash, &expected_root)?;
 
-    assert!(is_valid, "Byte range proof should be independently verifiable");
-    
+    assert!(
+        is_valid,
+        "Byte range proof should be independently verifiable"
+    );
+
     println!("✅ BYTE RANGE VERIFICATION SUCCESSFUL!");
-    println!("  • Range content: {:?}", std::str::from_utf8(range_content)?);
+    println!(
+        "  • Range content: {:?}",
+        std::str::from_utf8(range_content)?
+    );
     println!("  • Range hash: {}", range_hash.to_hex());
 
     Ok(())
@@ -171,24 +177,34 @@ fn test_proof_self_containment() -> Result<()> {
 
     // Generate proof
     let proof = digstore_min::proofs::Proof::new_file_proof(
-        &store, 
-        Path::new("test.txt"), 
-        Some(commit_hash)
+        &store,
+        Path::new("test.txt"),
+        Some(commit_hash),
     )?;
 
     // Verify that the proof contains all necessary information
     match &proof.target {
-        digstore_min::proofs::ProofTarget::File { file_hash, path, at } => {
+        digstore_min::proofs::ProofTarget::File {
+            file_hash,
+            path,
+            at,
+        } => {
             println!("✅ PROOF CONTAINS:");
             println!("  • File path: {}", path.display());
             println!("  • File hash: {}", file_hash.to_hex());
             println!("  • Root hash: {}", proof.root.to_hex());
             println!("  • Commit hash: {}", at.unwrap().to_hex());
-            println!("  • Proof elements: {} sibling hashes", proof.proof_path.len());
-            
+            println!(
+                "  • Proof elements: {} sibling hashes",
+                proof.proof_path.len()
+            );
+
             // Verify the file hash matches our content
             let computed_hash = digstore_min::core::hash::sha256(test_content);
-            assert_eq!(*file_hash, computed_hash, "Proof contains correct file hash");
+            assert_eq!(
+                *file_hash, computed_hash,
+                "Proof contains correct file hash"
+            );
         }
         _ => panic!("Expected file proof"),
     }

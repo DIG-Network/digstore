@@ -1,13 +1,13 @@
 //! File operations tests
 
+use anyhow::Result;
 use digstore_min::{
+    core::{error::DigstoreError, hash::*, types::*},
     storage::store::Store,
-    core::{types::*, hash::*, error::DigstoreError}
 };
-use tempfile::{TempDir, NamedTempFile};
 use std::io::Write;
 use std::path::Path;
-use anyhow::Result;
+use tempfile::{NamedTempFile, TempDir};
 
 #[test]
 fn test_add_single_file() -> Result<()> {
@@ -23,7 +23,7 @@ fn test_add_single_file() -> Result<()> {
 
     // Check that file is staged
     assert!(store.is_file_staged(Path::new("test.txt")));
-    
+
     let status = store.status();
     assert_eq!(status.staged_files.len(), 1);
     assert_eq!(status.staged_files[0], Path::new("test.txt"));
@@ -63,7 +63,7 @@ fn test_add_nonexistent_file() -> Result<()> {
 
     // Should be a FileNotFound error
     match result.unwrap_err() {
-        DigstoreError::FileNotFound { .. } => {}, // Expected
+        DigstoreError::FileNotFound { .. } => {} // Expected
         e => panic!("Expected FileNotFound, got: {:?}", e),
     }
 
@@ -76,21 +76,26 @@ fn test_commit_staged_files() -> Result<()> {
     let mut store = Store::init(temp_dir.path())?;
 
     // Create and add test file
-    std::fs::write(temp_dir.path().join("commit_test.txt"), b"Test commit content")?;
+    std::fs::write(
+        temp_dir.path().join("commit_test.txt"),
+        b"Test commit content",
+    )?;
     store.add_file(Path::new("commit_test.txt"))?;
 
     // Commit
     let commit_id = store.commit("Test commit message")?;
-    
+
     // Verify commit was created
     assert_ne!(commit_id, Hash::zero());
     assert_eq!(store.current_root(), Some(commit_id));
-    
+
     // Staging should be cleared
     assert!(store.staging.is_empty());
-    
+
     // Layer file should exist (using .layer extension)
-    let layer_path = store.global_path().join(format!("{}.layer", commit_id.to_hex()));
+    let layer_path = store
+        .global_path()
+        .join(format!("{}.layer", commit_id.to_hex()));
     assert!(layer_path.exists());
 
     Ok(())
@@ -132,7 +137,7 @@ fn test_get_committed_file() -> Result<()> {
     let test_content = b"Committed file content";
     std::fs::write(temp_dir.path().join("committed.txt"), test_content)?;
     store.add_file(Path::new("committed.txt"))?;
-    
+
     let commit_id = store.commit("Commit test file")?;
 
     // Get file from committed layer
@@ -223,17 +228,30 @@ fn test_add_directory_recursive() -> Result<()> {
     // Debug: print all staged files
     let status = store.status();
     println!("Staged files: {:?}", status.staged_files);
-    
+
     // Should include both files (check by filename since paths may be absolute)
-    let has_root_file = status.staged_files.iter().any(|p| p.file_name().and_then(|n| n.to_str()) == Some("root_file.txt"));
-    let has_sub_file = status.staged_files.iter().any(|p| p.file_name().and_then(|n| n.to_str()) == Some("sub_file.txt"));
-    let has_digstore = status.staged_files.iter().any(|p| p.file_name().and_then(|n| n.to_str()) == Some(".layerstore"));
-    
+    let has_root_file = status
+        .staged_files
+        .iter()
+        .any(|p| p.file_name().and_then(|n| n.to_str()) == Some("root_file.txt"));
+    let has_sub_file = status
+        .staged_files
+        .iter()
+        .any(|p| p.file_name().and_then(|n| n.to_str()) == Some("sub_file.txt"));
+    let has_digstore = status
+        .staged_files
+        .iter()
+        .any(|p| p.file_name().and_then(|n| n.to_str()) == Some(".layerstore"));
+
     assert!(has_root_file, "root_file.txt should be staged");
     assert!(has_sub_file, "sub_file.txt should be staged");
-    
+
     // Should have at least 2 files (excluding .layerstore)
-    let non_digstore_files = status.staged_files.iter().filter(|p| !p.to_string_lossy().ends_with(".layerstore")).count();
+    let non_digstore_files = status
+        .staged_files
+        .iter()
+        .filter(|p| !p.to_string_lossy().ends_with(".layerstore"))
+        .count();
     assert_eq!(non_digstore_files, 2, "Should have 2 non-.layerstore files");
 
     Ok(())
@@ -247,7 +265,7 @@ fn test_full_workflow() -> Result<()> {
     // Create test files
     let file1_content = b"First file content";
     let file2_content = b"Second file content";
-    
+
     std::fs::write(temp_dir.path().join("file1.txt"), file1_content)?;
     std::fs::write(temp_dir.path().join("file2.txt"), file2_content)?;
 
@@ -268,7 +286,7 @@ fn test_full_workflow() -> Result<()> {
     // Verify files can be retrieved
     let retrieved1 = store.get_file(Path::new("file1.txt"))?;
     let retrieved2 = store.get_file(Path::new("file2.txt"))?;
-    
+
     assert_eq!(retrieved1, file1_content);
     assert_eq!(retrieved2, file2_content);
 
@@ -276,7 +294,7 @@ fn test_full_workflow() -> Result<()> {
     let file3_content = b"Third file content";
     std::fs::write(temp_dir.path().join("file3.txt"), file3_content)?;
     store.add_file(Path::new("file3.txt"))?;
-    
+
     let commit_id2 = store.commit("Second commit")?;
     assert_ne!(commit_id2, commit_id);
 
@@ -301,7 +319,7 @@ fn test_large_file_operations() -> Result<()> {
     for i in 0..(2 * 1024 * 1024) {
         large_content.push((i % 256) as u8);
     }
-    
+
     let large_file_path = temp_dir.path().join("large_file.bin");
     std::fs::write(&large_file_path, &large_content)?;
 

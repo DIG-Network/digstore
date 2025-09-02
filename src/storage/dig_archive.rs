@@ -8,15 +8,18 @@
 //! - Compression support for space efficiency
 //! - Atomic operations for consistency
 
-use crate::core::{types::*, error::{Result, DigstoreError}};
+use crate::core::{
+    error::{DigstoreError, Result},
+    types::*,
+};
 use crate::storage::layer::Layer;
-use std::path::{Path, PathBuf};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write, Seek, SeekFrom, BufReader, BufWriter};
-use std::collections::HashMap;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use memmap2::{Mmap, MmapOptions};
 use crc32fast::Hasher as Crc32Hasher;
+use memmap2::{Mmap, MmapOptions};
+use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
 /// Magic bytes for .dig archive format
 const ARCHIVE_MAGIC: &[u8; 8] = b"DIGARCH\0";
@@ -80,7 +83,7 @@ impl ArchiveHeader {
                 reason: "Invalid magic bytes".to_string(),
             });
         }
-        
+
         self.version = reader.read_u32::<LittleEndian>()?;
         if self.version != ARCHIVE_VERSION {
             return Err(DigstoreError::UnsupportedVersion {
@@ -234,7 +237,7 @@ impl DigArchive {
             if self.header.layer_count > 0 {
                 cursor.set_position(self.header.index_offset);
                 self.index.clear();
-                
+
                 for _ in 0..self.header.layer_count {
                     let mut entry = LayerIndexEntry::new(Hash::zero(), 0, 0);
                     entry.read_from(&mut cursor)?;
@@ -275,7 +278,7 @@ impl DigArchive {
             .create(true)
             .write(true)
             .open(&self.archive_path)?;
-        
+
         file.seek(SeekFrom::Start(offset))?;
         file.write_all(layer_data)?;
         file.sync_all()?;
@@ -304,19 +307,21 @@ impl DigArchive {
 
     /// Get raw layer data by hash (for metadata layers like Layer 0)
     pub fn get_layer_data(&self, layer_hash: &Hash) -> Result<Vec<u8>> {
-        let entry = self.index.get(layer_hash)
+        let entry = self
+            .index
+            .get(layer_hash)
             .ok_or_else(|| DigstoreError::layer_not_found(*layer_hash))?;
 
         if let Some(ref mmap) = self.mmap {
             let start = entry.offset as usize;
             let end = start + entry.size as usize;
-            
+
             if end <= mmap.len() {
                 // Verify checksum
                 let mut hasher = Crc32Hasher::new();
                 hasher.update(&mmap[start..end]);
                 let calculated_checksum = hasher.finalize();
-                
+
                 if calculated_checksum != entry.checksum {
                     return Err(DigstoreError::ChecksumMismatch {
                         expected: entry.checksum.to_string(),
@@ -334,38 +339,40 @@ impl DigArchive {
             file.seek(SeekFrom::Start(entry.offset))?;
             let mut buffer = vec![0u8; entry.size as usize];
             file.read_exact(&mut buffer)?;
-            
+
             // Verify checksum
             let mut hasher = Crc32Hasher::new();
             hasher.update(&buffer);
             let calculated_checksum = hasher.finalize();
-            
+
             if calculated_checksum != entry.checksum {
                 return Err(DigstoreError::ChecksumMismatch {
                     expected: entry.checksum.to_string(),
                     actual: calculated_checksum.to_string(),
                 });
             }
-            
+
             Ok(buffer)
         }
     }
 
     /// Get a layer by hash
     pub fn get_layer(&self, layer_hash: &Hash) -> Result<Layer> {
-        let entry = self.index.get(layer_hash)
+        let entry = self
+            .index
+            .get(layer_hash)
             .ok_or_else(|| DigstoreError::layer_not_found(*layer_hash))?;
 
         if let Some(ref mmap) = self.mmap {
             let start = entry.offset as usize;
             let end = start + entry.size as usize;
-            
+
             if end <= mmap.len() {
                 // Verify checksum
                 let mut hasher = Crc32Hasher::new();
                 hasher.update(&mmap[start..end]);
                 let calculated_checksum = hasher.finalize();
-                
+
                 if calculated_checksum != entry.checksum {
                     return Err(DigstoreError::ChecksumMismatch {
                         expected: entry.checksum.to_string(),
@@ -387,20 +394,17 @@ impl DigArchive {
 
     /// List all layers in the archive
     pub fn list_layers(&self) -> Vec<(Hash, &LayerIndexEntry)> {
-        self.index.iter()
+        self.index
+            .iter()
             .map(|(hash, entry)| (*hash, entry))
             .collect()
     }
 
     /// Get archive statistics
     pub fn stats(&self) -> ArchiveStats {
-        let total_size = self.archive_path.metadata()
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let total_size = self.archive_path.metadata().map(|m| m.len()).unwrap_or(0);
 
-        let data_size = self.index.values()
-            .map(|entry| entry.size)
-            .sum::<u64>();
+        let data_size = self.index.values().map(|entry| entry.size).sum::<u64>();
 
         let index_size = self.header.index_size;
         let overhead = if total_size >= data_size {
@@ -408,7 +412,7 @@ impl DigArchive {
         } else {
             0 // Prevent overflow
         };
-        
+
         ArchiveStats {
             layer_count: self.index.len(),
             total_size,
@@ -446,67 +450,67 @@ impl DigArchive {
         // Rebuild the archive with updated header and index
         let temp_path = self.archive_path.with_extension("tmp");
         let mut temp_file = File::create(&temp_path)?;
-        
+
         // Write header (we'll update it later)
         self.header.write_to(&mut temp_file)?;
-        
+
         let data_start = temp_file.stream_position()?;
         self.header.data_offset = data_start;
-        
+
         // Copy all layer data and update offsets
         let mut data_size = 0u64;
         let mut updated_index = HashMap::new();
-        
+
         // Read from the original file instead of stale memory map
         let mut source_file = File::open(&self.archive_path)?;
-        
+
         for (layer_hash, entry) in &self.index {
             let new_offset = temp_file.stream_position()?;
-            
+
             // Read layer data from source file
             source_file.seek(SeekFrom::Start(entry.offset))?;
             let mut buffer = vec![0u8; entry.size as usize];
             source_file.read_exact(&mut buffer)?;
-            
+
             // Write to temp file
             temp_file.write_all(&buffer)?;
             data_size += entry.size;
-            
+
             // Create updated index entry
             let mut updated_entry = entry.clone();
             updated_entry.offset = new_offset;
             updated_index.insert(*layer_hash, updated_entry);
         }
-        
+
         // Update our index with new offsets
         self.index = updated_index;
-        
+
         self.header.data_size = data_size;
-        
+
         // Write index
         self.header.index_offset = temp_file.stream_position()?;
         let mut index_size = 0u64;
-        
+
         for entry in self.index.values() {
             entry.write_to(&mut temp_file)?;
             index_size += LayerIndexEntry::SIZE as u64;
         }
-        
+
         self.header.index_size = index_size;
         self.header.layer_count = self.index.len() as u32;
-        
+
         // Update header
         temp_file.seek(SeekFrom::Start(0))?;
         self.header.write_to(&mut temp_file)?;
         temp_file.sync_all()?;
         drop(temp_file);
-        
+
         // Replace original file
         std::fs::rename(&temp_path, &self.archive_path)?;
-        
+
         // Reload
         self.load()?;
-        
+
         Ok(())
     }
 
@@ -535,7 +539,7 @@ impl DigArchive {
             for (hash, entry) in &self.index {
                 let start = entry.offset as usize;
                 let end = start + entry.size as usize;
-                
+
                 if end > mmap.len() {
                     issues.push(format!("Layer {} extends beyond archive", hash));
                     continue;
@@ -545,7 +549,7 @@ impl DigArchive {
                 let mut hasher = Crc32Hasher::new();
                 hasher.update(&mmap[start..end]);
                 let calculated_checksum = hasher.finalize();
-                
+
                 if calculated_checksum != entry.checksum {
                     issues.push(format!("Checksum mismatch for layer {}", hash));
                 }
@@ -571,7 +575,9 @@ impl DigArchive {
         let layer_files = std::fs::read_dir(directory_path)?
             .filter_map(|entry| entry.ok())
             .filter(|entry| {
-                entry.path().extension()
+                entry
+                    .path()
+                    .extension()
                     .and_then(|ext| ext.to_str())
                     .map(|ext| ext == "layer")
                     .unwrap_or(false)
@@ -582,7 +588,7 @@ impl DigArchive {
         for layer_file in layer_files {
             let layer_path = layer_file.path();
             let layer_data = std::fs::read(&layer_path)?;
-            
+
             // Extract layer hash from filename
             if let Some(filename) = layer_path.file_stem().and_then(|s| s.to_str()) {
                 if let Ok(layer_hash) = Hash::from_hex(filename) {
@@ -593,7 +599,7 @@ impl DigArchive {
 
         // Flush to disk
         archive.flush()?;
-        
+
         Ok(archive)
     }
 
@@ -614,21 +620,21 @@ impl Drop for DigArchive {
 /// Helper function to get archive path for a store ID
 pub fn get_archive_path(store_id: &StoreId) -> Result<PathBuf> {
     use directories::UserDirs;
-    
+
     let user_dirs = UserDirs::new()
         .ok_or_else(|| DigstoreError::internal("Could not determine user directory"))?;
-    
+
     let dig_dir = user_dirs.home_dir().join(".dig");
     std::fs::create_dir_all(&dig_dir)?;
-    
+
     Ok(dig_dir.join(format!("{}.dig", store_id)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_archive_header_serialization() -> Result<()> {
@@ -670,7 +676,7 @@ mod tests {
     fn test_archive_creation_and_layer_operations() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let archive_path = temp_dir.path().join("test.dig");
-        
+
         // Create archive
         let mut archive = DigArchive::create(archive_path.clone())?;
         assert_eq!(archive.layer_count(), 0);
@@ -679,7 +685,7 @@ mod tests {
         let layer_hash = Hash::from_bytes([1; 32]);
         let layer_data = b"test layer data";
         archive.add_layer(layer_hash, layer_data)?;
-        
+
         assert_eq!(archive.layer_count(), 1);
         assert!(archive.has_layer(&layer_hash));
 
@@ -705,20 +711,26 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let old_dir = temp_dir.path().join("old_store");
         let archive_path = temp_dir.path().join("migrated.dig");
-        
+
         // Create old directory structure
         fs::create_dir_all(&old_dir)?;
-        
+
         // Create test layer files
         let layer1_hash = Hash::from_bytes([1; 32]);
         let layer2_hash = Hash::from_bytes([2; 32]);
-        
-        fs::write(old_dir.join(format!("{}.layer", layer1_hash)), "layer 1 data")?;
-        fs::write(old_dir.join(format!("{}.layer", layer2_hash)), "layer 2 data")?;
+
+        fs::write(
+            old_dir.join(format!("{}.layer", layer1_hash)),
+            "layer 1 data",
+        )?;
+        fs::write(
+            old_dir.join(format!("{}.layer", layer2_hash)),
+            "layer 2 data",
+        )?;
 
         // Migrate to archive
         let archive = DigArchive::migrate_from_directory(archive_path, &old_dir)?;
-        
+
         // Verify migration
         assert_eq!(archive.layer_count(), 2);
         assert!(archive.has_layer(&layer1_hash));
@@ -731,24 +743,24 @@ mod tests {
     fn test_archive_stats() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let archive_path = temp_dir.path().join("stats_test.dig");
-        
+
         let mut archive = DigArchive::create(archive_path)?;
-        
+
         // Add multiple layers
         for i in 0..5 {
             let hash = Hash::from_bytes([i; 32]);
             let data = vec![i; 1024]; // 1KB each
             archive.add_layer(hash, &data)?;
         }
-        
+
         archive.flush()?;
-        
+
         let stats = archive.stats();
         assert_eq!(stats.layer_count, 5);
         assert!(stats.total_size > 0); // Archive should have some size
         assert_eq!(stats.data_size, 5120); // Exactly 5KB of layer data
         assert!(stats.compression_ratio <= 1.0);
-        
+
         Ok(())
     }
 
@@ -756,9 +768,9 @@ mod tests {
     fn test_multiple_layer_additions_after_creation() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let archive_path = temp_dir.path().join("multi_layer.dig");
-        
+
         let mut archive = DigArchive::create(archive_path.clone())?;
-        
+
         // Add Layer 0 (metadata) first
         let layer_zero_hash = Hash::zero();
         let metadata = serde_json::json!({
@@ -767,31 +779,31 @@ mod tests {
         });
         let metadata_bytes = serde_json::to_vec_pretty(&metadata)?;
         archive.add_layer(layer_zero_hash, &metadata_bytes)?;
-        
+
         // Add multiple regular layers one by one
         for i in 1..=5 {
             let layer_hash = Hash::from_bytes([i; 32]);
             let layer_data = format!("Layer {} data content", i);
             archive.add_layer(layer_hash, layer_data.as_bytes())?;
-            
+
             // Verify we can read the layer back immediately
             let retrieved_data = archive.get_layer_data(&layer_hash)?;
             assert_eq!(retrieved_data, layer_data.as_bytes());
         }
-        
+
         // Verify all layers are accessible
         assert_eq!(archive.layer_count(), 6); // Layer 0 + 5 regular layers
-        
+
         // Verify Layer 0 is still accessible
         let layer_zero_data = archive.get_layer_data(&layer_zero_hash)?;
         let parsed_metadata: serde_json::Value = serde_json::from_slice(&layer_zero_data)?;
         assert_eq!(parsed_metadata["store_id"], "test_store");
-        
+
         // Test reopening the archive
         drop(archive);
         let archive = DigArchive::open(archive_path)?;
         assert_eq!(archive.layer_count(), 6);
-        
+
         // Verify all layers are still accessible after reopen
         for i in 1..=5 {
             let layer_hash = Hash::from_bytes([i; 32]);
@@ -799,7 +811,7 @@ mod tests {
             let expected_data = format!("Layer {} data content", i);
             assert_eq!(retrieved_data, expected_data.as_bytes());
         }
-        
+
         Ok(())
     }
 }

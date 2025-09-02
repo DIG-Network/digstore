@@ -1,10 +1,10 @@
 //! Hash utilities for Digstore Min
 
 use crate::core::types::Hash;
-use sha2::{Sha256, Digest};
-use std::path::Path;
+use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io::{self, Read, BufReader};
+use std::io::{self, BufReader, Read};
+use std::path::Path;
 
 /// Compute SHA-256 hash of data
 pub fn sha256(data: &[u8]) -> Hash {
@@ -96,17 +96,17 @@ impl Default for StreamingHasher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_sha256() {
         let data = b"Hello, Digstore!";
         let hash = sha256(data);
-        
+
         // Verify the hash is not zero
         assert_ne!(hash, Hash::zero());
-        
+
         // Verify deterministic
         let hash2 = sha256(data);
         assert_eq!(hash, hash2);
@@ -125,15 +125,15 @@ mod tests {
         let hash1 = sha256(b"first");
         let hash2 = sha256(b"second");
         let combined = hash_pair(&hash1, &hash2);
-        
+
         // Should be different from individual hashes
         assert_ne!(combined, hash1);
         assert_ne!(combined, hash2);
-        
+
         // Should be deterministic
         let combined2 = hash_pair(&hash1, &hash2);
         assert_eq!(combined, combined2);
-        
+
         // Order should matter
         let combined_reversed = hash_pair(&hash2, &hash1);
         assert_ne!(combined, combined_reversed);
@@ -148,7 +148,7 @@ mod tests {
 
         let file_hash = hash_file(temp_file.path())?;
         let data_hash = sha256(test_data);
-        
+
         assert_eq!(file_hash, data_hash);
         Ok(())
     }
@@ -158,11 +158,11 @@ mod tests {
         let chunk1 = b"Hello, ";
         let chunk2 = b"World!";
         let chunks = vec![chunk1.as_slice(), chunk2.as_slice()];
-        
+
         let chunked_hash = hash_chunks(&chunks);
         let combined_data = b"Hello, World!";
         let direct_hash = sha256(combined_data);
-        
+
         assert_eq!(chunked_hash, direct_hash);
     }
 
@@ -172,7 +172,7 @@ mod tests {
         hasher.update(b"Hello, ");
         hasher.update(b"World!");
         let hash = hasher.finalize();
-        
+
         let direct_hash = sha256(b"Hello, World!");
         assert_eq!(hash, direct_hash);
     }
@@ -184,7 +184,7 @@ mod tests {
         hasher.reset();
         hasher.update(b"Different data");
         let hash = hasher.finalize();
-        
+
         let expected = sha256(b"Different data");
         assert_eq!(hash, expected);
     }

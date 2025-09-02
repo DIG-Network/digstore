@@ -1,8 +1,8 @@
 //! Merkle tree implementation using rs_merkle
 
-use crate::core::{types::*, error::*};
-use rs_merkle::{MerkleTree as RsMerkleTree, MerkleProof as RsMerkleProof, Hasher};
-use sha2::{Sha256, Digest};
+use crate::core::{error::*, types::*};
+use rs_merkle::{Hasher, MerkleProof as RsMerkleProof, MerkleTree as RsMerkleTree};
+use sha2::{Digest, Sha256};
 
 /// Custom hasher implementation for rs_merkle
 #[derive(Clone)]
@@ -32,25 +32,22 @@ impl MerkleTree {
     /// Build a merkle tree from a list of hashes
     pub fn from_hashes(hashes: &[Hash]) -> Result<Self> {
         if hashes.is_empty() {
-            return Err(DigstoreError::MerkleTreeFailed { 
-                reason: "Cannot create merkle tree from empty hash list".to_string() 
+            return Err(DigstoreError::MerkleTreeFailed {
+                reason: "Cannot create merkle tree from empty hash list".to_string(),
             });
         }
 
         // Convert our Hash types to [u8; 32] for rs_merkle
-        let leaves: Vec<[u8; 32]> = hashes
-            .iter()
-            .map(|h| *h.as_bytes())
-            .collect();
+        let leaves: Vec<[u8; 32]> = hashes.iter().map(|h| *h.as_bytes()).collect();
 
         // Build the tree
         let tree = RsMerkleTree::<Sha256Hasher>::from_leaves(&leaves);
-        
+
         // Get the root hash
         let root_bytes = tree.root().ok_or_else(|| DigstoreError::MerkleTreeFailed {
-            reason: "Failed to get merkle tree root".to_string()
+            reason: "Failed to get merkle tree root".to_string(),
         })?;
-        
+
         let root = Hash::from_bytes(root_bytes);
 
         Ok(Self {
@@ -74,8 +71,11 @@ impl MerkleTree {
     pub fn generate_proof(&self, leaf_index: usize) -> Result<DigstoreProof> {
         if leaf_index >= self.leaves.len() {
             return Err(DigstoreError::MerkleTreeFailed {
-                reason: format!("Leaf index {} out of bounds (tree has {} leaves)", 
-                    leaf_index, self.leaves.len())
+                reason: format!(
+                    "Leaf index {} out of bounds (tree has {} leaves)",
+                    leaf_index,
+                    self.leaves.len()
+                ),
             });
         }
 
@@ -93,13 +93,15 @@ impl MerkleTree {
     /// Verify a proof against this tree's root
     pub fn verify_proof(&self, merkle_proof: &DigstoreProof) -> bool {
         // Parse the proof from bytes
-        if let Ok(proof) = RsMerkleProof::<Sha256Hasher>::try_from(merkle_proof.proof_bytes.as_slice()) {
+        if let Ok(proof) =
+            RsMerkleProof::<Sha256Hasher>::try_from(merkle_proof.proof_bytes.as_slice())
+        {
             // Verify the proof
             proof.verify(
                 *self.root.as_bytes(),
                 &[merkle_proof.leaf_index],
                 &[*merkle_proof.leaf_hash.as_bytes()],
-                self.leaves.len()
+                self.leaves.len(),
             )
         } else {
             false
@@ -139,7 +141,7 @@ impl DigstoreProof {
                 &[*self.leaf_hash.as_bytes()],
                 // Note: We need the leaf count, but it's not stored in the proof
                 // For now, we'll assume verification happens against the original tree
-                usize::MAX // This is a limitation we'll address
+                usize::MAX, // This is a limitation we'll address
             )
         } else {
             false
@@ -177,7 +179,7 @@ mod tests {
         ];
 
         let tree = MerkleTree::from_hashes(&hashes)?;
-        
+
         assert_eq!(tree.leaf_count(), 4);
         assert_ne!(tree.root(), Hash::zero());
         assert_eq!(tree.leaves(), &hashes);
@@ -195,7 +197,7 @@ mod tests {
     fn test_merkle_tree_single_leaf() -> Result<()> {
         let hash = sha256(b"single file");
         let tree = MerkleTree::from_hashes(&[hash])?;
-        
+
         assert_eq!(tree.leaf_count(), 1);
         assert_eq!(tree.leaves()[0], hash);
 
@@ -212,7 +214,7 @@ mod tests {
         ];
 
         let tree = MerkleTree::from_hashes(&hashes)?;
-        
+
         // Generate proof for each leaf
         for i in 0..hashes.len() {
             let proof = tree.generate_proof(i)?;
@@ -228,7 +230,7 @@ mod tests {
     fn test_merkle_proof_out_of_bounds() -> Result<()> {
         let hashes = vec![sha256(b"file1"), sha256(b"file2")];
         let tree = MerkleTree::from_hashes(&hashes)?;
-        
+
         let result = tree.generate_proof(5);
         assert!(result.is_err());
 
@@ -237,15 +239,11 @@ mod tests {
 
     #[test]
     fn test_merkle_tree_deterministic() -> Result<()> {
-        let hashes = vec![
-            sha256(b"file1"),
-            sha256(b"file2"),
-            sha256(b"file3"),
-        ];
+        let hashes = vec![sha256(b"file1"), sha256(b"file2"), sha256(b"file3")];
 
         let tree1 = MerkleTree::from_hashes(&hashes)?;
         let tree2 = MerkleTree::from_hashes(&hashes)?;
-        
+
         // Same input should produce same root
         assert_eq!(tree1.root(), tree2.root());
 
@@ -259,7 +257,7 @@ mod tests {
 
         let tree1 = MerkleTree::from_hashes(&hashes1)?;
         let tree2 = MerkleTree::from_hashes(&hashes2)?;
-        
+
         // Different inputs should produce different roots
         assert_ne!(tree1.root(), tree2.root());
 
@@ -268,22 +266,22 @@ mod tests {
 
     #[test]
     fn test_merkle_proof_verification_with_tree() -> Result<()> {
-        let hashes = vec![
-            sha256(b"file1"),
-            sha256(b"file2"),
-            sha256(b"file3"),
-        ];
+        let hashes = vec![sha256(b"file1"), sha256(b"file2"), sha256(b"file3")];
 
         let tree = MerkleTree::from_hashes(&hashes)?;
-        
+
         // Generate and verify proof for middle leaf
         let proof = tree.generate_proof(1)?;
         assert!(tree.verify_proof(&proof));
-        
+
         // Verify all proofs
         for i in 0..hashes.len() {
             let proof = tree.generate_proof(i)?;
-            assert!(tree.verify_proof(&proof), "Proof verification failed for index {}", i);
+            assert!(
+                tree.verify_proof(&proof),
+                "Proof verification failed for index {}",
+                i
+            );
         }
 
         Ok(())

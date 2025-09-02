@@ -1,6 +1,6 @@
+use crate::cli::commands::find_repository_root;
 use crate::core::error::DigstoreError;
 use crate::storage::Store;
-use crate::cli::commands::find_repository_root;
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
@@ -27,13 +27,13 @@ pub struct SizeArgs {
 }
 
 /// Execute the size command
-pub fn execute(
-    json: bool,
-    breakdown: bool,
-    efficiency: bool,
-    layers: bool,
-) -> Result<()> {
-    let args = SizeArgs { json, breakdown, efficiency, layers };
+pub fn execute(json: bool, breakdown: bool, efficiency: bool, layers: bool) -> Result<()> {
+    let args = SizeArgs {
+        json,
+        breakdown,
+        efficiency,
+        layers,
+    };
 
     let current_dir = std::env::current_dir()?;
     let store = Store::open(&current_dir)?;
@@ -92,26 +92,32 @@ fn analyze_storage(store: &Store) -> Result<StorageAnalysis> {
     let archive_layers = store.archive.list_layers();
     total_size = store.archive.path().metadata()?.len();
     layer_files_size = total_size;
-    
+
     for (layer_hash, entry) in archive_layers {
         // Skip Layer 0 for layer analysis
         if layer_hash != crate::core::types::Hash::zero() {
             if let Ok(layer) = store.load_layer(layer_hash) {
                 let layer_total_file_size: u64 = layer.files.iter().map(|f| f.size).sum();
                 total_file_size += layer_total_file_size;
-                
+
                 // Collect chunks for deduplication analysis
                 for chunk in &layer.chunks {
                     *all_chunks.entry(chunk.hash).or_insert(0) += 1;
                 }
-                
+
                 layer_breakdown.push(LayerInfo {
                     hash: layer_hash.to_hex(),
                     size: entry.size,
                     files_count: layer.files.len(),
                     chunks_count: layer.chunks.len(),
                     total_file_size: layer_total_file_size,
-                    layer_type: format!("{:?}", layer.header.get_layer_type().unwrap_or(crate::core::types::LayerType::Full)),
+                    layer_type: format!(
+                        "{:?}",
+                        layer
+                            .header
+                            .get_layer_type()
+                            .unwrap_or(crate::core::types::LayerType::Full)
+                    ),
                     generation: layer.header.layer_number,
                 });
             }
@@ -144,7 +150,8 @@ fn analyze_storage(store: &Store) -> Result<StorageAnalysis> {
         0.0
     };
 
-    let storage_efficiency = deduplication_ratio + compression_ratio - (deduplication_ratio * compression_ratio);
+    let storage_efficiency =
+        deduplication_ratio + compression_ratio - (deduplication_ratio * compression_ratio);
     let bytes_saved = (total_file_size as f64 * storage_efficiency) as u64;
 
     let efficiency_metrics = EfficiencyMetrics {
@@ -170,51 +177,72 @@ fn analyze_storage(store: &Store) -> Result<StorageAnalysis> {
 fn show_size_human(analysis: &StorageAnalysis, args: &SizeArgs) -> Result<()> {
     println!("{}", "Storage Analytics".green().bold());
     println!("{}", "═".repeat(50).green());
-    
-    println!("{}: {}", "Total Storage".bold(), format_bytes(analysis.total_size));
-    
+
+    println!(
+        "{}: {}",
+        "Total Storage".bold(),
+        format_bytes(analysis.total_size)
+    );
+
     if args.breakdown {
-        println!("├─ Layer Files: {} ({:.1}%)", 
-                 format_bytes(analysis.layer_files_size),
-                 analysis.layer_files_size as f64 / analysis.total_size as f64 * 100.0);
-        println!("├─ Metadata: {} ({:.1}%)", 
-                 format_bytes(analysis.metadata_size),
-                 analysis.metadata_size as f64 / analysis.total_size as f64 * 100.0);
-        println!("├─ Staging: {} ({:.1}%)", 
-                 format_bytes(analysis.staging_size),
-                 analysis.staging_size as f64 / analysis.total_size as f64 * 100.0);
-        println!("└─ Overhead: {} ({:.1}%)", 
-                 format_bytes(0), 0.0);
+        println!(
+            "├─ Layer Files: {} ({:.1}%)",
+            format_bytes(analysis.layer_files_size),
+            analysis.layer_files_size as f64 / analysis.total_size as f64 * 100.0
+        );
+        println!(
+            "├─ Metadata: {} ({:.1}%)",
+            format_bytes(analysis.metadata_size),
+            analysis.metadata_size as f64 / analysis.total_size as f64 * 100.0
+        );
+        println!(
+            "├─ Staging: {} ({:.1}%)",
+            format_bytes(analysis.staging_size),
+            analysis.staging_size as f64 / analysis.total_size as f64 * 100.0
+        );
+        println!("└─ Overhead: {} ({:.1}%)", format_bytes(0), 0.0);
     }
 
     if args.layers && !analysis.layer_breakdown.is_empty() {
         println!("\n{}", "Layer Breakdown:".bold());
         for (i, layer) in analysis.layer_breakdown.iter().enumerate() {
-            println!("  Layer {} ({}): {} - {} files, {} chunks", 
-                     i + 1,
-                     layer.layer_type,
-                     format_bytes(layer.size),
-                     layer.files_count,
-                     layer.chunks_count);
+            println!(
+                "  Layer {} ({}): {} - {} files, {} chunks",
+                i + 1,
+                layer.layer_type,
+                format_bytes(layer.size),
+                layer.files_count,
+                layer.chunks_count
+            );
         }
-        
+
         let avg_layer_size = analysis.layer_files_size / analysis.layer_count.max(1) as u64;
         println!("  Average layer size: {}", format_bytes(avg_layer_size));
     }
 
     if args.efficiency {
         println!("\n{}", "Efficiency Metrics:".bold());
-        println!("  Deduplication Ratio: {:.1}% ({} saved)", 
-                 analysis.efficiency_metrics.deduplication_ratio * 100.0,
-                 format_bytes(analysis.efficiency_metrics.bytes_saved));
-        println!("  Compression Ratio: {:.1}%", 
-                 analysis.efficiency_metrics.compression_ratio * 100.0);
-        println!("  Storage Efficiency: {:.1}%", 
-                 analysis.efficiency_metrics.storage_efficiency * 100.0);
-        println!("  Unique Chunks: {} of {} ({:.1}%)", 
-                 analysis.efficiency_metrics.unique_chunks,
-                 analysis.efficiency_metrics.total_chunks,
-                 analysis.efficiency_metrics.unique_chunks as f64 / analysis.efficiency_metrics.total_chunks.max(1) as f64 * 100.0);
+        println!(
+            "  Deduplication Ratio: {:.1}% ({} saved)",
+            analysis.efficiency_metrics.deduplication_ratio * 100.0,
+            format_bytes(analysis.efficiency_metrics.bytes_saved)
+        );
+        println!(
+            "  Compression Ratio: {:.1}%",
+            analysis.efficiency_metrics.compression_ratio * 100.0
+        );
+        println!(
+            "  Storage Efficiency: {:.1}%",
+            analysis.efficiency_metrics.storage_efficiency * 100.0
+        );
+        println!(
+            "  Unique Chunks: {} of {} ({:.1}%)",
+            analysis.efficiency_metrics.unique_chunks,
+            analysis.efficiency_metrics.total_chunks,
+            analysis.efficiency_metrics.unique_chunks as f64
+                / analysis.efficiency_metrics.total_chunks.max(1) as f64
+                * 100.0
+        );
     }
 
     Ok(())
@@ -262,12 +290,12 @@ fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
     } else {

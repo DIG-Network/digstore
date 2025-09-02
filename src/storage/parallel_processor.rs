@@ -8,21 +8,24 @@
 //! - Real-time progress reporting
 //! - Adaptive batch sizing based on system resources
 
-use crate::core::{types::*, error::{Result, DigstoreError}};
-use crate::storage::{
-    chunk::ChunkingEngine,
-    streaming::StreamingChunkingEngine,
-    binary_staging::{BinaryStagingArea, BinaryStagedFile},
+use crate::core::{
+    error::{DigstoreError, Result},
+    types::*,
 };
 use crate::ignore::scanner::{FilteredFileScanner, ScanResult};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
-use std::time::{Instant, Duration};
-use rayon::prelude::*;
-use dashmap::DashMap;
+use crate::storage::{
+    binary_staging::{BinaryStagedFile, BinaryStagingArea},
+    chunk::ChunkingEngine,
+    streaming::StreamingChunkingEngine,
+};
 use crossbeam_channel::{bounded, Receiver, Sender};
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use dashmap::DashMap;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use rayon::prelude::*;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Configuration for parallel processing
 #[derive(Debug, Clone)]
@@ -133,7 +136,7 @@ impl ParallelFileProcessor {
     /// Create a new parallel file processor
     pub fn new(config: ParallelConfig) -> Self {
         let (staging_sender, staging_receiver) = bounded(100); // Bounded channel for backpressure
-        
+
         Self {
             config,
             progress: ParallelProgress::new(),
@@ -153,27 +156,31 @@ impl ParallelFileProcessor {
     ) -> Result<ProcessingStats> {
         // Phase 1: Discover and filter files
         self.set_phase("Discovering files...");
-        
+
         let discovery_pb = multi_progress.add(ProgressBar::new_spinner());
         discovery_pb.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner:.green} {msg} ({pos:>7} files)")
-                .unwrap()
+                .unwrap(),
         );
 
         let mut scanner = FilteredFileScanner::new(directory)
             .map_err(|e| DigstoreError::internal(format!("Failed to create scanner: {}", e)))?;
-        let scan_result = scanner.scan_directory(directory)
+        let scan_result = scanner
+            .scan_directory(directory)
             .map_err(|e| DigstoreError::internal(format!("Failed to scan directory: {}", e)))?;
-        
+
         discovery_pb.finish_with_message(format!(
             "✓ Discovered {} files ({} filtered out)",
-            scan_result.stats.total_discovered,
-            scan_result.stats.total_ignored
+            scan_result.stats.total_discovered, scan_result.stats.total_ignored
         ));
 
-        self.progress.files_discovered.store(scan_result.stats.total_discovered, Ordering::Relaxed);
-        self.progress.files_ignored.store(scan_result.stats.total_ignored, Ordering::Relaxed);
+        self.progress
+            .files_discovered
+            .store(scan_result.stats.total_discovered, Ordering::Relaxed);
+        self.progress
+            .files_ignored
+            .store(scan_result.stats.total_ignored, Ordering::Relaxed);
 
         if scan_result.filtered_files.is_empty() {
             return Ok(ProcessingStats {
@@ -189,8 +196,9 @@ impl ParallelFileProcessor {
 
         // Phase 2: Parallel file processing
         self.set_phase("Processing files in parallel...");
-        
-        let processing_pb = multi_progress.add(ProgressBar::new(scan_result.filtered_files.len() as u64));
+
+        let processing_pb =
+            multi_progress.add(ProgressBar::new(scan_result.filtered_files.len() as u64));
         processing_pb.set_style(
             ProgressStyle::default_bar()
                 .template("{bar:50.cyan/blue} {pos:>7}/{len:7} files ({percent:>3}%) | {per_sec:>8} | ETA: {eta:>5} | {msg}")
@@ -198,17 +206,27 @@ impl ParallelFileProcessor {
         );
 
         // Start staging writer thread
-        let staging_writer_handle = self.start_staging_writer_thread(staging_area, &processing_pb)?;
+        let staging_writer_handle =
+            self.start_staging_writer_thread(staging_area, &processing_pb)?;
 
         // Create work items with priority (smaller files first for better parallelism)
-        let mut work_items: Vec<ProcessingWorkItem> = scan_result.filtered_files
+        let mut work_items: Vec<ProcessingWorkItem> = scan_result
+            .filtered_files
             .into_iter()
             .map(|path| {
                 let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                let priority = if file_size < 1024 * 1024 { 0 } // < 1MB = high priority
-                else if file_size < 10 * 1024 * 1024 { 1 } // < 10MB = medium priority
-                else { 2 }; // >= 10MB = low priority
-                
+                let priority = if file_size < 1024 * 1024 {
+                    0
+                }
+                // < 1MB = high priority
+                else if file_size < 10 * 1024 * 1024 {
+                    1
+                }
+                // < 10MB = medium priority
+                else {
+                    2
+                }; // >= 10MB = low priority
+
                 ProcessingWorkItem {
                     file_path: path,
                     file_size,
@@ -233,28 +251,28 @@ impl ParallelFileProcessor {
         let progress_clone = Arc::clone(&self.progress.files_processed);
         let bytes_progress_clone = Arc::clone(&self.progress.bytes_processed);
         let staging_sender = self.staging_sender.clone();
-        
+
         thread_pool.install(|| {
             work_items
                 .into_par_iter()
                 .chunks(self.config.staging_batch_size)
                 .try_for_each(|batch| -> Result<()> {
                     let mut batch_results = Vec::with_capacity(batch.len());
-                    
+
                     // Process batch of files in parallel
                     let batch_processed: Result<Vec<_>> = batch
                         .into_par_iter()
-                        .map(|work_item| {
-                            self.process_single_file(&work_item)
-                        })
+                        .map(|work_item| self.process_single_file(&work_item))
                         .collect();
-                    
+
                     match batch_processed {
                         Ok(results) => {
                             for result in results {
                                 progress_clone.fetch_add(1, Ordering::Relaxed);
-                                bytes_progress_clone.fetch_add(result.staged_file.size, Ordering::Relaxed);
-                                processing_pb.set_position(progress_clone.load(Ordering::Relaxed) as u64);
+                                bytes_progress_clone
+                                    .fetch_add(result.staged_file.size, Ordering::Relaxed);
+                                processing_pb
+                                    .set_position(progress_clone.load(Ordering::Relaxed) as u64);
                                 processing_pb.set_message(format!(
                                     "{:.1} files/s, {:.1} MB/s",
                                     self.progress.files_per_second(),
@@ -262,23 +280,28 @@ impl ParallelFileProcessor {
                                 ));
                                 batch_results.push(result.staged_file);
                             }
-                            
+
                             // Send batch to staging writer
                             if !batch_results.is_empty() {
-                                staging_sender.send(batch_results)
-                                    .map_err(|e| DigstoreError::internal(format!("Failed to send to staging: {}", e)))?;
+                                staging_sender.send(batch_results).map_err(|e| {
+                                    DigstoreError::internal(format!(
+                                        "Failed to send to staging: {}",
+                                        e
+                                    ))
+                                })?;
                             }
                         }
                         Err(e) => return Err(e),
                     }
-                    
+
                     Ok(())
                 })
         })?;
 
         // Signal completion and wait for staging writer
-        staging_writer_handle.join()
-            .map_err(|e| DigstoreError::internal(format!("Staging writer thread failed: {:?}", e)))??;
+        staging_writer_handle.join().map_err(|e| {
+            DigstoreError::internal(format!("Staging writer thread failed: {:?}", e))
+        })??;
 
         processing_pb.finish_with_message(format!(
             "✓ Processed {} files ({:.1} files/s, {:.1} MB/s)",
@@ -289,8 +312,8 @@ impl ParallelFileProcessor {
 
         let processing_time = self.progress.start_time.elapsed();
         let parallel_efficiency = if self.config.worker_threads > 1 {
-            (self.progress.files_per_second() * self.config.worker_threads as f64) / 
-            (total_files as f64 / processing_time.as_secs_f64())
+            (self.progress.files_per_second() * self.config.worker_threads as f64)
+                / (total_files as f64 / processing_time.as_secs_f64())
         } else {
             1.0
         };
@@ -309,19 +332,21 @@ impl ParallelFileProcessor {
     /// Process a single file (called from parallel context)
     fn process_single_file(&self, work_item: &ProcessingWorkItem) -> Result<ProcessingResult> {
         let start_time = Instant::now();
-        
+
         // Choose processing strategy based on file size
         let chunks = if work_item.file_size > self.config.streaming_threshold {
             // Large files: use streaming processing
-            self.streaming_engine.chunk_file_streaming(&work_item.file_path)?
+            self.streaming_engine
+                .chunk_file_streaming(&work_item.file_path)?
         } else {
             // Small files: use regular chunking
-            self.chunking_engine.chunk_file_streaming(&work_item.file_path)?
+            self.chunking_engine
+                .chunk_file_streaming(&work_item.file_path)?
         };
 
         // Compute file hash from chunks
         let file_hash = Self::compute_file_hash_from_chunks(&chunks);
-        
+
         // Get file metadata
         let modified_time = std::fs::metadata(&work_item.file_path)?.modified().ok();
 
@@ -349,11 +374,11 @@ impl ParallelFileProcessor {
     ) -> Result<std::thread::JoinHandle<Result<()>>> {
         let staging_receiver = self.staging_receiver.clone();
         let staged_counter = Arc::clone(&self.progress.files_staged);
-        
+
         // We need to pass ownership of staging_area to the thread
         // For now, let's use a simpler approach without background writing
         // and do batch staging writes in the main thread
-        
+
         Ok(std::thread::spawn(move || {
             // Placeholder - in real implementation, this would handle background staging writes
             Ok(())
@@ -369,7 +394,7 @@ impl ParallelFileProcessor {
 
     /// Compute file hash from chunks
     fn compute_file_hash_from_chunks(chunks: &[Chunk]) -> Hash {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         for chunk in chunks {
             hasher.update(chunk.hash.as_bytes());
@@ -398,7 +423,7 @@ pub fn add_all_parallel(
 ) -> Result<ProcessingStats> {
     let config = ParallelConfig::default();
     let mut processor = ParallelFileProcessor::new(config);
-    
+
     // Use simplified parallel processing for now
     processor.process_directory_simplified(directory, staging_area, multi_progress)
 }
@@ -413,23 +438,23 @@ impl ParallelFileProcessor {
     ) -> Result<ProcessingStats> {
         // Phase 1: Discover and filter files
         self.set_phase("Discovering files...");
-        
+
         let discovery_pb = multi_progress.add(ProgressBar::new_spinner());
         discovery_pb.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner:.green} {msg} ({pos:>7} files)")
-                .unwrap()
+                .unwrap(),
         );
 
         let mut scanner = FilteredFileScanner::new(directory)
             .map_err(|e| DigstoreError::internal(format!("Failed to create scanner: {}", e)))?;
-        let scan_result = scanner.scan_directory(directory)
+        let scan_result = scanner
+            .scan_directory(directory)
             .map_err(|e| DigstoreError::internal(format!("Failed to scan directory: {}", e)))?;
-        
+
         discovery_pb.finish_with_message(format!(
             "✓ Discovered {} files ({} filtered out)",
-            scan_result.stats.total_discovered,
-            scan_result.stats.total_ignored
+            scan_result.stats.total_discovered, scan_result.stats.total_ignored
         ));
 
         if scan_result.filtered_files.is_empty() {
@@ -446,8 +471,9 @@ impl ParallelFileProcessor {
 
         // Phase 2: Parallel file processing
         self.set_phase("Processing files in parallel...");
-        
-        let processing_pb = multi_progress.add(ProgressBar::new(scan_result.filtered_files.len() as u64));
+
+        let processing_pb =
+            multi_progress.add(ProgressBar::new(scan_result.filtered_files.len() as u64));
         processing_pb.set_style(
             ProgressStyle::default_bar()
                 .template("{bar:50.cyan/blue} {pos:>7}/{len:7} files ({percent:>3}%) | {per_sec:>10} | ETA: {eta:>5} | {msg}")
@@ -460,8 +486,11 @@ impl ParallelFileProcessor {
         let bytes_processed = Arc::new(AtomicU64::new(0));
 
         // Process files in parallel chunks
-        let chunk_size = (total_files / (self.config.worker_threads * 4)).max(10).min(100);
-        let chunks: Vec<Vec<PathBuf>> = scan_result.filtered_files
+        let chunk_size = (total_files / (self.config.worker_threads * 4))
+            .max(10)
+            .min(100);
+        let chunks: Vec<Vec<PathBuf>> = scan_result
+            .filtered_files
             .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -470,11 +499,11 @@ impl ParallelFileProcessor {
             .into_par_iter()
             .map(|file_chunk| -> Result<Vec<BinaryStagedFile>> {
                 let mut batch_results = Vec::with_capacity(file_chunk.len());
-                
+
                 for file_path in file_chunk {
                     // Process file
                     let file_size = std::fs::metadata(&file_path)?.len();
-                    
+
                     let chunks = if file_size > self.config.streaming_threshold {
                         self.streaming_engine.chunk_file_streaming(&file_path)?
                     } else {
@@ -502,13 +531,21 @@ impl ParallelFileProcessor {
                     // Update progress
                     let current_processed = files_processed.fetch_add(1, Ordering::Relaxed) + 1;
                     bytes_processed.fetch_add(file_size, Ordering::Relaxed);
-                    
+
                     // Update progress bar (with throttling)
                     if current_processed % 10 == 0 || current_processed == total_files {
                         let elapsed = start_time.elapsed().as_secs_f64();
-                        let files_per_sec = if elapsed > 0.0 { current_processed as f64 / elapsed } else { 0.0 };
-                        let bytes_per_sec = if elapsed > 0.0 { bytes_processed.load(Ordering::Relaxed) as f64 / elapsed } else { 0.0 };
-                        
+                        let files_per_sec = if elapsed > 0.0 {
+                            current_processed as f64 / elapsed
+                        } else {
+                            0.0
+                        };
+                        let bytes_per_sec = if elapsed > 0.0 {
+                            bytes_processed.load(Ordering::Relaxed) as f64 / elapsed
+                        } else {
+                            0.0
+                        };
+
                         processing_pb.set_position(current_processed as u64);
                         processing_pb.set_message(format!(
                             "{:.1} files/s, {:.1} MB/s",
@@ -517,7 +554,7 @@ impl ParallelFileProcessor {
                         ));
                     }
                 }
-                
+
                 Ok(batch_results)
             })
             .collect();
@@ -536,12 +573,12 @@ impl ParallelFileProcessor {
 
         // Phase 3: Batch staging writes
         self.set_phase("Writing to staging...");
-        
+
         let staging_pb = multi_progress.add(ProgressBar::new(total_processed as u64));
         staging_pb.set_style(
             ProgressStyle::default_bar()
                 .template("{bar:50.blue/cyan} {pos:>7}/{len:7} staged | {per_sec:>10} | {msg}")
-                .unwrap()
+                .unwrap(),
         );
 
         let mut staged_count = 0;
@@ -577,8 +614,8 @@ impl ParallelFileProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_parallel_config_default() {
@@ -591,13 +628,15 @@ mod tests {
     #[test]
     fn test_parallel_progress() {
         let progress = ParallelProgress::new();
-        
+
         progress.files_processed.store(100, Ordering::Relaxed);
-        progress.bytes_processed.store(1024 * 1024, Ordering::Relaxed);
-        
+        progress
+            .bytes_processed
+            .store(1024 * 1024, Ordering::Relaxed);
+
         // Give some time for elapsed calculation
         std::thread::sleep(Duration::from_millis(10));
-        
+
         assert!(progress.files_per_second() > 0.0);
         assert!(progress.bytes_per_second() > 0.0);
     }
@@ -606,34 +645,37 @@ mod tests {
     fn test_add_all_parallel_small_scale() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let root = temp_dir.path();
-        
+
         // Create test files
         for i in 0..10 {
-            fs::write(root.join(format!("test_{}.txt", i)), format!("content {}", i))?;
+            fs::write(
+                root.join(format!("test_{}.txt", i)),
+                format!("content {}", i),
+            )?;
         }
-        
+
         // Create .digignore to test filtering
         fs::write(root.join(".digignore"), "*.tmp\n")?;
         fs::write(root.join("ignored.tmp"), "ignored content")?;
-        
+
         // Create staging area
         let staging_path = root.join("staging.bin");
         let mut staging_area = BinaryStagingArea::new(staging_path);
         staging_area.initialize()?;
-        
+
         // Create progress manager
         let multi_progress = MultiProgress::new();
-        
+
         // Process files in parallel
         let stats = add_all_parallel(root, &mut staging_area, &multi_progress)?;
-        
+
         // Verify results (may include .digignore and other files)
         assert!(stats.total_files >= 10); // At least 10 .txt files
         assert!(stats.processed_files >= 10);
         assert!(stats.files_per_second > 0.0);
         assert!(stats.bytes_per_second >= 0.0); // Can be 0 for small files
         assert!(staging_area.staged_count() >= 10);
-        
+
         Ok(())
     }
 }

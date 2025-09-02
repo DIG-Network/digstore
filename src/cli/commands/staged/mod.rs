@@ -1,9 +1,9 @@
 //! Staging area management commands
 
-pub mod list;
 pub mod diff;
+pub mod list;
 
 // Re-export the execute functions
-pub use list::execute as execute_list;
-pub use list::clear_staged;
 pub use diff::execute as execute_diff;
+pub use list::clear_staged;
+pub use list::execute as execute_list;

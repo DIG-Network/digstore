@@ -1,12 +1,11 @@
 use crate::core::error::DigstoreError;
+use crate::proofs::{Proof, ProofElement, ProofMetadata, ProofPosition, ProofTarget};
 use crate::storage::Store;
-use crate::proofs::{Proof, ProofPosition, ProofTarget, ProofMetadata, ProofElement};
 use crate::urn::parse_urn;
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
 use std::path::{Path, PathBuf};
-
 
 #[derive(Args)]
 pub struct ProveArgs {
@@ -53,7 +52,7 @@ pub fn execute(
     };
 
     let current_dir = std::env::current_dir()?;
-    
+
     // Try to open store from current directory
     let store = match Store::open(&current_dir) {
         Ok(store) => store,
@@ -81,7 +80,7 @@ fn handle_path_prove(store: &Store, args: &ProveArgs) -> Result<()> {
     println!("  • Target: {}", args.target);
 
     let file_path = Path::new(&args.target);
-    
+
     // Parse root hash if provided
     let at_root = if let Some(at_hash) = &args.at {
         let root_hash = crate::core::types::Hash::from_hex(at_hash)
@@ -94,11 +93,20 @@ fn handle_path_prove(store: &Store, args: &ProveArgs) -> Result<()> {
     // Generate the proof
     let proof = if let Some(byte_range_str) = &args.bytes {
         // Parse byte range
-        let byte_range = crate::urn::parser::parse_byte_range(&format!("#bytes={}", byte_range_str))?;
-        println!("  • Byte range: {}-{}", 
-                 byte_range.start.map(|s| s.to_string()).unwrap_or("0".to_string()),
-                 byte_range.end.map(|e| e.to_string()).unwrap_or("end".to_string()));
-        
+        let byte_range =
+            crate::urn::parser::parse_byte_range(&format!("#bytes={}", byte_range_str))?;
+        println!(
+            "  • Byte range: {}-{}",
+            byte_range
+                .start
+                .map(|s| s.to_string())
+                .unwrap_or("0".to_string()),
+            byte_range
+                .end
+                .map(|e| e.to_string())
+                .unwrap_or("end".to_string())
+        );
+
         Proof::new_byte_range_proof(
             store,
             file_path,
@@ -125,22 +133,31 @@ fn handle_path_prove(store: &Store, args: &ProveArgs) -> Result<()> {
 
 fn handle_urn_prove(args: &ProveArgs) -> Result<()> {
     println!("{}", "Generating proof from URN...".green());
-    
+
     let mut urn = parse_urn(&args.target)?;
     println!("  • Store ID: {}", urn.store_id.to_hex().cyan());
-    
+
     // Add byte range if specified
     if let Some(byte_range_str) = &args.bytes {
-        let byte_range = crate::urn::parser::parse_byte_range(&format!("#bytes={}", byte_range_str))?;
-        println!("  • Byte range: {}-{}", 
-                 byte_range.start.map(|s| s.to_string()).unwrap_or("0".to_string()),
-                 byte_range.end.map(|e| e.to_string()).unwrap_or("end".to_string()));
+        let byte_range =
+            crate::urn::parser::parse_byte_range(&format!("#bytes={}", byte_range_str))?;
+        println!(
+            "  • Byte range: {}-{}",
+            byte_range
+                .start
+                .map(|s| s.to_string())
+                .unwrap_or("0".to_string()),
+            byte_range
+                .end
+                .map(|e| e.to_string())
+                .unwrap_or("end".to_string())
+        );
         urn.byte_range = Some(byte_range);
     }
 
     // Open the store
     let store = Store::open_global(&urn.store_id)?;
-    
+
     // Generate proof based on URN
     let proof = if let Some(path) = &urn.resource_path {
         let file_path = Path::new(path);
@@ -158,7 +175,9 @@ fn handle_urn_prove(args: &ProveArgs) -> Result<()> {
     } else {
         // Prove entire layer
         let root_hash = urn.root_hash.unwrap_or_else(|| {
-            store.current_root().unwrap_or_else(|| crate::core::types::Hash::zero())
+            store
+                .current_root()
+                .unwrap_or_else(|| crate::core::types::Hash::zero())
         });
         Proof::new_layer_proof(&store, root_hash)?
     };
@@ -195,7 +214,10 @@ fn output_proof(proof: &Proof, args: &ProveArgs) -> Result<()> {
 
     if let Some(output_path) = &args.output {
         std::fs::write(output_path, proof_data)?;
-        println!("  • Proof written to: {}", output_path.display().to_string().cyan());
+        println!(
+            "  • Proof written to: {}",
+            output_path.display().to_string().cyan()
+        );
     } else {
         println!("\n{}", "Proof:".bold());
         println!("{}", proof_data);
@@ -206,43 +228,48 @@ fn output_proof(proof: &Proof, args: &ProveArgs) -> Result<()> {
 
 fn format_proof_as_text(proof: &Proof) -> String {
     let mut output = String::new();
-    
+
     output.push_str(&format!("Proof Type: {}\n", proof.proof_type));
     output.push_str(&format!("Target: {:?}\n", proof.target));
     output.push_str(&format!("Root Hash: {}\n", proof.root.to_hex()));
     output.push_str(&format!("Generated: {}\n", proof.metadata.timestamp));
     output.push_str(&format!("Store ID: {}\n", proof.metadata.store_id.to_hex()));
-    
+
     if let Some(layer_num) = proof.metadata.layer_number {
         output.push_str(&format!("Layer: {}\n", layer_num));
     }
-    
-    output.push_str(&format!("Proof Elements: {} elements\n", proof.proof_path.len()));
-    
+
+    output.push_str(&format!(
+        "Proof Elements: {} elements\n",
+        proof.proof_path.len()
+    ));
+
     for (i, element) in proof.proof_path.iter().enumerate() {
-        output.push_str(&format!("  {}: {} - {}\n", 
-                                 i + 1, 
-                                 match element.position {
-                                     ProofPosition::Left => "Left",
-                                     ProofPosition::Right => "Right",
-                                 },
-                                 element.hash.to_hex()));
+        output.push_str(&format!(
+            "  {}: {} - {}\n",
+            i + 1,
+            match element.position {
+                ProofPosition::Left => "Left",
+                ProofPosition::Right => "Right",
+            },
+            element.hash.to_hex()
+        ));
     }
-    
+
     output
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_format_proof_as_text() {
         use crate::core::types::Hash;
-        use crate::proofs::{ProofMetadata, ProofTarget, ProofPosition};
-        
+        use crate::proofs::{ProofMetadata, ProofPosition, ProofTarget};
+
         let proof = Proof {
             version: "1.0".to_string(),
             proof_type: "file".to_string(),
@@ -253,12 +280,12 @@ mod tests {
             },
             root: Hash::zero(),
             proof_path: vec![
-                ProofElement { 
-                    hash: Hash::zero(), 
+                ProofElement {
+                    hash: Hash::zero(),
                     position: ProofPosition::Left,
                 },
-                ProofElement { 
-                    hash: Hash::zero(), 
+                ProofElement {
+                    hash: Hash::zero(),
                     position: ProofPosition::Right,
                 },
             ],

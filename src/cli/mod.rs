@@ -50,15 +50,15 @@ pub enum Commands {
         /// Use specific store ID (default: generate random)
         #[arg(long)]
         store_id: Option<String>,
-        
+
         /// Repository name
         #[arg(long)]
         name: Option<String>,
-        
+
         /// Disable compression
         #[arg(long)]
         no_compression: bool,
-        
+
         /// Average chunk size in KB (default: 1024)
         #[arg(long, default_value = "1024")]
         chunk_size: u32,
@@ -68,27 +68,27 @@ pub enum Commands {
     Add {
         /// Files or directories to add
         paths: Vec<PathBuf>,
-        
+
         /// Add directories recursively
         #[arg(short, long)]
         recursive: bool,
-        
+
         /// Add all files in the repository
         #[arg(short = 'A', long)]
         all: bool,
-        
+
         /// Force add ignored files
         #[arg(short, long)]
         force: bool,
-        
+
         /// Show what would be added
         #[arg(long)]
         dry_run: bool,
-        
+
         /// Read file list from stdin
         #[arg(long)]
         from_stdin: bool,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -99,23 +99,23 @@ pub enum Commands {
         /// Commit message
         #[arg(short, long)]
         message: String,
-        
+
         /// Create full layer (not delta)
         #[arg(long)]
         full_layer: bool,
-        
+
         /// Set author name
         #[arg(long)]
         author: Option<String>,
-        
+
         /// Override commit date
         #[arg(long)]
         date: Option<String>,
-        
+
         /// Open editor for message
         #[arg(short, long)]
         edit: bool,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -126,15 +126,15 @@ pub enum Commands {
         /// Show short format
         #[arg(short, long)]
         short: bool,
-        
+
         /// Machine-readable output
         #[arg(long)]
         porcelain: bool,
-        
+
         /// Display chunk statistics
         #[arg(long)]
         show_chunks: bool,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -144,27 +144,27 @@ pub enum Commands {
     Get {
         /// Path or URN to retrieve
         path: String,
-        
+
         /// Output file (default: stdout)
         #[arg(short, long)]
         output: Option<PathBuf>,
-        
+
         /// Verify with merkle proof while retrieving
         #[arg(long)]
         verify: bool,
-        
+
         /// Include metadata in output
         #[arg(long)]
         metadata: bool,
-        
+
         /// Retrieve at specific root hash
         #[arg(long)]
         at: Option<String>,
-        
+
         /// Force show progress even when piping
         #[arg(long)]
         progress: bool,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -174,29 +174,27 @@ pub enum Commands {
     Cat {
         /// File path or URN
         path: String,
-        
+
         /// Show at specific root hash
         #[arg(long)]
         at: Option<String>,
-        
+
         /// Number all output lines
         #[arg(short, long)]
         number: bool,
-        
+
         /// Don't use pager for long output
         #[arg(long)]
         no_pager: bool,
-        
+
         /// Display specific byte range
         #[arg(long)]
         bytes: Option<String>,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
     },
-
-
 
     /// Generate shell completion scripts
     Completion {
@@ -312,15 +310,15 @@ pub enum LayerCommands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Show size information
         #[arg(long)]
         size: bool,
-        
+
         /// Show file details
         #[arg(long)]
         files: bool,
-        
+
         /// Show chunk details
         #[arg(long)]
         chunks: bool,
@@ -330,19 +328,19 @@ pub enum LayerCommands {
     Analyze {
         /// Layer hash to analyze
         layer_hash: String,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Show size information
         #[arg(long)]
         size: bool,
-        
+
         /// Show file details
         #[arg(long)]
         files: bool,
-        
+
         /// Show chunk details
         #[arg(long)]
         chunks: bool,
@@ -352,23 +350,23 @@ pub enum LayerCommands {
     Inspect {
         /// Layer hash to inspect
         layer_hash: String,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Show layer header details
         #[arg(long)]
         header: bool,
-        
+
         /// Show merkle tree information
         #[arg(long)]
         merkle: bool,
-        
+
         /// Show chunk analysis
         #[arg(long)]
         chunks: bool,
-        
+
         /// Verify layer integrity
         #[arg(long)]
         verify: bool,
@@ -383,15 +381,15 @@ pub enum StoreCommands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Show configuration details
         #[arg(long)]
         config: bool,
-        
+
         /// Show all paths
         #[arg(long)]
         paths: bool,
-        
+
         /// Show specific layer info
         #[arg(long)]
         layer: Option<String>,
@@ -402,15 +400,15 @@ pub enum StoreCommands {
         /// Limit number of entries
         #[arg(short = 'n', long)]
         limit: Option<usize>,
-        
+
         /// One line per layer
         #[arg(long)]
         oneline: bool,
-        
+
         /// Show ASCII graph
         #[arg(long)]
         graph: bool,
-        
+
         /// Show layers since date
         #[arg(long)]
         since: Option<String>,
@@ -421,19 +419,19 @@ pub enum StoreCommands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Limit number of entries
         #[arg(short = 'n', long)]
         limit: Option<usize>,
-        
+
         /// Show statistics
         #[arg(long)]
         stats: bool,
-        
+
         /// Show ASCII graph
         #[arg(long)]
         graph: bool,
-        
+
         /// Show entries since date
         #[arg(long)]
         since: Option<String>,
@@ -444,11 +442,11 @@ pub enum StoreCommands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Show detailed information
         #[arg(short, long)]
         verbose: bool,
-        
+
         /// Show only the root hash
         #[arg(long)]
         hash_only: bool,
@@ -459,15 +457,15 @@ pub enum StoreCommands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Show detailed breakdown
         #[arg(long)]
         breakdown: bool,
-        
+
         /// Show deduplication metrics
         #[arg(long)]
         efficiency: bool,
-        
+
         /// Show per-layer analysis
         #[arg(long)]
         layers: bool,
@@ -478,15 +476,15 @@ pub enum StoreCommands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Show detailed statistics
         #[arg(long)]
         detailed: bool,
-        
+
         /// Show performance metrics
         #[arg(long)]
         performance: bool,
-        
+
         /// Show security metrics
         #[arg(long)]
         security: bool,
@@ -500,23 +498,23 @@ pub enum ProofCommands {
     Generate {
         /// Target to prove
         target: String,
-        
+
         /// Write proof to file (default: stdout)
         #[arg(short, long)]
         output: Option<PathBuf>,
-        
+
         /// Output format: json, binary, text
         #[arg(long, default_value = "json")]
         format: String,
-        
+
         /// Prove at specific root hash
         #[arg(long)]
         at: Option<String>,
-        
+
         /// Prove specific byte range
         #[arg(long)]
         bytes: Option<String>,
-        
+
         /// Generate compact proof
         #[arg(long)]
         compact: bool,
@@ -526,19 +524,19 @@ pub enum ProofCommands {
     Verify {
         /// Proof file to verify
         proof: PathBuf,
-        
+
         /// Expected target hash
         #[arg(long)]
         target: Option<String>,
-        
+
         /// Expected root hash
         #[arg(long)]
         root: Option<String>,
-        
+
         /// Show detailed verification steps
         #[arg(short, long)]
         verbose: bool,
-        
+
         /// Read proof from stdin
         #[arg(long)]
         from_stdin: bool,

@@ -1,9 +1,9 @@
 //! .digstore file management
 
-use crate::core::{types::*, error::*};
+use crate::core::{error::*, types::*};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use chrono::Utc;
 
 /// Contents of a .digstore file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,11 +38,10 @@ impl DigstoreFile {
 
     /// Load .digstore file from disk
     pub fn load(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| DigstoreError::Io(e))?;
-        
-        let digstore_file: DigstoreFile = toml::from_str(&content)
-            .map_err(|e| DigstoreError::ConfigurationError {
+        let content = std::fs::read_to_string(path).map_err(|e| DigstoreError::Io(e))?;
+
+        let digstore_file: DigstoreFile =
+            toml::from_str(&content).map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to parse .digstore file: {}", e),
             })?;
 
@@ -55,9 +54,10 @@ impl DigstoreFile {
 
         // Validate store ID format
         if digstore_file.store_id.len() != 64 {
-            return Err(DigstoreError::invalid_store_id(
-                format!("Store ID must be 64 hex characters, got {}", digstore_file.store_id.len())
-            ));
+            return Err(DigstoreError::invalid_store_id(format!(
+                "Store ID must be 64 hex characters, got {}",
+                digstore_file.store_id.len()
+            )));
         }
 
         Ok(digstore_file)
@@ -65,13 +65,12 @@ impl DigstoreFile {
 
     /// Save .digstore file to disk
     pub fn save(&self, path: &Path) -> Result<()> {
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| DigstoreError::ConfigurationError {
+        let content =
+            toml::to_string_pretty(self).map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to serialize .digstore file: {}", e),
             })?;
 
-        std::fs::write(path, content)
-            .map_err(|e| DigstoreError::Io(e))?;
+        std::fs::write(path, content).map_err(|e| DigstoreError::Io(e))?;
 
         Ok(())
     }
@@ -83,10 +82,12 @@ impl DigstoreFile {
 
     /// Get the store ID as a Hash
     pub fn get_store_id(&self) -> Result<StoreId> {
-        Hash::from_hex(&self.store_id)
-            .map_err(|_| DigstoreError::invalid_store_id(
-                format!("Invalid store ID in .digstore file: {}", self.store_id)
+        Hash::from_hex(&self.store_id).map_err(|_| {
+            DigstoreError::invalid_store_id(format!(
+                "Invalid store ID in .digstore file: {}",
+                self.store_id
             ))
+        })
     }
 
     /// Check if this .digstore file is valid
@@ -101,16 +102,21 @@ impl DigstoreFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_digstore_file_creation() {
-        let store_id = Hash::from_hex("a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2").unwrap();
+        let store_id =
+            Hash::from_hex("a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2")
+                .unwrap();
         let digstore_file = DigstoreFile::new(store_id, Some("test-repo".to_string()));
 
         assert_eq!(digstore_file.version, "1.0.0");
-        assert_eq!(digstore_file.store_id, "a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2");
+        assert_eq!(
+            digstore_file.store_id,
+            "a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2"
+        );
         assert_eq!(digstore_file.encrypted, false);
         assert_eq!(digstore_file.repository_name, Some("test-repo".to_string()));
         assert!(digstore_file.is_valid());
@@ -118,43 +124,49 @@ mod tests {
 
     #[test]
     fn test_digstore_file_roundtrip() -> Result<()> {
-        let store_id = Hash::from_hex("a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2").unwrap();
+        let store_id =
+            Hash::from_hex("a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2")
+                .unwrap();
         let original = DigstoreFile::new(store_id, Some("test-repo".to_string()));
 
         let mut temp_file = NamedTempFile::new().unwrap();
         original.save(temp_file.path())?;
 
         let loaded = DigstoreFile::load(temp_file.path())?;
-        
+
         assert_eq!(original.version, loaded.version);
         assert_eq!(original.store_id, loaded.store_id);
         assert_eq!(original.encrypted, loaded.encrypted);
         assert_eq!(original.repository_name, loaded.repository_name);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_get_store_id() -> Result<()> {
-        let store_id = Hash::from_hex("a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2").unwrap();
+        let store_id =
+            Hash::from_hex("a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2")
+                .unwrap();
         let digstore_file = DigstoreFile::new(store_id, None);
-        
+
         let retrieved_id = digstore_file.get_store_id()?;
         assert_eq!(store_id, retrieved_id);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_update_last_accessed() {
-        let store_id = Hash::from_hex("a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2").unwrap();
+        let store_id =
+            Hash::from_hex("a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2")
+                .unwrap();
         let mut digstore_file = DigstoreFile::new(store_id, None);
-        
+
         let original_time = digstore_file.last_accessed.clone();
-        
+
         // Small delay to ensure different timestamp
         std::thread::sleep(std::time::Duration::from_millis(10));
-        
+
         digstore_file.update_last_accessed();
         assert_ne!(original_time, digstore_file.last_accessed);
     }

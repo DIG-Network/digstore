@@ -1,6 +1,6 @@
 //! Digstore Min - A simplified content-addressable storage system
 //!
-//! Digstore Min provides Git-like repository functionality with enhanced merkle proof 
+//! Digstore Min provides Git-like repository functionality with enhanced merkle proof
 //! capabilities and URN-based retrieval. It focuses on core content-addressable storage
 //! without encryption, privacy features, or blockchain integration.
 //!
@@ -32,27 +32,24 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub mod core;
-pub mod storage;
-pub mod proofs;
-pub mod urn;
 pub mod cli;
-pub mod security;
-pub mod ignore;
 pub mod config;
+pub mod core;
+pub mod ignore;
+pub mod proofs;
+pub mod security;
+pub mod storage;
+pub mod urn;
 
 // Re-export commonly used types
 pub use core::{
-    types::{Hash, StoreId, LayerType, Chunk, FileEntry},
     error::{DigstoreError, Result},
+    types::{Chunk, FileEntry, Hash, LayerType, StoreId},
 };
 
-pub use storage::{
-    store::Store,
-    layer::Layer,
-};
+pub use storage::{layer::Layer, store::Store};
 
-pub use urn::{Urn, ByteRange};
+pub use urn::{ByteRange, Urn};
 
 pub use proofs::{
     merkle::MerkleTree,

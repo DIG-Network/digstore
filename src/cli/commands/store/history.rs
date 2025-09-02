@@ -1,6 +1,6 @@
+use crate::cli::commands::find_repository_root;
 use crate::core::error::DigstoreError;
 use crate::storage::Store;
-use crate::cli::commands::find_repository_root;
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
@@ -37,7 +37,13 @@ pub fn execute(
     graph: bool,
     since: Option<String>,
 ) -> Result<()> {
-    let args = HistoryArgs { json, limit, stats, graph, since };
+    let args = HistoryArgs {
+        json,
+        limit,
+        stats,
+        graph,
+        since,
+    };
 
     let current_dir = std::env::current_dir()?;
     let store = Store::open(&current_dir)?;
@@ -64,7 +70,10 @@ pub fn execute(
         }
     } else {
         if args.json {
-            println!("{}", json!({"error": "No commit history found", "history": []}));
+            println!(
+                "{}",
+                json!({"error": "No commit history found", "history": []})
+            );
         } else {
             println!("{}", "No commit history found".yellow());
         }
@@ -73,9 +82,13 @@ pub fn execute(
     Ok(())
 }
 
-fn show_history_human(store: &Store, root_history: &[serde_json::Value], args: &HistoryArgs) -> Result<()> {
+fn show_history_human(
+    store: &Store,
+    root_history: &[serde_json::Value],
+    args: &HistoryArgs,
+) -> Result<()> {
     let mut entries: Vec<&serde_json::Value> = root_history.iter().collect();
-    
+
     // Apply limit
     if let Some(limit) = args.limit {
         entries.truncate(limit);
@@ -112,11 +125,11 @@ fn show_history_human(store: &Store, root_history: &[serde_json::Value], args: &
                 }
                 println!("│ Generation: {}", generation);
                 println!("│ Date: {}", format_timestamp(timestamp));
-                
+
                 if let Some(layer_count) = entry.get("layer_count").and_then(|v| v.as_u64()) {
                     println!("│ Layers: {}", layer_count);
                 }
-                
+
                 // Try to load layer for commit message
                 if let Ok(layer_hash) = crate::core::types::Hash::from_hex(root_hash) {
                     if let Ok(layer) = store.load_layer(layer_hash) {
@@ -126,25 +139,29 @@ fn show_history_human(store: &Store, root_history: &[serde_json::Value], args: &
                         if let Some(author) = &layer.metadata.author {
                             println!("│ Author: {}", author);
                         }
-                        
+
                         // Show file statistics
                         let total_size: u64 = layer.files.iter().map(|f| f.size).sum();
-                        println!("│ Files: {} ({} total)", layer.files.len(), format_bytes(total_size));
+                        println!(
+                            "│ Files: {} ({} total)",
+                            layer.files.len(),
+                            format_bytes(total_size)
+                        );
                     }
                 }
             } else {
                 if i > 0 {
                     println!();
                 }
-                
+
                 println!("{} {}", "commit".yellow().bold(), root_hash.cyan());
                 println!("Generation: {}", generation);
                 println!("Date: {}", format_timestamp(timestamp));
-                
+
                 if let Some(layer_count) = entry.get("layer_count").and_then(|v| v.as_u64()) {
                     println!("Layers: {}", layer_count);
                 }
-                
+
                 // Try to load layer for commit details
                 if let Ok(layer_hash) = crate::core::types::Hash::from_hex(root_hash) {
                     if let Ok(layer) = store.load_layer(layer_hash) {
@@ -154,9 +171,13 @@ fn show_history_human(store: &Store, root_history: &[serde_json::Value], args: &
                         if let Some(author) = &layer.metadata.author {
                             println!("Author: {}", author);
                         }
-                        
+
                         let total_size: u64 = layer.files.iter().map(|f| f.size).sum();
-                        println!("Files: {} ({} total)", layer.files.len(), format_bytes(total_size));
+                        println!(
+                            "Files: {} ({} total)",
+                            layer.files.len(),
+                            format_bytes(total_size)
+                        );
                         println!("Chunks: {}", layer.chunks.len());
                     }
                 }
@@ -164,13 +185,25 @@ fn show_history_human(store: &Store, root_history: &[serde_json::Value], args: &
         }
     }
 
-    println!("\n{}", format!("Showing {} of {} commits", entries.len(), root_history.len()).cyan());
+    println!(
+        "\n{}",
+        format!(
+            "Showing {} of {} commits",
+            entries.len(),
+            root_history.len()
+        )
+        .cyan()
+    );
     Ok(())
 }
 
-fn show_history_json(store: &Store, root_history: &[serde_json::Value], args: &HistoryArgs) -> Result<()> {
+fn show_history_json(
+    store: &Store,
+    root_history: &[serde_json::Value],
+    args: &HistoryArgs,
+) -> Result<()> {
     let mut entries: Vec<&serde_json::Value> = root_history.iter().collect();
-    
+
     // Apply limit
     if let Some(limit) = args.limit {
         entries.truncate(limit);
@@ -180,19 +213,21 @@ fn show_history_json(store: &Store, root_history: &[serde_json::Value], args: &H
     entries.reverse();
 
     let mut json_entries = Vec::new();
-    
+
     for entry in entries {
         let mut json_entry = entry.clone();
-        
+
         // Add layer details if available
         if let Some(root_hash_str) = entry.get("root_hash").and_then(|h| h.as_str()) {
             if let Ok(layer_hash) = crate::core::types::Hash::from_hex(root_hash_str) {
-                let layer_path = store.global_path().join(format!("{}.layer", layer_hash.to_hex()));
+                let layer_path = store
+                    .global_path()
+                    .join(format!("{}.layer", layer_hash.to_hex()));
                 if layer_path.exists() {
                     if let Ok(metadata) = std::fs::metadata(&layer_path) {
                         json_entry["layer_file_size"] = json!(metadata.len());
                     }
-                    
+
                     if let Ok(layer) = store.load_layer(layer_hash) {
                         json_entry["layer_details"] = json!({
                             "files_count": layer.files.len(),
@@ -207,7 +242,7 @@ fn show_history_json(store: &Store, root_history: &[serde_json::Value], args: &H
                 }
             }
         }
-        
+
         json_entries.push(json_entry);
     }
 
@@ -238,26 +273,29 @@ fn show_history_stats(entries: &[&serde_json::Value]) -> Result<()> {
 
     println!("{}", "Repository Statistics".green().bold());
     println!("{}", "═".repeat(30).green());
-    
+
     let total_commits = entries.len();
     println!("Total Commits: {}", total_commits);
-    
+
     // Calculate repository age
     if let (Some(oldest), Some(newest)) = (entries.last(), entries.first()) {
         if let (Some(oldest_ts), Some(newest_ts)) = (
             oldest.get("timestamp").and_then(|t| t.as_i64()),
-            newest.get("timestamp").and_then(|t| t.as_i64())
+            newest.get("timestamp").and_then(|t| t.as_i64()),
         ) {
             let age_seconds = newest_ts - oldest_ts;
             let age_days = age_seconds / 86400;
             println!("Repository Age: {} days", age_days);
-            
+
             if age_days > 0 {
-                println!("Commit Frequency: {:.1} commits/day", total_commits as f64 / age_days as f64);
+                println!(
+                    "Commit Frequency: {:.1} commits/day",
+                    total_commits as f64 / age_days as f64
+                );
             }
         }
     }
-    
+
     println!();
     Ok(())
 }
@@ -268,23 +306,28 @@ fn calculate_history_stats(entries: &[serde_json::Value]) -> Result<serde_json::
     }
 
     let total_commits = entries.len();
-    
+
     // Calculate age and frequency
-    let (age_days, commit_frequency) = if let (Some(oldest), Some(newest)) = (entries.last(), entries.first()) {
-        if let (Some(oldest_ts), Some(newest_ts)) = (
-            oldest.get("timestamp").and_then(|t| t.as_i64()),
-            newest.get("timestamp").and_then(|t| t.as_i64())
-        ) {
-            let age_seconds = newest_ts - oldest_ts;
-            let age_days = age_seconds / 86400;
-            let frequency = if age_days > 0 { total_commits as f64 / age_days as f64 } else { 0.0 };
-            (age_days, frequency)
+    let (age_days, commit_frequency) =
+        if let (Some(oldest), Some(newest)) = (entries.last(), entries.first()) {
+            if let (Some(oldest_ts), Some(newest_ts)) = (
+                oldest.get("timestamp").and_then(|t| t.as_i64()),
+                newest.get("timestamp").and_then(|t| t.as_i64()),
+            ) {
+                let age_seconds = newest_ts - oldest_ts;
+                let age_days = age_seconds / 86400;
+                let frequency = if age_days > 0 {
+                    total_commits as f64 / age_days as f64
+                } else {
+                    0.0
+                };
+                (age_days, frequency)
+            } else {
+                (0, 0.0)
+            }
         } else {
             (0, 0.0)
-        }
-    } else {
-        (0, 0.0)
-    };
+        };
 
     Ok(json!({
         "total_commits": total_commits,
@@ -296,22 +339,26 @@ fn calculate_history_stats(entries: &[serde_json::Value]) -> Result<serde_json::
 }
 
 fn format_timestamp(timestamp: i64) -> String {
-    use std::time::{UNIX_EPOCH, Duration};
-    
+    use std::time::{Duration, UNIX_EPOCH};
+
     let datetime = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
-    format!("{:?}", datetime).split_once('.').map(|(s, _)| s).unwrap_or("Unknown").to_string()
+    format!("{:?}", datetime)
+        .split_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or("Unknown")
+        .to_string()
 }
 
 fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
     } else {

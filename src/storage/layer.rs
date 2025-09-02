@@ -1,9 +1,9 @@
 //! Layer format implementation
 
-use crate::core::{types::*, error::*, hash::*};
-use std::path::Path;
-use std::io::{Write, Read, Seek, SeekFrom};
+use crate::core::{error::*, hash::*, types::*};
 use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
 
 /// Layer structure with binary format support
 // Removed Serialize/Deserialize - using simpler archive format
@@ -25,7 +25,11 @@ impl Layer {
             header: LayerHeader::new(layer_type, layer_number, parent_hash),
             metadata: LayerMetadata {
                 layer_id: Hash::zero(), // Will be set when layer is finalized
-                parent_id: if parent_hash == Hash::zero() { None } else { Some(parent_hash) },
+                parent_id: if parent_hash == Hash::zero() {
+                    None
+                } else {
+                    Some(parent_hash)
+                },
                 timestamp: chrono::Utc::now().timestamp(),
                 generation: layer_number,
                 layer_type,
@@ -63,7 +67,7 @@ impl Layer {
             "files": self.files,
             "chunks": self.chunks,
         });
-        
+
         let layer_json = serde_json::to_vec_pretty(&layer_data)?;
         Ok(layer_json)
     }
@@ -89,7 +93,7 @@ impl Layer {
 
         let json_bytes = serde_json::to_vec_pretty(&layer_data)?;
         std::fs::write(path, json_bytes)?;
-        
+
         Ok(())
     }
 
@@ -106,62 +110,72 @@ impl Layer {
         let content = std::fs::read(path)?;
         Self::read_from_content(&content)
     }
-    
+
     /// Read layer from content bytes
     fn read_from_content(content: &[u8]) -> Result<Self> {
         let layer_data: serde_json::Value = serde_json::from_slice(content)?;
-        
+
         // Parse header
-        let header_data = layer_data.get("header")
+        let header_data = layer_data
+            .get("header")
             .ok_or_else(|| DigstoreError::invalid_layer_format("Missing header section"))?;
-            
-        let layer_type_str = header_data.get("layer_type")
+
+        let layer_type_str = header_data
+            .get("layer_type")
             .and_then(|v| v.as_str())
             .ok_or_else(|| DigstoreError::invalid_layer_format("Missing layer_type"))?;
-            
+
         let layer_type = match layer_type_str {
             "Header" => LayerType::Header,
             "Full" => LayerType::Full,
             "Delta" => LayerType::Delta,
             _ => return Err(DigstoreError::invalid_layer_format("Invalid layer_type")),
         };
-        
-        let layer_number = header_data.get("layer_number")
+
+        let layer_number = header_data
+            .get("layer_number")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| DigstoreError::invalid_layer_format("Missing layer_number"))?;
-            
-        let parent_hash_str = header_data.get("parent_hash")
+
+        let parent_hash_str = header_data
+            .get("parent_hash")
             .and_then(|v| v.as_str())
             .ok_or_else(|| DigstoreError::invalid_layer_format("Missing parent_hash"))?;
-            
+
         let parent_hash = Hash::from_hex(parent_hash_str)
             .map_err(|_| DigstoreError::invalid_layer_format("Invalid parent_hash"))?;
-        
+
         // Create header
         let mut header = LayerHeader::new(layer_type, layer_number, parent_hash);
-        
+
         // Parse metadata
         let metadata: LayerMetadata = serde_json::from_value(
-            layer_data.get("metadata").cloned()
-                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing metadata section"))?
+            layer_data
+                .get("metadata")
+                .cloned()
+                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing metadata section"))?,
         )?;
-        
+
         // Parse files
         let files: Vec<FileEntry> = serde_json::from_value(
-            layer_data.get("files").cloned()
-                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing files section"))?
+            layer_data
+                .get("files")
+                .cloned()
+                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing files section"))?,
         )?;
-        
+
         // Parse chunks
         let chunks: Vec<Chunk> = serde_json::from_value(
-            layer_data.get("chunks").cloned()
-                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing chunks section"))?
+            layer_data
+                .get("chunks")
+                .cloned()
+                .ok_or_else(|| DigstoreError::invalid_layer_format("Missing chunks section"))?,
         )?;
-        
+
         // Update header counts to match actual data
         header.files_count = files.len() as u32;
         header.chunks_count = chunks.len() as u32;
-        
+
         Ok(Self {
             header,
             metadata,
@@ -176,19 +190,19 @@ impl Layer {
         if !self.header.is_valid() {
             return Ok(false);
         }
-        
+
         // For empty layers, don't check counts (they're set during serialization)
         if !self.files.is_empty() || !self.chunks.is_empty() {
             // Verify counts match
             if self.header.files_count != self.files.len() as u32 {
                 return Ok(false);
             }
-            
+
             if self.header.chunks_count != self.chunks.len() as u32 {
                 return Ok(false);
             }
         }
-        
+
         // Verify chunk hashes
         for chunk in &self.chunks {
             let computed_hash = crate::core::hash::sha256(&chunk.data);
@@ -196,7 +210,7 @@ impl Layer {
                 return Ok(false);
             }
         }
-        
+
         // Verify file hashes
         for file_entry in &self.files {
             // Find chunks for this file and verify file hash
@@ -206,133 +220,136 @@ impl Layer {
                     file_chunks.push(chunk.clone());
                 }
             }
-            
+
             // Reconstruct file data and verify hash
             let mut file_data = Vec::new();
             for chunk in file_chunks {
                 file_data.extend_from_slice(&chunk.data);
             }
-            
+
             let computed_file_hash = crate::core::hash::sha256(&file_data);
             if computed_file_hash != file_entry.hash {
                 return Ok(false);
             }
         }
-        
+
         Ok(true)
     }
 
     /// Serialize the index section
     fn serialize_index(&self) -> Result<Vec<u8>> {
         let mut index_data = Vec::new();
-        
+
         // Index header (6 bytes)
         index_data.extend_from_slice(&1u16.to_le_bytes()); // Version
-        index_data.extend_from_slice(&((self.files.len() + self.chunks.len()) as u32).to_le_bytes()); // Total entries
-        
+        index_data
+            .extend_from_slice(&((self.files.len() + self.chunks.len()) as u32).to_le_bytes()); // Total entries
+
         // File entries
         for file in &self.files {
             let path_str = file.path.to_string_lossy();
             let path_bytes = path_str.as_bytes();
-            
+
             // Path length (2 bytes)
             index_data.extend_from_slice(&(path_bytes.len() as u16).to_le_bytes());
-            
+
             // Path (variable)
             index_data.extend_from_slice(path_bytes);
-            
+
             // File size (8 bytes)
             index_data.extend_from_slice(&file.size.to_le_bytes());
-            
+
             // File hash (32 bytes)
             index_data.extend_from_slice(file.hash.as_bytes());
-            
+
             // Chunk count (2 bytes)
             index_data.extend_from_slice(&(file.chunks.len() as u16).to_le_bytes());
-            
+
             // First chunk index (4 bytes) - simplified for now
             index_data.extend_from_slice(&0u32.to_le_bytes());
-            
+
             // Metadata (JSON serialized)
             let metadata_json = serde_json::to_vec(&file.metadata)?;
             index_data.extend_from_slice(&(metadata_json.len() as u16).to_le_bytes());
             index_data.extend_from_slice(&metadata_json);
         }
-        
+
         // Chunk entries
         for chunk in &self.chunks {
             // Chunk hash (32 bytes)
             index_data.extend_from_slice(chunk.hash.as_bytes());
-            
+
             // Offset in file (8 bytes)
             index_data.extend_from_slice(&chunk.offset.to_le_bytes());
-            
+
             // Chunk size (4 bytes)
             index_data.extend_from_slice(&chunk.size.to_le_bytes());
-            
+
             // Data offset in layer (8 bytes) - will be calculated
             index_data.extend_from_slice(&0u64.to_le_bytes());
-            
+
             // Compressed size (4 bytes) - same as size for now (no compression)
             index_data.extend_from_slice(&chunk.size.to_le_bytes());
-            
+
             // Flags (1 byte)
             index_data.push(0);
         }
-        
+
         Ok(index_data)
     }
 
     /// Deserialize the index section
     fn deserialize_index(index_data: &[u8]) -> Result<(Vec<FileEntry>, Vec<Chunk>)> {
         let mut offset = 0;
-        
+
         // Read index header
         if index_data.len() < 6 {
             return Err(DigstoreError::invalid_layer_format("Index too short"));
         }
-        
+
         let _version = u16::from_le_bytes([index_data[offset], index_data[offset + 1]]);
         offset += 2;
-        
+
         let _entries_count = u32::from_le_bytes([
-            index_data[offset], index_data[offset + 1], 
-            index_data[offset + 2], index_data[offset + 3]
+            index_data[offset],
+            index_data[offset + 1],
+            index_data[offset + 2],
+            index_data[offset + 3],
         ]);
         offset += 4;
-        
+
         // For now, return empty vectors (will implement proper parsing later)
         // This is a simplified implementation - full parsing would be complex
         let files = Vec::new();
         let chunks = Vec::new();
-        
+
         Ok((files, chunks))
     }
 
     /// Serialize the data section
     fn serialize_data(&self) -> Result<Vec<u8>> {
         let mut data_section = Vec::new();
-        
+
         // For each chunk, write size + data
         for chunk in &self.chunks {
             // 4-byte size prefix
             data_section.extend_from_slice(&chunk.size.to_le_bytes());
-            
+
             // Chunk data
             data_section.extend_from_slice(&chunk.data);
         }
-        
+
         Ok(data_section)
     }
 
     /// Serialize the merkle tree section
     fn serialize_merkle(&self) -> Result<Vec<u8>> {
         let mut merkle_data = Vec::new();
-        
+
         if self.files.is_empty() {
             return Ok(merkle_data);
         }
-        
+
         // Calculate tree depth
         let leaf_count = self.files.len();
         let depth = if leaf_count <= 1 {
@@ -340,23 +357,23 @@ impl Layer {
         } else {
             (leaf_count as f64).log2().ceil() as u8
         };
-        
+
         // Tree header
         merkle_data.push(depth);
         merkle_data.extend_from_slice(&(leaf_count as u32).to_le_bytes());
-        
+
         // Include file hashes as leaves
         for file in &self.files {
             merkle_data.extend_from_slice(file.hash.as_bytes());
         }
-        
+
         // Build and include merkle tree
         if leaf_count > 1 {
             let file_hashes: Vec<_> = self.files.iter().map(|f| f.hash).collect();
             let merkle_tree = crate::proofs::merkle::MerkleTree::from_hashes(&file_hashes)?;
             merkle_data.extend_from_slice(merkle_tree.root().as_bytes());
         }
-        
+
         Ok(merkle_data)
     }
 
@@ -365,7 +382,7 @@ impl Layer {
         self.files.push(file);
         self.metadata.file_count = self.files.len();
         self.metadata.total_size = self.files.iter().map(|f| f.size).sum();
-        
+
         // Update header counts
         self.header.files_count = self.files.len() as u32;
     }
@@ -373,7 +390,7 @@ impl Layer {
     /// Add a chunk to this layer
     pub fn add_chunk(&mut self, chunk: Chunk) {
         self.chunks.push(chunk);
-        
+
         // Update header counts
         self.header.chunks_count = self.chunks.len() as u32;
     }

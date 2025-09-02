@@ -3,8 +3,8 @@ use crate::proofs::Proof;
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
-use std::path::PathBuf;
 use std::io::{self, Read};
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct VerifyArgs {
@@ -62,7 +62,9 @@ pub fn execute(
         // JSON format
         Proof::from_json(&proof_data)?
     } else {
-        return Err(DigstoreError::internal("Only JSON proof format is currently supported").into());
+        return Err(
+            DigstoreError::internal("Only JSON proof format is currently supported").into(),
+        );
     };
 
     if args.verbose {
@@ -112,7 +114,7 @@ pub fn execute(
 
     if verification_result {
         println!("{}", "✓ Proof verification successful!".green());
-        
+
         if args.verbose {
             println!("\n{}", "Verification Details:".bold());
             println!("  • Proof format: Valid");
@@ -120,17 +122,20 @@ pub fn execute(
             println!("  • Root reconstruction: Success");
             println!("  • Cryptographic integrity: Verified");
         }
-        
-        println!("\n{}", "🔒 The proof cryptographically verifies the integrity of the target data.".green());
+
+        println!(
+            "\n{}",
+            "🔒 The proof cryptographically verifies the integrity of the target data.".green()
+        );
     } else {
         println!("{}", "✗ Proof verification failed!".red());
-        
+
         if args.verbose {
             println!("\n{}", "Verification Issues:".bold().red());
             println!("  • The proof path does not reconstruct to the expected root");
             println!("  • This indicates the proof is invalid or corrupted");
         }
-        
+
         return Err(DigstoreError::internal("Proof verification failed").into());
     }
 
@@ -140,15 +145,17 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_verify_command_structure() {
         let args = VerifyArgs {
             proof: PathBuf::from("test.json"),
             target: Some("test_target".to_string()),
-            root: Some("0000000000000000000000000000000000000000000000000000000000000000".to_string()),
+            root: Some(
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            ),
             verbose: true,
             from_stdin: false,
         };

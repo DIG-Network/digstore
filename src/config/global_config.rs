@@ -3,10 +3,10 @@
 //! Provides Git-like global configuration stored in ~/.dig/config.toml
 
 use crate::core::error::{DigstoreError, Result};
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 use directories::UserDirs;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// Global configuration for Digstore
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,15 +88,15 @@ impl GlobalConfig {
     /// Load global configuration from disk
     pub fn load() -> Result<Self> {
         let config_path = Self::get_config_path()?;
-        
+
         if !config_path.exists() {
             // Return default configuration if file doesn't exist
             return Ok(Self::default());
         }
 
         let content = std::fs::read_to_string(&config_path)?;
-        let config: GlobalConfig = toml::from_str(&content)
-            .map_err(|e| DigstoreError::ConfigurationError {
+        let config: GlobalConfig =
+            toml::from_str(&content).map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to parse global config: {}", e),
             })?;
 
@@ -106,14 +106,14 @@ impl GlobalConfig {
     /// Save global configuration to disk
     pub fn save(&self) -> Result<()> {
         let config_path = Self::get_config_path()?;
-        
+
         // Create parent directory if it doesn't exist
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| DigstoreError::ConfigurationError {
+        let content =
+            toml::to_string_pretty(self).map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to serialize config: {}", e),
             })?;
 
@@ -123,9 +123,8 @@ impl GlobalConfig {
 
     /// Get the path to the global configuration file
     pub fn get_config_path() -> Result<PathBuf> {
-        let user_dirs = UserDirs::new()
-            .ok_or(DigstoreError::HomeDirectoryNotFound)?;
-        
+        let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
+
         let dig_dir = user_dirs.home_dir().join(".dig");
         Ok(dig_dir.join("config.toml"))
     }
@@ -133,11 +132,31 @@ impl GlobalConfig {
     /// Get a configuration value
     pub fn get(&self, key: &ConfigKey) -> Option<ConfigValue> {
         match key {
-            ConfigKey::UserName => self.user.name.as_ref().map(|s| ConfigValue::String(s.clone())),
-            ConfigKey::UserEmail => self.user.email.as_ref().map(|s| ConfigValue::String(s.clone())),
-            ConfigKey::CoreEditor => self.core.editor.as_ref().map(|s| ConfigValue::String(s.clone())),
-            ConfigKey::CoreChunkSize => self.core.chunk_size.as_ref().map(|n| ConfigValue::Number(*n as i64)),
-            ConfigKey::CoreCompression => self.core.compression.as_ref().map(|s| ConfigValue::String(s.clone())),
+            ConfigKey::UserName => self
+                .user
+                .name
+                .as_ref()
+                .map(|s| ConfigValue::String(s.clone())),
+            ConfigKey::UserEmail => self
+                .user
+                .email
+                .as_ref()
+                .map(|s| ConfigValue::String(s.clone())),
+            ConfigKey::CoreEditor => self
+                .core
+                .editor
+                .as_ref()
+                .map(|s| ConfigValue::String(s.clone())),
+            ConfigKey::CoreChunkSize => self
+                .core
+                .chunk_size
+                .as_ref()
+                .map(|n| ConfigValue::Number(*n as i64)),
+            ConfigKey::CoreCompression => self
+                .core
+                .compression
+                .as_ref()
+                .map(|s| ConfigValue::String(s.clone())),
             ConfigKey::Custom(key) => self.custom.get(key).cloned(),
         }
     }
@@ -257,9 +276,10 @@ impl GlobalConfig {
 
     /// Get author email with fallback
     pub fn get_author_email(&self) -> Option<String> {
-        self.user.email.clone().or_else(|| {
-            std::env::var("GIT_AUTHOR_EMAIL").ok()
-        })
+        self.user
+            .email
+            .clone()
+            .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
     }
 
     /// Check if user configuration is complete
@@ -273,8 +293,8 @@ impl GlobalConfig {
             return Ok(());
         }
 
-        use dialoguer::Input;
         use colored::Colorize;
+        use dialoguer::Input;
 
         println!();
         println!("{}", "User configuration required".yellow().bold());
@@ -320,7 +340,10 @@ impl GlobalConfig {
         println!();
         println!("You can change these settings anytime with:");
         println!("  {}", "digstore config user.name \"Your Name\"".cyan());
-        println!("  {}", "digstore config user.email \"your@email.com\"".cyan());
+        println!(
+            "  {}",
+            "digstore config user.email \"your@email.com\"".cyan()
+        );
         println!();
 
         Ok(())
@@ -375,7 +398,7 @@ mod tests {
     #[test]
     fn test_config_creation_and_defaults() {
         let config = GlobalConfig::default();
-        
+
         assert!(config.user.name.is_none());
         assert!(config.user.email.is_none());
         assert_eq!(config.core.chunk_size, Some(1024));
@@ -386,46 +409,65 @@ mod tests {
     #[test]
     fn test_config_set_and_get() -> Result<()> {
         let mut config = GlobalConfig::default();
-        
+
         // Set user name
         config.set(
-            ConfigKey::UserName, 
-            ConfigValue::String("Test User".to_string())
+            ConfigKey::UserName,
+            ConfigValue::String("Test User".to_string()),
         )?;
-        
+
         // Set user email
         config.set(
-            ConfigKey::UserEmail, 
-            ConfigValue::String("test@example.com".to_string())
+            ConfigKey::UserEmail,
+            ConfigValue::String("test@example.com".to_string()),
         )?;
-        
+
         // Verify values
         assert_eq!(config.user.name, Some("Test User".to_string()));
         assert_eq!(config.user.email, Some("test@example.com".to_string()));
         assert!(config.is_user_configured());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_config_list() -> Result<()> {
         let mut config = GlobalConfig::default();
-        
-        config.set(ConfigKey::UserName, ConfigValue::String("John Doe".to_string()))?;
-        config.set(ConfigKey::UserEmail, ConfigValue::String("john@example.com".to_string()))?;
-        
+
+        config.set(
+            ConfigKey::UserName,
+            ConfigValue::String("John Doe".to_string()),
+        )?;
+        config.set(
+            ConfigKey::UserEmail,
+            ConfigValue::String("john@example.com".to_string()),
+        )?;
+
         let entries = config.list();
-        
-        assert!(entries.iter().any(|(k, v)| k == "user.name" && v == "John Doe"));
-        assert!(entries.iter().any(|(k, v)| k == "user.email" && v == "john@example.com"));
-        
+
+        assert!(entries
+            .iter()
+            .any(|(k, v)| k == "user.name" && v == "John Doe"));
+        assert!(entries
+            .iter()
+            .any(|(k, v)| k == "user.email" && v == "john@example.com"));
+
         Ok(())
     }
 
     #[test]
     fn test_config_key_parsing() {
-        assert!(matches!(ConfigKey::from_str("user.name"), Some(ConfigKey::UserName)));
-        assert!(matches!(ConfigKey::from_str("user.email"), Some(ConfigKey::UserEmail)));
-        assert!(matches!(ConfigKey::from_str("custom.key"), Some(ConfigKey::Custom(_))));
+        assert!(matches!(
+            ConfigKey::from_str("user.name"),
+            Some(ConfigKey::UserName)
+        ));
+        assert!(matches!(
+            ConfigKey::from_str("user.email"),
+            Some(ConfigKey::UserEmail)
+        ));
+        assert!(matches!(
+            ConfigKey::from_str("custom.key"),
+            Some(ConfigKey::Custom(_))
+        ));
     }
 }

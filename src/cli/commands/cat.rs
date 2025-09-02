@@ -27,7 +27,14 @@ pub struct CatArgs {
     pub at: Option<String>,
 }
 
-pub fn execute(path: String, at: Option<String>, number: bool, no_pager: bool, bytes: Option<String>, json: bool) -> Result<()> {
+pub fn execute(
+    path: String,
+    at: Option<String>,
+    number: bool,
+    no_pager: bool,
+    bytes: Option<String>,
+    json: bool,
+) -> Result<()> {
     let args = CatArgs {
         target: path,
         number,
@@ -35,7 +42,7 @@ pub fn execute(path: String, at: Option<String>, number: bool, no_pager: bool, b
         at,
     };
     let current_dir = std::env::current_dir()?;
-    
+
     // Try to open store from current directory
     let store = match Store::open(&current_dir) {
         Ok(store) => store,
@@ -58,9 +65,14 @@ pub fn execute(path: String, at: Option<String>, number: bool, no_pager: bool, b
     handle_path_cat(&store, &args, &bytes, json)
 }
 
-fn handle_path_cat(store: &Store, args: &CatArgs, bytes: &Option<String>, json: bool) -> Result<()> {
+fn handle_path_cat(
+    store: &Store,
+    args: &CatArgs,
+    bytes: &Option<String>,
+    json: bool,
+) -> Result<()> {
     let file_path = Path::new(&args.target);
-    
+
     // Retrieve file content
     let mut content = if let Some(at_hash) = &args.at {
         let root_hash = crate::core::types::Hash::from_hex(at_hash)
@@ -72,7 +84,8 @@ fn handle_path_cat(store: &Store, args: &CatArgs, bytes: &Option<String>, json: 
 
     // Apply byte range if specified
     if let Some(byte_range_str) = bytes {
-        let byte_range = crate::urn::parser::parse_byte_range(&format!("#bytes={}", byte_range_str))?;
+        let byte_range =
+            crate::urn::parser::parse_byte_range(&format!("#bytes={}", byte_range_str))?;
         let file_len = content.len();
         let start = byte_range.start.unwrap_or(0) as usize;
         let end = byte_range.end.map(|e| (e + 1) as usize).unwrap_or(file_len);
@@ -86,22 +99,22 @@ fn handle_path_cat(store: &Store, args: &CatArgs, bytes: &Option<String>, json: 
 
 fn handle_urn_cat(args: &CatArgs, bytes: &Option<String>, json: bool) -> Result<()> {
     let mut urn = parse_urn(&args.target)?;
-    
+
     // Add byte range if specified
     if let Some(byte_range_str) = bytes {
-        let byte_range = crate::urn::parser::parse_byte_range(&format!("#bytes={}", byte_range_str))?;
+        let byte_range =
+            crate::urn::parser::parse_byte_range(&format!("#bytes={}", byte_range_str))?;
         urn.byte_range = Some(byte_range);
     }
-    
+
     // We need a store to resolve URNs, try to get one
     let current_dir = std::env::current_dir()?;
-    let store = Store::open(&current_dir)
-        .or_else(|_| {
-            // Try to extract store ID from URN and open global store
-            let store_id = urn.store_id;
-            Store::open_global(&store_id)
-        })?;
-    
+    let store = Store::open(&current_dir).or_else(|_| {
+        // Try to extract store ID from URN and open global store
+        let store_id = urn.store_id;
+        Store::open_global(&store_id)
+    })?;
+
     let content = urn.resolve(&store)?;
     output_content(&content, args, json)
 }
@@ -117,18 +130,18 @@ fn output_content(content: &[u8], args: &CatArgs, json: bool) -> Result<()> {
             "at_root": args.at.as_ref()
         });
         eprintln!("{}", serde_json::to_string_pretty(&metadata)?);
-        
+
         // Stream content to stdout
         std::io::stdout().write_all(content)?;
         return Ok(());
     }
-    
+
     // Convert to string for processing
     let text = String::from_utf8_lossy(content);
-    
+
     // Check if we should use a pager
     let should_page = !args.no_pager && should_use_pager(&text);
-    
+
     if should_page {
         output_with_pager(&text, args)
     } else {
@@ -196,8 +209,8 @@ fn write_content_to_writer<W: Write>(writer: &mut W, content: &str, args: &CatAr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_should_use_pager() {
@@ -224,7 +237,7 @@ mod tests {
 
         write_content_to_writer(&mut output, content, &args).unwrap();
         let result = String::from_utf8(output).unwrap();
-        
+
         // Check that line numbers are present (ignoring color codes)
         assert!(result.contains("1"));
         assert!(result.contains("2"));

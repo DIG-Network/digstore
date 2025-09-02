@@ -8,14 +8,14 @@
 //! - Index for fast lookups
 //! - Memory-mapped access for large staging areas
 
-use crate::core::{types::*, error::DigstoreError};
-use std::path::{Path, PathBuf};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write, Seek, SeekFrom, BufReader, BufWriter};
-use std::collections::HashMap;
 use crate::core::error::Result;
+use crate::core::{error::DigstoreError, types::*};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use memmap2::{Mmap, MmapMut, MmapOptions};
+use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
 /// Magic bytes for binary staging format
 const STAGING_MAGIC: &[u8; 8] = b"DIGSTAGE";
@@ -81,15 +81,17 @@ impl StagingHeader {
             return Err(DigstoreError::InvalidFormat {
                 format: "staging".to_string(),
                 reason: "Invalid magic bytes".to_string(),
-            }.into());
+            }
+            .into());
         }
-        
+
         self.version = reader.read_u32::<LittleEndian>()?;
         if self.version != STAGING_VERSION {
             return Err(DigstoreError::UnsupportedVersion {
                 version: self.version,
                 supported: STAGING_VERSION,
-            }.into());
+            }
+            .into());
         }
 
         self.file_count = reader.read_u64::<LittleEndian>()?;
@@ -169,7 +171,8 @@ impl BinaryStagedFile {
         match self.modified_time {
             Some(time) => {
                 writer.write_u8(1)?; // has time
-                let duration = time.duration_since(std::time::UNIX_EPOCH)
+                let duration = time
+                    .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default();
                 writer.write_u64::<LittleEndian>(duration.as_secs())?;
                 writer.write_u32::<LittleEndian>(duration.subsec_nanos())?;
@@ -223,7 +226,7 @@ impl BinaryStagedFile {
             reader.read_exact(&mut chunk_hash)?;
             let offset = reader.read_u64::<LittleEndian>()?;
             let size = reader.read_u32::<LittleEndian>()?;
-            
+
             self.chunks.push(Chunk {
                 hash: Hash::from_bytes(chunk_hash),
                 offset,
@@ -277,7 +280,7 @@ impl BinaryStagingArea {
         let header = StagingHeader::new();
         header.write_to(&mut file)?;
         file.sync_all()?;
-        
+
         self.reload()?;
         Ok(())
     }
@@ -287,7 +290,7 @@ impl BinaryStagingArea {
         if !self.staging_path.exists() {
             return self.initialize();
         }
-        
+
         self.reload()
     }
 
@@ -330,7 +333,7 @@ impl BinaryStagingArea {
     /// Add a file to the staging area using streaming writes
     pub fn stage_file_streaming(&mut self, staged_file: BinaryStagedFile) -> Result<()> {
         let path_hash = self.hash_path(&staged_file.path);
-        
+
         // For streaming, we need to append to the file
         let mut file = OpenOptions::new()
             .create(true)
@@ -339,7 +342,7 @@ impl BinaryStagingArea {
 
         // Get current file size to know where to write
         let current_size = file.metadata()?.len();
-        
+
         // Serialize the staged file
         let mut buffer = Vec::new();
         staged_file.write_to(&mut buffer)?;
@@ -379,22 +382,22 @@ impl BinaryStagingArea {
         for staged_file in staged_files {
             self.stage_file_streaming(staged_file)?;
         }
-        
+
         // Don't flush here - let the caller handle flushing to prevent corruption
         // The individual stage_file_streaming calls already handle memory map refresh
-        
+
         Ok(())
     }
 
     /// Get a staged file by path
     pub fn get_staged_file(&self, path: &Path) -> Result<Option<BinaryStagedFile>> {
         let path_hash = self.hash_path(path);
-        
+
         if let Some((_, entry)) = self.index.get(&path_hash) {
             if let Some(ref mmap) = self.mmap {
                 let start = entry.data_offset as usize;
                 let end = start + entry.data_size as usize;
-                
+
                 if end <= mmap.len() {
                     let mut cursor = std::io::Cursor::new(&mmap[start..end]);
                     let mut staged_file = BinaryStagedFile {
@@ -409,19 +412,19 @@ impl BinaryStagingArea {
                 }
             }
         }
-        
+
         Ok(None)
     }
 
     /// Get all staged files
     pub fn get_all_staged_files(&self) -> Result<Vec<BinaryStagedFile>> {
         let mut files = Vec::with_capacity(self.index.len());
-        
+
         if let Some(ref mmap) = self.mmap {
             for (_, (_, entry)) in &self.index {
                 let start = entry.data_offset as usize;
                 let end = start + entry.data_size as usize;
-                
+
                 if end <= mmap.len() {
                     let mut cursor = std::io::Cursor::new(&mmap[start..end]);
                     let mut staged_file = BinaryStagedFile {
@@ -436,7 +439,7 @@ impl BinaryStagingArea {
                 }
             }
         }
-        
+
         Ok(files)
     }
 
@@ -450,24 +453,24 @@ impl BinaryStagingArea {
     pub fn staged_count(&self) -> usize {
         self.index.len()
     }
-    
+
     /// Get the staging file path
     pub fn staging_path(&self) -> &PathBuf {
         &self.staging_path
     }
-    
+
     /// Refresh the memory map after writes
     fn refresh_memory_map(&mut self) -> Result<()> {
         // Close existing memory map
         self.mmap = None;
         self.mmap_mut = None;
-        
+
         // Reopen with updated file
         if self.staging_path.exists() {
             let file = File::open(&self.staging_path)?;
             self.mmap = Some(unsafe { MmapOptions::new().map(&file)? });
         }
-        
+
         Ok(())
     }
 
@@ -486,32 +489,32 @@ impl BinaryStagingArea {
         // Rebuild the file with proper header and index
         let temp_path = self.staging_path.with_extension("tmp");
         let mut temp_file = File::create(&temp_path)?;
-        
+
         // Write header (we'll update it later)
         let mut header = StagingHeader::new();
         header.file_count = self.index.len() as u64;
         header.write_to(&mut temp_file)?;
-        
+
         let data_start = temp_file.stream_position()?;
         header.data_offset = data_start;
-        
+
         // Copy all file data and update index entries with new offsets
         let mut data_size = 0u64;
         let mut updated_index = HashMap::new();
-        
+
         if let Some(ref mmap) = self.mmap {
             for (path_hash, (index_pos, entry)) in &self.index {
                 let start = entry.data_offset as usize;
                 let end = start + entry.data_size as usize;
-                
+
                 if end <= mmap.len() {
                     // Get new offset in temp file
                     let new_offset = temp_file.stream_position()?;
-                    
+
                     // Copy data to new location
                     temp_file.write_all(&mmap[start..end])?;
                     data_size += entry.data_size as u64;
-                    
+
                     // Create updated index entry with new offset
                     let updated_entry = IndexEntry {
                         path_hash: entry.path_hash,
@@ -520,40 +523,40 @@ impl BinaryStagingArea {
                         path_length: entry.path_length,
                         flags: entry.flags,
                     };
-                    
+
                     updated_index.insert(*path_hash, (*index_pos, updated_entry));
                 }
             }
         }
-        
+
         header.data_size = data_size;
-        
+
         // Write index with updated offsets
         header.index_offset = temp_file.stream_position()?;
         let mut index_size = 0u64;
-        
+
         for (_, (_, entry)) in &updated_index {
             entry.write_to(&mut temp_file)?;
             index_size += IndexEntry::SIZE as u64;
         }
-        
+
         // Update in-memory index with new offsets
         self.index = updated_index;
-        
+
         header.index_size = index_size;
-        
+
         // Update header
         temp_file.seek(SeekFrom::Start(0))?;
         header.write_to(&mut temp_file)?;
         temp_file.sync_all()?;
         drop(temp_file);
-        
+
         // Replace original file
         std::fs::rename(&temp_path, &self.staging_path)?;
-        
+
         // Reload
         self.reload()?;
-        
+
         Ok(())
     }
 
@@ -561,7 +564,7 @@ impl BinaryStagingArea {
     fn hash_path(&self, path: &Path) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash as StdHash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         path.to_string_lossy().hash(&mut hasher);
         hasher.finish()
@@ -574,11 +577,12 @@ impl BinaryStagingArea {
         } else {
             0
         };
-        
+
         Ok(StagingStats {
             file_count: self.index.len(),
             file_size_bytes: file_size,
-            memory_usage_bytes: self.index.len() * std::mem::size_of::<(u64, (usize, IndexEntry))>(),
+            memory_usage_bytes: self.index.len()
+                * std::mem::size_of::<(u64, (usize, IndexEntry))>(),
             is_dirty: self.dirty,
         })
     }
@@ -628,7 +632,7 @@ mod tests {
     fn test_binary_staging_basic_operations() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let staging_path = temp_dir.path().join("staging.bin");
-        
+
         let mut staging = BinaryStagingArea::new(staging_path);
         staging.initialize()?;
 
@@ -637,14 +641,12 @@ mod tests {
             path: PathBuf::from("test.txt"),
             hash: Hash::from_bytes([1; 32]),
             size: 100,
-            chunks: vec![
-                Chunk {
-                    hash: Hash::from_bytes([2; 32]),
-                    offset: 0,
-                    size: 100,
-                    data: Vec::new(),
-                }
-            ],
+            chunks: vec![Chunk {
+                hash: Hash::from_bytes([2; 32]),
+                offset: 0,
+                size: 100,
+                data: Vec::new(),
+            }],
             modified_time: Some(std::time::SystemTime::now()),
         };
 
@@ -656,7 +658,7 @@ mod tests {
         // Retrieve the file
         let retrieved = staging.get_staged_file(&PathBuf::from("test.txt"))?;
         assert!(retrieved.is_some());
-        
+
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.path, staged_file.path);
         assert_eq!(retrieved.hash, staged_file.hash);
@@ -670,7 +672,7 @@ mod tests {
     fn test_binary_staging_batch_operations() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let staging_path = temp_dir.path().join("staging.bin");
-        
+
         let mut staging = BinaryStagingArea::new(staging_path);
         staging.initialize()?;
 
@@ -681,14 +683,12 @@ mod tests {
                 path: PathBuf::from(format!("test_{}.txt", i)),
                 hash: Hash::from_bytes([i as u8; 32]),
                 size: 100 + i as u64,
-                chunks: vec![
-                    Chunk {
-                        hash: Hash::from_bytes([(i + 1) as u8; 32]),
-                        offset: 0,
-                        size: 100 + i as u32,
-                        data: Vec::new(),
-                    }
-                ],
+                chunks: vec![Chunk {
+                    hash: Hash::from_bytes([(i + 1) as u8; 32]),
+                    offset: 0,
+                    size: 100 + i as u32,
+                    data: Vec::new(),
+                }],
                 modified_time: Some(std::time::SystemTime::now()),
             });
         }
@@ -701,10 +701,10 @@ mod tests {
         for i in 0..100 {
             let path = PathBuf::from(format!("test_{}.txt", i));
             assert!(staging.is_staged(&path));
-            
+
             let retrieved = staging.get_staged_file(&path)?;
             assert!(retrieved.is_some());
-            
+
             let retrieved = retrieved.unwrap();
             assert_eq!(retrieved.path, staged_files[i].path);
             assert_eq!(retrieved.hash, staged_files[i].hash);
@@ -722,7 +722,7 @@ mod tests {
     fn test_staging_persistence() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let staging_path = temp_dir.path().join("staging.bin");
-        
+
         // Create and populate staging area
         {
             let mut staging = BinaryStagingArea::new(staging_path.clone());
@@ -732,14 +732,12 @@ mod tests {
                 path: PathBuf::from("persistent.txt"),
                 hash: Hash::from_bytes([42; 32]),
                 size: 200,
-                chunks: vec![
-                    Chunk {
-                        hash: Hash::from_bytes([43; 32]),
-                        offset: 0,
-                        size: 200,
-                        data: Vec::new(),
-                    }
-                ],
+                chunks: vec![Chunk {
+                    hash: Hash::from_bytes([43; 32]),
+                    offset: 0,
+                    size: 200,
+                    data: Vec::new(),
+                }],
                 modified_time: Some(std::time::SystemTime::now()),
             };
 
@@ -751,13 +749,13 @@ mod tests {
         {
             let mut staging = BinaryStagingArea::new(staging_path);
             staging.load()?;
-            
+
             assert_eq!(staging.staged_count(), 1);
             assert!(staging.is_staged(&PathBuf::from("persistent.txt")));
-            
+
             let retrieved = staging.get_staged_file(&PathBuf::from("persistent.txt"))?;
             assert!(retrieved.is_some());
-            
+
             let retrieved = retrieved.unwrap();
             assert_eq!(retrieved.hash, Hash::from_bytes([42; 32]));
             assert_eq!(retrieved.size, 200);
@@ -770,63 +768,65 @@ mod tests {
     fn test_memory_map_refresh_after_writes() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let staging_path = temp_dir.path().join("refresh_test.bin");
-        
+
         let mut staging = BinaryStagingArea::new(staging_path);
         staging.initialize()?;
-        
+
         // Add first file
         let file1 = BinaryStagedFile {
             path: PathBuf::from("file1.txt"),
             hash: Hash::from_bytes([1; 32]),
             size: 100,
-            chunks: vec![
-                Chunk {
-                    hash: Hash::from_bytes([2; 32]),
-                    offset: 0,
-                    size: 100,
-                    data: Vec::new(),
-                }
-            ],
+            chunks: vec![Chunk {
+                hash: Hash::from_bytes([2; 32]),
+                offset: 0,
+                size: 100,
+                data: Vec::new(),
+            }],
             modified_time: Some(std::time::SystemTime::now()),
         };
-        
+
         staging.stage_file_streaming(file1.clone())?;
         assert_eq!(staging.staged_count(), 1);
-        
+
         // Verify file can be retrieved immediately after staging
         let retrieved = staging.get_staged_file(&PathBuf::from("file1.txt"))?;
-        assert!(retrieved.is_some(), "File should be retrievable immediately after staging");
-        
+        assert!(
+            retrieved.is_some(),
+            "File should be retrievable immediately after staging"
+        );
+
         // Add second file to test memory map refresh
         let file2 = BinaryStagedFile {
             path: PathBuf::from("file2.txt"),
             hash: Hash::from_bytes([3; 32]),
             size: 200,
-            chunks: vec![
-                Chunk {
-                    hash: Hash::from_bytes([4; 32]),
-                    offset: 0,
-                    size: 200,
-                    data: Vec::new(),
-                }
-            ],
+            chunks: vec![Chunk {
+                hash: Hash::from_bytes([4; 32]),
+                offset: 0,
+                size: 200,
+                data: Vec::new(),
+            }],
             modified_time: Some(std::time::SystemTime::now()),
         };
-        
+
         staging.stage_file_streaming(file2.clone())?;
         assert_eq!(staging.staged_count(), 2);
-        
+
         // Verify both files can be retrieved
         let retrieved1 = staging.get_staged_file(&PathBuf::from("file1.txt"))?;
         let retrieved2 = staging.get_staged_file(&PathBuf::from("file2.txt"))?;
-        
-        assert!(retrieved1.is_some(), "First file should still be retrievable");
+
+        assert!(
+            retrieved1.is_some(),
+            "First file should still be retrievable"
+        );
         assert!(retrieved2.is_some(), "Second file should be retrievable");
-        
+
         // Test get_all_staged_files works correctly
         let all_files = staging.get_all_staged_files()?;
         assert_eq!(all_files.len(), 2, "Should retrieve both staged files");
-        
+
         Ok(())
     }
 
@@ -834,45 +834,49 @@ mod tests {
     fn test_iterator_fix_validation() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let staging_path = temp_dir.path().join("iterator_test.bin");
-        
+
         let mut staging = BinaryStagingArea::new(staging_path);
         staging.initialize()?;
-        
+
         // Add multiple files to test iterator fix
-        let files = (0..5).map(|i| BinaryStagedFile {
-            path: PathBuf::from(format!("test{}.txt", i)),
-            hash: Hash::from_bytes([i as u8; 32]),
-            size: 100 + i as u64,
-            chunks: vec![
-                Chunk {
+        let files = (0..5)
+            .map(|i| BinaryStagedFile {
+                path: PathBuf::from(format!("test{}.txt", i)),
+                hash: Hash::from_bytes([i as u8; 32]),
+                size: 100 + i as u64,
+                chunks: vec![Chunk {
                     hash: Hash::from_bytes([(i + 10) as u8; 32]),
                     offset: 0,
                     size: 100 + i as u32,
                     data: Vec::new(),
-                }
-            ],
-            modified_time: Some(std::time::SystemTime::now()),
-        }).collect::<Vec<_>>();
-        
+                }],
+                modified_time: Some(std::time::SystemTime::now()),
+            })
+            .collect::<Vec<_>>();
+
         // Stage files using batch method
         staging.stage_files_batch(files.clone())?;
         assert_eq!(staging.staged_count(), 5);
-        
+
         // Test that get_all_staged_files() works correctly (this was the main bug)
         let retrieved_files = staging.get_all_staged_files()?;
-        assert_eq!(retrieved_files.len(), 5, "Iterator fix: should retrieve all 5 files");
-        
+        assert_eq!(
+            retrieved_files.len(),
+            5,
+            "Iterator fix: should retrieve all 5 files"
+        );
+
         // Verify each file individually
         for (i, original_file) in files.iter().enumerate() {
             let retrieved = staging.get_staged_file(&original_file.path)?;
             assert!(retrieved.is_some(), "File {} should be retrievable", i);
-            
+
             let retrieved = retrieved.unwrap();
             assert_eq!(retrieved.path, original_file.path);
             assert_eq!(retrieved.hash, original_file.hash);
             assert_eq!(retrieved.size, original_file.size);
         }
-        
+
         Ok(())
     }
 
@@ -880,46 +884,51 @@ mod tests {
     fn test_staging_persistence_across_instances() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let staging_path = temp_dir.path().join("persistence_test.bin");
-        
+
         // Create staging area and add files
         {
             let mut staging = BinaryStagingArea::new(staging_path.clone());
             staging.initialize()?;
-            
+
             let file = BinaryStagedFile {
                 path: PathBuf::from("persistent.txt"),
                 hash: Hash::from_bytes([42; 32]),
                 size: 150,
-                chunks: vec![
-                    Chunk {
-                        hash: Hash::from_bytes([43; 32]),
-                        offset: 0,
-                        size: 150,
-                        data: Vec::new(),
-                    }
-                ],
+                chunks: vec![Chunk {
+                    hash: Hash::from_bytes([43; 32]),
+                    offset: 0,
+                    size: 150,
+                    data: Vec::new(),
+                }],
                 modified_time: Some(std::time::SystemTime::now()),
             };
-            
+
             staging.stage_file_streaming(file)?;
             staging.flush()?; // Ensure data is written to disk
         } // staging goes out of scope
-        
+
         // Create new staging instance and verify data persists
         {
             let mut staging = BinaryStagingArea::new(staging_path);
             staging.load()?;
-            
-            assert_eq!(staging.staged_count(), 1, "Staged file should persist across instances");
-            
+
+            assert_eq!(
+                staging.staged_count(),
+                1,
+                "Staged file should persist across instances"
+            );
+
             let retrieved = staging.get_staged_file(&PathBuf::from("persistent.txt"))?;
-            assert!(retrieved.is_some(), "File should be retrievable in new instance");
-            
+            assert!(
+                retrieved.is_some(),
+                "File should be retrievable in new instance"
+            );
+
             let retrieved = retrieved.unwrap();
             assert_eq!(retrieved.hash, Hash::from_bytes([42; 32]));
             assert_eq!(retrieved.size, 150);
         }
-        
+
         Ok(())
     }
 
@@ -927,37 +936,39 @@ mod tests {
     fn test_windows_file_locking_fix() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let staging_path = temp_dir.path().join("locking_test.bin");
-        
+
         let mut staging = BinaryStagingArea::new(staging_path);
         staging.initialize()?;
-        
+
         // Add a file
         let file = BinaryStagedFile {
             path: PathBuf::from("lock_test.txt"),
             hash: Hash::from_bytes([99; 32]),
             size: 50,
-            chunks: vec![
-                Chunk {
-                    hash: Hash::from_bytes([100; 32]),
-                    offset: 0,
-                    size: 50,
-                    data: Vec::new(),
-                }
-            ],
+            chunks: vec![Chunk {
+                hash: Hash::from_bytes([100; 32]),
+                offset: 0,
+                size: 50,
+                data: Vec::new(),
+            }],
             modified_time: Some(std::time::SystemTime::now()),
         };
-        
+
         staging.stage_file_streaming(file)?;
-        
+
         // Simulate Windows file locking fix: close memory maps before clear
         staging.mmap = None;
         staging.mmap_mut = None;
-        
+
         // This should not fail with file locking error
         staging.clear()?;
-        
-        assert_eq!(staging.staged_count(), 0, "Staging should be cleared without file locking issues");
-        
+
+        assert_eq!(
+            staging.staged_count(),
+            0,
+            "Staging should be cleared without file locking issues"
+        );
+
         Ok(())
     }
 }

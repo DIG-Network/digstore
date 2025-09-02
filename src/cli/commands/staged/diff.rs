@@ -1,8 +1,8 @@
 //! Stage diff command - show differences between staged files and last commit
 
-use anyhow::Result;
-use crate::storage::Store;
 use crate::cli::commands::find_repository_root;
+use crate::storage::Store;
+use anyhow::Result;
 use colored::Colorize;
 use serde_json::json;
 use std::path::Path;
@@ -61,19 +61,22 @@ pub fn execute(
 
     // Get staged files
     let staged_files = store.staging.get_all_staged_files()?;
-    
+
     if staged_files.is_empty() {
         if json {
-            println!("{}", json!({
-                "diffs": [],
-                "stats": {
-                    "total_files": 0,
-                    "new_files": 0,
-                    "modified_files": 0,
-                    "deleted_files": 0,
-                    "unchanged_files": 0
-                }
-            }));
+            println!(
+                "{}",
+                json!({
+                    "diffs": [],
+                    "stats": {
+                        "total_files": 0,
+                        "new_files": 0,
+                        "modified_files": 0,
+                        "deleted_files": 0,
+                        "unchanged_files": 0
+                    }
+                })
+            );
         } else {
             println!("{}", "No files staged for commit".yellow());
             println!("  → Use 'digstore add <files>' to stage files");
@@ -104,7 +107,10 @@ fn calculate_stage_diffs(
 
     // Filter to specific file if requested
     let files_to_process: Vec<_> = if let Some(file_filter) = specific_file {
-        staged_files.iter().filter(|f| f.path.to_string_lossy() == file_filter).collect()
+        staged_files
+            .iter()
+            .filter(|f| f.path.to_string_lossy() == file_filter)
+            .collect()
     } else {
         staged_files.iter().collect()
     };
@@ -129,7 +135,7 @@ fn calculate_single_file_diff(
     staged_file: &crate::storage::binary_staging::BinaryStagedFile,
 ) -> Result<FileDiff> {
     let file_path = &staged_file.path;
-    
+
     // Check if file exists in last commit
     if let Some(current_root) = store.current_root() {
         match store.get_committed_file_hash(file_path, current_root) {
@@ -143,7 +149,9 @@ fn calculate_single_file_diff(
 
                 // Get committed file size
                 let committed_size = if let Ok(layer) = store.archive.get_layer(&current_root) {
-                    layer.files.iter()
+                    layer
+                        .files
+                        .iter()
                         .find(|f| f.path == *file_path)
                         .map(|f| f.size)
                 } else {
@@ -197,9 +205,8 @@ fn find_deleted_files(
     if let Some(current_root) = store.current_root() {
         if let Ok(layer) = store.archive.get_layer(&current_root) {
             // Create set of staged file paths for quick lookup
-            let staged_paths: std::collections::HashSet<_> = staged_files.iter()
-                .map(|f| f.path.clone())
-                .collect();
+            let staged_paths: std::collections::HashSet<_> =
+                staged_files.iter().map(|f| f.path.clone()).collect();
 
             // Check each committed file
             for file_entry in &layer.files {
@@ -279,12 +286,26 @@ fn show_diff_human(
 
     if show_stat {
         println!("{}", "Summary Statistics:".bold());
-        println!("  New files: {} (+{})", stats.new_files.to_string().green(), format_size(stats.total_staged_size));
-        println!("  Modified files: {} (Δ{})", stats.modified_files.to_string().yellow(), 
-                 format_size_diff(stats.total_staged_size, stats.total_committed_size));
-        println!("  Deleted files: {} (-{})", stats.deleted_files.to_string().red(), format_size(stats.total_committed_size));
+        println!(
+            "  New files: {} (+{})",
+            stats.new_files.to_string().green(),
+            format_size(stats.total_staged_size)
+        );
+        println!(
+            "  Modified files: {} (Δ{})",
+            stats.modified_files.to_string().yellow(),
+            format_size_diff(stats.total_staged_size, stats.total_committed_size)
+        );
+        println!(
+            "  Deleted files: {} (-{})",
+            stats.deleted_files.to_string().red(),
+            format_size(stats.total_committed_size)
+        );
         if stats.unchanged_files > 0 {
-            println!("  Unchanged files: {} (skipped)", stats.unchanged_files.to_string().dimmed());
+            println!(
+                "  Unchanged files: {} (skipped)",
+                stats.unchanged_files.to_string().dimmed()
+            );
         }
         println!();
     }
@@ -295,9 +316,18 @@ fn show_diff_human(
     }
 
     // Group by status for better display
-    let new_files: Vec<_> = diffs.iter().filter(|d| matches!(d.status, FileChangeStatus::New)).collect();
-    let modified_files: Vec<_> = diffs.iter().filter(|d| matches!(d.status, FileChangeStatus::Modified)).collect();
-    let deleted_files: Vec<_> = diffs.iter().filter(|d| matches!(d.status, FileChangeStatus::Deleted)).collect();
+    let new_files: Vec<_> = diffs
+        .iter()
+        .filter(|d| matches!(d.status, FileChangeStatus::New))
+        .collect();
+    let modified_files: Vec<_> = diffs
+        .iter()
+        .filter(|d| matches!(d.status, FileChangeStatus::Modified))
+        .collect();
+    let deleted_files: Vec<_> = diffs
+        .iter()
+        .filter(|d| matches!(d.status, FileChangeStatus::Deleted))
+        .collect();
 
     // Show new files
     if !new_files.is_empty() {
@@ -306,8 +336,12 @@ fn show_diff_human(
             if name_only {
                 println!("  {} {}", "+".green(), diff.path.green());
             } else {
-                println!("  {} {} ({})", "+".green(), diff.path.green(), 
-                         format_size(diff.staged_size.unwrap_or(0)));
+                println!(
+                    "  {} {} ({})",
+                    "+".green(),
+                    diff.path.green(),
+                    format_size(diff.staged_size.unwrap_or(0))
+                );
             }
         }
         println!();
@@ -322,9 +356,14 @@ fn show_diff_human(
             } else {
                 let size_change = format_size_diff(
                     diff.staged_size.unwrap_or(0),
-                    diff.committed_size.unwrap_or(0)
+                    diff.committed_size.unwrap_or(0),
                 );
-                println!("  {} {} ({})", "M".yellow(), diff.path.yellow(), size_change);
+                println!(
+                    "  {} {} ({})",
+                    "M".yellow(),
+                    diff.path.yellow(),
+                    size_change
+                );
             }
         }
         println!();
@@ -337,8 +376,12 @@ fn show_diff_human(
             if name_only {
                 println!("  {} {}", "-".red(), diff.path.red());
             } else {
-                println!("  {} {} (-{})", "-".red(), diff.path.red(), 
-                         format_size(diff.committed_size.unwrap_or(0)));
+                println!(
+                    "  {} {} (-{})",
+                    "-".red(),
+                    diff.path.red(),
+                    format_size(diff.committed_size.unwrap_or(0))
+                );
             }
         }
         println!();
@@ -359,12 +402,12 @@ fn format_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
     let mut size = bytes as f64;
     let mut unit_index = 0;
-    
+
     while size >= 1024.0 && unit_index < UNITS.len() - 1 {
         size /= 1024.0;
         unit_index += 1;
     }
-    
+
     if unit_index == 0 {
         format!("{} {}", size as u64, UNITS[unit_index])
     } else {
@@ -403,10 +446,10 @@ mod tests {
         // Note: These tests check the logic, but the colored output will contain ANSI codes
         let result = format_size_diff(2048, 1024);
         assert!(result.contains("1.0 KB")); // Should show +1.0 KB
-        
+
         let result = format_size_diff(1024, 2048);
         assert!(result.contains("1.0 KB")); // Should show -1.0 KB
-        
+
         let result = format_size_diff(1024, 1024);
         assert!(result.contains("no change")); // Should show no change
     }
@@ -435,7 +478,7 @@ mod tests {
         ];
 
         let stats = calculate_diff_stats(&diffs);
-        
+
         assert_eq!(stats.total_files, 2);
         assert_eq!(stats.new_files, 1);
         assert_eq!(stats.modified_files, 1);

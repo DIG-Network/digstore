@@ -55,7 +55,7 @@ pub fn execute(
 
     if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
         let mut entries: Vec<&serde_json::Value> = root_history.iter().collect();
-        
+
         // Apply limit
         if let Some(limit) = args.limit {
             entries.truncate(limit);
@@ -76,32 +76,37 @@ pub fn execute(
                 entry.get("generation").and_then(|v| v.as_u64()),
             ) {
                 if args.oneline {
-                    println!("{} {} (gen {})", 
-                             root_hash[..8].yellow(),
-                             format_timestamp(timestamp),
-                             generation);
+                    println!(
+                        "{} {} (gen {})",
+                        root_hash[..8].yellow(),
+                        format_timestamp(timestamp),
+                        generation
+                    );
                 } else {
                     if i > 0 {
                         println!();
                     }
-                    
+
                     if args.graph {
                         println!("* {}", root_hash.cyan());
                         println!("| Generation: {}", generation);
                         println!("| Date: {}", format_timestamp(timestamp));
-                        if let Some(layer_count) = entry.get("layer_count").and_then(|v| v.as_u64()) {
+                        if let Some(layer_count) = entry.get("layer_count").and_then(|v| v.as_u64())
+                        {
                             println!("| Layers: {}", layer_count);
                         }
                     } else {
                         println!("{} {}", "commit".yellow().bold(), root_hash.cyan());
                         println!("Generation: {}", generation);
                         println!("Date: {}", format_timestamp(timestamp));
-                        if let Some(layer_count) = entry.get("layer_count").and_then(|v| v.as_u64()) {
+                        if let Some(layer_count) = entry.get("layer_count").and_then(|v| v.as_u64())
+                        {
                             println!("Layers: {}", layer_count);
                         }
-                        
+
                         // Try to load the layer to get commit message
-                        if let Ok(root_hash_parsed) = crate::core::types::Hash::from_hex(root_hash) {
+                        if let Ok(root_hash_parsed) = crate::core::types::Hash::from_hex(root_hash)
+                        {
                             if let Ok(layer) = store.load_layer(root_hash_parsed) {
                                 if let Some(message) = &layer.metadata.message {
                                     println!("Message: {}", message);
@@ -116,7 +121,15 @@ pub fn execute(
             }
         }
 
-        println!("\n{}", format!("Showing {} of {} commits", entries.len(), root_history.len()).cyan());
+        println!(
+            "\n{}",
+            format!(
+                "Showing {} of {} commits",
+                entries.len(),
+                root_history.len()
+            )
+            .cyan()
+        );
     } else {
         println!("{}", "No commit history found".yellow());
     }
@@ -128,9 +141,9 @@ fn format_timestamp(timestamp: i64) -> String {
     if timestamp <= 0 {
         return "Not set".to_string();
     }
-    
-    use std::time::{UNIX_EPOCH, Duration};
-    
+
+    use std::time::{Duration, UNIX_EPOCH};
+
     match UNIX_EPOCH.checked_add(Duration::from_secs(timestamp as u64)) {
         Some(datetime) => {
             // Format as readable date/time
@@ -141,7 +154,7 @@ fn format_timestamp(timestamp: i64) -> String {
                     let hours = (secs % 86400) / 3600;
                     let minutes = (secs % 3600) / 60;
                     let seconds = secs % 60;
-                    
+
                     if days > 0 {
                         format!("{} days ago", days)
                     } else if hours > 0 {
@@ -152,10 +165,10 @@ fn format_timestamp(timestamp: i64) -> String {
                         format!("{} seconds ago", seconds)
                     }
                 }
-                Err(_) => format!("Timestamp: {}", timestamp)
+                Err(_) => format!("Timestamp: {}", timestamp),
             }
         }
-        None => format!("Invalid timestamp: {}", timestamp)
+        None => format!("Invalid timestamp: {}", timestamp),
     }
 }
 

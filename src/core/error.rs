@@ -1,8 +1,8 @@
 //! Error types for Digstore Min
 
-use thiserror::Error;
-use std::path::PathBuf;
 use crate::core::types::Hash;
+use std::path::PathBuf;
+use thiserror::Error;
 
 /// Main error type for Digstore operations
 #[derive(Error, Debug)]
