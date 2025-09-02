@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FileChangeStatus"],"fn":["execute"],"struct":["FileDiff","StageDiffStats"]};

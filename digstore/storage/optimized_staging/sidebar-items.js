@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BulkStagingResult","CompactStagedFile","InternerStats","OptimizedStagingArea","PathInterner","StagingBatch","StagingStats"]};

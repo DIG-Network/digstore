@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ProcessingStrategy","WorkloadType"],"struct":["AdaptiveProcessingResult","AdaptiveProcessor","OperationMetrics","PerformanceMonitor","PerformanceSummary","ProcessingConfig","WorkloadAnalysis","WorkloadAnalyzer"]};

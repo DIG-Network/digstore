@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AccessPermission"],"struct":["AccessController"],"trait":["StoreAccessControl"]};

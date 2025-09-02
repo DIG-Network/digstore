@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PatternType"],"fn":["normalize_pattern","parse_line"],"struct":["CompiledPattern","DigignoreParser"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["analyze_chunks","execute","format_bytes","format_timestamp","perform_deep_inspection","show_inspection_human","show_inspection_json","verify_layer_integrity"],"struct":["ChunkAnalysis","ChunkEfficiencyMetrics","ChunkSizeDistribution","ContentInfo","DeduplicationInfo","HeaderInfo","InspectArgs","IntegrityStatus","LayerInspection","MerkleInfo"]};

@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["digstore",[["impl Subcommand for <a class=\"enum\" href=\"digstore/cli/enum.Commands.html\" title=\"enum digstore::cli::Commands\">Commands</a>"],["impl Subcommand for <a class=\"enum\" href=\"digstore/cli/enum.LayerCommands.html\" title=\"enum digstore::cli::LayerCommands\">LayerCommands</a>"],["impl Subcommand for <a class=\"enum\" href=\"digstore/cli/enum.ProofCommands.html\" title=\"enum digstore::cli::ProofCommands\">ProofCommands</a>"],["impl Subcommand for <a class=\"enum\" href=\"digstore/cli/enum.StagedCommands.html\" title=\"enum digstore::cli::StagedCommands\">StagedCommands</a>"],["impl Subcommand for <a class=\"enum\" href=\"digstore/cli/enum.StoreCommands.html\" title=\"enum digstore::cli::StoreCommands\">StoreCommands</a>"]]],["digstore_min",[["impl Subcommand for <a class=\"enum\" href=\"digstore_min/cli/enum.Commands.html\" title=\"enum digstore_min::cli::Commands\">Commands</a>"],["impl Subcommand for <a class=\"enum\" href=\"digstore_min/cli/enum.LayerCommands.html\" title=\"enum digstore_min::cli::LayerCommands\">LayerCommands</a>"],["impl Subcommand for <a class=\"enum\" href=\"digstore_min/cli/enum.ProofCommands.html\" title=\"enum digstore_min::cli::ProofCommands\">ProofCommands</a>"],["impl Subcommand for <a class=\"enum\" href=\"digstore_min/cli/enum.StagedCommands.html\" title=\"enum digstore_min::cli::StagedCommands\">StagedCommands</a>"],["impl Subcommand for <a class=\"enum\" href=\"digstore_min/cli/enum.StoreCommands.html\" title=\"enum digstore_min::cli::StoreCommands\">StoreCommands</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[752,797]}

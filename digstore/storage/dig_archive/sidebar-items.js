@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ARCHIVE_MAGIC","ARCHIVE_VERSION"],"fn":["get_archive_path"],"struct":["ArchiveHeader","ArchiveStats","DigArchive","LayerIndexEntry"]};

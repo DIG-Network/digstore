@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BatchMetrics","BatchProcessor","BatchResult","ChunkInfo","DeduplicationStats","OptimizedFileScanner","PerformanceSnapshot"]};

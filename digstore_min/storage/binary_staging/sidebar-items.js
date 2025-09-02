@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BinaryStagedFile","BinaryStagingArea","IndexEntry","StagingHeader","StagingStats"]};

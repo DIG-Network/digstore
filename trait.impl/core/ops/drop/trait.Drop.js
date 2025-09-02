@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["digstore",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.89.0/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"digstore/storage/binary_staging/struct.BinaryStagingArea.html\" title=\"struct digstore::storage::binary_staging::BinaryStagingArea\">BinaryStagingArea</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.89.0/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"digstore/storage/dig_archive/struct.DigArchive.html\" title=\"struct digstore::storage::dig_archive::DigArchive\">DigArchive</a>"]]],["digstore_min",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.89.0/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"digstore_min/storage/binary_staging/struct.BinaryStagingArea.html\" title=\"struct digstore_min::storage::binary_staging::BinaryStagingArea\">BinaryStagingArea</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.89.0/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"digstore_min/storage/dig_archive/struct.DigArchive.html\" title=\"struct digstore_min::storage::dig_archive::DigArchive\">DigArchive</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[655,676]}

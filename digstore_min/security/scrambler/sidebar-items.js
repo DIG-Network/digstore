@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["DataScrambler","ScrambleState"]};

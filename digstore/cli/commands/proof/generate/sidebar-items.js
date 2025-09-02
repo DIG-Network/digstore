@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["execute","format_proof_as_text","handle_path_prove","handle_urn_prove","output_proof"],"struct":["ProveArgs"]};

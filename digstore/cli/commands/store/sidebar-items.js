@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["history","info","log","root","size","stats","store_info"]};

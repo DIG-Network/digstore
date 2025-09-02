@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FileChangeStatus"],"fn":["calculate_diff_stats","calculate_single_file_diff","calculate_stage_diffs","execute","find_deleted_files","format_size","format_size_diff","show_diff_human","show_diff_json"],"struct":["FileDiff","StageDiffStats"]};

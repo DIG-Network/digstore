@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["STAGING_MAGIC","STAGING_VERSION"],"struct":["BinaryStagedFile","BinaryStagingArea","IndexEntry","StagingHeader","StagingStats"]};

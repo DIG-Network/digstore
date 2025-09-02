@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ProofPosition","ProofTarget"],"struct":["Proof","ProofElement","ProofGenerator","ProofMetadata"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BufferPool","BufferPoolStats","CacheConfig","CacheStats","ChunkCache","ChunkMetadata"]};

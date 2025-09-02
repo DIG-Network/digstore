@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LayerType","TreeNode"],"struct":["Chunk","ChunkRef","CommitInfo","FileEntry","FileMetadata","Hash","LayerHeader","LayerMetadata"],"type":["ChunkHash","LayerId","RootHash","StoreId"]};

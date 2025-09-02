@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_all_parallel"],"struct":["ParallelConfig","ParallelFileProcessor","ParallelProgress","ProcessingResult","ProcessingStats","ProcessingWorkItem"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["analyze_storage","execute","format_bytes","show_size_human","show_size_json"],"struct":["EfficiencyMetrics","LayerInfo","SizeArgs","StorageAnalysis"]};

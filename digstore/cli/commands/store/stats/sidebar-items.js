@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["calculate_repository_stats","execute","format_bytes","show_stats_human","show_stats_json"],"struct":["GrowthMetrics","PerformanceMetrics","RepositoryStats","SecurityMetrics","StatsArgs","StorageEfficiency"]};

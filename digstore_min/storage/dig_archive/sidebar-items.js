@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["get_archive_path"],"struct":["ArchiveHeader","ArchiveStats","DigArchive","LayerIndexEntry"]};

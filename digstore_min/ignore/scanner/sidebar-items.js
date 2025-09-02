@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ScanPhase"],"struct":["FilteredFileScanner","ScanProgress","ScanResult","ScanStats"]};

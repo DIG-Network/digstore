@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["clear_staged","execute","format_size"],"struct":["StagedArgs","StagedFileInfo"]};
