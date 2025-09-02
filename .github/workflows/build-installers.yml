@@ -99,6 +99,7 @@ jobs:
       with:
         name: digstore-windows-installer
         path: installer/windows/digstore-windows-x64.msi
+        retention-days: 30
 
   build-macos-installer:
     name: Build macOS Installer
@@ -175,6 +176,7 @@ jobs:
       with:
         name: digstore-macos-installer
         path: installer/macos/digstore-macos.dmg
+        retention-days: 30
 
   build-linux-packages:
     name: Build Linux Packages
@@ -281,6 +283,7 @@ jobs:
           installer/linux/digstore_0.1.0_amd64.deb
           installer/linux/digstore-0.1.0-1.x86_64.rpm
           installer/linux/digstore-linux-x86_64.AppImage
+        retention-days: 30
 
   create-universal-install-script:
     name: Create Universal Install Script
@@ -365,12 +368,36 @@ jobs:
       with:
         name: universal-install-script
         path: installer/install.sh
+        retention-days: 30
 
   summary:
     name: Build Summary
     needs: [build-windows-installer, build-macos-installer, build-linux-packages, create-universal-install-script]
     runs-on: ubuntu-latest
+    if: always()
     steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        
+    - name: List artifacts
+      run: |
+        echo "Downloaded artifacts:"
+        find artifacts -type f -ls
+        
+    - name: Create artifact download URLs
+      id: urls
+      run: |
+        echo "## 📥 Download Links" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "You can download the installers from the workflow artifacts:" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- [View all artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Note:** These artifacts will be available for 30 days. For permanent downloads, wait for the 'Latest Build' release to be updated." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
     - name: Summary
       run: |
         echo "# Build Summary" >> $GITHUB_STEP_SUMMARY

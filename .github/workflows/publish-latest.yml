@@ -1,0 +1,266 @@
+name: Publish Latest Build
+
+on:
+  workflow_run:
+    workflows: ["Build Installers"]
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  publish-latest:
+    name: Publish Latest Build
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+    - name: Download artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            run_id: context.payload.workflow_run.id,
+          });
+          
+          const fs = require('fs');
+          const path = require('path');
+          
+          // Create directory for artifacts
+          fs.mkdirSync('artifacts', { recursive: true });
+          
+          for (const artifact of artifacts.data.artifacts) {
+            console.log(`Downloading ${artifact.name}...`);
+            const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifact.id,
+              archive_format: 'zip',
+            });
+            
+            const artifactPath = path.join('artifacts', `${artifact.name}.zip`);
+            fs.writeFileSync(artifactPath, Buffer.from(download.data));
+          }
+
+    - name: Extract artifacts
+      run: |
+        cd artifacts
+        for file in *.zip; do
+          echo "Extracting $file..."
+          unzip -o "$file"
+          rm "$file"
+        done
+        ls -la
+
+    - name: Get current date
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+
+    - name: Create or Update Latest Release
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          // Try to get the "latest-build" release
+          let release;
+          try {
+            const { data } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: 'latest-build'
+            });
+            release = data;
+            
+            // Delete existing assets
+            for (const asset of release.assets) {
+              await github.rest.repos.deleteReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: asset.id,
+              });
+            }
+          } catch (error) {
+            if (error.status === 404) {
+              // Create the tag if it doesn't exist
+              try {
+                await github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: 'refs/tags/latest-build',
+                  sha: context.payload.workflow_run.head_sha,
+                });
+              } catch (e) {
+                // Tag might already exist, update it
+                await github.rest.git.updateRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: 'tags/latest-build',
+                  sha: context.payload.workflow_run.head_sha,
+                  force: true,
+                });
+              }
+              
+              // Create the release
+              const { data } = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: 'latest-build',
+                name: 'Latest Build (Development)',
+                body: 'This release is automatically updated with the latest successful build from the main branch.',
+                draft: false,
+                prerelease: true,
+              });
+              release = data;
+            } else {
+              throw error;
+            }
+          }
+          
+          // Update release body with build info
+          await github.rest.repos.updateRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: release.id,
+            body: `# Latest Development Build
+          
+This release is automatically updated with installers from the latest successful build on the main branch.
+
+**Last Updated:** ${{ steps.date.outputs.date }}
+**Commit:** ${context.payload.workflow_run.head_sha.substring(0, 7)}
+**Build:** [#${context.payload.workflow_run.run_number}](${context.payload.workflow_run.html_url})
+
+## 📦 Available Installers
+
+### Windows
+- **digstore-windows-x64.msi** - Windows Installer (requires Administrator)
+  - Installs to Program Files
+  - Adds to system PATH automatically
+  - Creates Start Menu shortcuts
+
+### macOS
+- **digstore-macos.dmg** - macOS Disk Image
+  - Universal binary (Intel + Apple Silicon)
+  - Drag to Applications folder
+
+### Linux
+- **digstore_0.1.0_amd64.deb** - Debian/Ubuntu package
+- **digstore-0.1.0-1.x86_64.rpm** - RedHat/Fedora package
+- **digstore-linux-x86_64.AppImage** - Universal Linux package
+
+### Universal
+- **install.sh** - Installation script for all platforms
+
+## ⚠️ Important Notes
+
+- This is a development build and may be unstable
+- For stable releases, see the [Releases](https://github.com/${context.repo.owner}/${context.repo.repo}/releases) page
+- These artifacts are built from the latest commit on the main branch
+
+## 🚀 Quick Install
+
+**Windows PowerShell (Admin):**
+\`\`\`powershell
+Invoke-WebRequest -Uri "https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-windows-x64.msi" -OutFile "digstore.msi"
+msiexec /i digstore.msi
+\`\`\`
+
+**macOS:**
+\`\`\`bash
+curl -L https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-macos.dmg -o digstore.dmg
+hdiutil attach digstore.dmg
+cp -r /Volumes/Digstore*/Digstore*.app /Applications/
+hdiutil detach /Volumes/Digstore*
+\`\`\`
+
+**Linux (Debian/Ubuntu):**
+\`\`\`bash
+curl -L https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore_0.1.0_amd64.deb -o digstore.deb
+sudo dpkg -i digstore.deb
+\`\`\``
+          });
+          
+          // Upload artifacts
+          const artifactsDir = 'artifacts';
+          const files = fs.readdirSync(artifactsDir);
+          
+          const fileMap = {
+            'digstore-windows-x64.msi': 'application/x-msi',
+            'digstore-macos.dmg': 'application/x-apple-diskimage',
+            'digstore_0.1.0_amd64.deb': 'application/vnd.debian.binary-package',
+            'digstore-0.1.0-1.x86_64.rpm': 'application/x-rpm',
+            'digstore-linux-x86_64.AppImage': 'application/x-executable',
+            'install.sh': 'text/plain',
+          };
+          
+          for (const [filename, contentType] of Object.entries(fileMap)) {
+            const filepath = path.join(artifactsDir, filename);
+            if (fs.existsSync(filepath)) {
+              console.log(`Uploading ${filename}...`);
+              const data = fs.readFileSync(filepath);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id,
+                name: filename,
+                data: data,
+                headers: {
+                  'content-type': contentType,
+                  'content-length': data.length,
+                },
+              });
+            }
+          }
+
+    - name: Update README download links
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { data: readme } = await github.rest.repos.getContent({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            path: 'README.md',
+          });
+          
+          const content = Buffer.from(readme.content, 'base64').toString('utf-8');
+          
+          // Check if we need to add download section
+          if (!content.includes('## Download Latest Build')) {
+            const downloadSection = `
+## Download Latest Build
+
+You can download the latest development build installers:
+
+- [Windows Installer (MSI)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-windows-x64.msi)
+- [macOS Installer (DMG)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-macos.dmg)
+- [Linux DEB Package](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore_0.1.0_amd64.deb)
+- [Linux RPM Package](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-0.1.0-1.x86_64.rpm)
+- [Linux AppImage](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-linux-x86_64.AppImage)
+
+For stable releases, visit the [Releases](https://github.com/${context.repo.owner}/${context.repo.repo}/releases) page.
+`;
+            
+            // Add before "## Installation" or at the end
+            let newContent;
+            if (content.includes('## Installation')) {
+              newContent = content.replace('## Installation', downloadSection + '\n## Installation');
+            } else {
+              newContent = content + '\n' + downloadSection;
+            }
+            
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: 'README.md',
+              message: 'Add download links for latest build installers',
+              content: Buffer.from(newContent).toString('base64'),
+              sha: readme.sha,
+            });
+            
+            console.log('Updated README with download links');
+          }
