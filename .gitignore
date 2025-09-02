@@ -13,6 +13,9 @@
 .DS_Store
 Thumbs.db
 
+# Include icon file
+!DIG-Token-450.ico
+
 # Test artifacts
 *.tmp
 *.temp

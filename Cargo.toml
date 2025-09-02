@@ -3,9 +3,9 @@ name = "digstore_min"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.70"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["DIG Network"]
 description = "A simplified content-addressable storage system with Git-like semantics"
-repository = "https://github.com/yourusername/digstore_min"
+repository = "https://github.com/DIG-Network/digstore"
 license = "MIT OR Apache-2.0"
 keywords = ["storage", "merkle", "content-addressable", "chunking"]
 categories = ["filesystem", "cryptography"]
@@ -82,6 +82,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"]
 
 # Async (optional, remove if not needed)
 tokio = { version = "1.35", features = ["rt-multi-thread", "fs", "io-util"], optional = true }
+
+[build-dependencies]
+winres = "0.1"
 
 [dev-dependencies]
 # Testing

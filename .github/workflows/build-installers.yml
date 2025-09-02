@@ -11,7 +11,7 @@ env:
   CARGO_TERM_COLOR: always
   PROJECT_NAME: digstore
   PROJECT_DESC: "Content-addressable storage system with Git-like semantics"
-  PROJECT_AUTH: "Digstore Contributors"
+  PROJECT_AUTH: "DIG Network"
   PROJECT_HOMEPAGE: "https://github.com/${{ github.repository }}"
 
 jobs:
@@ -26,6 +26,15 @@ jobs:
 
     - name: Build Release Binary
       run: cargo build --release
+
+    - name: Copy Icon File
+      run: |
+        if (Test-Path "DIG-Token-450.ico") {
+          Write-Host "Icon file found, copying for installer use"
+          Copy-Item "DIG-Token-450.ico" -Destination "." -Force
+        } else {
+          Write-Host "Warning: DIG-Token-450.ico not found" -ForegroundColor Yellow
+        }
 
     - name: Install WiX Toolset
       run: |
@@ -59,6 +68,7 @@ jobs:
               <ComponentGroupRef Id="ProductComponents" />
               <ComponentRef Id="Path" />
               <ComponentRef Id="ProgramMenuDir" />
+              <ComponentRef Id="FileAssociation" />
             </Feature>
             
             <Directory Id="TARGETDIR" Name="SourceDir">
@@ -92,6 +102,18 @@ jobs:
             </Component>
             
             <Icon Id="digstore.exe" SourceFile="..\..\target\release\digstore.exe" />
+            <Icon Id="digstore.ico" SourceFile="..\..\DIG-Token-450.ico" />
+            
+            <!-- File Association for .dig files -->
+            <DirectoryRef Id="TARGETDIR">
+              <Component Id="FileAssociation" Guid="D3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D7">
+                <ProgId Id="Digstore.DigFile" Description="DIG Archive File" Icon="digstore.ico">
+                  <Extension Id="dig" ContentType="application/x-dig">
+                    <Verb Id="open" Command="Open" TargetFile="[#digstore.exe]" Argument='"%1"' />
+                  </Extension>
+                </ProgId>
+              </Component>
+            </DirectoryRef>
           </Product>
         </Wix>
         "@ | Out-File -FilePath installer\windows\digstore.wxs -Encoding utf8

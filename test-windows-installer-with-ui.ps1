@@ -5,7 +5,7 @@ Write-Host "Creating Windows Installer with UI" -ForegroundColor Cyan
 Write-Host "===================================" -ForegroundColor Cyan
 
 # Set environment variables
-$env:PROJECT_AUTH = "Digstore Contributors"
+$env:PROJECT_AUTH = "DIG Network"
 
 # Check if we have the binary
 if (-not (Test-Path "target\release\digstore.exe")) {
@@ -113,7 +113,7 @@ Write-Host "Creating WiX file with UI..." -ForegroundColor Green
 @"
 Digstore Min - Content-addressable storage system
 
-Copyright (c) 2024 Digstore Contributors
+Copyright (c) 2024 DIG Network
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
