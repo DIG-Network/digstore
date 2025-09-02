@@ -12,11 +12,13 @@ pub enum ProofTarget {
     /// Prove a file exists
     File {
         path: PathBuf,
+        file_hash: Hash,  // SHA256 of the file content
         at: Option<Hash>,
     },
     /// Prove a byte range
     ByteRange {
         path: PathBuf,
+        range_hash: Hash, // SHA256 of the byte range content
         start: u64,
         end: u64,
         at: Option<Hash>,
@@ -91,6 +93,9 @@ impl Proof {
         let layer = store.load_layer(target_root)?;
         
         // Find the file in the layer
+        let file_entry = layer.files.iter().find(|f| f.path == file_path)
+            .ok_or_else(|| DigstoreError::file_not_found(file_path.to_path_buf()))?;
+        
         let file_index = layer.files.iter().position(|f| f.path == file_path)
             .ok_or_else(|| DigstoreError::file_not_found(file_path.to_path_buf()))?;
 
@@ -109,6 +114,7 @@ impl Proof {
             proof_type: "file".to_string(),
             target: ProofTarget::File {
                 path: file_path.to_path_buf(),
+                file_hash: file_entry.hash, // Include the actual file hash for independent verification
                 at: Some(target_root),
             },
             root: merkle_tree.root(),
@@ -137,9 +143,21 @@ impl Proof {
         // For byte range proofs, we first prove the file exists, then add byte range info
         let mut file_proof = Self::new_file_proof(store, file_path, Some(target_root))?;
         
+        // Get the actual byte range content to compute its hash
+        let file_content = store.get_file_at(file_path, Some(target_root))?;
+        let range_content = if end == u64::MAX {
+            &file_content[start as usize..]
+        } else {
+            let start_idx = start as usize;
+            let end_idx = ((end + 1) as usize).min(file_content.len()); // end is inclusive, so add 1
+            &file_content[start_idx..end_idx]
+        };
+        let range_hash = crate::core::hash::sha256(range_content);
+        
         // Update the target to be a byte range
         file_proof.target = ProofTarget::ByteRange {
             path: file_path.to_path_buf(),
+            range_hash, // Include the actual range hash for independent verification
             start,
             end,
             at: Some(target_root),
@@ -171,22 +189,16 @@ impl Proof {
         })
     }
 
-    /// Verify this proof
+    /// Verify this proof (uses the target hash from the proof itself)
     pub fn verify(&self) -> Result<bool> {
-        match &self.target {
-            ProofTarget::File { .. } | ProofTarget::ByteRange { .. } => {
-                // For file proofs, verify the merkle proof path
-                self.verify_merkle_proof_path()
-            },
-            ProofTarget::Layer { layer_id } => {
-                // For layer proofs, verify the layer ID matches the root
-                Ok(self.root == *layer_id)
-            },
-            ProofTarget::Chunk { chunk_hash } => {
-                // For chunk proofs, verify the chunk hash matches the root
-                Ok(self.root == *chunk_hash)
-            }
-        }
+        let target_hash = match &self.target {
+            ProofTarget::File { file_hash, .. } => *file_hash,
+            ProofTarget::ByteRange { range_hash, .. } => *range_hash,
+            ProofTarget::Layer { layer_id } => *layer_id,
+            ProofTarget::Chunk { chunk_hash } => *chunk_hash,
+        };
+        
+        self.verify_independently(&target_hash, &self.root)
     }
 
     /// Verify the merkle proof path by reconstructing the root
@@ -195,15 +207,15 @@ impl Proof {
             return Ok(false);
         }
         
-        // Start with the target hash (we need to extract this from the target)
+        // Start with the target hash for independent verification
         let mut current_hash = match &self.target {
-            ProofTarget::File { path, .. } => {
-                // For file proofs, we'd need the file hash - simplified for now
-                self.root // Use root as placeholder
+            ProofTarget::File { file_hash, .. } => {
+                // Use the actual file hash included in the proof
+                *file_hash
             }
-            ProofTarget::ByteRange { path, .. } => {
-                // For byte range proofs, similar issue
-                self.root // Use root as placeholder  
+            ProofTarget::ByteRange { range_hash, .. } => {
+                // Use the actual range hash included in the proof
+                *range_hash
             }
             ProofTarget::Layer { layer_id } => *layer_id,
             ProofTarget::Chunk { chunk_hash } => *chunk_hash,
@@ -244,6 +256,61 @@ impl Proof {
     /// Deserialize proof from JSON
     pub fn from_json(json: &str) -> Result<Self> {
         serde_json::from_str(json).map_err(DigstoreError::JsonSerialization)
+    }
+
+    /// Verify proof independently with known data
+    /// This function can verify a proof without needing access to the original datastore
+    /// 
+    /// # Arguments
+    /// * `data_hash` - SHA256 hash of the data being verified
+    /// * `expected_root` - The expected merkle root hash
+    /// 
+    /// # Returns
+    /// * `Ok(true)` if the proof is valid
+    /// * `Ok(false)` if the proof is invalid
+    /// * `Err(...)` if there's an error in verification
+    pub fn verify_independently(&self, data_hash: &Hash, expected_root: &Hash) -> Result<bool> {
+        // Verify the expected root matches the proof root
+        if self.root != *expected_root {
+            return Ok(false);
+        }
+
+        // Verify the target hash matches the provided data hash
+        let target_hash = match &self.target {
+            ProofTarget::File { file_hash, .. } => *file_hash,
+            ProofTarget::ByteRange { range_hash, .. } => *range_hash,
+            ProofTarget::Layer { layer_id } => *layer_id,
+            ProofTarget::Chunk { chunk_hash } => *chunk_hash,
+        };
+
+        if target_hash != *data_hash {
+            return Ok(false);
+        }
+
+        // Verify the merkle proof path
+        if self.proof_path.is_empty() {
+            // For single-item proofs, the target hash should equal the root
+            return Ok(target_hash == *expected_root);
+        }
+
+        let mut current_hash = target_hash;
+        
+        // Walk up the proof path, reconstructing the merkle tree
+        for element in &self.proof_path {
+            current_hash = match element.position {
+                ProofPosition::Left => {
+                    // Sibling is on left, current is on right
+                    crate::core::hash::hash_pair(&element.hash, &current_hash)
+                }
+                ProofPosition::Right => {
+                    // Sibling is on right, current is on left
+                    crate::core::hash::hash_pair(&current_hash, &element.hash)
+                }
+            };
+        }
+        
+        // Check if we reconstructed the expected root
+        Ok(current_hash == *expected_root)
     }
 }
 
