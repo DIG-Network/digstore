@@ -30,8 +30,8 @@ jobs:
     - name: Copy Icon File
       run: |
         if (Test-Path "DIG-Token-450.ico") {
-          Write-Host "Icon file found, copying for installer use"
-          Copy-Item "DIG-Token-450.ico" -Destination "." -Force
+          Write-Host "Icon file found in repository"
+          # Icon is already in the right place, no need to copy
         } else {
           Write-Host "Warning: DIG-Token-450.ico not found" -ForegroundColor Yellow
         }
