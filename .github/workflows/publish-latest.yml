@@ -128,7 +128,7 @@ jobs:
             repo: context.repo.repo,
             release_id: release.id,
             body: `# Latest Development Build
-          
+
 This release is automatically updated with installers from the latest successful build on the main branch.
 
 **Last Updated:** ${{ steps.date.outputs.date }}

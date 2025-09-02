@@ -48,7 +48,14 @@ jobs:
             <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
             <MediaTemplate EmbedCab="yes" />
             
-            <Feature Id="ProductFeature" Title="Digstore Min" Level="1">
+            <!-- Add UI -->
+            <UIRef Id="WixUI_Minimal" />
+            <UIRef Id="WixUI_ErrorProgressText" />
+            
+            <!-- Custom completion message -->
+            <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Digstore has been successfully installed. Please restart your terminal or log out and back in for PATH changes to take effect." />
+            
+            <Feature Id="ProductFeature" Title="Digstore Min" Level="1" Display="expand">
               <ComponentGroupRef Id="ProductComponents" />
               <ComponentRef Id="Path" />
               <ComponentRef Id="ProgramMenuDir" />
@@ -91,8 +98,8 @@ jobs:
         
         # Build MSI installer
         cd installer\windows
-        candle digstore.wxs
-        light digstore.wixobj -o digstore-windows-x64.msi
+        candle -ext WixUIExtension digstore.wxs
+        light -ext WixUIExtension -ext WixUtilExtension digstore.wixobj -o digstore-windows-x64.msi
 
     - name: Upload Windows Installer
       uses: actions/upload-artifact@v4
