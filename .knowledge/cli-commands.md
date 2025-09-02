@@ -62,6 +62,11 @@ digstore add README.md
 
 # Add all files in repository
 digstore add -A
+Scanning files: 100% (1234/1234), done.
+Computing hashes: 100% (1234/1234), done.
+Analyzing chunks: 100% (5678/5678), done.
+Deduplication: 234 chunks saved (12.3 MiB)
+Staged 1234 files (123.4 MiB)
 
 # Add directory recursively  
 digstore add -r src/
@@ -87,6 +92,13 @@ OPTIONS:
 ```bash
 # Create delta layer
 digstore commit -m "Add new feature"
+Enumerating objects: 234, done.
+Counting objects: 100% (234/234), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (187/187), done.
+Writing layer: 100% (234/234), 12.3 MiB | 5.6 MiB/s, done.
+Total 234 (delta 47), reused 123 (delta 12), pack-reused 0
+Layer created: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 # Force full layer
 digstore commit --full -m "Periodic snapshot"

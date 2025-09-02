@@ -385,6 +385,68 @@ fn test_file_roundtrip() {
 }
 ```
 
+## Progress Output Implementation
+
+### Using indicatif for Progress Bars
+
+```rust
+use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use std::time::Duration;
+
+fn create_commit_with_progress(staged_files: Vec<StagedFile>) -> Result<LayerId> {
+    let mp = MultiProgress::new();
+    
+    // Phase 1: Enumeration
+    println!("Enumerating objects: {}, done.", staged_files.len());
+    
+    // Phase 2: Counting
+    let count_pb = ProgressBar::new(staged_files.len() as u64);
+    count_pb.set_style(ProgressStyle::default_bar()
+        .template("Counting objects: {percent}% ({pos}/{len}), done.")
+        .unwrap());
+    
+    for (i, file) in staged_files.iter().enumerate() {
+        // Process file
+        count_pb.set_position(i as u64 + 1);
+    }
+    count_pb.finish();
+    
+    // Phase 3: Compression
+    println!("Delta compression using up to {} threads", num_cpus::get());
+    
+    let compress_pb = mp.add(ProgressBar::new(total_chunks));
+    compress_pb.set_style(ProgressStyle::default_bar()
+        .template("Compressing objects: {percent}% ({pos}/{len}), done.")
+        .unwrap());
+    
+    // Compress chunks in parallel
+    let compressed = chunks.par_iter()
+        .map(|chunk| {
+            let result = compress_chunk(chunk);
+            compress_pb.inc(1);
+            result
+        })
+        .collect::<Vec<_>>();
+    
+    compress_pb.finish();
+    
+    // Phase 4: Writing
+    let write_pb = mp.add(ProgressBar::new(total_bytes));
+    write_pb.set_style(ProgressStyle::default_bar()
+        .template("Writing layer: {percent}% ({pos}/{len}), {bytes}/{total_bytes} | {bytes_per_sec}, done.")
+        .unwrap());
+    
+    // Write with progress
+    write_layer_with_progress(compressed, &write_pb)?;
+    
+    // Summary
+    println!("Total {} (delta {}), reused {} (delta {}), pack-reused 0",
+        total_objects, delta_objects, reused_objects, reused_deltas);
+    
+    Ok(layer_id)
+}
+```
+
 ## Common Pitfalls
 
 1. **Endianness**: Always use little-endian for serialization
@@ -392,6 +454,8 @@ fn test_file_roundtrip() {
 3. **Hash Consistency**: Use binary format internally, hex for display
 4. **Memory Usage**: Stream large files instead of loading entirely
 5. **Error Handling**: Preserve error context through the stack
+6. **Progress Updates**: Don't update progress too frequently (throttle to ~60Hz)
+7. **Terminal Detection**: Disable progress bars when output is piped
 
 ## Debugging Tools
 

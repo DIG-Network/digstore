@@ -218,6 +218,8 @@ For delta layers:
    - Significant space savings
 
 4. **Compression**
-   - Optional zstd compression
-   - Per-chunk compression
-   - Configurable levels
+   - Default zstd compression (level 3)
+   - Per-chunk compression with adaptive strategy
+   - Skip compression for incompressible data
+   - Configurable algorithm and levels
+   - Progress reporting during compression
