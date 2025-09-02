@@ -72,10 +72,11 @@ jobs:
               </Component>
             </ComponentGroup>
             
-            <Component Id="Path" Guid="B3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D5" Directory="INSTALLFOLDER">
-              <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="append" System="yes" />
-              <RegistryValue Root="HKLM" Key="Software\[Manufacturer]\[ProductName]" Name="InstallPath" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
-            </Component>
+            <DirectoryRef Id="TARGETDIR">
+              <Component Id="Path" Guid="B3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D5">
+                <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="append" System="yes" />
+              </Component>
+            </DirectoryRef>
             
             <Component Id="ProgramMenuDir" Guid="C3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D6" Directory="ProgramMenuDir">
               <RemoveFolder Id="ProgramMenuDir" On="uninstall" />
@@ -90,7 +91,7 @@ jobs:
         # Build MSI installer
         cd installer\windows
         candle digstore.wxs
-        light -ext WixUIExtension digstore.wixobj -o digstore-windows-x64.msi
+        light digstore.wixobj -o digstore-windows-x64.msi
 
     - name: Upload Windows Installer
       uses: actions/upload-artifact@v4
