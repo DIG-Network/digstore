@@ -123,66 +123,71 @@ jobs:
           }
           
           // Update release body with build info
+          const releaseBody = [
+            '# Latest Development Build',
+            '',
+            'This release is automatically updated with installers from the latest successful build on the main branch.',
+            '',
+            `**Last Updated:** ${{ steps.date.outputs.date }}`,
+            `**Commit:** ${context.payload.workflow_run.head_sha.substring(0, 7)}`,
+            `**Build:** [#${context.payload.workflow_run.run_number}](${context.payload.workflow_run.html_url})`,
+            '',
+            '## 📦 Available Installers',
+            '',
+            '### Windows',
+            '- **digstore-windows-x64.msi** - Windows Installer (requires Administrator)',
+            '  - Installs to Program Files',
+            '  - Adds to system PATH automatically',
+            '  - Creates Start Menu shortcuts',
+            '  - Associates .dig files with Digstore',
+            '',
+            '### macOS',
+            '- **digstore-macos.dmg** - macOS Disk Image',
+            '  - Universal binary (Intel + Apple Silicon)',
+            '  - Drag to Applications folder',
+            '',
+            '### Linux',
+            '- **digstore_0.1.0_amd64.deb** - Debian/Ubuntu package',
+            '- **digstore-0.1.0-1.x86_64.rpm** - RedHat/Fedora package',
+            '- **digstore-linux-x86_64.AppImage** - Universal Linux package',
+            '',
+            '### Universal',
+            '- **install.sh** - Installation script for all platforms',
+            '',
+            '## ⚠️ Important Notes',
+            '',
+            '- This is a development build and may be unstable',
+            `- For stable releases, see the [Releases](https://github.com/${context.repo.owner}/${context.repo.repo}/releases) page`,
+            '- These artifacts are built from the latest commit on the main branch',
+            '',
+            '## 🚀 Quick Install',
+            '',
+            '**Windows PowerShell (Admin):**',
+            '```powershell',
+            `Invoke-WebRequest -Uri "https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-windows-x64.msi" -OutFile "digstore.msi"`,
+            'msiexec /i digstore.msi',
+            '```',
+            '',
+            '**macOS:**',
+            '```bash',
+            `curl -L https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-macos.dmg -o digstore.dmg`,
+            'hdiutil attach digstore.dmg',
+            'cp -r /Volumes/Digstore*/Digstore*.app /Applications/',
+            'hdiutil detach /Volumes/Digstore*',
+            '```',
+            '',
+            '**Linux (Debian/Ubuntu):**',
+            '```bash',
+            `curl -L https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore_0.1.0_amd64.deb -o digstore.deb`,
+            'sudo dpkg -i digstore.deb',
+            '```'
+          ].join('\n');
+          
           await github.rest.repos.updateRelease({
             owner: context.repo.owner,
             repo: context.repo.repo,
             release_id: release.id,
-            body: `# Latest Development Build
-
-This release is automatically updated with installers from the latest successful build on the main branch.
-
-**Last Updated:** ${{ steps.date.outputs.date }}
-**Commit:** ${context.payload.workflow_run.head_sha.substring(0, 7)}
-**Build:** [#${context.payload.workflow_run.run_number}](${context.payload.workflow_run.html_url})
-
-## 📦 Available Installers
-
-### Windows
-- **digstore-windows-x64.msi** - Windows Installer (requires Administrator)
-  - Installs to Program Files
-  - Adds to system PATH automatically
-  - Creates Start Menu shortcuts
-
-### macOS
-- **digstore-macos.dmg** - macOS Disk Image
-  - Universal binary (Intel + Apple Silicon)
-  - Drag to Applications folder
-
-### Linux
-- **digstore_0.1.0_amd64.deb** - Debian/Ubuntu package
-- **digstore-0.1.0-1.x86_64.rpm** - RedHat/Fedora package
-- **digstore-linux-x86_64.AppImage** - Universal Linux package
-
-### Universal
-- **install.sh** - Installation script for all platforms
-
-## ⚠️ Important Notes
-
-- This is a development build and may be unstable
-- For stable releases, see the [Releases](https://github.com/${context.repo.owner}/${context.repo.repo}/releases) page
-- These artifacts are built from the latest commit on the main branch
-
-## 🚀 Quick Install
-
-**Windows PowerShell (Admin):**
-\`\`\`powershell
-Invoke-WebRequest -Uri "https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-windows-x64.msi" -OutFile "digstore.msi"
-msiexec /i digstore.msi
-\`\`\`
-
-**macOS:**
-\`\`\`bash
-curl -L https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-macos.dmg -o digstore.dmg
-hdiutil attach digstore.dmg
-cp -r /Volumes/Digstore*/Digstore*.app /Applications/
-hdiutil detach /Volumes/Digstore*
-\`\`\`
-
-**Linux (Debian/Ubuntu):**
-\`\`\`bash
-curl -L https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore_0.1.0_amd64.deb -o digstore.deb
-sudo dpkg -i digstore.deb
-\`\`\``
+            body: releaseBody
           });
           
           // Upload artifacts
@@ -231,19 +236,21 @@ sudo dpkg -i digstore.deb
           
           // Check if we need to add download section
           if (!content.includes('## Download Latest Build')) {
-            const downloadSection = `
-## Download Latest Build
-
-You can download the latest development build installers:
-
-- [Windows Installer (MSI)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-windows-x64.msi)
-- [macOS Installer (DMG)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-macos.dmg)
-- [Linux DEB Package](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore_0.1.0_amd64.deb)
-- [Linux RPM Package](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-0.1.0-1.x86_64.rpm)
-- [Linux AppImage](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-linux-x86_64.AppImage)
-
-For stable releases, visit the [Releases](https://github.com/${context.repo.owner}/${context.repo.repo}/releases) page.
-`;
+            const downloadSection = [
+              '',
+              '## Download Latest Build',
+              '',
+              'You can download the latest development build installers:',
+              '',
+              `- [Windows Installer (MSI)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-windows-x64.msi)`,
+              `- [macOS Installer (DMG)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-macos.dmg)`,
+              `- [Linux DEB Package](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore_0.1.0_amd64.deb)`,
+              `- [Linux RPM Package](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-0.1.0-1.x86_64.rpm)`,
+              `- [Linux AppImage](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/latest-build/digstore-linux-x86_64.AppImage)`,
+              '',
+              `For stable releases, visit the [Releases](https://github.com/${context.repo.owner}/${context.repo.repo}/releases) page.`,
+              ''
+            ].join('\n');
             
             // Add before "## Installation" or at the end
             let newContent;
