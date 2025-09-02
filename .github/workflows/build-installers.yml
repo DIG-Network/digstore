@@ -43,7 +43,8 @@ jobs:
         <?xml version="1.0" encoding="UTF-8"?>
         <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
           <Product Id="*" Name="Digstore Min" Language="1033" Version="0.1.0" Manufacturer="$env:PROJECT_AUTH" UpgradeCode="A3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D4">
-            <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+            <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated" 
+                     Description="Content-addressable storage system with Git-like semantics. After installation, restart your terminal to use 'digstore' from the command line." />
             <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
             <MediaTemplate EmbedCab="yes" />
             
@@ -72,7 +73,8 @@ jobs:
             </ComponentGroup>
             
             <Component Id="Path" Guid="B3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D5" Directory="INSTALLFOLDER">
-              <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+              <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="append" System="yes" />
+              <RegistryValue Root="HKLM" Key="Software\[Manufacturer]\[ProductName]" Name="InstallPath" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
             </Component>
             
             <Component Id="ProgramMenuDir" Guid="C3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D6" Directory="ProgramMenuDir">
@@ -385,10 +387,11 @@ jobs:
         echo "## 🚀 Installation Methods" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Windows" >> $GITHUB_STEP_SUMMARY
-        echo "Run the MSI installer which will:" >> $GITHUB_STEP_SUMMARY
+        echo "Run the MSI installer (requires Administrator privileges) which will:" >> $GITHUB_STEP_SUMMARY
         echo "- Install to Program Files" >> $GITHUB_STEP_SUMMARY
-        echo "- Add to PATH automatically" >> $GITHUB_STEP_SUMMARY
+        echo "- Add to system PATH automatically" >> $GITHUB_STEP_SUMMARY
         echo "- Create Start Menu shortcuts" >> $GITHUB_STEP_SUMMARY
+        echo "- **Important**: Restart your terminal or log out/in for PATH changes to take effect" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### macOS" >> $GITHUB_STEP_SUMMARY
         echo "1. Mount the DMG file" >> $GITHUB_STEP_SUMMARY
