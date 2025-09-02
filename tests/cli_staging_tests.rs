@@ -17,7 +17,7 @@ fn test_staged_command_with_no_files() -> Result<()> {
     
     // Test staged command execution with no staged files
     // This should not panic or error, just show "No files staged"
-    let result = digstore_min::cli::commands::staged::execute(20, 1, false, false, false);
+    let result = digstore_min::cli::commands::staged::execute_list(20, 1, false, false, false);
     
     // The command should handle empty staging gracefully
     // Note: This might fail if not in a repository context, but that's expected

@@ -248,6 +248,7 @@ mod tests {
             proof_type: "file".to_string(),
             target: ProofTarget::File {
                 path: "test.txt".into(),
+                file_hash: Hash::zero(),
                 at: Some(Hash::zero()),
             },
             root: Hash::zero(),
