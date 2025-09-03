@@ -104,26 +104,27 @@ impl EncryptedArchive {
 }
 ```
 
-## Migration System
+## Archive Management
 
-### Automatic Migration
-- **Detection**: Automatically detect old directory-based stores
-- **Migration Process**: Copy all `.layer` files to new `.dig` archive
-- **Verification**: Verify all layers are accessible in new format
-- **Cleanup**: Remove old directory after successful migration
-- **Seamless**: No user intervention required
+### Efficient Operations
+- **Single File Access**: All repository data in one efficient archive file
+- **Fast Indexing**: Hash-based layer lookup with O(1) access time
+- **Memory Mapping**: Efficient large archive handling
+- **Atomic Updates**: Consistent archive modifications
 
-### Migration Flow
+### Archive Benefits
 ```
-Old Format: ~/.dig/{store_id}/
-├── 0000000000000000.layer
-├── layer1.layer
-└── layer2.layer
+Traditional Directory Format:
+├── Multiple files per repository
+├── Directory overhead and fragmentation
+└── Complex file management
 
-        ↓ Automatic Migration ↓
+        vs
 
-New Format: ~/.dig/{store_id}.dig
-└── Single archive containing all layers
+Single Archive Format:
+├── One file per repository
+├── Efficient indexing and access
+└── Simplified management and transfer
 ```
 
 ## CLI Integration
@@ -157,14 +158,14 @@ digstore store info                       # Verify archive integrity
 - **Compression Support**: Optional compression for layer data
 - **Deduplication**: Chunk-level deduplication across layers
 
-### Example Efficiency
+### Efficiency Comparison
 ```
-Old Format (Directory):
+Directory-Based Format:
 ├── Directory overhead: ~4KB per layer
 ├── Filesystem metadata: Variable
 └── Fragmentation: High
 
-New Format (Archive):
+Archive Format (.dig):
 ├── Archive overhead: 64 bytes + (80 bytes × layer_count)
 ├── Filesystem metadata: Single file
 └── Fragmentation: None
@@ -208,8 +209,8 @@ New Format (Archive):
 
 ### Compatibility
 - **Forward Compatibility**: Reserved fields for future features
-- **Version Migration**: Automatic upgrade paths for new formats
-- **Legacy Support**: Automatic migration from old formats
+- **Version Management**: Automatic upgrade paths for new format versions
 - **Cross-Platform**: Consistent behavior across all platforms
+- **Standard Compliance**: Industry-standard archive design patterns
 
 This single-file archive format represents a significant advancement in content-addressable storage, providing better performance, integrity, and usability compared to traditional directory-based approaches.

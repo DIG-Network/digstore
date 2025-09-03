@@ -2,13 +2,12 @@
 
 ## Overview
 
-The `.dig` archive format is a single-file container that stores all layer files for a Digstore repository. This replaces the previous directory-based approach where each store had its own folder in `~/.dig/`.
+The `.dig` archive format is a single-file container that stores all layer files for a Digstore repository in an efficient, high-performance archive.
 
 ## File Structure
 
 ### Location
-- **Old Format**: `~/.dig/{store_id}/` (directory containing multiple `.layer` files)
-- **New Format**: `~/.dig/{store_id}.dig` (single archive file)
+- **Current Format**: `~/.dig/{store_id}.dig` (single archive file)
 
 ### Archive Format
 
@@ -125,21 +124,21 @@ digstore inspect --archive               # Inspect entire archive
 - **`digstore size`**: Include archive overhead and efficiency metrics
 - **`digstore stats`**: Add archive-specific statistics
 
-### Migration Strategy
+### Archive Operations
 
-#### Automatic Migration
-- Detect old directory-based stores during `Store::open()`
-- Automatically migrate to `.dig` archive format
-- Preserve all existing layer data
-- Clean up old directory after successful migration
+#### Efficient Management
+- **Single File Access**: All repository operations through one archive file
+- **Fast Indexing**: Hash-based layer lookup for O(1) access
+- **Memory Mapping**: Efficient large archive handling
+- **Atomic Updates**: Consistent archive state during modifications
 
-#### Migration Process
-1. **Detection**: Check if `~/.dig/{store_id}/` directory exists
-2. **Archive Creation**: Create new `{store_id}.dig` archive
-3. **Layer Migration**: Copy all `.layer` files to archive
-4. **Verification**: Verify all layers are accessible
-5. **Cleanup**: Remove old directory structure
-6. **Update References**: Update `.digstore` file if needed
+#### Archive Lifecycle
+1. **Creation**: Initialize new empty `.dig` archive
+2. **Layer Addition**: Append new layers to archive efficiently
+3. **Access**: Fast layer retrieval through memory-mapped index
+4. **Maintenance**: Compact and optimize archive as needed
+5. **Verification**: Validate archive integrity and checksums
+6. **Backup**: Efficient archive backup and transfer
 
 ### Error Handling
 
@@ -164,8 +163,8 @@ digstore inspect --archive               # Inspect entire archive
 - Compression and checksum validation
 
 ### Integration Tests
-- Store migration from directory to archive format
-- Full repository workflow with archive storage
+- Complete repository workflow with archive storage
+- Full archive lifecycle testing
 - Concurrent access scenarios
 - Large archive performance testing
 
@@ -179,7 +178,7 @@ digstore inspect --archive               # Inspect entire archive
 
 ### Functional Requirements
 - ✅ Single `.dig` file replaces directory structure
-- ✅ All existing layer data preserved during migration
+- ✅ All repository data efficiently stored in archives
 - ✅ CLI commands can list and inspect layers within archive
 - ✅ Memory-mapped access for performance
 - ✅ Compression support for space efficiency
@@ -191,7 +190,7 @@ digstore inspect --archive               # Inspect entire archive
 - ✅ Efficient append operations for new layers
 
 ### Compatibility Requirements
-- ✅ Automatic migration from old format
-- ✅ All existing CLI commands work unchanged
-- ✅ All tests pass with new format
+- ✅ Efficient single-file format
+- ✅ All CLI commands optimized for archive format
+- ✅ All tests validate archive operations
 - ✅ Cross-platform compatibility maintained

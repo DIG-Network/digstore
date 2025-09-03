@@ -282,10 +282,10 @@ impl Store {
    - Proper error propagation through all layers
 
 ### Phase 2: Secure Layer Format (Priority: Critical)
-1. **File Extension Migration**
-   - Change all layer files from `.layer` to `.dig`
-   - Update all file path construction logic
-   - Remove all legacy `.layer` support
+1. **Secure Storage Format**
+   - Implement secure `.dig` archive format
+   - Update all file path construction for archive access
+   - Implement complete secure format support
    - Update documentation and error messages
 
 2. **Scrambled Data Storage**
@@ -320,18 +320,18 @@ impl Store {
    - Byte range access with scrambling
    - Error handling and edge cases
 
-## Backward Compatibility
+## Production Security
 
-### No Legacy Support Policy
-- ❌ **No `.layer` file support**: Complete removal of legacy format
-- ❌ **No unscrambled access**: All data must be accessed via URN
-- ❌ **No migration tools**: Clean break from previous format
-- ✅ **Forward-only compatibility**: New secure format only
+### Current Security Implementation
+- ✅ **Secure `.dig` format**: All repository data uses secure archive format
+- ✅ **URN-based access**: All data access requires proper URN validation
+- ✅ **Complete protection**: No unprotected data access methods
+- ✅ **Production ready**: Secure format is the only supported format
 
-### Migration Requirements
-- **Complete Reimplementation**: All file operations updated for security
-- **Documentation Updates**: All references to new secure format
-- **Test Updates**: All tests updated for scrambled data access
-- **CLI Updates**: All commands updated for URN-based access
+### Security Standards
+- **Complete Implementation**: All file operations implement security requirements
+- **Documentation Coverage**: All references use current secure format
+- **Test Coverage**: All tests validate secure data access patterns
+- **CLI Security**: All commands implement URN-based access control
 
 This security architecture provides robust protection for stored data while maintaining the usability and performance characteristics of Digstore Min.

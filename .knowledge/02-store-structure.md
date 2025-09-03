@@ -5,22 +5,13 @@
 Digstore Min uses a two-part structure:
 
 ### 1. Global Store Directory (~/.dig)
-The actual repository data lives in a global directory using the new single-file archive format:
+The actual repository data lives in a global directory using the single-file archive format:
 
 ```
 ~/.dig/
 ├── {store_id}.dig               # Single archive file containing all layers
 ├── {store_id}.staging.bin       # Binary staging area (high-performance format)
 └── config.toml                  # Global configuration
-```
-
-**Legacy Format (automatically migrated):**
-```
-~/.dig/
-└── {store_id}/                  # Old directory format
-    ├── 0000000000000000.layer   # Migrated to .dig archive
-    ├── {root_hash_1}.layer      # Migrated to .dig archive
-    └── {root_hash_n}.layer      # Migrated to .dig archive
 ```
 
 ### 2. Local Project Directory

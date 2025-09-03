@@ -256,7 +256,7 @@ Performance Metrics:
 Security Metrics:
   Scrambling: 100% of data protected
   URN Access Control: Active
-  Legacy Access: Disabled
+  Secure Access: Enforced
   Security Overhead: <2%
 ```
 
@@ -344,7 +344,7 @@ Integrity Verification:
 #### 4. Security Information
 - Scrambling status and coverage
 - URN access control status
-- Legacy access detection
+- Secure access validation
 - Security metric reporting
 
 ### Output Formats
