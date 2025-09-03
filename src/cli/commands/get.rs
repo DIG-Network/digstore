@@ -7,8 +7,35 @@ use crate::urn::{parse_urn, Urn};
 use anyhow::Result;
 use base64;
 use colored::Colorize;
+use sha2::{Sha256, Digest};
 use std::io::Write;
 use std::path::PathBuf;
+
+/// Generate deterministic random bytes from a seed string
+/// This provides zero-knowledge property by returning consistent random data for invalid URNs
+/// 
+/// The same invalid URN will always return the same random bytes, making it impossible
+/// for a host to distinguish between valid and invalid URNs based on the response.
+fn generate_deterministic_random_bytes(seed: &str, size: usize) -> Vec<u8> {
+    let mut result = Vec::with_capacity(size);
+    let mut hasher = Sha256::new();
+    hasher.update(seed.as_bytes());
+    let mut counter = 0u64;
+    
+    while result.len() < size {
+        let mut current_hasher = hasher.clone();
+        current_hasher.update(&counter.to_le_bytes());
+        let hash = current_hasher.finalize();
+        
+        let bytes_needed = size - result.len();
+        let bytes_to_copy = bytes_needed.min(hash.len());
+        result.extend_from_slice(&hash[..bytes_to_copy]);
+        
+        counter += 1;
+    }
+    
+    result
+}
 
 /// Execute the get command
 pub fn execute(
@@ -35,11 +62,54 @@ pub fn execute(
     let content = if path.starts_with("urn:dig:chia:") {
         // Full URN provided - parse and resolve
         println!("  {} Parsing URN: {}", "•".cyan(), path.dimmed());
-        let urn = parse_urn(&path)?;
-
-        // For URN resolution, we need to open the store by ID
-        let store = Store::open_global(&urn.store_id)?;
-        urn.resolve(&store)?
+        
+        // Try to resolve the URN, but if it fails, return deterministic random bytes
+        match parse_urn(&path) {
+            Ok(urn) => {
+                // Try to open the store and resolve
+                match Store::open_global(&urn.store_id) {
+                    Ok(store) => {
+                        match urn.resolve(&store) {
+                            Ok(content) => content,
+                            Err(_) => {
+                                // File not found or other error - return deterministic random bytes
+                                // Use full URN as seed to ensure consistency
+                                // Size based on byte range if present, otherwise 1MB default
+                                let size = if let Some(range) = &urn.byte_range {
+                                    match (range.start, range.end) {
+                                        (Some(start), Some(end)) => (end - start + 1) as usize,
+                                        (Some(start), None) => (1024 * 1024 - start) as usize, // 1MB file assumed
+                                        (None, Some(end)) => (end + 1) as usize,
+                                        (None, None) => 1024 * 1024,
+                                    }
+                                } else {
+                                    1024 * 1024 // Default 1MB
+                                };
+                                generate_deterministic_random_bytes(&path, size)
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Store not found - return deterministic random bytes
+                        let size = if let Some(range) = &urn.byte_range {
+                            match (range.start, range.end) {
+                                (Some(start), Some(end)) => (end - start + 1) as usize,
+                                (Some(start), None) => (1024 * 1024 - start) as usize,
+                                (None, Some(end)) => (end + 1) as usize,
+                                (None, None) => 1024 * 1024,
+                            }
+                        } else {
+                            1024 * 1024
+                        };
+                        generate_deterministic_random_bytes(&path, size)
+                    }
+                }
+            }
+            Err(_) => {
+                // Invalid URN format - return deterministic random bytes
+                generate_deterministic_random_bytes(&path, 1024 * 1024)
+            }
+        }
     } else {
         // Simple path - find repository and resolve
         let repo_root = find_repository_root()?

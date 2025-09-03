@@ -223,24 +223,7 @@ impl Store {
             std::fs::remove_dir_all(&old_global_path)?;
             archive
         } else {
-            // Store archive not found - for global access, just show error (no project context)
-            eprintln!("{}", "Store not found!".red().bold());
-            eprintln!(
-                "  Archive file: {}",
-                archive_path.display().to_string().yellow()
-            );
-            eprintln!("  Store ID: {}", store_id.to_hex().cyan());
-            eprintln!();
-            eprintln!(
-                "{}",
-                "This store does not exist or has been deleted.".blue()
-            );
-            eprintln!(
-                "{}",
-                "Use 'digstore init' in a project directory to create a new store.".green()
-            );
-            eprintln!();
-
+            // Store archive not found - return error silently for zero-knowledge property
             return Err(DigstoreError::store_not_found(archive_path.clone()));
         };
 

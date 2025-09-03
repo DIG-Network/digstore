@@ -36,5 +36,6 @@ test-windows-installer.ps1
 test-windows-installer.bat
 test-wix-only.ps1
 test-icon-display.ps1
+test-zero-knowledge.ps1
 extracted_icon.ico
 installer/
