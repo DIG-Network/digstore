@@ -9,6 +9,7 @@ pub mod binary_staging;
 pub mod cache;
 pub mod chunk;
 pub mod dig_archive;
+pub mod encrypted_archive;
 pub mod layer;
 pub mod optimized_staging;
 pub mod parallel_processor;

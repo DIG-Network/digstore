@@ -7,6 +7,7 @@ use crate::storage::{
     binary_staging::{BinaryStagedFile, BinaryStagingArea},
     chunk::ChunkingEngine,
     dig_archive::{get_archive_path, DigArchive},
+    encrypted_archive::EncryptedArchive,
     layer::Layer,
     streaming::StreamingChunkingEngine,
 };
@@ -20,8 +21,8 @@ use std::path::{Path, PathBuf};
 pub struct Store {
     /// Store identifier
     pub store_id: StoreId,
-    /// Archive file for storing layers
-    pub archive: DigArchive,
+    /// Archive file for storing layers (with optional encryption)
+    pub archive: EncryptedArchive,
     /// Path to the project directory (if in project context)
     pub project_path: Option<PathBuf>,
     /// Current root hash (latest generation)
@@ -97,8 +98,9 @@ impl Store {
         let digstore_file = DigstoreFile::new(store_id, repository_name);
         digstore_file.save(&digstore_path)?;
 
-        // Create archive
-        let archive = DigArchive::create(archive_path.clone())?;
+        // Create archive with optional encryption
+        let dig_archive = DigArchive::create(archive_path.clone())?;
+        let archive = EncryptedArchive::new(dig_archive)?;
 
         // Initialize binary staging area (in same directory as archive)
         let staging_path = archive_path.with_extension("staging.bin");
@@ -154,18 +156,19 @@ impl Store {
         // Check for migration from old directory format
         let old_global_path = get_global_store_path(&store_id)?;
         let archive = if archive_path.exists() {
-            // Open existing archive
-            DigArchive::open(archive_path.clone())?
+            // Open existing archive with optional encryption
+            let dig_archive = DigArchive::open(archive_path.clone())?;
+            EncryptedArchive::new(dig_archive)?
         } else if old_global_path.exists() {
             // Migrate from old directory format
             println!("Migrating store from directory to archive format...");
-            let archive =
+            let dig_archive =
                 DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
 
             // Clean up old directory after successful migration
             std::fs::remove_dir_all(&old_global_path)?;
+            let archive = EncryptedArchive::new(dig_archive)?;
             println!("✓ Migration completed successfully");
-
             archive
         } else {
             // Store archive not found - offer interactive recreation
@@ -215,13 +218,14 @@ impl Store {
         // Check for migration from old directory format
         let old_global_path = get_global_store_path(store_id)?;
         let archive = if archive_path.exists() {
-            DigArchive::open(archive_path.clone())?
+            let dig_archive = DigArchive::open(archive_path.clone())?;
+            EncryptedArchive::new(dig_archive)?
         } else if old_global_path.exists() {
             // Migrate from old directory format
-            let archive =
+            let dig_archive =
                 DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
             std::fs::remove_dir_all(&old_global_path)?;
-            archive
+            EncryptedArchive::new(dig_archive)?
         } else {
             // Store archive not found - return error silently for zero-knowledge property
             return Err(DigstoreError::store_not_found(archive_path.clone()));
@@ -839,7 +843,7 @@ impl Store {
     }
 
     /// Load current root hash from Layer 0 in archive
-    fn load_current_root_from_archive(archive: &DigArchive) -> Result<Option<RootHash>> {
+    fn load_current_root_from_archive(archive: &EncryptedArchive) -> Result<Option<RootHash>> {
         let layer_zero_hash = Hash::zero();
 
         if !archive.has_layer(&layer_zero_hash) {

@@ -18,12 +18,8 @@ pub fn execute(
 ) -> Result<()> {
     println!("{}", "Decrypting content...".bright_blue());
 
-    // Read the encrypted file
-    let encrypted_data = if let Some(output_path) = &output {
-        std::fs::read(output_path)?
-    } else {
-        std::fs::read(&path)?
-    };
+    // Read the encrypted file from input path
+    let encrypted_data = std::fs::read(&path)?;
 
     println!("  {} Read {} bytes of encrypted data", "•".cyan(), encrypted_data.len());
 
