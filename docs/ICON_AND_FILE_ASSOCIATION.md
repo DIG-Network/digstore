@@ -19,7 +19,7 @@ The Windows installer configures .dig file association automatically:
 
 ### Registry Changes:
 - Creates ProgId: `Digstore.DigFile`
-- Sets file type description: "DIG Archive File"
+- Sets file type description: "DIG DataStore"
 - Associates .dig extension with the ProgId
 - Sets up the open verb with command line arguments
 

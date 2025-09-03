@@ -52,8 +52,8 @@ jobs:
         <?xml version="1.0" encoding="UTF-8"?>
         <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
           <Product Id="*" Name="Digstore Min" Language="1033" Version="0.1.0" Manufacturer="$env:PROJECT_AUTH" UpgradeCode="A3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D4">
-            <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated" 
-                     Description="Content-addressable storage system with Git-like semantics. After installation, restart your terminal to use 'digstore' from the command line." />
+                        <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated"
+                     Description="DIG DataStore - Content-addressable storage system with Git-like semantics. After installation, restart your terminal to use 'digstore' from the command line." />
             <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
             <MediaTemplate EmbedCab="yes" />
             
@@ -87,6 +87,9 @@ jobs:
                             WorkingDirectory="INSTALLFOLDER" Icon="digstore.exe" IconIndex="0" Advertise="yes" />
                 </File>
               </Component>
+              <Component Id="IconFile">
+                <File Id="DIG.ico" Source="..\..\DIG.ico" KeyPath="yes" />
+              </Component>
             </ComponentGroup>
             
             <DirectoryRef Id="TARGETDIR">
@@ -109,11 +112,13 @@ jobs:
               <Component Id="FileAssociation" Guid="D3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D7">
                 <RegistryValue Root="HKCR" Key=".dig" Type="string" Value="Digstore.DigFile" KeyPath="yes" />
                 <RegistryValue Root="HKCR" Key=".dig" Name="Content Type" Type="string" Value="application/x-dig" />
-                <RegistryValue Root="HKCR" Key="Digstore.DigFile" Type="string" Value="DIG Archive File" />
-                <RegistryValue Root="HKCR" Key="Digstore.DigFile\DefaultIcon" Type="string" Value="[INSTALLFOLDER]digstore.exe,0" />
+                <RegistryValue Root="HKCR" Key="Digstore.DigFile" Type="string" Value="DIG DataStore" />
+                <RegistryValue Root="HKCR" Key="Digstore.DigFile\DefaultIcon" Type="string" Value="[INSTALLFOLDER]DIG.ico" />
                 <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell" Type="string" Value="open" />
                 <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell\open" Type="string" Value="&amp;Open" />
                 <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]digstore.exe&quot; &quot;%1&quot;" />
+                <!-- Force Windows to refresh icon cache -->
+                <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" Name="Max Cached Icons" Type="string" Value="8192" />
               </Component>
             </DirectoryRef>
           </Product>
