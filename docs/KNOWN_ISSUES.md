@@ -1,5 +1,23 @@
 # Known Issues
 
+## Zero-Knowledge URN Behavior (Feature, not a bug)
+
+**Behavior**: Invalid URNs return deterministic random bytes instead of errors.
+
+This is an intentional security feature. When using `digstore get` with a URN:
+- Invalid store IDs return 1MB of deterministic random data
+- Non-existent files return random data
+- Invalid URN formats return random data
+
+This prevents hosts from learning which URNs are valid. See [Zero-Knowledge URNs](ZERO_KNOWLEDGE_URNS.md) for details.
+
+**Example**:
+```bash
+# Invalid URN returns random data, not an error
+digstore get urn:dig:chia:0000000000000000000000000000000000000000000000000000000000000000/fake.txt -o output.bin
+# Creates output.bin with 1MB of deterministic random bytes
+```
+
 ## Empty Files in Existing Repositories (Fixed in commit a417823)
 
 ### Issue
