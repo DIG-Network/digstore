@@ -9,6 +9,7 @@ use tracing_subscriber;
 mod cli;
 mod config;
 mod core;
+mod crypto;
 mod ignore;
 mod proofs;
 mod security;
@@ -71,6 +72,12 @@ fn main() -> Result<()> {
             progress,
             json,
         } => cli::commands::get::execute(path, output, verify, metadata, at, progress, json),
+        Commands::Decrypt {
+            path,
+            output,
+            urn,
+            json,
+        } => cli::commands::decrypt::execute(path, output, urn, json),
         Commands::Cat {
             path,
             at,

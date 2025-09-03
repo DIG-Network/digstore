@@ -34,6 +34,8 @@ digest = "0.10"
 hex = "0.4"
 rs_merkle = "1.4"
 base64 = "0.21"
+aes-gcm = "0.10"
+rand = "0.8"
 
 # Content-Defined Chunking
 fastcdc = "3.1"

@@ -6,6 +6,7 @@ pub mod cat;
 pub mod commit;
 pub mod completion;
 pub mod config;
+pub mod decrypt;
 pub mod get;
 pub mod init;
 pub mod status;

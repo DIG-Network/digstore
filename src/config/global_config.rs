@@ -15,6 +15,8 @@ pub struct GlobalConfig {
     pub user: UserConfig,
     /// Core configuration
     pub core: CoreConfig,
+    /// Crypto configuration
+    pub crypto: CryptoConfig,
     /// Custom configuration values
     #[serde(flatten)]
     pub custom: HashMap<String, ConfigValue>,
@@ -40,6 +42,15 @@ pub struct CoreConfig {
     pub editor: Option<String>,
 }
 
+/// Crypto configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CryptoConfig {
+    /// Public key for URN transformation (hex encoded)
+    pub public_key: Option<String>,
+    /// Enable encrypted storage
+    pub encrypted_storage: Option<bool>,
+}
+
 /// Configuration value types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -57,6 +68,8 @@ pub enum ConfigKey {
     CoreEditor,
     CoreChunkSize,
     CoreCompression,
+    CryptoPublicKey,
+    CryptoEncryptedStorage,
     Custom(String),
 }
 
@@ -68,6 +81,8 @@ impl ConfigKey {
             "core.editor" => Some(ConfigKey::CoreEditor),
             "core.chunk_size" => Some(ConfigKey::CoreChunkSize),
             "core.compression" => Some(ConfigKey::CoreCompression),
+            "crypto.public_key" => Some(ConfigKey::CryptoPublicKey),
+            "crypto.encrypted_storage" => Some(ConfigKey::CryptoEncryptedStorage),
             _ => Some(ConfigKey::Custom(key.to_string())),
         }
     }
@@ -79,6 +94,8 @@ impl ConfigKey {
             ConfigKey::CoreEditor => "core.editor",
             ConfigKey::CoreChunkSize => "core.chunk_size",
             ConfigKey::CoreCompression => "core.compression",
+            ConfigKey::CryptoPublicKey => "crypto.public_key",
+            ConfigKey::CryptoEncryptedStorage => "crypto.encrypted_storage",
             ConfigKey::Custom(key) => key,
         }
     }
@@ -157,6 +174,15 @@ impl GlobalConfig {
                 .compression
                 .as_ref()
                 .map(|s| ConfigValue::String(s.clone())),
+            ConfigKey::CryptoPublicKey => self
+                .crypto
+                .public_key
+                .as_ref()
+                .map(|s| ConfigValue::String(s.clone())),
+            ConfigKey::CryptoEncryptedStorage => self
+                .crypto
+                .encrypted_storage
+                .map(ConfigValue::Boolean),
             ConfigKey::Custom(key) => self.custom.get(key).cloned(),
         }
     }
@@ -209,6 +235,30 @@ impl GlobalConfig {
                     });
                 }
             },
+            ConfigKey::CryptoPublicKey => {
+                if let ConfigValue::String(pubkey) = value {
+                    // Validate it's a valid hex string
+                    if pubkey.len() != 64 || hex::decode(&pubkey).is_err() {
+                        return Err(DigstoreError::ConfigurationError {
+                            reason: "crypto.public_key must be a 64-character hex string (32 bytes)".to_string(),
+                        });
+                    }
+                    self.crypto.public_key = Some(pubkey);
+                } else {
+                    return Err(DigstoreError::ConfigurationError {
+                        reason: "crypto.public_key must be a string".to_string(),
+                    });
+                }
+            },
+            ConfigKey::CryptoEncryptedStorage => {
+                if let ConfigValue::Boolean(enabled) = value {
+                    self.crypto.encrypted_storage = Some(enabled);
+                } else {
+                    return Err(DigstoreError::ConfigurationError {
+                        reason: "crypto.encrypted_storage must be a boolean".to_string(),
+                    });
+                }
+            },
             ConfigKey::Custom(key_name) => {
                 self.custom.insert(key_name, value);
             },
@@ -224,6 +274,8 @@ impl GlobalConfig {
             ConfigKey::CoreEditor => self.core.editor = None,
             ConfigKey::CoreChunkSize => self.core.chunk_size = None,
             ConfigKey::CoreCompression => self.core.compression = None,
+            ConfigKey::CryptoPublicKey => self.crypto.public_key = None,
+            ConfigKey::CryptoEncryptedStorage => self.crypto.encrypted_storage = None,
             ConfigKey::Custom(key_name) => {
                 self.custom.remove(key_name);
             },
@@ -248,6 +300,12 @@ impl GlobalConfig {
         }
         if let Some(compression) = &self.core.compression {
             entries.push(("core.compression".to_string(), compression.clone()));
+        }
+        if let Some(public_key) = &self.crypto.public_key {
+            entries.push(("crypto.public_key".to_string(), public_key.clone()));
+        }
+        if let Some(encrypted_storage) = self.crypto.encrypted_storage {
+            entries.push(("crypto.encrypted_storage".to_string(), encrypted_storage.to_string()));
         }
 
         for (key, value) in &self.custom {
@@ -361,6 +419,10 @@ impl Default for GlobalConfig {
                 chunk_size: Some(1024), // 1KB default
                 compression: Some("zstd".to_string()),
                 editor: None,
+            },
+            crypto: CryptoConfig {
+                public_key: None,
+                encrypted_storage: Some(false),
             },
             custom: HashMap::new(),
         }

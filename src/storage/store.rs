@@ -595,12 +595,30 @@ impl Store {
                     let mut chunk_data = vec![0u8; chunk.size as usize];
                     file.read_exact(&mut chunk_data)?;
                     
+                    // Check if encrypted storage is enabled
+                    let global_config = crate::config::GlobalConfig::load()?;
+                    let should_encrypt = global_config.crypto.encrypted_storage.unwrap_or(false);
+                    
+                    let final_data = if should_encrypt && global_config.crypto.public_key.is_some() {
+                        // Create URN for this chunk (use store ID and chunk hash)
+                        let chunk_urn = format!(
+                            "urn:dig:chia:{}/chunk/{}",
+                            self.store_id.to_hex(),
+                            chunk.hash.to_hex()
+                        );
+                        
+                        // Encrypt chunk data using URN
+                        crate::crypto::encrypt_data(&chunk_data, &chunk_urn)?
+                    } else {
+                        chunk_data
+                    };
+                    
                     // Create chunk with actual data
                     let chunk_with_data = Chunk {
                         hash: chunk.hash,
                         offset: chunk.offset,
                         size: chunk.size,
-                        data: chunk_data,
+                        data: final_data,
                     };
                     
                     layer.add_chunk(chunk_with_data);

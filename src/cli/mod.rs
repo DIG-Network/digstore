@@ -170,6 +170,24 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Decrypt encrypted content using URN
+    Decrypt {
+        /// Input file containing encrypted data
+        path: String,
+
+        /// Output file for decrypted data (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// URN to use for decryption (if not auto-detected)
+        #[arg(long)]
+        urn: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Display file contents from repository
     Cat {
         /// File path or URN
