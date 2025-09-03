@@ -147,25 +147,78 @@ impl EncryptedArchive {
         self.archive.path()
     }
     
+    /// Generate a deterministic random file size that looks realistic
+    /// This produces sizes that follow common file size patterns to make decoys indistinguishable
+    /// from real content based on size alone.
+    fn generate_deterministic_random_size(&self, seed: &str) -> usize {
+        use sha2::{Sha256, Digest};
+        
+        let mut hasher = Sha256::new();
+        hasher.update(seed.as_bytes());
+        hasher.update(b"size_generation");
+        let hash = hasher.finalize();
+        
+        // Use first 8 bytes as a u64 for randomness
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&hash[0..8]);
+        let random_value = u64::from_le_bytes(bytes);
+        
+        // Create realistic file size distribution:
+        // 40% small files (1KB - 100KB)
+        // 35% medium files (100KB - 1MB) 
+        // 20% large files (1MB - 10MB)
+        // 5% very large files (10MB - 20MB)
+        
+        let size_category = random_value % 100;
+        let size_random = (random_value >> 8) % 1000000; // Use remaining bits for size within category
+        
+        match size_category {
+            0..=39 => {
+                // Small files: 1KB - 100KB
+                let base = 1024; // 1KB
+                let range = 99 * 1024; // up to 100KB
+                base + (size_random % range) as usize
+            },
+            40..=74 => {
+                // Medium files: 100KB - 1MB
+                let base = 100 * 1024; // 100KB
+                let range = 924 * 1024; // up to 1MB
+                base + (size_random % range as u64) as usize
+            },
+            75..=94 => {
+                // Large files: 1MB - 10MB
+                let base = 1024 * 1024; // 1MB
+                let range = 9 * 1024 * 1024; // up to 10MB
+                base + (size_random % range as u64) as usize
+            },
+            _ => {
+                // Very large files: 10MB - 20MB
+                let base = 10 * 1024 * 1024; // 10MB
+                let range = 10 * 1024 * 1024; // up to 20MB
+                base + (size_random % range as u64) as usize
+            }
+        }
+    }
+
     /// Generate deterministic random data for invalid content addresses
     fn generate_random_data_for_hash(&self, layer_hash: &Hash) -> Vec<u8> {
         use sha2::{Sha256, Digest};
         
         // Use the layer hash as seed for deterministic random generation
         let seed = format!("invalid_content_address:{}", layer_hash.to_hex());
-        let default_size = 1024 * 1024; // 1MB default
+        let random_size = self.generate_deterministic_random_size(&seed);
         
-        let mut result = Vec::with_capacity(default_size);
+        let mut result = Vec::with_capacity(random_size);
         let mut hasher = Sha256::new();
         hasher.update(seed.as_bytes());
         let mut counter = 0u64;
         
-        while result.len() < default_size {
+        while result.len() < random_size {
             let mut current_hasher = hasher.clone();
             current_hasher.update(&counter.to_le_bytes());
             let hash = current_hasher.finalize();
             
-            let bytes_needed = default_size - result.len();
+            let bytes_needed = random_size - result.len();
             let bytes_to_copy = bytes_needed.min(hash.len());
             result.extend_from_slice(&hash[..bytes_to_copy]);
             

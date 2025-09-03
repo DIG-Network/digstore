@@ -11,6 +11,57 @@ use sha2::{Sha256, Digest};
 use std::io::Write;
 use std::path::PathBuf;
 
+/// Generate a deterministic random file size that looks realistic
+/// This produces sizes that follow common file size patterns to make decoys indistinguishable
+/// from real content based on size alone.
+fn generate_deterministic_random_size(seed: &str) -> usize {
+    let mut hasher = Sha256::new();
+    hasher.update(seed.as_bytes());
+    hasher.update(b"size_generation");
+    let hash = hasher.finalize();
+    
+    // Use first 8 bytes as a u64 for randomness
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&hash[0..8]);
+    let random_value = u64::from_le_bytes(bytes);
+    
+    // Create realistic file size distribution:
+    // 40% small files (1KB - 100KB)
+    // 35% medium files (100KB - 1MB) 
+    // 20% large files (1MB - 10MB)
+    // 5% very large files (10MB - 20MB)
+    
+    let size_category = random_value % 100;
+    let size_random = (random_value >> 8) % 1000000; // Use remaining bits for size within category
+    
+    match size_category {
+        0..=39 => {
+            // Small files: 1KB - 100KB
+            let base = 1024; // 1KB
+            let range = 99 * 1024; // up to 100KB
+            base + (size_random % range) as usize
+        },
+        40..=74 => {
+            // Medium files: 100KB - 1MB
+            let base = 100 * 1024; // 100KB
+            let range = 924 * 1024; // up to 1MB
+            base + (size_random % range as u64) as usize
+        },
+        75..=94 => {
+            // Large files: 1MB - 10MB
+            let base = 1024 * 1024; // 1MB
+            let range = 9 * 1024 * 1024; // up to 10MB
+            base + (size_random % range as u64) as usize
+        },
+        _ => {
+            // Very large files: 10MB - 20MB
+            let base = 10 * 1024 * 1024; // 10MB
+            let range = 10 * 1024 * 1024; // up to 20MB
+            base + (size_random % range as u64) as usize
+        }
+    }
+}
+
 /// Generate deterministic random bytes from a seed string
 /// This provides zero-knowledge property by returning consistent random data for invalid URNs
 /// 
@@ -74,16 +125,24 @@ pub fn execute(
                             Err(_) => {
                                 // File not found or other error - return deterministic random bytes
                                 // Use full URN as seed to ensure consistency
-                                // Size based on byte range if present, otherwise 1MB default
+                                // Size based on byte range if present, otherwise deterministic random size
                                 let size = if let Some(range) = &urn.byte_range {
                                     match (range.start, range.end) {
                                         (Some(start), Some(end)) => (end - start + 1) as usize,
-                                        (Some(start), None) => (1024 * 1024 - start) as usize, // 1MB file assumed
+                                        (Some(start), None) => {
+                                            // Generate realistic file size and subtract start offset
+                                            let total_size = generate_deterministic_random_size(&path);
+                                            if total_size > start as usize {
+                                                total_size - start as usize
+                                            } else {
+                                                1024 // Minimum 1KB if offset is too large
+                                            }
+                                        },
                                         (None, Some(end)) => (end + 1) as usize,
-                                        (None, None) => 1024 * 1024,
+                                        (None, None) => generate_deterministic_random_size(&path),
                                     }
                                 } else {
-                                    1024 * 1024 // Default 1MB
+                                    generate_deterministic_random_size(&path)
                                 };
                                 generate_deterministic_random_bytes(&path, size)
                             }
@@ -94,12 +153,20 @@ pub fn execute(
                         let size = if let Some(range) = &urn.byte_range {
                             match (range.start, range.end) {
                                 (Some(start), Some(end)) => (end - start + 1) as usize,
-                                (Some(start), None) => (1024 * 1024 - start) as usize,
+                                (Some(start), None) => {
+                                    // Generate realistic file size and subtract start offset
+                                    let total_size = generate_deterministic_random_size(&path);
+                                    if total_size > start as usize {
+                                        total_size - start as usize
+                                    } else {
+                                        1024 // Minimum 1KB if offset is too large
+                                    }
+                                },
                                 (None, Some(end)) => (end + 1) as usize,
-                                (None, None) => 1024 * 1024,
+                                (None, None) => generate_deterministic_random_size(&path),
                             }
                         } else {
-                            1024 * 1024
+                            generate_deterministic_random_size(&path)
                         };
                         generate_deterministic_random_bytes(&path, size)
                     }
@@ -107,7 +174,7 @@ pub fn execute(
             }
             Err(_) => {
                 // Invalid URN format - return deterministic random bytes
-                generate_deterministic_random_bytes(&path, 1024 * 1024)
+                generate_deterministic_random_bytes(&path, generate_deterministic_random_size(&path))
             }
         }
     } else {
