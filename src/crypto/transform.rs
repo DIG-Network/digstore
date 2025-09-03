@@ -66,9 +66,8 @@ pub fn transform_urn(urn: &str, public_key: &PublicKey) -> Result<String> {
     // Get the hash
     let hash = hasher.finalize();
     
-    // Create the transformed URN
-    // Format: "urn:dig:transformed:<hex_hash>"
-    Ok(format!("urn:dig:transformed:{}", hex::encode(hash)))
+    // Return the raw transformation result (just the hex hash)
+    Ok(hex::encode(hash))
 }
 
 #[cfg(test)]
@@ -93,8 +92,9 @@ mod tests {
         let transformed3 = transform_urn(urn2, &pubkey).unwrap();
         assert_ne!(transformed, transformed3);
         
-        // Should start with the transformed prefix
-        assert!(transformed.starts_with("urn:dig:transformed:"));
+        // Should be a 64-character hex string (32 bytes)
+        assert_eq!(transformed.len(), 64);
+        assert!(transformed.chars().all(|c| c.is_ascii_hexdigit()));
     }
     
     #[test]

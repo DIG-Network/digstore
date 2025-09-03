@@ -9,6 +9,7 @@ pub mod config;
 pub mod decrypt;
 pub mod get;
 pub mod init;
+pub mod keygen;
 pub mod status;
 
 // Command subtrees

@@ -188,6 +188,28 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Generate content key from URN and public key
+    Keygen {
+        /// URN to generate key for
+        urn: String,
+
+        /// Output file for key information (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Show only storage address
+        #[arg(long)]
+        storage_address: bool,
+
+        /// Show only encryption key
+        #[arg(long)]
+        encryption_key: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Display file contents from repository
     Cat {
         /// File path or URN

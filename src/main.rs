@@ -78,6 +78,13 @@ fn main() -> Result<()> {
             urn,
             json,
         } => cli::commands::decrypt::execute(path, output, urn, json),
+        Commands::Keygen {
+            urn,
+            output,
+            storage_address,
+            encryption_key,
+            json,
+        } => cli::commands::keygen::execute(urn, output, storage_address, encryption_key, json),
         Commands::Cat {
             path,
             at,

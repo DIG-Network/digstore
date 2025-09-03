@@ -47,17 +47,12 @@ impl EncryptedArchive {
             // Create URN from layer hash
             let layer_urn = format!("urn:dig:layer:{}", layer_hash.to_hex());
             
-            // Transform the URN
-            let transformed_urn = transform_urn(&layer_urn, public_key)?;
+            // Transform the URN (returns raw hex string, not URN format)
+            let transformed_hex = transform_urn(&layer_urn, public_key)?;
             
-            // Extract hash from transformed URN
-            // Format is "urn:dig:transformed:<hex_hash>"
-            let hash_str = transformed_urn
-                .strip_prefix("urn:dig:transformed:")
-                .ok_or_else(|| crate::core::error::DigstoreError::internal("Invalid transformed URN format"))?;
-            
-            Hash::from_hex(hash_str)
-                .map_err(|_| DigstoreError::internal("Invalid hash in transformed URN"))
+            // Parse the hex string directly as the new hash
+            Hash::from_hex(&transformed_hex)
+                .map_err(|_| DigstoreError::internal("Invalid hash from URN transformation"))
         } else {
             Ok(*layer_hash)
         }

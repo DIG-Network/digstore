@@ -39,5 +39,6 @@ test-icon-display.ps1
 test-zero-knowledge.ps1
 test-encrypted-storage.ps1
 test-encrypted-storage-full.ps1
+test-encrypted-workflow-complete.ps1
 extracted_icon.ico
 installer/

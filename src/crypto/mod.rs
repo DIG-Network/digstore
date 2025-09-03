@@ -17,7 +17,6 @@ use sha2::{Sha256, Digest};
 /// Derive an encryption key from a URN
 pub fn derive_key_from_urn(urn: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"digstore_encryption_key:");
     hasher.update(urn.as_bytes());
     hasher.finalize().into()
 }
