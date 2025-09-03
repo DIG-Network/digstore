@@ -601,7 +601,7 @@
 <a href=#601 id=601 data-nosnippet>601</a>                    
 <a href=#602 id=602 data-nosnippet>602</a>                    <span class="comment">// Check if encrypted storage is enabled
 <a href=#603 id=603 data-nosnippet>603</a>                    </span><span class="kw">let </span>global_config = <span class="kw">crate</span>::config::GlobalConfig::load()<span class="question-mark">?</span>;
-<a href=#604 id=604 data-nosnippet>604</a>                    <span class="kw">let </span>should_encrypt = global_config.crypto.encrypted_storage.unwrap_or(<span class="bool-val">false</span>);
+<a href=#604 id=604 data-nosnippet>604</a>                    <span class="kw">let </span>should_encrypt = global_config.crypto.encrypted_storage.unwrap_or(<span class="bool-val">true</span>);
 <a href=#605 id=605 data-nosnippet>605</a>                    
 <a href=#606 id=606 data-nosnippet>606</a>                    <span class="kw">let </span>final_data = <span class="kw">if </span>should_encrypt &amp;&amp; global_config.crypto.public_key.is_some() {
 <a href=#607 id=607 data-nosnippet>607</a>                        <span class="comment">// Create URN for this chunk (use store ID and chunk hash)
