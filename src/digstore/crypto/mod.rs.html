@@ -17,21 +17,20 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="doccomment">/// Derive an encryption key from a URN
 <a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub fn </span>derive_key_from_urn(urn: <span class="kw-2">&amp;</span>str) -&gt; [u8; <span class="number">32</span>] {
 <a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">let </span><span class="kw-2">mut </span>hasher = Sha256::new();
-<a href=#20 id=20 data-nosnippet>20</a>    hasher.update(<span class="string">b"digstore_encryption_key:"</span>);
-<a href=#21 id=21 data-nosnippet>21</a>    hasher.update(urn.as_bytes());
-<a href=#22 id=22 data-nosnippet>22</a>    hasher.finalize().into()
-<a href=#23 id=23 data-nosnippet>23</a>}
-<a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a><span class="doccomment">/// Derive a storage address from transformed URN
-<a href=#26 id=26 data-nosnippet>26</a></span><span class="kw">pub fn </span>derive_storage_address(urn: <span class="kw-2">&amp;</span>str, public_key: <span class="kw-2">&amp;</span>PublicKey) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="comment">// Transform URN with public key
-<a href=#28 id=28 data-nosnippet>28</a>    </span><span class="kw">let </span>transformed = transform_urn(urn, public_key)<span class="question-mark">?</span>;
-<a href=#29 id=29 data-nosnippet>29</a>    
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="comment">// Hash the result to get a fixed-size address
-<a href=#31 id=31 data-nosnippet>31</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>hasher = Sha256::new();
-<a href=#32 id=32 data-nosnippet>32</a>    hasher.update(transformed.as_bytes());
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span>hash = hasher.finalize();
-<a href=#34 id=34 data-nosnippet>34</a>    
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="comment">// Return as hex string
-<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="prelude-val">Ok</span>(hex::encode(hash))
-<a href=#37 id=37 data-nosnippet>37</a>}</code></pre></div></section></main></body></html>
+<a href=#20 id=20 data-nosnippet>20</a>    hasher.update(urn.as_bytes());
+<a href=#21 id=21 data-nosnippet>21</a>    hasher.finalize().into()
+<a href=#22 id=22 data-nosnippet>22</a>}
+<a href=#23 id=23 data-nosnippet>23</a>
+<a href=#24 id=24 data-nosnippet>24</a><span class="doccomment">/// Derive a storage address from transformed URN
+<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">pub fn </span>derive_storage_address(urn: <span class="kw-2">&amp;</span>str, public_key: <span class="kw-2">&amp;</span>PublicKey) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
+<a href=#26 id=26 data-nosnippet>26</a>    <span class="comment">// Transform URN with public key
+<a href=#27 id=27 data-nosnippet>27</a>    </span><span class="kw">let </span>transformed = transform_urn(urn, public_key)<span class="question-mark">?</span>;
+<a href=#28 id=28 data-nosnippet>28</a>    
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="comment">// Hash the result to get a fixed-size address
+<a href=#30 id=30 data-nosnippet>30</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>hasher = Sha256::new();
+<a href=#31 id=31 data-nosnippet>31</a>    hasher.update(transformed.as_bytes());
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">let </span>hash = hasher.finalize();
+<a href=#33 id=33 data-nosnippet>33</a>    
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="comment">// Return as hex string
+<a href=#35 id=35 data-nosnippet>35</a>    </span><span class="prelude-val">Ok</span>(hex::encode(hash))
+<a href=#36 id=36 data-nosnippet>36</a>}</code></pre></div></section></main></body></html>
