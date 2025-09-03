@@ -400,6 +400,43 @@ digstore import backup.tar
 digstore import --merge other-repo.tar
 ```
 
+## Cryptographic Commands
+
+### keygen
+
+Generate content keys from URN and public key.
+
+```bash
+digstore keygen <URN> [OPTIONS]
+
+OPTIONS:
+  -o, --output <PATH>       Output file for key information
+  --storage-address         Show only storage address
+  --encryption-key          Show only encryption key
+  --json                    Output as JSON
+
+ARGUMENTS:
+  <URN>                     URN to generate keys for
+```
+
+**Example:**
+```bash
+# Generate all keys with explanations
+digstore keygen "urn:dig:chia:STORE_ID/file.txt"
+
+# Generate keys in JSON format
+digstore keygen "urn:dig:chia:STORE_ID/file.txt" --json
+
+# Generate only storage address
+digstore keygen "urn:dig:chia:STORE_ID/file.txt" --storage-address
+
+# Generate only encryption key
+digstore keygen "urn:dig:chia:STORE_ID/file.txt" --encryption-key
+
+# Save to file
+digstore keygen "urn:dig:chia:STORE_ID/file.txt" --json -o keys.json
+```
+
 ## Utility Commands
 
 ### diff

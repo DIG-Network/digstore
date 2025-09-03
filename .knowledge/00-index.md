@@ -21,6 +21,7 @@ This knowledge base contains comprehensive documentation for the Digstore Min co
 - [`14-digignore-system.md`](14-digignore-system.md) - File filtering with .digignore support
 - [`15-archive-format.md`](15-archive-format.md) - Single-file archive format
 - [`16-performance-engine.md`](16-performance-engine.md) - Advanced performance optimization
+- [`17-keygen-command.md`](17-keygen-command.md) - Content key generation from URN + public key
 
 ### CLI & User Interface
 - [`20-cli-commands.md`](20-cli-commands.md) - Complete CLI command reference

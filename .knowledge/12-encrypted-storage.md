@@ -52,16 +52,23 @@ digstore config crypto.public_key "1234567890abcdef1234567890abcdef1234567890abc
 digstore config crypto.encrypted_storage true
 ```
 
-### Usage
+### Complete Workflow
 ```bash
-# Add and commit files (automatically encrypted)
+# Configure encryption
+digstore config crypto.public_key "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+digstore config crypto.encrypted_storage true
+
+# Add and commit files (automatically encrypted using URN keys)
 digstore add sensitive-file.txt
 digstore commit -m "Store encrypted data"
 
-# Retrieve encrypted data via URN
-digstore get "urn:dig:chia:STORE_ID/sensitive-file.txt" -o encrypted.bin
+# Generate content keys for analysis
+digstore keygen "urn:dig:chia:STORE_ID/sensitive-file.txt" --json
 
-# Decrypt the data
+# Retrieve encrypted data (returns encrypted data, not plaintext)
+digstore get sensitive-file.txt -o encrypted.bin
+
+# Decrypt using original URN
 digstore decrypt encrypted.bin --urn "urn:dig:chia:STORE_ID/sensitive-file.txt" -o decrypted.txt
 ```
 
@@ -84,17 +91,22 @@ digstore decrypt encrypted.bin --urn "urn:dig:chia:STORE_ID/sensitive-file.txt" 
 
 ## Implementation Status
 
-### ✅ Completed Features
-1. **Cryptographic Module** - URN transformation and AES-GCM encryption
-2. **Configuration Support** - Public key and encryption toggle
-3. **Encrypted Commit Storage** - Automatic encryption during commits
+### ✅ Fully Implemented Features
+1. **Complete Cryptographic Module** - URN transformation and AES-256-GCM encryption
+2. **Configuration Support** - Public key and encryption toggle via global config
+3. **Encrypted Commit Storage** - Automatic encryption during commits using URN keys
 4. **Decrypt Command** - Decrypt files using original URN
-5. **Storage Address Transformation** - EncryptedArchive wrapper
+5. **Storage Address Transformation** - Complete EncryptedArchive implementation
+6. **Keygen Command** - Generate content keys from URN + public key
+7. **Zero-Knowledge Content Addresses** - Invalid addresses return deterministic random data
+8. **Complete CLI Integration** - All commands support encrypted storage workflow
 
-### ⚠️ Current Limitations
-- Zero-knowledge URN feature may interfere with encrypted storage retrieval
-- Storage addresses are partially transformed (layer level only)
-- Full URN transformation requires additional storage layer integration
+### ✅ Security Properties Achieved
+- **URN-Based Encryption**: Encryption keys derived from `SHA256(URN)`
+- **Address Transformation**: Storage addresses from `SHA256(transform(URN + public_key))`
+- **Zero-Knowledge Storage**: Invalid URNs and content addresses return random data
+- **Complete Isolation**: Different public keys cannot access each other's data
+- **Deterministic Behavior**: Same inputs always produce same outputs
 
 ## Use Cases
 
