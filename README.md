@@ -36,29 +36,35 @@ Digstore Min is a streamlined version of the Digstore project, focusing on core 
 
 ## Quick Start
 
+After installation, verify digstore is working:
 ```bash
-# Initialize a new repository
+digstore --version
+```
+
+### Basic Workflow
+
+```bash
+# 1. Initialize a new repository
 digstore init
 
-# Add files
-digstore add -r src/
-digstore add README.md
+# 2. Add files to staging
+digstore add README.md              # Add single file
+digstore add -r src/                # Add directory recursively
+digstore add -A                     # Add all files
 
-# Create a commit
+# 3. Create a commit
 digstore commit -m "Initial commit"
 
-# Retrieve files (in project directory with .digstore)
-digstore get /README.md
-digstore cat /src/main.rs
+# 4. Check repository status
+digstore status
 
-# Or use full URN from anywhere
-digstore get urn:dig:chia:STORE_ID/README.md
+# 5. View commit history
+digstore log
 
-# Generate proof
-digstore prove README.md -o proof.json
-
-# Verify proof
-digstore verify proof.json
+# 6. Retrieve files
+digstore get README.md              # Get file content
+digstore cat src/main.rs            # Display file content
+digstore get README.md -o copy.md   # Save to file
 ```
 
 
@@ -76,13 +82,64 @@ For stable releases, visit the [Releases](https://github.com/DIG-Network/digstor
 
 ## Installation
 
+### Option 1: Download Pre-built Installers (Recommended)
+
+**Windows:**
+1. Download the [Windows Installer (MSI)](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-windows-x64.msi)
+2. Run the installer and follow the prompts
+3. Restart your terminal or log out/in for PATH changes to take effect
+4. Verify installation: `digstore --version`
+
+**macOS:**
+1. Download the [macOS Installer (DMG)](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-macos.dmg)
+2. Mount the DMG and drag Digstore to Applications
+3. Add to PATH: `echo 'export PATH="/Applications/Digstore.app/Contents/MacOS:$PATH"' >> ~/.zshrc`
+4. Reload terminal: `source ~/.zshrc`
+
+**Linux (Ubuntu/Debian):**
 ```bash
-# From source
+# Download and install DEB package
+wget https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore_0.1.0_amd64.deb
+sudo dpkg -i digstore_0.1.0_amd64.deb
+```
+
+**Linux (RHEL/CentOS/Fedora):**
+```bash
+# Download and install RPM package
+wget https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-0.1.0-1.x86_64.rpm
+sudo rpm -i digstore-0.1.0-1.x86_64.rpm
+```
+
+**Linux (AppImage - Universal):**
+```bash
+# Download AppImage
+wget https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-linux-x86_64.AppImage
+chmod +x digstore-linux-x86_64.AppImage
+
+# Run directly or add to PATH
+./digstore-linux-x86_64.AppImage --version
+```
+
+### Option 2: Build from Source
+
+**Prerequisites:**
+- Rust 1.70+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- Git
+
+**Build Steps:**
+```bash
+# Clone repository
+git clone https://github.com/DIG-Network/digstore.git
+cd digstore
+
+# Build release binary
+cargo build --release
+
+# Install to system
 cargo install --path .
 
-# Or download pre-built binary
-wget https://github.com/yourrepo/digstore_min/releases/latest/digstore
-chmod +x digstore
+# Verify installation
+digstore --version
 ```
 
 ## Core Concepts
@@ -124,18 +181,123 @@ urn:dig:chia:a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2:e3
 urn:dig:chia:a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2/video.mp4#bytes=0-1048576
 ```
 
+## Available Commands
+
+### Core Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `init` | Initialize a new repository | `digstore init` |
+| `add` | Add files to staging area | `digstore add file.txt` |
+| `commit` | Create a new commit | `digstore commit -m "message"` |
+| `status` | Show repository status | `digstore status` |
+| `get` | Retrieve file content | `digstore get file.txt` |
+| `cat` | Display file content | `digstore cat file.txt` |
+
+### Repository Management
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `log` | Show commit history | `digstore log` |
+| `config` | Get/set configuration | `digstore config user.name "Your Name"` |
+
+### Advanced Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `prove` | Generate merkle proof | `digstore prove file.txt -o proof.json` |
+| `verify` | Verify a merkle proof | `digstore verify proof.json` |
+| `decrypt` | Decrypt encrypted content | `digstore decrypt file.enc --urn "urn:dig:chia:..." |
+
+### Subcommands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `layer list` | List all layers | `digstore layer list` |
+| `layer inspect` | Inspect layer details | `digstore layer inspect HASH` |
+| `store info` | Show store information | `digstore store info` |
+| `store stats` | Show storage statistics | `digstore store stats` |
+| `staged list` | List staged files | `digstore staged list` |
+| `staged diff` | Show staged changes | `digstore staged diff` |
+
+### Command Options
+
+Most commands support these common options:
+
+| Option | Description |
+|--------|-------------|
+| `--help` | Show command help |
+| `--json` | Output in JSON format |
+| `--verbose` | Enable verbose output |
+| `--quiet` | Suppress output |
+| `-o, --output` | Specify output file |
+
+### Examples
+
+**Initialize and commit:**
+```bash
+digstore init
+digstore add -A
+digstore commit -m "Initial commit"
+```
+
+**Retrieve specific versions:**
+```bash
+# Get latest version
+digstore get file.txt
+
+# Get at specific commit
+digstore get file.txt --at COMMIT_HASH
+
+# Get byte range
+digstore get "file.txt#bytes=0-1023" -o first_kb.bin
+```
+
+**Work with URNs:**
+```bash
+# Get file using full URN
+digstore get urn:dig:chia:STORE_ID/file.txt
+
+# Generate and verify proof
+digstore prove file.txt -o proof.json
+digstore verify proof.json
+```
+
+**Configuration:**
+```bash
+# Set user info
+digstore config user.name "Your Name"
+digstore config user.email "your@email.com"
+
+# Enable encrypted storage
+digstore config crypto.public_key "your-32-byte-hex-key"
+digstore config crypto.encrypted_storage true
+
+# List all settings
+digstore config --list
+```
+
 ## Documentation
 
-Comprehensive documentation is available in the `.knowledge/` directory:
+Comprehensive documentation is available in the [`.knowledge/`](.knowledge/) directory:
 
-- [Overview](digstore_min/.knowledge/overview.md) - High-level introduction
-- [Store Structure](digstore_min/.knowledge/store-structure.md) - Repository layout and organization
-- [URN Specification](digstore_min/.knowledge/urn-specification.md) - URN format with byte ranges
-- [Layer Format](digstore_min/.knowledge/layer-format.md) - Binary layer file specification
-- [Merkle Proofs](digstore_min/.knowledge/merkle-proof.md) - Proof generation and verification
-- [CLI Commands](digstore_min/.knowledge/cli-commands.md) - Complete command reference
-- [API Design](digstore_min/.knowledge/api-design.md) - Library API documentation
-- [Implementation Guide](digstore_min/.knowledge/implementation-guide.md) - Development roadmap
+### Quick Links
+- **[📖 Knowledge Base Index](.knowledge/00-index.md)** - Complete documentation index
+- **[🚀 Quick Start Guide](.knowledge/42-quick-start-guide.md)** - Get started quickly
+- **[💻 CLI Commands Reference](.knowledge/20-cli-commands.md)** - Complete command documentation
+- **[🏗️ System Overview](.knowledge/01-overview.md)** - High-level introduction
+
+### Key Topics
+- **[🔐 Encrypted Storage](.knowledge/12-encrypted-storage.md)** - Zero-knowledge encrypted storage
+- **[🎭 Zero-Knowledge URNs](.knowledge/13-zero-knowledge-urns.md)** - Privacy-preserving URN behavior
+- **[📦 Store Structure](.knowledge/02-store-structure.md)** - Repository layout and organization
+- **[🔍 URN Specification](.knowledge/04-urn-specification.md)** - URN format with byte ranges
+- **[🌳 Merkle Proofs](.knowledge/05-merkle-proofs.md)** - Proof generation and verification
+
+### For Developers
+- **[👨‍💻 Implementation Checklist](.knowledge/40-implementation-checklist.md)** - Development roadmap
+- **[📚 Rust Crates Guide](.knowledge/41-rust-crates-guide.md)** - Recommended dependencies
+- **[🔧 API Design](.knowledge/70-api-design.md)** - Library API documentation
 
 ## Use Cases
 
@@ -161,14 +323,47 @@ Comprehensive documentation is available in the `.knowledge/` directory:
 └─────────────────────────────┘
 ```
 
+## Troubleshooting
+
+### Common Issues
+
+**Command not found after installation:**
+- **Windows**: Restart your terminal or log out/in
+- **macOS/Linux**: Run `source ~/.bashrc` or `source ~/.zshrc`
+- **All**: Verify PATH includes digstore location
+
+**Permission errors:**
+- **Linux/macOS**: Use `sudo` for system-wide installation
+- **Windows**: Run installer as Administrator
+
+**Build from source fails:**
+- Ensure Rust 1.70+ is installed: `rustc --version`
+- Update Rust: `rustup update`
+- Clean and retry: `cargo clean && cargo build --release`
+
+### Getting Help
+
+```bash
+# General help
+digstore --help
+
+# Command-specific help
+digstore init --help
+digstore add --help
+digstore commit --help
+
+# Version information
+digstore --version
+```
+
 ## Development
 
 ### Building from Source
 
 ```bash
 # Clone repository
-git clone https://github.com/yourrepo/digstore_min
-cd digstore_min
+git clone https://github.com/DIG-Network/digstore.git
+cd digstore
 
 # Build
 cargo build --release
@@ -183,17 +378,19 @@ cargo install --path .
 ### Project Structure
 
 ```
-digstore_min/
+digstore/
 ├── src/
 │   ├── main.rs          # CLI entry point
 │   ├── lib.rs           # Library interface
 │   ├── core/            # Core types and logic
 │   ├── storage/         # Storage engine
+│   ├── crypto/          # Encryption and security
 │   ├── proofs/          # Merkle proof system
 │   └── cli/             # CLI implementation
 ├── tests/               # Integration tests
 ├── benches/             # Performance benchmarks
-└── .knowledge/          # Documentation
+├── docs/                # Additional documentation
+└── .knowledge/          # Comprehensive knowledge base
 ```
 
 ## Performance
@@ -227,17 +424,45 @@ While keeping the core simple, potential additions include:
 
 ## Contributing
 
-Contributions are welcome! Please read the implementation guide and ensure:
+Contributions are welcome! Please see our [Implementation Checklist](.knowledge/40-implementation-checklist.md) and ensure:
 
 1. Tests pass: `cargo test`
 2. Code is formatted: `cargo fmt`
 3. Lints pass: `cargo clippy`
 4. Documentation is updated
+5. Follow the [coding guidelines](CONTRIBUTING.md)
 
 ## License
 
-[Your chosen license]
+MIT OR Apache-2.0
+
+This project is licensed under either of:
+- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+## Features
+
+### ✅ Implemented
+- **Core Storage**: Content-addressable storage with SHA-256 hashing
+- **Layer System**: Git-like commits with full and delta layers  
+- **URN Support**: Permanent identifiers with byte range retrieval
+- **Merkle Proofs**: Generate and verify cryptographic proofs
+- **CLI Interface**: 11+ commands for complete repository management
+- **Encrypted Storage**: Zero-knowledge encrypted storage with URN transformation
+- **Zero-Knowledge URNs**: Privacy-preserving URN behavior
+- **Cross-Platform**: Windows, macOS, and Linux support
+- **Portable Format**: Self-contained repositories
+- **Performance Optimized**: Efficient chunking and compression
+
+### 🚧 Roadmap
+- Network synchronization protocol
+- S3/cloud storage backends  
+- Watch mode for automatic commits
+- GUI for repository visualization
+- Plugin system for extensions
 
 ## Acknowledgments
 
-This is a simplified version of the original Digstore project, focusing on core content-addressable storage functionality without the complexity of encryption, privacy features, or blockchain integration.
+This project implements a content-addressable storage system with advanced features including encrypted storage, zero-knowledge properties, and comprehensive merkle proof capabilities. It provides a Git-like interface while adding unique features for data integrity verification and privacy-preserving storage.
