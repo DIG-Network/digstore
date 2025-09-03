@@ -31,6 +31,8 @@ jobs:
       run: |
         if (Test-Path "DIG.ico") {
           Write-Host "Icon file found in repository"
+          $iconInfo = Get-Item "DIG.ico"
+          Write-Host "Icon size: $($iconInfo.Length) bytes"
           # Icon is already in the right place, no need to copy
         } else {
           Write-Host "Warning: DIG.ico not found" -ForegroundColor Yellow
@@ -63,6 +65,11 @@ jobs:
             
             <!-- Custom completion message -->
             <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Digstore has been successfully installed. Please restart your terminal or log out and back in for PATH changes to take effect." />
+            
+            <!-- Custom action to notify shell of association changes -->
+            <CustomAction Id="NotifyShell" Directory="TARGETDIR" Execute="deferred" Impersonate="no"
+                          ExeCommand="[SystemFolder]cmd.exe /c &quot;echo Refreshing file associations...&quot;" 
+                          Return="ignore" />
             
             <Feature Id="ProductFeature" Title="Digstore Min" Level="1" Display="expand">
               <ComponentGroupRef Id="ProductComponents" />
@@ -117,10 +124,13 @@ jobs:
                 <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell" Type="string" Value="open" />
                 <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell\open" Type="string" Value="&amp;Open" />
                 <RegistryValue Root="HKCR" Key="Digstore.DigFile\shell\open\command" Type="string" Value="&quot;[INSTALLFOLDER]digstore.exe&quot; &quot;%1&quot;" />
-                <!-- Force Windows to refresh icon cache -->
-                <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" Name="Max Cached Icons" Type="string" Value="8192" />
               </Component>
             </DirectoryRef>
+            
+            <!-- Schedule custom action after installation -->
+            <InstallExecuteSequence>
+              <Custom Action="NotifyShell" After="InstallFinalize">NOT Installed</Custom>
+            </InstallExecuteSequence>
           </Product>
         </Wix>
         "@ | Out-File -FilePath installer\windows\digstore.wxs -Encoding utf8

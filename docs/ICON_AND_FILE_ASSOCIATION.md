@@ -66,5 +66,16 @@ After installation:
 
 ### Icon not showing on .dig files:
 - Windows may cache icons - try refreshing icon cache
-- Restart Windows Explorer
+- Restart Windows Explorer (or log out and back in)
 - Check that installer completed successfully
+- Verify DIG.ico was installed to the program folder
+- Try rebuilding the icon cache:
+  1. Open Command Prompt as Administrator
+  2. Run: `ie4uinit.exe -show`
+  3. Restart Windows Explorer
+
+### Icon not showing on digstore.exe:
+- Ensure DIG.ico exists in project root when building
+- Verify winres is in Cargo.toml [build-dependencies]
+- Rebuild with `cargo clean && cargo build --release`
+- The icon is embedded during compilation, not by the installer

@@ -7,6 +7,7 @@ authors = ["DIG Network"]
 description = "A simplified content-addressable storage system with Git-like semantics"
 repository = "https://github.com/DIG-Network/digstore"
 license = "MIT OR Apache-2.0"
+build = "build.rs"
 keywords = ["storage", "merkle", "content-addressable", "chunking"]
 categories = ["filesystem", "cryptography"]
 
