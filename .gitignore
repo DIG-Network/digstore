@@ -16,6 +16,9 @@ Thumbs.db
 # Include icon file
 !DIG.ico
 
+# Build script generated files
+digstore.rc
+
 # Test artifacts
 *.tmp
 *.temp

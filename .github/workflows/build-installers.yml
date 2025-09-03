@@ -25,7 +25,23 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Build Release Binary
-      run: cargo build --release
+      run: |
+        # The build.rs script will create digstore.rc and embed the icon
+        cargo build --release
+        
+        # Verify the icon was embedded
+        Write-Host "Checking if icon was embedded..."
+        $exe = Get-Item "target\release\digstore.exe"
+        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe.FullName)
+        Write-Host "ProductName: $($versionInfo.ProductName)"
+        Write-Host "CompanyName: $($versionInfo.CompanyName)"
+        Write-Host "FileDescription: $($versionInfo.FileDescription)"
+        
+        # Clean up temporary RC file created by build script
+        if (Test-Path "digstore.rc") {
+          Remove-Item "digstore.rc"
+          Write-Host "Cleaned up temporary digstore.rc file"
+        }
 
     - name: Copy Icon File
       run: |
