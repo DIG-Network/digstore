@@ -291,7 +291,7 @@ digstore keygen "urn:dig:chia:STORE_ID/file.txt" --json
 **Storage:**
 ```bash
 digstore config crypto.public_key "hex_public_key"
-# Note: encrypted_storage is always enabled by default
+digstore config crypto.encrypted_storage true
 digstore add file.txt
 digstore commit -m "Store encrypted content"
 ```
@@ -534,4 +534,3 @@ urn:dig:chia:{storeID}[:{rootHash}][/{resourcePath}][#{byteRange}]
 ---
 
 *This whitepaper describes the theoretical foundations and practical implementation of the zero-knowledge content-addressable storage system implemented in Digstore Min. The system provides strong privacy guarantees while maintaining practical performance characteristics suitable for real-world deployment.*
-

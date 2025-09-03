@@ -318,9 +318,8 @@ digstore verify proof.json
 digstore config user.name "Your Name"
 digstore config user.email "your@email.com"
 
-# Configure encrypted storage with URN transformation
+# Configure encrypted storage with URN transformation (encrypted storage is enabled by default)
 digstore config crypto.public_key "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-digstore config crypto.encrypted_storage true
 
 # Use .digignore for file filtering (like .gitignore)
 echo "*.tmp" > .digignore
@@ -344,7 +343,7 @@ digstore staged diff --stat
 # Zero-knowledge URN behavior
 digstore get "urn:dig:chia:invalid-store/fake.txt"  # Returns random data, not error
 
-# List all configuration
+# List all configuration (encrypted storage is enabled by default)
 digstore config --list
 ```
 

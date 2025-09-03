@@ -29,7 +29,7 @@ impl EncryptedArchive {
             None
         };
         
-        let encrypted_storage = config.crypto.encrypted_storage.unwrap_or(false);
+        let encrypted_storage = config.crypto.encrypted_storage.unwrap_or(true);
         
         Ok(Self {
             archive,

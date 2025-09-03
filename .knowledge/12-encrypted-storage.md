@@ -45,18 +45,14 @@ Original plaintext data
 
 ### Configuration
 ```bash
-# Set your public key (32 bytes as hex)
+# Set your public key (32 bytes as hex) - encrypted storage is enabled by default
 digstore config crypto.public_key "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-
-# Enable encrypted storage
-digstore config crypto.encrypted_storage true
 ```
 
 ### Complete Workflow
 ```bash
-# Configure encryption
+# Configure encryption (encrypted storage is enabled by default)
 digstore config crypto.public_key "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-digstore config crypto.encrypted_storage true
 
 # Add and commit files (automatically encrypted using URN keys)
 digstore add sensitive-file.txt

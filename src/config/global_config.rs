@@ -47,7 +47,7 @@ pub struct CoreConfig {
 pub struct CryptoConfig {
     /// Public key for URN transformation (hex encoded)
     pub public_key: Option<String>,
-    /// Enable encrypted storage
+    /// Enable encrypted storage (always true for zero-knowledge properties)
     pub encrypted_storage: Option<bool>,
 }
 
@@ -422,7 +422,7 @@ impl Default for GlobalConfig {
             },
             crypto: CryptoConfig {
                 public_key: None,
-                encrypted_storage: Some(false),
+                encrypted_storage: Some(true),
             },
             custom: HashMap::new(),
         }

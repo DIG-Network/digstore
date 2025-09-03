@@ -601,7 +601,7 @@ impl Store {
                     
                     // Check if encrypted storage is enabled
                     let global_config = crate::config::GlobalConfig::load()?;
-                    let should_encrypt = global_config.crypto.encrypted_storage.unwrap_or(false);
+                    let should_encrypt = global_config.crypto.encrypted_storage.unwrap_or(true);
                     
                     let final_data = if should_encrypt && global_config.crypto.public_key.is_some() {
                         // Create URN for this chunk (use store ID and chunk hash)
