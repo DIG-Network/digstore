@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["execute"]};
+window.SIDEBAR_ITEMS = {"fn":["execute","generate_deterministic_random_bytes"]};
