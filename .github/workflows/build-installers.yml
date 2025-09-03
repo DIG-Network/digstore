@@ -82,10 +82,8 @@ jobs:
             <!-- Custom completion message -->
             <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Digstore has been successfully installed. Please restart your terminal or log out and back in for PATH changes to take effect." />
             
-            <!-- Custom action to notify shell of association changes -->
-            <CustomAction Id="NotifyShell" Directory="TARGETDIR" Execute="deferred" Impersonate="no"
-                          ExeCommand="[SystemFolder]cmd.exe /c &quot;echo Refreshing file associations...&quot;" 
-                          Return="ignore" />
+            <!-- Remove custom action as it's causing ICE77 error -->
+            <!-- File associations will be refreshed on next login -->
             
             <Feature Id="ProductFeature" Title="Digstore Min" Level="1" Display="expand">
               <ComponentGroupRef Id="ProductComponents" />
@@ -143,10 +141,8 @@ jobs:
               </Component>
             </DirectoryRef>
             
-            <!-- Schedule custom action after installation -->
-            <InstallExecuteSequence>
-              <Custom Action="NotifyShell" After="InstallFinalize">NOT Installed</Custom>
-            </InstallExecuteSequence>
+            <!-- Set the icon for Add/Remove Programs -->
+            <Property Id="ARPPRODUCTICON" Value="digstore.ico" />
           </Product>
         </Wix>
         "@ | Out-File -FilePath installer\windows\digstore.wxs -Encoding utf8
