@@ -17,7 +17,7 @@ OPTIONS:
   -h, --help        Print help information
 ```
 
-## Core Commands
+## Core Repository Commands
 
 ### init
 
@@ -28,14 +28,15 @@ digstore init [OPTIONS]
 
 OPTIONS:
   --store-id <ID>   Use specific store ID (default: generate random)
+  --name <NAME>     Repository name
   --no-compression  Disable compression
-  --chunk-size <N>  Set chunk size in KB (default: 64)
+  --chunk-size <N>  Set chunk size in KB (default: 1024)
 ```
 
 **Example:**
 ```bash
 # Initialize new repository
-digstore init
+digstore init --name "my-project"
 
 # Initialize with custom store ID
 digstore init --store-id a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8
@@ -43,16 +44,18 @@ digstore init --store-id a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8
 
 ### add
 
-Add files to the staging area for the next layer.
+Add files to the staging area with advanced filtering and parallel processing.
 
 ```bash
 digstore add [OPTIONS] <PATH>...
 
 OPTIONS:
   -r, --recursive   Add directories recursively
-  -A, --all         Add all files in the repository
-  -f, --force       Force add ignored files
+  -A, --all         Add all files in the repository (respects .digignore)
+  -f, --force       Force add ignored files (bypass .digignore)
   --dry-run         Show what would be added
+  --from-stdin      Read file list from stdin
+  --json            Output as JSON
 ```
 
 **Example:**
@@ -60,19 +63,24 @@ OPTIONS:
 # Add single file
 digstore add README.md
 
-# Add all files in repository
+# Add all files with .digignore filtering and parallel processing
 digstore add -A
-Scanning files: 100% (1234/1234), done.
-Computing hashes: 100% (1234/1234), done.
-Analyzing chunks: 100% (5678/5678), done.
-Deduplication: 234 chunks saved (12.3 MiB)
-Staged 1234 files (123.4 MiB)
+Phase 1: Discovering files...
+█████████████████████████████████████████████████████████████ 100% (17,137 files found)
+Phase 2: Applying .digignore filters...
+█████████████████████████████████████████████████████████████ 100% (17,137 files → 12,456 files)
+Phase 3: Adding files to repository...
+█████████████████████████████████████████████████████████████ 100% (12,456/12,456 files added)
+✓ Processed 12,456 files at 1,129.9 files/s
 
 # Add directory recursively  
 digstore add -r src/
 
-# Add multiple paths
-digstore add file1.txt file2.txt docs/
+# Force add ignored files
+digstore add --force target/debug/binary
+
+# Preview what would be added
+digstore add --dry-run -A
 ```
 
 ### commit

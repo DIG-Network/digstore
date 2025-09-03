@@ -18,6 +18,9 @@ This knowledge base contains comprehensive documentation for the Digstore Min co
 - [`11-data-scrambling.md`](11-data-scrambling.md) - URN-based data scrambling
 - [`12-encrypted-storage.md`](12-encrypted-storage.md) - Encrypted storage with transformed URNs
 - [`13-zero-knowledge-urns.md`](13-zero-knowledge-urns.md) - Zero-knowledge URN behavior
+- [`14-digignore-system.md`](14-digignore-system.md) - File filtering with .digignore support
+- [`15-archive-format.md`](15-archive-format.md) - Single-file archive format
+- [`16-performance-engine.md`](16-performance-engine.md) - Advanced performance optimization
 
 ### CLI & User Interface
 - [`20-cli-commands.md`](20-cli-commands.md) - Complete CLI command reference
@@ -82,11 +85,12 @@ This knowledge base contains comprehensive documentation for the Digstore Min co
 
 ## 📋 Implementation Status
 
-- ✅ **Core System**: Fully implemented and tested
-- ✅ **CLI Interface**: Complete with 11 working commands
-- ✅ **Security**: URN-based data scrambling and encrypted storage
-- ✅ **Performance**: Optimized for both large and small files
-- ✅ **Testing**: 77 tests with comprehensive coverage
+- ✅ **Core System**: Fully implemented and tested with single-file archive format
+- ✅ **CLI Interface**: Complete with 15+ working commands and rich formatting
+- ✅ **Security**: Zero-knowledge URNs, encrypted storage, URN transformation, data scrambling
+- ✅ **Performance**: Adaptive processing, parallel operations, memory efficiency
+- ✅ **Advanced Features**: `.digignore` filtering, binary staging, streaming architecture
+- ✅ **Enterprise Ready**: Comprehensive testing, CI/CD, cross-platform installers
 
 ## 🔗 External Links
 

@@ -1,8 +1,8 @@
-# Digstore Min - Simplified Content-Addressable Storage System
+# Digstore Min - Advanced Content-Addressable Storage System
 
 ## Overview
 
-Digstore Min is a simplified version of the Digstore project, focusing on core content-addressable storage functionality without encryption, privacy features, or blockchain integration. It provides a Git-like repository system with enhanced merkle proof capabilities and URN-based retrieval.
+Digstore Min is an enterprise-grade content-addressable storage system with advanced security, performance, and zero-knowledge features. It provides a Git-like repository system with encrypted storage, URN transformation, comprehensive file filtering, and exceptional performance optimization.
 
 ## Core Concepts
 
@@ -35,11 +35,16 @@ Every piece of data is identified by its SHA-256 hash, ensuring data integrity a
 
 ## Key Features
 
-1. **Merkle Proofs**: Generate cryptographic proofs for any data item, byte range, or layer
-2. **Diff Optimization**: Efficient storage of changes between versions
-3. **Root History Tracking**: Complete history of all root hash changes
-4. **Streaming Support**: Stream data in/out of layers using URNs
-5. **Portability**: Entire repository is self-contained and portable
+1. **Zero-Knowledge URN Retrieval**: Invalid URNs return deterministic random data, preventing enumeration attacks
+2. **Encrypted Storage with URN Transformation**: Data encrypted using URN keys, stored at transformed addresses
+3. **Single-File Archive Format**: `.dig` archive files replace directory-based storage
+4. **Advanced Performance Engine**: Adaptive processing, parallel batch operations, streaming for large files
+5. **Comprehensive File Filtering**: `.digignore` support with exact `.gitignore` syntax
+6. **Memory-Efficient Processing**: Constant memory usage regardless of file size
+7. **Enterprise Security**: URN-based access control, data scrambling, multi-layer encryption
+8. **Rich CLI Interface**: 15+ commands with progress bars, JSON output, colored formatting
+9. **Binary Staging System**: High-performance staging for large repositories (20,000+ files)
+10. **Cryptographic Integrity**: Merkle proofs, SHA-256 verification, tamper-evident storage
 
 ## Architecture Components
 
