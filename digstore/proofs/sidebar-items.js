@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["incremental","merkle","proof"]};
+window.SIDEBAR_ITEMS = {"mod":["incremental","merkle","proof","size_proof"]};

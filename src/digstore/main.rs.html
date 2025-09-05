@@ -220,5 +220,28 @@
 <a href=#220 id=220 data-nosnippet>220</a>            edit,
 <a href=#221 id=221 data-nosnippet>221</a>            json,
 <a href=#222 id=222 data-nosnippet>222</a>        } =&gt; cli::commands::config::execute(key, value, list, unset, show_origin, edit, json),
-<a href=#223 id=223 data-nosnippet>223</a>    }
-<a href=#224 id=224 data-nosnippet>224</a>}</code></pre></div></section></main></body></html>
+<a href=#223 id=223 data-nosnippet>223</a>        Commands::ProveArchiveSize {
+<a href=#224 id=224 data-nosnippet>224</a>            store_id,
+<a href=#225 id=225 data-nosnippet>225</a>            root_hash,
+<a href=#226 id=226 data-nosnippet>226</a>            expected_size,
+<a href=#227 id=227 data-nosnippet>227</a>            output,
+<a href=#228 id=228 data-nosnippet>228</a>            format,
+<a href=#229 id=229 data-nosnippet>229</a>            verbose,
+<a href=#230 id=230 data-nosnippet>230</a>            show_compression,
+<a href=#231 id=231 data-nosnippet>231</a>            json,
+<a href=#232 id=232 data-nosnippet>232</a>        } =&gt; cli::commands::prove_archive_size::execute(
+<a href=#233 id=233 data-nosnippet>233</a>            store_id, root_hash, expected_size, output, format, verbose, show_compression, json
+<a href=#234 id=234 data-nosnippet>234</a>        ),
+<a href=#235 id=235 data-nosnippet>235</a>        Commands::VerifyArchiveSize {
+<a href=#236 id=236 data-nosnippet>236</a>            proof,
+<a href=#237 id=237 data-nosnippet>237</a>            store_id,
+<a href=#238 id=238 data-nosnippet>238</a>            root_hash,
+<a href=#239 id=239 data-nosnippet>239</a>            expected_size,
+<a href=#240 id=240 data-nosnippet>240</a>            from_file,
+<a href=#241 id=241 data-nosnippet>241</a>            verbose,
+<a href=#242 id=242 data-nosnippet>242</a>            json,
+<a href=#243 id=243 data-nosnippet>243</a>        } =&gt; cli::commands::verify_archive_size::execute(
+<a href=#244 id=244 data-nosnippet>244</a>            proof, store_id, root_hash, expected_size, from_file, verbose, json
+<a href=#245 id=245 data-nosnippet>245</a>        ),
+<a href=#246 id=246 data-nosnippet>246</a>    }
+<a href=#247 id=247 data-nosnippet>247</a>}</code></pre></div></section></main></body></html>
