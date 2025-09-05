@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "proof_type": "archive_size",
+  "input_parameters": {
+    "store_id": "9baeb47a392476fe88266b579bf343f3af5f75c7633e25a722a89a6d7b47a2bd",
+    "root_hash": "e9254d8982b7a15a1dbdac05a99129df67880e37b43e5481dcf667aeca04fd4e",
+    "expected_size": 2769
+  },
+  "verification_data": {
+    "root_hash_verified": true,
+    "layer_count": 2,
+    "total_calculated_size": 2769,
+    "layer_size_tree_root": "f1e2d3c4b5a6978685746352413021110f0e0d0c0b0a09080706050403020100"
+  },
+  "proof_path": [
+    {
+      "hash": "a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c",
+      "position": "right"
+    }
+  ],
+  "integrity_proof": {
+    "archive_header_hash": "1a2b3c4d5e6f789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c",
+    "layer_index_hash": "2b3c4d5e6f789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d",
+    "first_layer_hash": "3c4d5e6f789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d4e",
+    "last_layer_hash": "4d5e6f789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d4e5f6789a1b2c3d4e5f"
+  },
+  "metadata": {
+    "timestamp": 1725548400,
+    "generator": "digstore v0.0.1",
+    "proof_size_bytes": 1247,
+    "compression_ratio": 0.75,
+    "bandwidth_savings": 0.999987
+  }
+}

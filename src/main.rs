@@ -220,5 +220,28 @@ fn main() -> Result<()> {
             edit,
             json,
         } => cli::commands::config::execute(key, value, list, unset, show_origin, edit, json),
+        Commands::ProveArchiveSize {
+            store_id,
+            root_hash,
+            expected_size,
+            output,
+            format,
+            verbose,
+            show_compression,
+            json,
+        } => cli::commands::prove_archive_size::execute(
+            store_id, root_hash, expected_size, output, format, verbose, show_compression, json
+        ),
+        Commands::VerifyArchiveSize {
+            proof,
+            store_id,
+            root_hash,
+            expected_size,
+            from_file,
+            verbose,
+            json,
+        } => cli::commands::verify_archive_size::execute(
+            proof, store_id, root_hash, expected_size, from_file, verbose, json
+        ),
     }
 }

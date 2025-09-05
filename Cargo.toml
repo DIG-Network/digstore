@@ -98,6 +98,8 @@ pretty_assertions = "1.4"
 serial_test = "3.0"
 mockall = "0.12"
 rstest = "0.18"
+assert_cmd = "2.0"
+predicates = "3.0"
 
 # Benchmarking support (disabled on Windows due to compatibility issues)
 # pprof = { version = "0.13", features = ["flamegraph", "criterion"] }

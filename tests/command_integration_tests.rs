@@ -7,7 +7,27 @@ use digstore_min::storage::Store;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+/// Test timeout - individual tests should complete within 30 seconds
+const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Helper to ensure tests don't run too long
+fn with_timeout<F, R>(test_fn: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let start = Instant::now();
+    let result = test_fn();
+    let elapsed = start.elapsed();
+    
+    if elapsed > TEST_TIMEOUT {
+        panic!("Test exceeded timeout of {:?}, took {:?}", TEST_TIMEOUT, elapsed);
+    }
+    
+    result
+}
 
 /// Test utility for creating test repositories with data
 struct TestRepository {
@@ -55,7 +75,8 @@ impl TestRepository {
 
 #[test]
 fn test_core_staging_commands() -> Result<()> {
-    let repo = TestRepository::new()?;
+    with_timeout(|| {
+        let repo = TestRepository::new()?;
 
     // Test status command
     let output = repo.run_command(&["status"])?;
@@ -75,7 +96,8 @@ fn test_core_staging_commands() -> Result<()> {
         "Should show no staged files"
     );
 
-    Ok(())
+        Ok(())
+    })
 }
 
 #[test]
