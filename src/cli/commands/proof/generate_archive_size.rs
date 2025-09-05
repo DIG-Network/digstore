@@ -1,6 +1,8 @@
 //! Generate archive size proof command (moved from prove_archive_size.rs)
 
+use crate::cli::commands::find_repository_root;
 use crate::config::global_config::{GlobalConfig, ConfigKey, ConfigValue};
+use crate::core::digstore_file::DigstoreFile;
 use crate::core::types::Hash;
 use crate::proofs::size_proof::ArchiveSizeProof;
 use crate::storage::{Store, dig_archive::get_archive_path};
@@ -11,7 +13,7 @@ use std::path::PathBuf;
 
 /// Execute the proof generate-archive-size command
 pub fn execute(
-    store_id: String,
+    store_id: Option<String>,
     output: Option<PathBuf>,
     format: Option<String>,
     verbose: bool,
@@ -20,12 +22,50 @@ pub fn execute(
 ) -> Result<()> {
     println!("{}", "Generating tamper-proof archive size proof...".bright_blue());
     
-    // Parse store ID
-    let store_id_hash = Hash::from_hex(&store_id)
-        .map_err(|_| anyhow::anyhow!("Invalid store ID format: {}", store_id))?;
+    // Determine store ID (auto-detect from .digstore file or use provided)
+    let (store_id_string, store_id_hash) = match store_id {
+        Some(provided_store_id) => {
+            if verbose {
+                println!("  {} Using provided store ID: {}", "•".cyan(), provided_store_id);
+            }
+            let parsed_hash = Hash::from_hex(&provided_store_id)
+                .map_err(|_| anyhow::anyhow!("Invalid store ID format: {}", provided_store_id))?;
+            (provided_store_id, parsed_hash)
+        }
+        None => {
+            if verbose {
+                println!("  {} Auto-detecting store ID from .digstore file...", "•".cyan());
+            }
+            
+            // Find .digstore file in current directory or parent directories
+            let repo_root = find_repository_root()
+                .map_err(|e| anyhow::anyhow!("Failed to search for repository: {}", e))?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "No .digstore file found in current directory or parent directories.\n  \
+                     Either provide store ID as argument or run from a digstore repository directory."
+                ))?;
+            
+            // Load .digstore file to get store ID
+            let digstore_file_path = repo_root.join(".digstore");
+            let digstore_file = DigstoreFile::load(&digstore_file_path)
+                .map_err(|e| anyhow::anyhow!("Failed to load .digstore file: {}", e))?;
+            
+            let detected_store_id = digstore_file.store_id.clone();
+            let parsed_hash = digstore_file.get_store_id()
+                .map_err(|e| anyhow::anyhow!("Invalid store ID in .digstore file: {}", e))?;
+            
+            if verbose {
+                println!("  {} Detected store ID: {}", "✓".green(), detected_store_id);
+                if let Some(repo_name) = &digstore_file.repository_name {
+                    println!("  {} Repository: {}", "•".cyan(), repo_name);
+                }
+            }
+            
+            (detected_store_id, parsed_hash)
+        }
+    };
     
     if verbose {
-        println!("  {} Store ID: {}", "•".cyan(), store_id);
         println!("  {} Auto-discovering parameters from .dig directory...", "•".cyan());
     }
     
@@ -45,15 +85,16 @@ pub fn execute(
     
     if verbose {
         println!("  {} Publisher public key: {}...", "•".cyan(), &publisher_public_key[..16]);
+        println!("  {} Final store ID: {}", "•".cyan(), store_id_string);
     }
     
     // Open the store to get current root hash and archive size
     let store = Store::open_global(&store_id_hash).map_err(|e| {
-        anyhow::anyhow!("Failed to open store {}: {}. Ensure the store exists in ~/.dig/", store_id, e)
+        anyhow::anyhow!("Failed to open store {}: {}. Ensure the store exists in ~/.dig/", store_id_string, e)
     })?;
     
     let current_root_hash = store.current_root.ok_or_else(|| {
-        anyhow::anyhow!("Store {} has no commits yet. Please commit some data first.", store_id)
+        anyhow::anyhow!("Store {} has no commits yet. Please commit some data first.", store_id_string)
     })?;
     
     // Get the actual archive file size

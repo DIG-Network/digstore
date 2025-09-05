@@ -586,8 +586,8 @@ pub enum ProofCommands {
     /// Generate tamper-proof archive size proof
     #[command(name = "generate-archive-size")]
     GenerateArchiveSize {
-        /// Store ID (32-byte hex) - system will auto-discover root hash and size
-        store_id: String,
+        /// Store ID (32-byte hex) - optional, auto-detected from .digstore file if not provided
+        store_id: Option<String>,
         /// Output file (default: stdout)
         #[arg(short, long)]
         output: Option<PathBuf>,
