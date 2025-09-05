@@ -290,51 +290,6 @@ pub enum Commands {
         json: bool,
     },
 
-    /// Generate tamper-proof archive size proof
-    ProveArchiveSize {
-        /// Store ID (32-byte hex)
-        store_id: String,
-        /// Root hash (32-byte hex)
-        root_hash: String,
-        /// Expected size in bytes
-        expected_size: u64,
-        /// Output file (default: stdout)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        /// Output format: compressed, json, binary
-        #[arg(long, default_value = "compressed")]
-        format: Option<String>,
-        /// Show verbose proof generation steps
-        #[arg(short, long)]
-        verbose: bool,
-        /// Show compression statistics
-        #[arg(long)]
-        show_compression: bool,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Verify archive size proof
-    VerifyArchiveSize {
-        /// Proof data (compressed hex string or file path with --from-file)
-        proof: String,
-        /// Store ID (32-byte hex)
-        store_id: String,
-        /// Root hash (32-byte hex) 
-        root_hash: String,
-        /// Expected size in bytes
-        expected_size: u64,
-        /// Read proof from file instead of command line
-        #[arg(long)]
-        from_file: bool,
-        /// Show verbose verification steps
-        #[arg(short, long)]
-        verbose: bool,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
 }
 
 /// Staging area subcommands
@@ -626,5 +581,53 @@ pub enum ProofCommands {
         /// Read proof from stdin
         #[arg(long)]
         from_stdin: bool,
+    },
+
+    /// Generate tamper-proof archive size proof
+    #[command(name = "generate-archive-size")]
+    GenerateArchiveSize {
+        /// Store ID (32-byte hex)
+        store_id: String,
+        /// Root hash (32-byte hex) 
+        root_hash: String,
+        /// Expected size in bytes
+        expected_size: u64,
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Output format: compressed, json, binary
+        #[arg(long, default_value = "compressed")]
+        format: Option<String>,
+        /// Show verbose proof generation steps
+        #[arg(short, long)]
+        verbose: bool,
+        /// Show compression statistics
+        #[arg(long)]
+        show_compression: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Verify archive size proof
+    #[command(name = "verify-archive-size")]
+    VerifyArchiveSize {
+        /// Proof data (compressed hex string or file path with --from-file)
+        proof: String,
+        /// Store ID (32-byte hex)
+        store_id: String,
+        /// Root hash (32-byte hex)
+        root_hash: String,
+        /// Expected size in bytes
+        expected_size: u64,
+        /// Read proof from file instead of command line
+        #[arg(long)]
+        from_file: bool,
+        /// Show detailed verification steps
+        #[arg(short, long)]
+        verbose: bool,
+        /// Output verification result as JSON
+        #[arg(long)]
+        json: bool,
     },
 }

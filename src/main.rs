@@ -209,6 +209,29 @@ fn main() -> Result<()> {
                 verbose,
                 from_stdin,
             } => cli::commands::proof::execute_verify(proof, target, root, verbose, from_stdin),
+            ProofCommands::GenerateArchiveSize {
+                store_id,
+                root_hash,
+                expected_size,
+                output,
+                format,
+                verbose,
+                show_compression,
+                json,
+            } => cli::commands::proof::execute_generate_archive_size(
+                store_id, root_hash, expected_size, output, format, verbose, show_compression, json
+            ),
+            ProofCommands::VerifyArchiveSize {
+                proof,
+                store_id,
+                root_hash,
+                expected_size,
+                from_file,
+                verbose,
+                json,
+            } => cli::commands::proof::execute_verify_archive_size(
+                proof, store_id, root_hash, expected_size, from_file, verbose, json
+            ),
         },
 
         Commands::Config {
@@ -220,28 +243,5 @@ fn main() -> Result<()> {
             edit,
             json,
         } => cli::commands::config::execute(key, value, list, unset, show_origin, edit, json),
-        Commands::ProveArchiveSize {
-            store_id,
-            root_hash,
-            expected_size,
-            output,
-            format,
-            verbose,
-            show_compression,
-            json,
-        } => cli::commands::prove_archive_size::execute(
-            store_id, root_hash, expected_size, output, format, verbose, show_compression, json
-        ),
-        Commands::VerifyArchiveSize {
-            proof,
-            store_id,
-            root_hash,
-            expected_size,
-            from_file,
-            verbose,
-            json,
-        } => cli::commands::verify_archive_size::execute(
-            proof, store_id, root_hash, expected_size, from_file, verbose, json
-        ),
     }
 }

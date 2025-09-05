@@ -10,9 +10,7 @@ pub mod decrypt;
 pub mod get;
 pub mod init;
 pub mod keygen;
-pub mod prove_archive_size;
 pub mod status;
-pub mod verify_archive_size;
 
 // Command subtrees
 pub mod layer;

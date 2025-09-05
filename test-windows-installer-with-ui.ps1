@@ -37,7 +37,9 @@ Write-Host "Creating WiX file with UI..." -ForegroundColor Green
            Manufacturer="$env:PROJECT_AUTH" UpgradeCode="A3F5C8D9-E2B1-F4A6-C9D8-E7F2A5B8C1D4">
     <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated" 
              Description="Content-addressable storage system with Git-like semantics." />
-    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" AllowDowngrades="no" 
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." 
+                  Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" />
     
     <!-- Add UI Reference -->
