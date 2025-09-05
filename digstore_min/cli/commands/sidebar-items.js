@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["find_repository_root","load_store_id_from_digstore"],"mod":["add","cat","commit","completion","config","decrypt","get","init","keygen","layer","proof","prove_archive_size","staged","status","store","verify_archive_size"]};
+window.SIDEBAR_ITEMS = {"fn":["find_repository_root","load_store_id_from_digstore"],"mod":["add","cat","commit","completion","config","decrypt","get","init","keygen","layer","proof","staged","status","store"]};

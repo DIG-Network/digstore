@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["generate","verify"]};
+window.SIDEBAR_ITEMS = {"mod":["generate","generate_archive_size","verify","verify_archive_size"]};
