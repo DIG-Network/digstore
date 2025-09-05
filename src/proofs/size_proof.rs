@@ -27,6 +27,8 @@ pub struct ArchiveSizeProof {
     pub layer_size_tree_root: Hash,
     /// Integrity proofs to prevent tampering
     pub integrity_proofs: IntegrityProofs,
+    /// Publisher's public key (included by proof generator, verified by verifier)
+    pub publisher_public_key: Option<String>,
 }
 
 /// Integrity proofs to verify archive structure
@@ -58,6 +60,9 @@ pub struct CompressedSizeProof {
     pub merkle_tree_root: [u8; 32],    // 32 bytes: Layer size tree root
     pub proof_path_length: u8,         // 1 byte: Number of proof elements
     pub proof_path: Vec<ProofElement>, // Variable: Merkle proof path
+    
+    // Publisher verification (32 bytes)
+    pub publisher_public_key: [u8; 32], // 32 bytes: Publisher's public key
     
     // Integrity verification (96 bytes)
     pub header_hash: [u8; 32],         // 32 bytes: Archive header hash
@@ -147,6 +152,7 @@ impl ArchiveSizeProof {
             layer_sizes,
             layer_size_tree_root: layer_size_tree.root(),
             integrity_proofs,
+            publisher_public_key: None, // Will be set by CLI command
         })
     }
     
@@ -229,6 +235,16 @@ impl CompressedSizeProof {
             }
         ];
         
+        // Convert publisher public key from hex string to bytes
+        let mut publisher_key_bytes = [0u8; 32];
+        if let Some(ref pubkey_hex) = proof.publisher_public_key {
+            if let Ok(pubkey_bytes) = hex::decode(pubkey_hex) {
+                if pubkey_bytes.len() == 32 {
+                    publisher_key_bytes.copy_from_slice(&pubkey_bytes);
+                }
+            }
+        }
+        
         Ok(Self {
             version: 1,
             store_id: *proof.store_id.as_bytes(),
@@ -238,6 +254,7 @@ impl CompressedSizeProof {
             merkle_tree_root: *proof.layer_size_tree_root.as_bytes(),
             proof_path_length: proof_path.len() as u8,
             proof_path,
+            publisher_public_key: publisher_key_bytes,
             header_hash: *proof.integrity_proofs.archive_header_hash.as_bytes(),
             index_hash: *proof.integrity_proofs.layer_index_hash.as_bytes(),
             first_layer_hash: *proof.integrity_proofs.first_layer_content_hash.as_bytes(),
@@ -265,7 +282,10 @@ impl CompressedSizeProof {
             buffer.push(element.position);
         }
         
-        // 4. Integrity proofs (96 bytes)
+        // 4. Publisher public key (32 bytes)
+        buffer.extend_from_slice(&self.publisher_public_key);
+        
+        // 5. Integrity proofs (96 bytes)
         buffer.extend_from_slice(&self.header_hash);
         buffer.extend_from_slice(&self.index_hash);
         buffer.extend_from_slice(&self.first_layer_hash);
@@ -284,7 +304,7 @@ impl CompressedSizeProof {
         let buffer = zstd::decode_all(&compressed[..])
             .map_err(|e| DigstoreError::internal(format!("Decompression failed: {}", e)))?;
         
-        if buffer.len() < 110 {
+        if buffer.len() < 142 {  // 110 + 32 for publisher public key
             return Err(DigstoreError::internal("Proof too short"));
         }
         
@@ -324,7 +344,16 @@ impl CompressedSizeProof {
             offset += 33;
         }
         
-        // 5. Parse integrity proofs
+        // 5. Parse publisher public key (32 bytes)
+        if offset + 32 > buffer.len() {
+            return Err(DigstoreError::internal("Publisher public key extends beyond buffer"));
+        }
+        
+        let mut publisher_public_key = [0u8; 32];
+        publisher_public_key.copy_from_slice(&buffer[offset..offset + 32]);
+        offset += 32;
+        
+        // 6. Parse integrity proofs (96 bytes)
         if offset + 96 > buffer.len() {
             return Err(DigstoreError::internal("Integrity proofs extend beyond buffer"));
         }
@@ -345,6 +374,7 @@ impl CompressedSizeProof {
             merkle_tree_root,
             proof_path_length,
             proof_path,
+            publisher_public_key,
             header_hash,
             index_hash,
             first_layer_hash,
@@ -355,6 +385,13 @@ impl CompressedSizeProof {
     pub fn to_archive_proof(&self) -> Result<ArchiveSizeProof> {
         // For simplified verification, create minimal layer sizes that sum to total
         let layer_sizes = vec![self.total_size / 2, self.total_size - (self.total_size / 2)]; // Split into 2 layers
+        
+        // Convert publisher public key back to hex string
+        let publisher_public_key = if self.publisher_public_key != [0u8; 32] {
+            Some(hex::encode(&self.publisher_public_key))
+        } else {
+            None
+        };
         
         Ok(ArchiveSizeProof {
             store_id: Hash::from_bytes(self.store_id),
@@ -370,6 +407,7 @@ impl CompressedSizeProof {
                 first_layer_content_hash: Hash::from_bytes(self.first_layer_hash),
                 last_layer_content_hash: Hash::from_bytes(self.first_layer_hash), // Simplified
             },
+            publisher_public_key,
         })
     }
 }

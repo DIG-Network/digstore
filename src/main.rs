@@ -211,15 +211,13 @@ fn main() -> Result<()> {
             } => cli::commands::proof::execute_verify(proof, target, root, verbose, from_stdin),
             ProofCommands::GenerateArchiveSize {
                 store_id,
-                root_hash,
-                expected_size,
                 output,
                 format,
                 verbose,
                 show_compression,
                 json,
             } => cli::commands::proof::execute_generate_archive_size(
-                store_id, root_hash, expected_size, output, format, verbose, show_compression, json
+                store_id, output, format, verbose, show_compression, json
             ),
             ProofCommands::VerifyArchiveSize {
                 proof,

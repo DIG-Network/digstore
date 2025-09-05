@@ -269,7 +269,7 @@ urn:dig:chia:a3f5c8d9e2b1f4a6c9d8e7f2a5b8c1d4e7f0a3b6c9d2e5f8b1c4d7e0a3b6c9d2/vi
 |---------|-------------|---------|
 | `proof generate` | Generate merkle proof | `digstore proof generate file.txt --bytes 0-1023` |
 | `proof verify` | Verify a merkle proof | `digstore proof verify proof.json --verbose` |
-| `proof generate-archive-size` | Generate tamper-proof archive size proof | `digstore proof generate-archive-size STORE_ID ROOT_HASH SIZE` |
+| `proof generate-archive-size` | Generate tamper-proof archive size proof | `digstore proof generate-archive-size STORE_ID` |
 | `proof verify-archive-size` | Verify archive size proof without file access | `digstore proof verify-archive-size proof.txt STORE_ID ROOT_HASH SIZE` |
 
 ### Command Options
@@ -314,8 +314,10 @@ digstore get urn:dig:chia:STORE_ID/file.txt
 digstore proof generate file.txt -o proof.json
 digstore proof verify proof.json
 
-# Generate archive size proof (tamper-proof, no file download needed)
-digstore proof generate-archive-size STORE_ID ROOT_HASH SIZE -o size_proof.txt
+# Generate archive size proof (tamper-proof, no file download needed)  
+# Publisher only needs store ID - system auto-discovers root hash and size
+digstore proof generate-archive-size STORE_ID -o size_proof.txt
+# Verifier needs all parameters since they don't have the .dig files
 digstore proof verify-archive-size --from-file size_proof.txt STORE_ID ROOT_HASH SIZE
 ```
 
@@ -351,12 +353,13 @@ digstore staged diff --stat
 digstore get "urn:dig:chia:invalid-store/fake.txt"  # Returns random data, not error
 
 # Archive size proofs (prove file size without downloading)
-digstore proof generate-archive-size 9baeb47a392476fe88266b579bf343f3af5f75c7633e25a722a89a6d7b47a2bd \
-  e9254d8982b7a15a1dbdac05a99129df67880e37b43e5481dcf667aeca04fd4e \
-  2544 --verbose --show-compression  # Outputs compressed hex proof to stdout
+# Publisher: Only needs store ID (auto-discovers root hash, size, includes public key)
+digstore proof generate-archive-size bf9dfeba76de1daa2c1674260efbb9a7b5effc251213fd90241b37d547528102 \
+  --verbose --show-compression  # Outputs compressed hex proof to stdout
 
-# Verify size proof (no file access required)
-digstore proof verify-archive-size proof.txt STORE_ID ROOT_HASH SIZE --verbose
+# Verifier: Needs all parameters (doesn't have .dig files to inspect)
+digstore proof verify-archive-size proof.txt bf9dfeba76de1daa2c1674260efbb9a7b5effc251213fd90241b37d547528102 \
+  beec453fffccaf57d3938d3015e8effda1cf71b027b45b3467052d96e31453b3 2544 --verbose
 
 # List all configuration (encrypted storage is enabled by default)
 digstore config --list
