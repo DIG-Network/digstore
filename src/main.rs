@@ -15,8 +15,10 @@ mod proofs;
 mod security;
 mod storage;
 mod urn;
+mod wallet;
 
-use cli::{Cli, Commands, LayerCommands, ProofCommands, StagedCommands, StoreCommands};
+use cli::{context::CliContext, Cli, Commands, LayerCommands, ProofCommands, StagedCommands, StoreCommands, WalletCommands};
+use wallet::WalletManager;
 
 fn main() -> Result<()> {
     // Initialize logging
@@ -29,6 +31,35 @@ fn main() -> Result<()> {
 
     // Parse command line arguments
     let cli = Cli::parse();
+
+    // Set CLI context for commands to access
+    CliContext::set(CliContext {
+        wallet_profile: cli.wallet_profile.clone(),
+        auto_generate_wallet: cli.auto_generate_wallet,
+        auto_import_mnemonic: cli.auto_import_mnemonic.clone(),
+        verbose: cli.verbose,
+        quiet: cli.quiet,
+        yes: cli.yes,
+    });
+
+    // Handle auto-generation or auto-import flags first (these work regardless of command)
+    if cli.auto_generate_wallet || cli.auto_import_mnemonic.is_some() {
+        let wallet_profile = cli.wallet_profile.clone();
+        let mut wallet_manager = WalletManager::new_with_profile(wallet_profile)?;
+        
+        if cli.auto_generate_wallet {
+            wallet_manager.auto_generate_wallet()?;
+        } else if let Some(mnemonic) = cli.auto_import_mnemonic.clone() {
+            wallet_manager.auto_import_wallet(&mnemonic)?;
+        }
+    }
+    
+    // Check if wallet initialization is needed for this command
+    if needs_wallet_initialization(&cli.command) {
+        let wallet_profile = cli.wallet_profile.clone();
+        let wallet_manager = WalletManager::new_with_profile(wallet_profile)?;
+        wallet_manager.ensure_wallet_initialized()?;
+    }
 
     // Execute the command
     match cli.command {
@@ -224,11 +255,12 @@ fn main() -> Result<()> {
                 store_id,
                 root_hash,
                 expected_size,
+                publisher_public_key,
                 from_file,
                 verbose,
                 json,
             } => cli::commands::proof::execute_verify_archive_size(
-                proof, store_id, root_hash, expected_size, from_file, verbose, json
+                proof, store_id, root_hash, expected_size, publisher_public_key, from_file, verbose, json
             ),
         },
 
@@ -241,5 +273,20 @@ fn main() -> Result<()> {
             edit,
             json,
         } => cli::commands::config::execute(key, value, list, unset, show_origin, edit, json),
+
+        Commands::Wallet { command } => cli::commands::wallet::execute(command).map_err(|e| e.into()),
+    }
+}
+
+/// Determines if a command requires wallet initialization
+fn needs_wallet_initialization(command: &Commands) -> bool {
+    match command {
+        // Commands that don't need wallet initialization
+        Commands::Completion { .. } => false,
+        Commands::Config { .. } => false,
+        Commands::Wallet { .. } => false, // Wallet commands manage their own initialization
+        
+        // All other commands require wallet initialization
+        _ => true,
     }
 }

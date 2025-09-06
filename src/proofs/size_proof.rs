@@ -217,6 +217,12 @@ impl ArchiveSizeProof {
         compressed.to_hex_string()
     }
     
+    /// Convert to ultra-compressed format (absolute minimum size possible)
+    pub fn to_ultra_compressed(&self) -> Result<String> {
+        let ultra_compressed = crate::proofs::ultra_compressed_proof::UltraCompressedProof::from_archive_proof(self)?;
+        ultra_compressed.to_absolute_minimum_text()
+    }
+    
     /// Create from compressed binary hex string
     pub fn from_compressed_hex(hex_string: &str) -> Result<Self> {
         let compressed = CompressedSizeProof::from_hex_string(hex_string)?;
@@ -417,7 +423,8 @@ pub fn verify_archive_size_proof(
     proof: &ArchiveSizeProof,
     store_id: &StoreId, 
     root_hash: &Hash,
-    expected_size: u64
+    expected_size: u64,
+    expected_publisher_public_key: &str
 ) -> Result<bool> {
     // 1. Verify input parameters match proof
     if proof.store_id != *store_id || proof.root_hash != *root_hash {
@@ -427,6 +434,18 @@ pub fn verify_archive_size_proof(
     // 2. Verify calculated size matches expected
     if proof.calculated_total_size != expected_size {
         return Ok(false);
+    }
+    
+    // 3. Verify publisher public key matches expected (critical security check)
+    match &proof.publisher_public_key {
+        Some(proof_pubkey) => {
+            if proof_pubkey != expected_publisher_public_key {
+                return Ok(false);  // Publisher mismatch - reject proof
+            }
+        }
+        None => {
+            return Ok(false);  // No publisher key in proof - reject for security
+        }
     }
     
     // 3. Verify layer sizes sum to total (redundant check)
@@ -477,10 +496,11 @@ pub fn verify_compressed_hex_proof(
     hex_proof: &str,
     store_id: &StoreId,
     root_hash: &Hash, 
-    expected_size: u64
+    expected_size: u64,
+    expected_publisher_public_key: &str
 ) -> Result<bool> {
     let proof = ArchiveSizeProof::from_compressed_hex(hex_proof)?;
-    verify_archive_size_proof(&proof, store_id, root_hash, expected_size)
+    verify_archive_size_proof(&proof, store_id, root_hash, expected_size, expected_publisher_public_key)
 }
 
 #[cfg(test)]
@@ -493,8 +513,8 @@ mod tests {
             store_id: Hash::from_bytes([1; 32]),
             root_hash: Hash::from_bytes([2; 32]),
             verified_layer_count: 5,
-            calculated_total_size: 1000000,
-            layer_sizes: vec![200000, 300000, 200000, 150000, 150000],
+            calculated_total_size: 600000,  // Fix the size to match test
+            layer_sizes: vec![200000, 300000, 100000],  // Simplified layer structure
             layer_size_tree_root: Hash::from_bytes([3; 32]),
             integrity_proofs: IntegrityProofs {
                 archive_header_hash: Hash::from_bytes([4; 32]),
@@ -503,6 +523,7 @@ mod tests {
                 first_layer_content_hash: Hash::from_bytes([7; 32]),
                 last_layer_content_hash: Hash::from_bytes([8; 32]),
             },
+            publisher_public_key: Some("test_publisher_key".to_string()),
         };
         
         // Test compression and decompression
@@ -538,7 +559,8 @@ mod tests {
             &proof,
             &Hash::from_bytes([1; 32]),
             &Hash::from_bytes([2; 32]),
-            600000
+            600000,
+            "test_publisher_key"
         ).unwrap();
         assert!(result);
         
@@ -547,7 +569,8 @@ mod tests {
             &proof,
             &Hash::from_bytes([1; 32]),
             &Hash::from_bytes([2; 32]),
-            500000
+            500000,
+            "test_publisher_key"
         ).unwrap();
         assert!(!result);
         
@@ -556,7 +579,18 @@ mod tests {
             &proof,
             &Hash::from_bytes([99; 32]),
             &Hash::from_bytes([2; 32]),
-            600000
+            600000,
+            "test_publisher_key"
+        ).unwrap();
+        assert!(!result);
+        
+        // Test wrong publisher public key
+        let result = verify_archive_size_proof(
+            &proof,
+            &Hash::from_bytes([1; 32]),
+            &Hash::from_bytes([2; 32]),
+            600000,
+            "wrong_publisher_key"
         ).unwrap();
         assert!(!result);
     }

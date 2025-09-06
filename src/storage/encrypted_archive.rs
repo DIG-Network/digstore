@@ -2,6 +2,7 @@
 //!
 //! This wrapper handles URN transformation for zero-knowledge storage
 
+use crate::cli::context::CliContext;
 use crate::config::GlobalConfig;
 use crate::core::error::{DigstoreError, Result};
 use crate::core::types::Hash;
@@ -9,6 +10,7 @@ use crate::crypto::{PublicKey, transform_urn};
 use crate::storage::dig_archive::{self, DigArchive};
 use crate::storage::layer::Layer;
 use crate::core::types::{FileEntry, FileMetadata};
+use crate::wallet::WalletManager;
 use std::path::PathBuf;
 
 /// Wrapper around DigArchive that handles address transformation
@@ -23,10 +25,18 @@ impl EncryptedArchive {
     pub fn new(archive: DigArchive) -> Result<Self> {
         let config = GlobalConfig::load()?;
         
-        let public_key = if let Some(hex_key) = config.crypto.public_key {
-            Some(PublicKey::from_hex(&hex_key)?)
-        } else {
-            None
+        // Try to get public key from wallet (using CLI context profile), fallback to config
+        let wallet_profile = CliContext::get_wallet_profile();
+        let public_key = match WalletManager::get_wallet_public_key(wallet_profile) {
+            Ok(wallet_key) => Some(wallet_key),
+            Err(_) => {
+                // Fallback to config for backward compatibility
+                if let Some(hex_key) = config.crypto.public_key {
+                    Some(PublicKey::from_hex(&hex_key)?)
+                } else {
+                    None
+                }
+            }
         };
         
         let encrypted_storage = config.crypto.encrypted_storage.unwrap_or(true);

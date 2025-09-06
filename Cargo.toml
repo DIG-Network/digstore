@@ -34,6 +34,8 @@ digest = "0.10"
 hex = "0.4"
 rs_merkle = "1.4"
 base64 = "0.21"
+ascii85 = "0.2"
+num-bigint = "0.4"
 aes-gcm = "0.10"
 rand = "0.8"
 
@@ -79,6 +81,9 @@ num_cpus = "1.16"
 crossbeam-channel = "0.5"
 getrandom = "0.2"
 
+# Wallet Management
+dig-wallet = "0.1.0"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
@@ -105,7 +110,7 @@ predicates = "3.0"
 # pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
 
 [features]
-default = []
+default = ["tokio"]
 async = ["tokio"]
 unstable = []
 

@@ -1,7 +1,9 @@
 //! Key generation command implementation
 
+use crate::cli::context::CliContext;
 use crate::config::GlobalConfig;
 use crate::crypto::{PublicKey, transform_urn, derive_key_from_urn, derive_storage_address};
+use crate::wallet::WalletManager;
 use anyhow::Result;
 use colored::Colorize;
 use std::path::PathBuf;
@@ -14,14 +16,28 @@ pub fn execute(
     encryption_key: bool,
     json: bool,
 ) -> Result<()> {
+    execute_with_profile(urn, output, storage_address, encryption_key, json, None)
+}
+
+/// Execute the keygen command with optional wallet profile
+pub fn execute_with_profile(
+    urn: String,
+    output: Option<PathBuf>,
+    storage_address: bool,
+    encryption_key: bool,
+    json: bool,
+    wallet_profile: Option<String>,
+) -> Result<()> {
     println!("{}", "Generating content key...".bright_blue());
 
-    // Load global config to get public key
-    let config = GlobalConfig::load()?;
-    let public_key_hex = config.crypto.public_key
-        .ok_or_else(|| anyhow::anyhow!("No public key configured. Set with: digstore config crypto.public_key <hex-key>"))?;
+    // Get wallet profile from CLI context if not provided
+    let effective_wallet_profile = wallet_profile.or_else(|| CliContext::get_wallet_profile());
     
-    let public_key = PublicKey::from_hex(&public_key_hex)?;
+    // Get public key from specified wallet profile or active wallet
+    let public_key = WalletManager::get_wallet_public_key(effective_wallet_profile)
+        .map_err(|e| anyhow::anyhow!("Failed to get public key from wallet: {}. Ensure you have a wallet initialized.", e))?;
+    
+    let public_key_hex = public_key.to_hex();
     
     println!("  {} URN: {}", "•".cyan(), urn.dimmed());
     println!("  {} Public Key: {}", "•".cyan(), public_key_hex.dimmed());

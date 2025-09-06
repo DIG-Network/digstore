@@ -1,0 +1,52 @@
+//! CLI context for storing global options during command execution
+
+use std::cell::RefCell;
+
+thread_local! {
+    static CLI_CONTEXT: RefCell<Option<CliContext>> = RefCell::new(None);
+}
+
+/// Context containing global CLI options
+#[derive(Debug, Clone)]
+pub struct CliContext {
+    pub wallet_profile: Option<String>,
+    pub auto_generate_wallet: bool,
+    pub auto_import_mnemonic: Option<String>,
+    pub verbose: bool,
+    pub quiet: bool,
+    pub yes: bool,
+}
+
+impl CliContext {
+    /// Set the global CLI context for the current thread
+    pub fn set(context: CliContext) {
+        CLI_CONTEXT.with(|c| {
+            *c.borrow_mut() = Some(context);
+        });
+    }
+
+    /// Get the current CLI context
+    pub fn get() -> Option<CliContext> {
+        CLI_CONTEXT.with(|c| c.borrow().clone())
+    }
+
+    /// Get the wallet profile from the current context
+    pub fn get_wallet_profile() -> Option<String> {
+        Self::get().and_then(|ctx| ctx.wallet_profile)
+    }
+
+    /// Check if verbose mode is enabled
+    pub fn is_verbose() -> bool {
+        Self::get().map(|ctx| ctx.verbose).unwrap_or(false)
+    }
+
+    /// Check if quiet mode is enabled
+    pub fn is_quiet() -> bool {
+        Self::get().map(|ctx| ctx.quiet).unwrap_or(false)
+    }
+
+    /// Check if auto-answer yes is enabled
+    pub fn is_yes() -> bool {
+        Self::get().map(|ctx| ctx.yes).unwrap_or(false)
+    }
+}

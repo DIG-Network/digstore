@@ -17,6 +17,8 @@ pub struct GlobalConfig {
     pub core: CoreConfig,
     /// Crypto configuration
     pub crypto: CryptoConfig,
+    /// Wallet configuration
+    pub wallet: WalletConfig,
     /// Custom configuration values
     #[serde(flatten)]
     pub custom: HashMap<String, ConfigValue>,
@@ -51,6 +53,13 @@ pub struct CryptoConfig {
     pub encrypted_storage: Option<bool>,
 }
 
+/// Wallet configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletConfig {
+    /// Active wallet profile name
+    pub active_profile: Option<String>,
+}
+
 /// Configuration value types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -70,6 +79,7 @@ pub enum ConfigKey {
     CoreCompression,
     CryptoPublicKey,
     CryptoEncryptedStorage,
+    WalletActiveProfile,
     Custom(String),
 }
 
@@ -83,6 +93,7 @@ impl ConfigKey {
             "core.compression" => Some(ConfigKey::CoreCompression),
             "crypto.public_key" => Some(ConfigKey::CryptoPublicKey),
             "crypto.encrypted_storage" => Some(ConfigKey::CryptoEncryptedStorage),
+            "wallet.active_profile" => Some(ConfigKey::WalletActiveProfile),
             _ => Some(ConfigKey::Custom(key.to_string())),
         }
     }
@@ -96,6 +107,7 @@ impl ConfigKey {
             ConfigKey::CoreCompression => "core.compression",
             ConfigKey::CryptoPublicKey => "crypto.public_key",
             ConfigKey::CryptoEncryptedStorage => "crypto.encrypted_storage",
+            ConfigKey::WalletActiveProfile => "wallet.active_profile",
             ConfigKey::Custom(key) => key,
         }
     }
@@ -183,6 +195,11 @@ impl GlobalConfig {
                 .crypto
                 .encrypted_storage
                 .map(ConfigValue::Boolean),
+            ConfigKey::WalletActiveProfile => self
+                .wallet
+                .active_profile
+                .as_ref()
+                .map(|s| ConfigValue::String(s.clone())),
             ConfigKey::Custom(key) => self.custom.get(key).cloned(),
         }
     }
@@ -259,6 +276,15 @@ impl GlobalConfig {
                     });
                 }
             },
+            ConfigKey::WalletActiveProfile => {
+                if let ConfigValue::String(profile) = value {
+                    self.wallet.active_profile = Some(profile);
+                } else {
+                    return Err(DigstoreError::ConfigurationError {
+                        reason: "wallet.active_profile must be a string".to_string(),
+                    });
+                }
+            },
             ConfigKey::Custom(key_name) => {
                 self.custom.insert(key_name, value);
             },
@@ -276,6 +302,7 @@ impl GlobalConfig {
             ConfigKey::CoreCompression => self.core.compression = None,
             ConfigKey::CryptoPublicKey => self.crypto.public_key = None,
             ConfigKey::CryptoEncryptedStorage => self.crypto.encrypted_storage = None,
+            ConfigKey::WalletActiveProfile => self.wallet.active_profile = None,
             ConfigKey::Custom(key_name) => {
                 self.custom.remove(key_name);
             },
@@ -306,6 +333,9 @@ impl GlobalConfig {
         }
         if let Some(encrypted_storage) = self.crypto.encrypted_storage {
             entries.push(("crypto.encrypted_storage".to_string(), encrypted_storage.to_string()));
+        }
+        if let Some(active_profile) = &self.wallet.active_profile {
+            entries.push(("wallet.active_profile".to_string(), active_profile.clone()));
         }
 
         for (key, value) in &self.custom {
@@ -423,6 +453,9 @@ impl Default for GlobalConfig {
             crypto: CryptoConfig {
                 public_key: None,
                 encrypted_storage: Some(true),
+            },
+            wallet: WalletConfig {
+                active_profile: Some("default".to_string()),
             },
             custom: HashMap::new(),
         }

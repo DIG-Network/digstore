@@ -603,7 +603,10 @@ impl Store {
                     let global_config = crate::config::GlobalConfig::load()?;
                     let should_encrypt = global_config.crypto.encrypted_storage.unwrap_or(true);
                     
-                    let final_data = if should_encrypt && global_config.crypto.public_key.is_some() {
+                    // Check if we have an active wallet (for encrypted storage)
+                    let has_wallet = crate::wallet::WalletManager::get_active_wallet_public_key().is_ok();
+                    
+                    let final_data = if should_encrypt && has_wallet {
                         // Create URN for this chunk (use store ID and chunk hash)
                         let chunk_urn = format!(
                             "urn:dig:chia:{}/chunk/{}",

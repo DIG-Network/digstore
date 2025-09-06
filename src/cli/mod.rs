@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 pub mod commands;
+pub mod context;
 pub mod interactive;
 
 /// Digstore Min - Content-addressable storage system
@@ -38,6 +39,18 @@ pub struct Cli {
     /// Path to store directory
     #[arg(long, global = true)]
     pub store: Option<PathBuf>,
+
+    /// Auto-generate wallet if it doesn't exist (no prompts)
+    #[arg(long, global = true)]
+    pub auto_generate_wallet: bool,
+
+    /// Auto-import wallet from mnemonic (no prompts)
+    #[arg(long, global = true)]
+    pub auto_import_mnemonic: Option<String>,
+
+    /// Wallet profile to use (default: "default")
+    #[arg(long, global = true)]
+    pub wallet_profile: Option<String>,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -290,6 +303,12 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Wallet management
+    Wallet {
+        #[command(subcommand)]
+        command: WalletCommands,
+    },
+
 }
 
 /// Staging area subcommands
@@ -532,6 +551,81 @@ pub enum StoreCommands {
     },
 }
 
+/// Wallet management subcommands
+#[derive(Subcommand)]
+pub enum WalletCommands {
+    /// List all wallets
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show wallet information
+    Info {
+        /// Wallet profile name (default: active profile)
+        profile: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Show mnemonic phrase (DANGEROUS - only use in secure environments)
+        #[arg(long)]
+        show_mnemonic: bool,
+    },
+
+    /// Create a new wallet
+    Create {
+        /// Wallet profile name
+        profile: String,
+        /// Import from mnemonic instead of generating
+        #[arg(long)]
+        from_mnemonic: Option<String>,
+        /// Set as active profile
+        #[arg(long)]
+        set_active: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Delete a wallet
+    Delete {
+        /// Wallet profile name
+        profile: String,
+        /// Force deletion without confirmation
+        #[arg(short, long)]
+        force: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Set active wallet profile
+    SetActive {
+        /// Wallet profile name
+        profile: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show active wallet profile
+    Active {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Export wallet mnemonic (DANGEROUS - only use in secure environments)
+    Export {
+        /// Wallet profile name (default: active profile)
+        profile: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 /// Proof system subcommands
 #[derive(Subcommand)]
 pub enum ProofCommands {
@@ -616,6 +710,8 @@ pub enum ProofCommands {
         root_hash: String,
         /// Expected size in bytes
         expected_size: u64,
+        /// Expected publisher public key (32-byte hex) - ensures proof authenticity
+        publisher_public_key: String,
         /// Read proof from file instead of command line
         #[arg(long)]
         from_file: bool,

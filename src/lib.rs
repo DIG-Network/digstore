@@ -41,6 +41,7 @@ pub mod proofs;
 pub mod security;
 pub mod storage;
 pub mod urn;
+pub mod wallet;
 
 // Re-export commonly used types
 pub use core::{

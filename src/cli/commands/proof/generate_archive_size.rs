@@ -1,11 +1,13 @@
 //! Generate archive size proof command (moved from prove_archive_size.rs)
 
 use crate::cli::commands::find_repository_root;
+use crate::cli::context::CliContext;
 use crate::config::global_config::{GlobalConfig, ConfigKey, ConfigValue};
 use crate::core::digstore_file::DigstoreFile;
 use crate::core::types::Hash;
 use crate::proofs::size_proof::ArchiveSizeProof;
 use crate::storage::{Store, dig_archive::get_archive_path};
+use crate::wallet::WalletManager;
 use anyhow::Result;
 use colored::Colorize;
 use std::io::Write;
@@ -69,19 +71,13 @@ pub fn execute(
         println!("  {} Auto-discovering parameters from .dig directory...", "•".cyan());
     }
     
-    // Load global configuration to get publisher's public key
-    let global_config = GlobalConfig::load().map_err(|e| {
-        anyhow::anyhow!("Failed to load global configuration: {}. Please set crypto.public_key using 'digstore config crypto.public_key <hex_key>'", e)
+    // Get publisher's public key from specified wallet profile or active wallet
+    let wallet_profile = CliContext::get_wallet_profile();
+    let wallet_public_key = WalletManager::get_wallet_public_key(wallet_profile).map_err(|e| {
+        anyhow::anyhow!("Failed to get public key from wallet: {}. Ensure you have a wallet initialized with 'digstore wallet create <profile>' or 'digstore wallet list' to see available wallets.", e)
     })?;
     
-    let publisher_public_key = match global_config.get(&ConfigKey::CryptoPublicKey) {
-        Some(ConfigValue::String(pubkey)) => pubkey,
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Publisher public key not configured. Please set it using:\n  digstore config crypto.public_key <32-byte-hex-key>"
-            ));
-        }
-    };
+    let publisher_public_key = wallet_public_key.to_hex();
     
     if verbose {
         println!("  {} Publisher public key: {}...", "•".cyan(), &publisher_public_key[..16]);
@@ -129,14 +125,31 @@ pub fn execute(
         }
     };
     
-    // Convert to compressed format
-    let hex_output = proof.to_compressed_hex()?;
+    // Convert to ultra-compressed format (absolute minimum size)
+    let ultra_output = proof.to_ultra_compressed().map_err(|e| {
+        anyhow::anyhow!("Ultra compression failed, falling back to standard compression: {}", e)
+    });
+    
+    let final_output = match ultra_output {
+        Ok(ultra) => {
+            if verbose {
+                println!("  {} Using ultra-compressed format", "✓".green());
+            }
+            ultra
+        }
+        Err(_) => {
+            if verbose {
+                println!("  {} Falling back to standard hex compression", "•".yellow());
+            }
+            proof.to_compressed_hex()?
+        }
+    };
     
     if show_compression {
         println!();
         println!("{}", "Compression Statistics:".bright_yellow());
         println!("  {} Original proof data: ~{} bytes", "•".cyan(), std::mem::size_of_val(&proof));
-        println!("  {} Hex encoded: {} characters", "•".cyan(), hex_output.len());
+        println!("  {} Final output: {} characters", "•".cyan(), final_output.len());
         println!("  {} Compression achieved through binary encoding", "•".cyan());
         println!();
     }
@@ -150,8 +163,8 @@ pub fn execute(
                 std::fs::write(&output_path, json_output)?;
                 println!("{} Proof written to: {}", "✓".green(), output_path.display());
             } else {
-                std::fs::write(&output_path, &hex_output)?;
-                println!("{} Compressed proof written to: {}", "✓".green(), output_path.display());
+                std::fs::write(&output_path, &final_output)?;
+                println!("{} Ultra-compressed proof written to: {}", "✓".green(), output_path.display());
             }
         }
         None => {
@@ -160,7 +173,7 @@ pub fn execute(
                 let json_output = serde_json::to_string_pretty(&proof)?;
                 println!("{}", json_output);
             } else {
-                println!("{}", hex_output);
+                println!("{}", final_output);
             }
         }
     }
