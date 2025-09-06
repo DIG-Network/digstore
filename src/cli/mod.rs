@@ -309,6 +309,12 @@ pub enum Commands {
         command: WalletCommands,
     },
 
+    /// Datastore coin management
+    Coin {
+        #[command(subcommand)]
+        command: CoinCommands,
+    },
+
 }
 
 /// Staging area subcommands
@@ -623,6 +629,87 @@ pub enum WalletCommands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+    },
+}
+
+/// Datastore coin subcommands
+#[derive(Subcommand)]
+pub enum CoinCommands {
+    /// Create a new datastore coin
+    Create {
+        /// Datastore ID or path
+        datastore: String,
+        
+        /// Size of the datastore in bytes (if not auto-detected)
+        #[arg(long)]
+        size: Option<u64>,
+        
+        /// Wallet profile to use
+        #[arg(long, short = 'w')]
+        wallet: Option<String>,
+    },
+    
+    /// Mint a pending coin on the blockchain
+    Mint {
+        /// Coin ID to mint
+        coin_id: String,
+        
+        /// Wallet profile to use
+        #[arg(long, short = 'w')]
+        wallet: Option<String>,
+    },
+    
+    /// List datastore coins
+    List {
+        /// Show only active coins
+        #[arg(long)]
+        active: bool,
+        
+        /// Filter by owner address
+        #[arg(long)]
+        owner: Option<String>,
+        
+        /// Filter by datastore ID
+        #[arg(long)]
+        datastore: Option<String>,
+    },
+    
+    /// Show detailed information about a coin
+    Info {
+        /// Coin ID
+        coin_id: String,
+    },
+    
+    /// Transfer coin ownership
+    Transfer {
+        /// Coin ID to transfer
+        coin_id: String,
+        
+        /// Recipient address
+        to: String,
+        
+        /// Wallet profile to use
+        #[arg(long, short = 'w')]
+        wallet: Option<String>,
+    },
+    
+    /// Spend a coin to release collateral
+    Spend {
+        /// Coin ID to spend
+        coin_id: String,
+        
+        /// Wallet profile to use
+        #[arg(long, short = 'w')]
+        wallet: Option<String>,
+    },
+    
+    /// Show coin statistics
+    Stats,
+    
+    /// Calculate collateral requirement
+    Collateral {
+        /// Size in bytes
+        size: u64,
     },
 }
 

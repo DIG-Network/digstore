@@ -36,6 +36,7 @@ pub mod cli;
 pub mod config;
 pub mod core;
 pub mod crypto;
+pub mod datastore_coin;
 pub mod ignore;
 pub mod proofs;
 pub mod security;

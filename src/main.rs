@@ -17,7 +17,7 @@ mod storage;
 mod urn;
 mod wallet;
 
-use cli::{context::CliContext, Cli, Commands, LayerCommands, ProofCommands, StagedCommands, StoreCommands, WalletCommands};
+use cli::{context::CliContext, Cli, Commands, CoinCommands, LayerCommands, ProofCommands, StagedCommands, StoreCommands, WalletCommands};
 use wallet::WalletManager;
 
 fn main() -> Result<()> {
@@ -275,6 +275,8 @@ fn main() -> Result<()> {
         } => cli::commands::config::execute(key, value, list, unset, show_origin, edit, json),
 
         Commands::Wallet { command } => cli::commands::wallet::execute(command).map_err(|e| e.into()),
+        
+        Commands::Coin { command } => cli::commands::coin::handle_coin_command(&context, command),
     }
 }
 
@@ -285,6 +287,7 @@ fn needs_wallet_initialization(command: &Commands) -> bool {
         Commands::Completion { .. } => false,
         Commands::Config { .. } => false,
         Commands::Wallet { .. } => false, // Wallet commands manage their own initialization
+        Commands::Coin { .. } => true, // Coin commands require wallet
         
         // All other commands require wallet initialization
         _ => true,
