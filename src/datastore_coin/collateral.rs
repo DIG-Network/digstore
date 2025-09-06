@@ -26,11 +26,14 @@ pub struct CollateralBreakdown {
     /// Size of the datastore in bytes
     pub size_bytes: u64,
     
-    /// Rate per byte in mojos
-    pub rate_per_byte: u64,
+    /// Size of the datastore in GB
+    pub size_gb: f64,
     
-    /// Base calculation (size * rate)
-    pub base_calculation: u64,
+    /// Rate per GB in DIG tokens
+    pub rate_per_gb_dig: f64,
+    
+    /// Base calculation in DIG tokens
+    pub base_calculation_dig: f64,
     
     /// Whether large datastore multiplier was applied
     pub is_large_datastore: bool,
@@ -66,10 +69,11 @@ impl CollateralManager {
             });
         }
         
-        // Base calculation
-        let base_amount = size_bytes
-            .checked_mul(self.config.min_collateral_per_byte)
-            .ok_or_else(|| DigstoreError::internal("Collateral calculation overflow"))?;
+        // Convert bytes to GB
+        let size_gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        
+        // Base calculation in DIG tokens
+        let base_calculation_dig = size_gb * self.config.min_collateral_per_gb_dig;
         
         // Check if large datastore multiplier applies
         let (is_large, multiplier) = if size_bytes > self.config.max_size_standard {
@@ -79,16 +83,18 @@ impl CollateralManager {
         };
         
         // Calculate total with multiplier
-        let total_amount = if is_large {
-            (base_amount as f64 * multiplier) as u64
-        } else {
-            base_amount
-        };
+        let total_dig = base_calculation_dig * multiplier;
+        
+        // Convert to u64 (representing DIG tokens with appropriate precision)
+        // Using 8 decimal places for DIG tokens
+        let base_amount = (base_calculation_dig * 100_000_000.0) as u64;
+        let total_amount = (total_dig * 100_000_000.0) as u64;
         
         let breakdown = CollateralBreakdown {
             size_bytes,
-            rate_per_byte: self.config.min_collateral_per_byte,
-            base_calculation: base_amount,
+            size_gb,
+            rate_per_gb_dig: self.config.min_collateral_per_gb_dig,
+            base_calculation_dig,
             is_large_datastore,
             applied_multiplier: multiplier,
         };

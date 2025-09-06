@@ -60,7 +60,7 @@ pub struct CoinMetadata {
     /// The size of the datastore in bytes
     pub size_bytes: u64,
     
-    /// The amount of DIG tokens locked as collateral
+    /// The amount of DIG tokens locked as collateral (in DIG tokens, not mojos)
     pub collateral_amount: u64,
     
     /// The address that owns this coin
@@ -82,8 +82,8 @@ pub struct CoinMetadata {
 /// Requirements for collateral
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollateralConfig {
-    /// Minimum collateral per byte (in mojos)
-    pub min_collateral_per_byte: u64,
+    /// Minimum collateral per GB in DIG tokens
+    pub min_collateral_per_gb_dig: f64,
     
     /// Maximum datastore size without additional requirements
     pub max_size_standard: u64,
@@ -98,7 +98,7 @@ pub struct CollateralConfig {
 impl Default for CollateralConfig {
     fn default() -> Self {
         Self {
-            min_collateral_per_byte: 1, // 1 mojo per byte
+            min_collateral_per_gb_dig: 0.1, // 0.1 DIG tokens per GB
             max_size_standard: 1024 * 1024 * 1024, // 1 GB
             large_datastore_multiplier: 1.5,
             grace_period_seconds: 86400 * 30, // 30 days

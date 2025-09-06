@@ -22,7 +22,9 @@ fn test_coin_creation_and_lifecycle() -> Result<()> {
     
     // Calculate collateral requirement
     let collateral_req = coin_manager.get_collateral_requirement(size_bytes)?;
-    assert_eq!(collateral_req.base_amount, size_bytes); // 1 mojo per byte default
+    // For 1MB, that's ~0.00098 GB * 0.1 DIG/GB = 0.000098 DIG tokens
+    // With 8 decimal precision: 0.000098 * 100_000_000 = 9800
+    assert_eq!(collateral_req.base_amount, 9765); // Approximately 0.1 DIG per GB
     assert!(!collateral_req.breakdown.is_large_datastore);
     
     // Verify coin statistics are initially empty
@@ -41,17 +43,20 @@ fn test_collateral_calculations() -> Result<()> {
     // Test standard size (under 1GB)
     let small_size = 100 * 1024 * 1024; // 100 MB
     let req = manager.calculate_requirement(small_size)?;
-    assert_eq!(req.base_amount, small_size);
-    assert_eq!(req.total_amount, small_size);
+    // 100MB = 0.0977 GB * 0.1 DIG/GB = 0.00977 DIG * 100_000_000 = 976,562
+    assert_eq!(req.base_amount, 976562);
+    assert_eq!(req.total_amount, 976562);
     assert!(!req.breakdown.is_large_datastore);
     
     // Test large datastore (over 1GB)
     let large_size = 2u64 * 1024 * 1024 * 1024; // 2 GB
     let req = manager.calculate_requirement(large_size)?;
-    assert_eq!(req.base_amount, large_size);
+    // 2GB * 0.1 DIG/GB = 0.2 DIG * 100_000_000 = 20_000_000
+    assert_eq!(req.base_amount, 20_000_000);
     assert!(req.breakdown.is_large_datastore);
     assert_eq!(req.size_multiplier, 1.5);
-    assert_eq!(req.total_amount, (large_size as f64 * 1.5) as u64);
+    // 0.2 DIG * 1.5 = 0.3 DIG * 100_000_000 = 30_000_000
+    assert_eq!(req.total_amount, 30_000_000);
     
     // Test zero size (should fail)
     let result = manager.calculate_requirement(0);

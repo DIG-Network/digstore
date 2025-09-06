@@ -170,11 +170,13 @@ fn create_coin(
     println!("Size: {} bytes", size_bytes);
     println!();
     println!("{}", "Collateral Requirement:".yellow());
-    println!("  Base amount: {} mojos", collateral_req.base_amount);
+    println!("  Datastore size: {:.3} GB", collateral_req.breakdown.size_gb);
+    println!("  Rate: {} DIG per GB", collateral_req.breakdown.rate_per_gb_dig);
+    println!("  Base amount: {:.8} DIG", collateral_req.breakdown.base_calculation_dig);
     if collateral_req.breakdown.is_large_datastore {
         println!("  Large datastore multiplier: {}x", collateral_req.size_multiplier);
     }
-    println!("  {} {} mojos", "Total required:".bold(), collateral_req.total_amount);
+    println!("  {} {:.8} DIG tokens", "Total required:".bold(), collateral_req.total_amount as f64 / 100_000_000.0);
     println!();
     
     // Create the coin
@@ -257,7 +259,7 @@ fn list_coins(
             state: format!("{:?}", coin.state),
             datastore: coin.metadata.datastore_id.to_string(),
             size: bytesize::ByteSize(coin.metadata.size_bytes).to_string(),
-            collateral: format!("{} mojos", coin.metadata.collateral_amount),
+            collateral: format!("{:.8} DIG", coin.metadata.collateral_amount as f64 / 100_000_000.0),
             owner: coin.metadata.owner_address.clone(),
         }
     }).collect();
@@ -292,7 +294,7 @@ fn show_coin_info(
     }
     println!();
     println!("{}", "Collateral:".yellow());
-    println!("  Amount: {} mojos", coin.metadata.collateral_amount);
+    println!("  Amount: {:.8} DIG tokens", coin.metadata.collateral_amount as f64 / 100_000_000.0);
     println!("  Created: {}", chrono::DateTime::<chrono::Utc>::from_timestamp(coin.metadata.created_at as i64, 0)
         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
         .unwrap_or_else(|| "Unknown".to_string()));
@@ -351,7 +353,7 @@ fn spend_coin(
     let refund_amount = manager.spend_coin(&coin_id, &wallet)?;
     
     println!("{} Coin spent successfully!", "✓".green());
-    println!("Collateral refunded: {} mojos", refund_amount);
+    println!("Collateral refunded: {:.8} DIG tokens", refund_amount as f64 / 100_000_000.0);
     
     Ok(())
 }
@@ -367,7 +369,7 @@ fn show_stats(manager: &DatastoreCoinManager) -> Result<()> {
     println!("Expired coins: {}", stats.expired_coins);
     println!("Spent coins: {}", stats.spent_coins);
     println!();
-    println!("Total collateral locked: {} mojos", stats.total_collateral_locked);
+    println!("Total collateral locked: {:.8} DIG tokens", stats.total_collateral_locked as f64 / 100_000_000.0);
     println!("Total storage: {}", bytesize::ByteSize(stats.total_storage_bytes));
     
     Ok(())
@@ -383,15 +385,15 @@ fn show_collateral_requirement(
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Datastore size: {}", bytesize::ByteSize(size_bytes));
     println!();
-    println!("Base rate: {} mojos per byte", req.breakdown.rate_per_byte);
-    println!("Base amount: {} mojos", req.base_amount);
+    println!("Rate: {} DIG per GB", req.breakdown.rate_per_gb_dig);
+    println!("Base amount: {:.8} DIG tokens", req.base_amount as f64 / 100_000_000.0);
     if req.breakdown.is_large_datastore {
         println!();
         println!("{}", "Large datastore detected!".yellow());
         println!("Multiplier: {}x", req.size_multiplier);
     }
     println!();
-    println!("{} {} mojos", "Total required:".bold(), req.total_amount);
+    println!("{} {:.8} DIG tokens", "Total required:".bold(), req.total_amount as f64 / 100_000_000.0);
     
     Ok(())
 }

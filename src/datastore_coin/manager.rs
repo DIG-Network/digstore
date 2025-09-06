@@ -105,11 +105,13 @@ impl DatastoreCoinManager {
         // Check wallet balance for DIG tokens
         let balance = self.check_dig_balance(owner_wallet)?;
         if balance < collateral_req.total_amount {
+            use crate::datastore_coin::utils::format_dig;
             return Err(DigstoreError::ValidationError {
                 field: "balance".to_string(),
                 reason: format!(
                     "Insufficient DIG token balance. Required: {}, Available: {}",
-                    collateral_req.total_amount, balance
+                    format_dig(collateral_req.total_amount), 
+                    format_dig(balance)
                 ),
             });
         }

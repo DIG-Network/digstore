@@ -6,8 +6,11 @@
 
 pub mod coin;
 pub mod collateral;
+pub mod config;
+pub mod integration;
 pub mod manager;
 pub mod types;
+pub mod utils;
 
 // Re-export commonly used items
 pub use coin::{DatastoreCoin, CoinState};

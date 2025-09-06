@@ -104,9 +104,15 @@ impl DatastoreCoin {
         self.state = CoinState::Active;
     }
     
-    /// Get the collateral amount in DIG tokens
+    /// Get the collateral amount in DIG tokens (with 8 decimal precision)
     pub fn get_collateral_amount(&self) -> u64 {
         self.metadata.collateral_amount
+    }
+    
+    /// Get the collateral amount as float DIG tokens
+    pub fn get_collateral_amount_dig(&self) -> f64 {
+        use crate::datastore_coin::utils::dig_to_float;
+        dig_to_float(self.metadata.collateral_amount)
     }
     
     /// Get the datastore size in bytes
