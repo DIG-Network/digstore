@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["calculate_minimum_theoretical_size"],"struct":["UltraCompressedProof"]};

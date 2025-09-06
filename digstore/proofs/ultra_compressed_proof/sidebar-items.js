@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BASE94_CHARSET"],"fn":["calculate_minimum_theoretical_size","create_compression_dictionary","decode_base94","decode_varint","encode_base94","encode_varint"],"struct":["UltraCompressedProof"]};

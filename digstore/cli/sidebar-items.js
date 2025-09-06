@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Commands","LayerCommands","ProofCommands","StagedCommands","StoreCommands"],"mod":["commands","interactive"],"struct":["Cli"]};
+window.SIDEBAR_ITEMS = {"enum":["Commands","LayerCommands","ProofCommands","StagedCommands","StoreCommands","WalletCommands"],"mod":["commands","context","interactive"],"struct":["Cli"]};
