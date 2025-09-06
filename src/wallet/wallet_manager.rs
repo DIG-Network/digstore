@@ -216,7 +216,7 @@ impl WalletManager {
         println!();
         println!("{}", "⚠️  SECURITY NOTICE:".yellow().bold());
         println!("   • This phrase is the ONLY way to recover your wallet");
-        println!("   • Write it down on paper and store it securely");
+        println!("   • Please import this key into your Chia Wallet Software");
         println!("   • Never share it with anyone or store it digitally");
         println!("   • Anyone with this phrase can access your data");
         println!();

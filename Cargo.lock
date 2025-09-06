@@ -1443,6 +1443,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "dashmap",
+ "datalayer-driver",
  "dialoguer",
  "dig-wallet",
  "digest 0.10.7",
