@@ -83,6 +83,7 @@ getrandom = "0.2"
 
 # Wallet Management
 dig-wallet = "0.1.0"
+chia-wallet-sdk = "0.13.0"
 
 # Logging
 tracing = "0.1"

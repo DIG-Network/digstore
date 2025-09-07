@@ -8,7 +8,7 @@ use crate::datastore_coin::{
     types::{CoinId, CoinMetadata, DatastoreId, CollateralConfig},
 };
 use crate::wallet::WalletManager;
-use datalayer_driver::{ChiaDriver, OfferStore, OfferFile, Peer, connect_random};
+use crate::datastore_coin::blockchain::{BlockchainConnection, create_chia_wallet};
 use dig_wallet::{Wallet, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ pub struct DatastoreCoinManager {
     storage: Arc<Mutex<CoinStorage>>,
     collateral_manager: CollateralManager,
     storage_path: PathBuf,
-    chia_driver: Option<ChiaDriver>,
+    blockchain: Option<BlockchainConnection>,
     runtime: Runtime,
 }
 
@@ -67,36 +67,20 @@ impl DatastoreCoinManager {
             storage: Arc::new(Mutex::new(storage)),
             collateral_manager: CollateralManager::new(),
             storage_path,
-            chia_driver: None,
+            blockchain: None,
             runtime,
         })
     }
     
     /// Initialize with Chia blockchain connection
     pub fn init_blockchain(&mut self, network: &str) -> Result<()> {
-        println!("Initializing blockchain connection to {} network...", network);
+        let mut blockchain = BlockchainConnection::new(network);
         
-        // Try to connect to a random peer directly
-        let peer = self.runtime.block_on(async {
-            println!("Attempting to connect to random Chia peer...");
-            match connect_random(network == "mainnet").await {
-                Ok(peer) => {
-                    println!("✓ Connected to peer successfully!");
-                    Ok(peer)
-                }
-                Err(e) => {
-                    println!("✗ Failed to connect to peer: {}", e);
-                    Err(e)
-                }
-            }
-        }).map_err(|e| {
-            DigstoreError::internal(format!("Failed to connect to Chia network: {}", e))
+        self.runtime.block_on(async {
+            blockchain.connect().await
         })?;
         
-        // Store the peer connection for later use
-        // Note: In a real implementation, we'd store the peer connection
-        println!("Blockchain connection initialized (peer connected)");
-        
+        self.blockchain = Some(blockchain);
         Ok(())
     }
     
@@ -397,31 +381,24 @@ impl DatastoreCoinManager {
     
     /// Check DIG token balance for a wallet
     fn check_dig_balance(&self, wallet: &Wallet) -> Result<u64> {
-        println!("Checking DIG token balance...");
-        
-        // This would make actual blockchain calls:
-        // 1. Connect to Chia node
-        // 2. Query CAT coins with DIG asset ID
-        // 3. Sum up all DIG coin amounts
-        
-        self.runtime.block_on(async {
-            match wallet.get_cat_balance("DIG").await {
-                Ok(balance) => {
-                    println!("DIG balance: {} units ({:.8} DIG)", balance, balance as f64 / 100_000_000.0);
-                    Ok(balance)
-                }
-                Err(e) => {
-                    println!("Warning: Could not check DIG balance: {}", e);
-                    println!("This usually means:");
-                    println!("  - No Chia node is running");
-                    println!("  - Node is not synced");
-                    println!("  - Network connection issues");
-                    Err(e)
-                }
-            }
-        }).map_err(|e| {
-            DigstoreError::internal(format!("Failed to check DIG balance: {}", e))
-        })
+        if let Some(blockchain) = &self.blockchain {
+            self.runtime.block_on(async {
+                // Create chia-wallet-sdk wallet instance
+                let chia_wallet = create_chia_wallet(wallet).await?;
+                
+                // Use chia-wallet-sdk to check balance
+                blockchain.get_dig_balance(wallet, &chia_wallet).await
+            })
+        } else {
+            // Fallback to dig-wallet's method if no blockchain connection
+            println!("Using dig-wallet balance check (no blockchain connection)...");
+            
+            self.runtime.block_on(async {
+                wallet.get_cat_balance("DIG").await
+            }).map_err(|e| {
+                DigstoreError::internal(format!("Failed to check DIG balance: {}", e))
+            })
+        }
     }
     
     /// Save storage to disk

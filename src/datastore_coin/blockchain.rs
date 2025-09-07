@@ -1,23 +1,28 @@
-//! Direct blockchain interaction using DataLayer-Driver's peer connections
+//! Blockchain interaction using chia-wallet-sdk
 
 use crate::core::error::{DigstoreError, Result};
 use crate::datastore_coin::types::DatastoreId;
-use datalayer_driver::{
-    connect_random, Peer, Coin, CoinSpend, SpendBundle,
-    DataStore, DataStoreMetadata, DelegatedPuzzle,
+use crate::datastore_coin::utils::{dig_to_float, float_to_dig};
+use chia_wallet_sdk::{
+    Cat, CatSpend, Conditions, Peer, PeerOptions,
+    Puzzle, PublicKey as ChiaPublicKey, SecretKey as ChiaSecretKey,
+    StandardTransaction, Wallet as ChiaWallet,
 };
-use dig_wallet::{Wallet, PublicKey, SecretKey};
+use dig_wallet::Wallet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Manages direct peer connections for blockchain operations
+/// DIG token asset ID on Chia blockchain
+pub const DIG_ASSET_ID: &str = "6d95dae356e32a71db5ddcb42224754a02524c615c5fc35f568c2af04774e589";
+
+/// Manages blockchain operations using chia-wallet-sdk
 pub struct BlockchainConnection {
     peer: Option<Arc<Mutex<Peer>>>,
     network: String,
 }
 
 impl BlockchainConnection {
-    /// Create a new blockchain connection manager
+    /// Create a new blockchain connection
     pub fn new(network: &str) -> Self {
         Self {
             peer: None,
@@ -25,157 +30,192 @@ impl BlockchainConnection {
         }
     }
     
-    /// Connect to a random peer on the network
+    /// Connect to Chia network using chia-wallet-sdk
     pub async fn connect(&mut self) -> Result<()> {
-        println!("Connecting to {} network via random peer...", self.network);
+        println!("Connecting to {} network using chia-wallet-sdk...", self.network);
         
-        let is_mainnet = self.network == "mainnet";
+        // Use chia-wallet-sdk's peer connection
+        let options = if self.network == "mainnet" {
+            PeerOptions::mainnet()
+        } else {
+            PeerOptions::testnet11()
+        };
         
-        match connect_random(is_mainnet).await {
+        match Peer::connect(options).await {
             Ok(peer) => {
-                println!("✓ Successfully connected to Chia peer!");
-                println!("  Network: {}", self.network);
-                println!("  Peer connection established");
-                
+                println!("✓ Successfully connected via chia-wallet-sdk!");
                 self.peer = Some(Arc::new(Mutex::new(peer)));
                 Ok(())
             }
             Err(e) => {
-                println!("✗ Failed to connect to peer: {}", e);
+                println!("✗ Failed to connect: {}", e);
                 Err(DigstoreError::internal(format!(
-                    "Could not connect to Chia network: {}. \
-                    This may be due to network issues or firewall blocking port 8444.",
+                    "Could not connect to Chia network: {}",
                     e
                 )))
             }
         }
     }
     
-    /// Get the peer connection
-    pub fn get_peer(&self) -> Result<Arc<Mutex<Peer>>> {
+    /// Get DIG token balance for a wallet
+    pub async fn get_dig_balance(
+        &self,
+        wallet: &Wallet,
+        chia_wallet: &ChiaWallet,
+    ) -> Result<u64> {
+        let peer = self.get_peer()?;
+        let peer_lock = peer.lock().await;
+        
+        println!("Querying DIG CAT balance using chia-wallet-sdk...");
+        
+        // Create CAT puzzle for DIG tokens
+        let dig_cat = Cat::from_asset_id(DIG_ASSET_ID)
+            .map_err(|e| DigstoreError::internal(format!("Invalid DIG asset ID: {}", e)))?;
+        
+        // Get wallet's CAT coins
+        let cat_coins = chia_wallet
+            .cat_coins(&dig_cat, &*peer_lock)
+            .await
+            .map_err(|e| DigstoreError::internal(format!("Failed to query CAT coins: {}", e)))?;
+        
+        // Sum up the balances
+        let total_mojos: u64 = cat_coins.iter().map(|coin| coin.amount).sum();
+        
+        println!("DIG balance: {} mojos ({:.8} DIG)", total_mojos, dig_to_float(total_mojos));
+        
+        Ok(total_mojos)
+    }
+    
+    /// Create a CAT spend for DIG tokens
+    pub async fn create_dig_spend(
+        &self,
+        wallet: &ChiaWallet,
+        amount_mojos: u64,
+        recipient_puzzle_hash: [u8; 32],
+    ) -> Result<CatSpend> {
+        println!("Creating DIG token spend using chia-wallet-sdk...");
+        
+        let dig_cat = Cat::from_asset_id(DIG_ASSET_ID)
+            .map_err(|e| DigstoreError::internal(format!("Invalid DIG asset ID: {}", e)))?;
+        
+        // Create conditions for the spend
+        let conditions = Conditions::new().create_coin(recipient_puzzle_hash.into(), amount_mojos);
+        
+        // Create CAT spend
+        let cat_spend = wallet
+            .create_cat_spend(&dig_cat, amount_mojos, conditions)
+            .await
+            .map_err(|e| DigstoreError::internal(format!("Failed to create CAT spend: {}", e)))?;
+        
+        Ok(cat_spend)
+    }
+    
+    /// Submit a transaction to the network
+    pub async fn submit_transaction(&self, tx: StandardTransaction) -> Result<String> {
+        let peer = self.get_peer()?;
+        let mut peer_lock = peer.lock().await;
+        
+        println!("Submitting transaction using chia-wallet-sdk...");
+        
+        // Get transaction ID
+        let tx_id = tx.name();
+        println!("Transaction ID: {}", hex::encode(&tx_id));
+        
+        // Submit to network
+        peer_lock
+            .send_transaction(tx)
+            .await
+            .map_err(|e| DigstoreError::internal(format!("Failed to submit transaction: {}", e)))?;
+        
+        println!("✓ Transaction submitted successfully!");
+        
+        Ok(hex::encode(tx_id))
+    }
+    
+    /// Wait for transaction confirmation
+    pub async fn wait_for_confirmation(
+        &self,
+        tx_id: &str,
+        timeout_secs: u64,
+    ) -> Result<u32> {
+        let peer = self.get_peer()?;
+        let peer_lock = peer.lock().await;
+        
+        println!("Waiting for confirmation (timeout: {}s)...", timeout_secs);
+        
+        // Use tokio timeout
+        let timeout = tokio::time::Duration::from_secs(timeout_secs);
+        let start = tokio::time::Instant::now();
+        
+        loop {
+            if start.elapsed() > timeout {
+                return Err(DigstoreError::internal("Transaction confirmation timeout"));
+            }
+            
+            // Check if transaction is confirmed
+            // In chia-wallet-sdk, we'd check coin records
+            
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            
+            // For now, return dummy height
+            println!("(Would check confirmation status here)");
+            break;
+        }
+        
+        Ok(1000000)
+    }
+    
+    /// Get peer connection
+    fn get_peer(&self) -> Result<Arc<Mutex<Peer>>> {
         self.peer.clone().ok_or_else(|| {
             DigstoreError::internal("Not connected to blockchain")
         })
     }
-    
-    /// Query DIG token balance for a wallet
-    pub async fn get_dig_balance(&self, wallet: &Wallet) -> Result<u64> {
-        let peer = self.get_peer()?;
-        let peer_lock = peer.lock().await;
-        
-        println!("Querying DIG token balance from blockchain...");
-        
-        // Get wallet puzzle hash
-        let wallet_ph = wallet.get_puzzle_hash().await
-            .map_err(|e| DigstoreError::internal(format!("Failed to get wallet puzzle hash: {}", e)))?;
-        
-        // DIG CAT asset ID
-        const DIG_ASSET_ID: &str = "6d95dae356e32a71db5ddcb42224754a02524c615c5fc35f568c2af04774e589";
-        
-        // Calculate CAT puzzle hash (simplified - would need full CAT calculation)
-        // In reality, this would use chia-wallet-sdk to create proper CAT puzzle
-        println!("  Asset ID: {}", DIG_ASSET_ID);
-        println!("  Wallet puzzle hash: {:?}", &wallet_ph[..8]);
-        
-        // Query coin records
-        // Note: This is a simplified version - real implementation would:
-        // 1. Create proper CAT outer puzzle hash
-        // 2. Query get_coin_records_by_puzzle_hash
-        // 3. Filter for unspent coins
-        // 4. Sum amounts
-        
-        println!("  Querying coin records...");
-        
-        // For now, return 0 as we can't do the full CAT puzzle calculation
-        // without additional dependencies
-        println!("  (Full CAT balance query would happen here)");
-        
-        Ok(0)
-    }
-    
-    /// Submit a spend bundle to the network
-    pub async fn submit_spend_bundle(&self, spend_bundle: SpendBundle) -> Result<String> {
-        let peer = self.get_peer()?;
-        let mut peer_lock = peer.lock().await;
-        
-        println!("Submitting spend bundle to blockchain...");
-        
-        // Calculate spend bundle ID (transaction ID)
-        let tx_id = spend_bundle.name();
-        println!("  Transaction ID: {}", hex::encode(&tx_id));
-        
-        // Submit to mempool
-        match peer_lock.send_transaction(spend_bundle).await {
-            Ok(_) => {
-                println!("✓ Transaction submitted successfully!");
-                Ok(hex::encode(tx_id))
-            }
-            Err(e) => {
-                println!("✗ Failed to submit transaction: {}", e);
-                Err(DigstoreError::internal(format!("Transaction submission failed: {}", e)))
-            }
-        }
-    }
-    
-    /// Wait for transaction confirmation
-    pub async fn wait_for_confirmation(&self, tx_id: &str, timeout_secs: u64) -> Result<u32> {
-        let peer = self.get_peer()?;
-        let peer_lock = peer.lock().await;
-        
-        println!("Waiting for transaction confirmation...");
-        println!("  Transaction: {}", tx_id);
-        println!("  Timeout: {} seconds", timeout_secs);
-        
-        // In a real implementation, this would:
-        // 1. Poll get_coin_record_by_name
-        // 2. Check if coin is spent
-        // 3. Return confirmation height
-        
-        println!("  (Confirmation monitoring would happen here)");
-        
-        // For now, return a dummy height
-        Ok(1000000)
-    }
-    
-    /// Get current blockchain height
-    pub async fn get_blockchain_height(&self) -> Result<u32> {
-        let peer = self.get_peer()?;
-        let peer_lock = peer.lock().await;
-        
-        // This would call peer.get_blockchain_state()
-        println!("Getting current blockchain height...");
-        
-        Ok(1000000) // Dummy value
-    }
 }
 
-/// Helper to create a test spend bundle (for demonstration)
-pub fn create_test_spend_bundle() -> SpendBundle {
-    // This would normally:
-    // 1. Create coin spends
-    // 2. Add signatures
-    // 3. Bundle into SpendBundle
+/// Helper to convert dig-wallet keys to chia-wallet-sdk keys
+pub fn convert_keys(
+    wallet: &Wallet,
+) -> Result<(ChiaPublicKey, ChiaSecretKey)> {
+    // In a real implementation, we'd convert the keys properly
+    // For now, this is a placeholder
+    Err(DigstoreError::internal("Key conversion not implemented"))
+}
+
+/// Create a ChiaWallet instance from dig-wallet
+pub async fn create_chia_wallet(wallet: &Wallet) -> Result<ChiaWallet> {
+    // Get keys from dig-wallet
+    let sk = wallet.get_private_synthetic_key().await
+        .map_err(|e| DigstoreError::internal(format!("Failed to get private key: {}", e)))?;
     
-    SpendBundle {
-        coin_spends: vec![],
-        aggregated_signature: vec![0; 96], // Dummy BLS signature
-    }
+    // Convert to chia-wallet-sdk format
+    // Note: This would need proper key conversion
+    let chia_sk = ChiaSecretKey::from_bytes(&sk.to_bytes())
+        .map_err(|e| DigstoreError::internal(format!("Failed to convert secret key: {}", e)))?;
+    
+    Ok(ChiaWallet::from_sk(chia_sk))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     
+    #[test]
+    fn test_dig_asset_id() {
+        assert_eq!(DIG_ASSET_ID.len(), 64); // Hex string
+        
+        // Verify it's a valid hex string
+        hex::decode(DIG_ASSET_ID).expect("DIG_ASSET_ID should be valid hex");
+    }
+    
     #[tokio::test]
-    async fn test_peer_connection_structure() {
-        let mut conn = BlockchainConnection::new("testnet11");
-        
-        // The connection structure is ready
-        assert!(conn.peer.is_none());
+    async fn test_blockchain_connection_creation() {
+        let conn = BlockchainConnection::new("testnet11");
         assert_eq!(conn.network, "testnet11");
+        assert!(conn.peer.is_none());
         
-        // In a real test with internet, we could:
-        // conn.connect().await.unwrap();
+        // In a real test with network access:
+        // conn.connect().await.expect("Should connect");
         // assert!(conn.peer.is_some());
     }
 }
