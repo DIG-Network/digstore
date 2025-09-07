@@ -4,6 +4,7 @@
 //! Datastore coins are CAT (Colored Coins) on the Chia blockchain that represent
 //! storage commitments and require DIG token collateral.
 
+pub mod blockchain;
 pub mod coin;
 pub mod collateral;
 pub mod config;
