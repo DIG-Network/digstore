@@ -381,8 +381,28 @@ impl DatastoreCoinManager {
     
     /// Check DIG token balance for a wallet
     fn check_dig_balance(&self, wallet: &Wallet) -> Result<u64> {
+        println!("Checking DIG token balance...");
+        
+        // This would make actual blockchain calls:
+        // 1. Connect to Chia node
+        // 2. Query CAT coins with DIG asset ID
+        // 3. Sum up all DIG coin amounts
+        
         self.runtime.block_on(async {
-            wallet.get_cat_balance("DIG").await
+            match wallet.get_cat_balance("DIG").await {
+                Ok(balance) => {
+                    println!("DIG balance: {} units ({:.8} DIG)", balance, balance as f64 / 100_000_000.0);
+                    Ok(balance)
+                }
+                Err(e) => {
+                    println!("Warning: Could not check DIG balance: {}", e);
+                    println!("This usually means:");
+                    println!("  - No Chia node is running");
+                    println!("  - Node is not synced");
+                    println!("  - Network connection issues");
+                    Err(e)
+                }
+            }
         }).map_err(|e| {
             DigstoreError::internal(format!("Failed to check DIG balance: {}", e))
         })

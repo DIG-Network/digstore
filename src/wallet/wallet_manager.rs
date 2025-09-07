@@ -398,14 +398,21 @@ impl WalletManager {
         match rt.block_on(async {
             Wallet::load(Some(self.wallet_name.clone()), false).await
         }) {
-            Ok(_) => return Ok(()), // Wallet already exists, nothing to do
+            Ok(_) => {
+                println!("Wallet '{}' already exists, skipping import", self.wallet_name);
+                return Ok(())
+            }, // Wallet already exists, nothing to do
             Err(dig_wallet::WalletError::WalletNotFound(_)) => {
+                println!("Importing wallet '{}' with provided mnemonic...", self.wallet_name);
+                
                 // Wallet doesn't exist, import it
                 rt.block_on(async {
                     Wallet::import_wallet(&self.wallet_name, Some(mnemonic)).await
                 }).map_err(|e| DigstoreError::ConfigurationError {
                     reason: format!("Failed to import wallet: {}", e),
                 })?;
+                
+                println!("✓ Wallet imported successfully");
                 
                 // Set as active profile in config
                 let mut config = GlobalConfig::load().unwrap_or_default();
