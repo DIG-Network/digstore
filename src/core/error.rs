@@ -91,6 +91,10 @@ pub enum DigstoreError {
     #[error("Home directory not found")]
     HomeDirectoryNotFound,
 
+    /// Network-related errors
+    #[error("Network error: {reason}")]
+    NetworkError { reason: String },
+
     /// I/O errors
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

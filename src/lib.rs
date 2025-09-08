@@ -52,6 +52,7 @@ pub mod ignore;
 pub mod proofs;
 pub mod security;
 pub mod storage;
+pub mod update;
 pub mod urn;
 pub mod wallet;
 

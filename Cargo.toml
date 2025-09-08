@@ -92,6 +92,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"]
 tokio = { version = "1.35", features = ["rt-multi-thread", "fs", "io-util"], optional = true }
 datalayer-driver = "0.1.50"
 serde_yaml = "0.9.34"
+reqwest = { version = "0.12.23", features = ["blocking"] }
 
 [build-dependencies]
 embed-resource = "2.4"

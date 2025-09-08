@@ -286,6 +286,21 @@ pub enum Commands {
         command: LayerCommands,
     },
 
+    /// Check for and install updates
+    Update {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check_only: bool,
+
+        /// Force update without confirmation
+        #[arg(long)]
+        force: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Staging area management
     Staged {
         #[command(subcommand)]

@@ -26,6 +26,7 @@ mod ignore;
 mod proofs;
 mod security;
 mod storage;
+mod update;
 mod urn;
 mod wallet;
 
@@ -82,6 +83,11 @@ fn main() -> Result<()> {
         let wallet_profile = cli.wallet_profile.clone();
         let wallet_manager = WalletManager::new_with_profile(wallet_profile)?;
         wallet_manager.ensure_wallet_initialized()?;
+    }
+
+    // Check for updates (unless running update command or in quiet mode)
+    if !matches!(cli.command, Commands::Update { .. }) && !cli.quiet {
+        check_and_prompt_for_updates()?;
     }
 
     // Execute the command
@@ -191,6 +197,12 @@ fn main() -> Result<()> {
             },
         },
 
+        Commands::Update {
+            check_only,
+            force,
+            json,
+        } => cli::commands::update::execute(check_only, force, json),
+        
         Commands::Layer { command } => match command {
             LayerCommands::List {
                 json,
@@ -343,9 +355,61 @@ fn needs_wallet_initialization(command: &Commands) -> bool {
         // Commands that don't need wallet initialization
         Commands::Completion { .. } => false,
         Commands::Config { .. } => false,
+        Commands::Update { .. } => false,
         Commands::Wallet { .. } => false, // Wallet commands manage their own initialization
 
         // All other commands require wallet initialization
         _ => true,
     }
+}
+
+/// Check for updates and prompt user if available
+fn check_and_prompt_for_updates() -> Result<()> {
+    use colored::Colorize;
+    use dialoguer::Confirm;
+    
+    // Only check occasionally to avoid slowing down commands
+    let update_info = match crate::update::check_for_updates() {
+        Ok(info) => info,
+        Err(_) => return Ok(()), // Silently ignore update check failures
+    };
+
+    if !update_info.update_available {
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "{} {} Update available: {} → {}",
+        "🎉".bright_yellow(),
+        "Digstore".bright_cyan().bold(),
+        update_info.current_version.dimmed(),
+        update_info.latest_version.bright_green()
+    );
+
+    let should_update = Confirm::new()
+        .with_prompt("Would you like to download and install the update now?")
+        .default(false)
+        .interact()
+        .unwrap_or(false);
+
+    if should_update {
+        println!();
+        if let Some(download_url) = update_info.download_url {
+            match crate::update::download_and_install_update(&download_url) {
+                Ok(_) => {
+                    println!("{}", "✓ Update completed! Please restart your terminal.".green().bold());
+                }
+                Err(e) => {
+                    println!("{} Update failed: {}", "✗".red(), e);
+                    println!("  {} Manual download: https://github.com/DIG-Network/digstore/releases", "→".cyan());
+                }
+            }
+        }
+    } else {
+        println!("  {} Use 'digstore update' to update later", "→".cyan());
+    }
+
+    println!();
+    Ok(())
 }

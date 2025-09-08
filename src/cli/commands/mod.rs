@@ -11,6 +11,7 @@ pub mod get;
 pub mod init;
 pub mod keygen;
 pub mod status;
+pub mod update;
 pub mod wallet;
 
 // Command subtrees

@@ -10,9 +10,52 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  bump-version:
+    name: Bump Version
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GH_ACCESS_TOKEN }}
+    
+    - name: Setup Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+    
+    - name: Bump version
+      id: bump
+      run: |
+        # Read current version
+        CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+        echo "Current version: $CURRENT_VERSION"
+        
+        # Parse semantic version
+        IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+        
+        # Increment patch version
+        new_patch=$((patch + 1))
+        NEW_VERSION="$major.$minor.$new_patch"
+        
+        echo "New version: $NEW_VERSION"
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        
+        # Update Cargo.toml
+        sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+        
+        # Commit version bump
+        git add Cargo.toml
+        git commit -m "Bump version to $NEW_VERSION [skip ci]" || echo "No changes to commit"
+        git push || echo "No changes to push"
+
   test:
     name: Test Suite
     runs-on: ${{ matrix.os }}
+    needs: bump-version
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -78,6 +121,7 @@ jobs:
   build:
     name: Build Release
     runs-on: ${{ matrix.os }}
+    needs: bump-version
     strategy:
       matrix:
         include:
@@ -121,6 +165,7 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    needs: bump-version
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
@@ -132,6 +177,7 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    needs: bump-version
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
@@ -150,6 +196,7 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    needs: bump-version
     permissions:
       contents: write
     steps:
