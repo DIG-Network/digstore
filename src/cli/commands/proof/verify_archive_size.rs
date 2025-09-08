@@ -6,6 +6,7 @@ use anyhow::Result;
 use colored::Colorize;
 
 /// Execute the proof verify-archive-size command
+#[allow(clippy::too_many_arguments)]
 pub fn execute(
     proof_input: String,
     store_id: String,

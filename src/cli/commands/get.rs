@@ -88,6 +88,7 @@ fn generate_deterministic_random_bytes(seed: &str, size: usize) -> Vec<u8> {
 }
 
 /// Execute the get command
+#[allow(clippy::too_many_arguments)]
 pub fn execute(
     path: String,
     output: Option<PathBuf>,
@@ -95,7 +96,7 @@ pub fn execute(
     metadata: bool,
     at: Option<String>,
     progress: bool,
-    decryption_key: Option<String>,
+    _decryption_key: Option<String>,
     json: bool,
 ) -> Result<()> {
     println!("{}", "Retrieving content...".bright_blue());

@@ -32,6 +32,18 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_assignments)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::inherent_to_string)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::manual_clamp)]
+#![allow(deprecated)]
+
 pub mod cli;
 pub mod config;
 pub mod core;

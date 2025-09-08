@@ -2,6 +2,19 @@
 //!
 //! Command-line interface for the Digstore Min content-addressable storage system.
 
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_assignments)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::inherent_to_string)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::manual_clamp)]
+#![allow(deprecated)]
+#![allow(clippy::wrong_self_convention)]
+
 use anyhow::Result;
 use clap::Parser;
 

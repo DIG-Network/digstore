@@ -901,9 +901,6 @@ impl Store {
         self.store_id
     }
 
-    /// Get the global store path
-    // Removed duplicate global_path method - using the one that returns PathBuf
-
     /// Get the project path (if in project context)
     pub fn project_path(&self) -> Option<&Path> {
         self.project_path.as_deref()

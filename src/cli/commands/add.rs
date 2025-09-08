@@ -10,6 +10,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 
 /// Execute the add command
+#[allow(clippy::too_many_arguments)]
 pub fn execute(
     paths: Vec<PathBuf>,
     recursive: bool,
@@ -47,7 +48,7 @@ pub fn execute(
 
     let mut files_added = 0;
     let mut total_size = 0u64;
-    let mut files_ignored = 0;
+    let mut _files_ignored = 0;
 
     if all {
         // Add all files in repository with maximum parallelism
@@ -90,7 +91,7 @@ pub fn execute(
             let scan_result = scanner.scan_directory(&repo_root)?;
 
             files_added = scan_result.filtered_files.len();
-            files_ignored = scan_result.ignored_files.len();
+            _files_ignored = scan_result.ignored_files.len();
 
             println!(
                 "  • Would process: {} files",

@@ -301,6 +301,7 @@ impl DigArchive {
         // Write layer data to archive
         let mut file = OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .open(&self.archive_path)?;
 

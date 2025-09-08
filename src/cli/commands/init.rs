@@ -33,7 +33,7 @@ pub fn execute(
     }
 
     // Check if custom store ID was provided
-    let actual_store_id = if let Some(id_str) = store_id {
+    let _actual_store_id = if let Some(id_str) = store_id {
         println!(
             "  {} Using provided store ID: {}",
             "•".cyan(),

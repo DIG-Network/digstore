@@ -3,7 +3,7 @@
 use crate::core::{error::*, types::*};
 use crate::proofs::merkle::{DigstoreProof, MerkleTree};
 use crate::storage::layer::Layer;
-use sha2::Digest;
+// use sha2::Digest;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
