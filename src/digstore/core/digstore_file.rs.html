@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>
 <a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Load .digstore file from disk
 <a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub fn </span>load(path: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#41 id=41 data-nosnippet>41</a>        <span class="kw">let </span>content = std::fs::read_to_string(path).map_err(|e| DigstoreError::Io(e))<span class="question-mark">?</span>;
+<a href=#41 id=41 data-nosnippet>41</a>        <span class="kw">let </span>content = std::fs::read_to_string(path).map_err(DigstoreError::Io)<span class="question-mark">?</span>;
 <a href=#42 id=42 data-nosnippet>42</a>
 <a href=#43 id=43 data-nosnippet>43</a>        <span class="kw">let </span>digstore_file: DigstoreFile =
 <a href=#44 id=44 data-nosnippet>44</a>            toml::from_str(<span class="kw-2">&amp;</span>content).map_err(|e| DigstoreError::ConfigurationError {
@@ -70,7 +70,7 @@
 <a href=#70 id=70 data-nosnippet>70</a>                reason: <span class="macro">format!</span>(<span class="string">"Failed to serialize .digstore file: {}"</span>, e),
 <a href=#71 id=71 data-nosnippet>71</a>            })<span class="question-mark">?</span>;
 <a href=#72 id=72 data-nosnippet>72</a>
-<a href=#73 id=73 data-nosnippet>73</a>        std::fs::write(path, content).map_err(|e| DigstoreError::Io(e))<span class="question-mark">?</span>;
+<a href=#73 id=73 data-nosnippet>73</a>        std::fs::write(path, content).map_err(DigstoreError::Io)<span class="question-mark">?</span>;
 <a href=#74 id=74 data-nosnippet>74</a>
 <a href=#75 id=75 data-nosnippet>75</a>        <span class="prelude-val">Ok</span>(())
 <a href=#76 id=76 data-nosnippet>76</a>    }

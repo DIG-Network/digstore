@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>std::collections::HashMap;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>std::num::NonZeroUsize;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>std::sync::{Arc, Mutex};
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>std::time::{Duration, Instant};
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>std::time::Instant;
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a><span class="doccomment">/// Intelligent chunk cache with LRU eviction
 <a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">pub struct </span>ChunkCache {
@@ -78,7 +78,7 @@
 <a href=#78 id=78 data-nosnippet>78</a>
 <a href=#79 id=79 data-nosnippet>79</a>            <span class="comment">// Check if should promote to hot cache
 <a href=#80 id=80 data-nosnippet>80</a>            </span><span class="kw">if </span><span class="self">self</span>.should_promote_to_hot(hash) {
-<a href=#81 id=81 data-nosnippet>81</a>                <span class="self">self</span>.promote_to_hot_cache(hash.clone(), chunk.clone());
+<a href=#81 id=81 data-nosnippet>81</a>                <span class="self">self</span>.promote_to_hot_cache(<span class="kw-2">*</span>hash, chunk.clone());
 <a href=#82 id=82 data-nosnippet>82</a>            }
 <a href=#83 id=83 data-nosnippet>83</a>
 <a href=#84 id=84 data-nosnippet>84</a>            <span class="self">self</span>.update_access_metadata(hash);

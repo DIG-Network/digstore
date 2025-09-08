@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>std::cell::RefCell;
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a><span class="macro">thread_local!</span> {
-<a href=#6 id=6 data-nosnippet>6</a>    <span class="kw">static </span>CLI_CONTEXT: RefCell&lt;<span class="prelude-ty">Option</span>&lt;CliContext&gt;&gt; = RefCell::new(<span class="prelude-val">None</span>);
+<a href=#6 id=6 data-nosnippet>6</a>    <span class="kw">static </span>CLI_CONTEXT: RefCell&lt;<span class="prelude-ty">Option</span>&lt;CliContext&gt;&gt; = <span class="kw">const </span>{ RefCell::new(<span class="prelude-val">None</span>) };
 <a href=#7 id=7 data-nosnippet>7</a>}
 <a href=#8 id=8 data-nosnippet>8</a>
 <a href=#9 id=9 data-nosnippet>9</a><span class="doccomment">/// Context containing global CLI options

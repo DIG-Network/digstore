@@ -55,12 +55,12 @@
 <a href=#55 id=55 data-nosnippet>55</a>    </span>hasher.update(<span class="string">b"digstore_urn_transform_v1:"</span>);
 <a href=#56 id=56 data-nosnippet>56</a>
 <a href=#57 id=57 data-nosnippet>57</a>    <span class="comment">// Add the public key
-<a href=#58 id=58 data-nosnippet>58</a>    </span>hasher.update(<span class="kw-2">&amp;</span>public_key.algorithm.as_bytes());
-<a href=#59 id=59 data-nosnippet>59</a>    hasher.update(<span class="kw-2">&amp;</span>(public_key.bytes.len() <span class="kw">as </span>u32).to_le_bytes());
+<a href=#58 id=58 data-nosnippet>58</a>    </span>hasher.update(public_key.algorithm.as_bytes());
+<a href=#59 id=59 data-nosnippet>59</a>    hasher.update((public_key.bytes.len() <span class="kw">as </span>u32).to_le_bytes());
 <a href=#60 id=60 data-nosnippet>60</a>    hasher.update(<span class="kw-2">&amp;</span>public_key.bytes);
 <a href=#61 id=61 data-nosnippet>61</a>
 <a href=#62 id=62 data-nosnippet>62</a>    <span class="comment">// Add the URN
-<a href=#63 id=63 data-nosnippet>63</a>    </span>hasher.update(<span class="kw-2">&amp;</span>(urn.len() <span class="kw">as </span>u32).to_le_bytes());
+<a href=#63 id=63 data-nosnippet>63</a>    </span>hasher.update((urn.len() <span class="kw">as </span>u32).to_le_bytes());
 <a href=#64 id=64 data-nosnippet>64</a>    hasher.update(urn.as_bytes());
 <a href=#65 id=65 data-nosnippet>65</a>
 <a href=#66 id=66 data-nosnippet>66</a>    <span class="comment">// Get the hash

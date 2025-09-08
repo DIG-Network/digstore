@@ -37,7 +37,7 @@
 <a href=#37 id=37 data-nosnippet>37</a>        </span>.ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">"Not in a repository (no .digstore file found)"</span>))<span class="question-mark">?</span>;
 <a href=#38 id=38 data-nosnippet>38</a>
 <a href=#39 id=39 data-nosnippet>39</a>    <span class="comment">// Open the store
-<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>store = Store::open(<span class="kw-2">&amp;</span>repo_root)<span class="question-mark">?</span>;
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">let </span>store = Store::open(<span class="kw-2">&amp;</span>repo_root)<span class="question-mark">?</span>;
 <a href=#41 id=41 data-nosnippet>41</a>
 <a href=#42 id=42 data-nosnippet>42</a>    <span class="comment">// Get all staged files
 <a href=#43 id=43 data-nosnippet>43</a>    </span><span class="kw">let </span>staged_files = store.staging.get_all_staged_files()<span class="question-mark">?</span>;
@@ -97,7 +97,7 @@
 <a href=#97 id=97 data-nosnippet>97</a>                    <span class="string">"size"</span>: f.size,
 <a href=#98 id=98 data-nosnippet>98</a>                    <span class="string">"hash"</span>: f.hash.to_hex(),
 <a href=#99 id=99 data-nosnippet>99</a>                    <span class="string">"chunks"</span>: f.chunks.len(),
-<a href=#100 id=100 data-nosnippet>100</a>                    <span class="string">"modified_time"</span>: f.modified_time.map(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())).flatten()
+<a href=#100 id=100 data-nosnippet>100</a>                    <span class="string">"modified_time"</span>: f.modified_time.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))
 <a href=#101 id=101 data-nosnippet>101</a>                })
 <a href=#102 id=102 data-nosnippet>102</a>            } <span class="kw">else </span>{
 <a href=#103 id=103 data-nosnippet>103</a>                <span class="macro">json!</span>(f.path.display().to_string())
