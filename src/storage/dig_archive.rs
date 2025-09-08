@@ -218,6 +218,11 @@ impl DigArchive {
         file.sync_all()?;
         drop(file);
 
+        // On Windows, add a small delay to ensure file handle is fully released
+        // before attempting to memory-map the file
+        #[cfg(windows)]
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
         let mut archive = Self {
             archive_path,
             header,
@@ -226,7 +231,30 @@ impl DigArchive {
             dirty: false,
         };
 
+        // Retry memory mapping with backoff on Windows
+        #[cfg(windows)]
+        {
+            let mut attempts = 0;
+            const MAX_ATTEMPTS: usize = 5;
+            
+            loop {
+                match archive.load_mmap() {
+                    Ok(()) => break,
+                    Err(e) if attempts < MAX_ATTEMPTS => {
+                        attempts += 1;
+                        // Exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
+                        let delay = 50 * (1 << attempts);
+                        std::thread::sleep(std::time::Duration::from_millis(delay));
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        #[cfg(not(windows))]
         archive.load_mmap()?;
+
         Ok(archive)
     }
 

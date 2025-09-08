@@ -93,11 +93,19 @@ impl Store {
                 }
             }
 
-            // Longer delay to ensure all file handles are released on Windows
-            std::thread::sleep(std::time::Duration::from_millis(500));
-
-            // Try to force garbage collection
-            std::hint::black_box(());
+            // On Windows, use longer delay and force garbage collection
+            #[cfg(windows)]
+            {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                // Force garbage collection multiple times to ensure cleanup
+                for _ in 0..3 {
+                    std::hint::black_box(());
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+            
+            #[cfg(not(windows))]
+            std::thread::sleep(std::time::Duration::from_millis(100));
 
             // Remove existing .digstore file to proceed with new initialization
             std::fs::remove_file(&digstore_path)?;
