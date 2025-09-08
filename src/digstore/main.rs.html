@@ -202,7 +202,7 @@
 <a href=#202 id=202 data-nosnippet>202</a>            force,
 <a href=#203 id=203 data-nosnippet>203</a>            json,
 <a href=#204 id=204 data-nosnippet>204</a>        } =&gt; cli::commands::update::execute(check_only, force, json),
-<a href=#205 id=205 data-nosnippet>205</a>        
+<a href=#205 id=205 data-nosnippet>205</a>
 <a href=#206 id=206 data-nosnippet>206</a>        Commands::Layer { command } =&gt; <span class="kw">match </span>command {
 <a href=#207 id=207 data-nosnippet>207</a>            LayerCommands::List {
 <a href=#208 id=208 data-nosnippet>208</a>                json,
@@ -367,7 +367,7 @@
 <a href=#367 id=367 data-nosnippet>367</a></span><span class="kw">fn </span>check_and_prompt_for_updates() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">use </span>colored::Colorize;
 <a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">use </span>dialoguer::Confirm;
-<a href=#370 id=370 data-nosnippet>370</a>    
+<a href=#370 id=370 data-nosnippet>370</a>
 <a href=#371 id=371 data-nosnippet>371</a>    <span class="comment">// Only check occasionally to avoid slowing down commands
 <a href=#372 id=372 data-nosnippet>372</a>    </span><span class="kw">let </span>update_info = <span class="kw">match </span><span class="kw">crate</span>::update::check_for_updates() {
 <a href=#373 id=373 data-nosnippet>373</a>        <span class="prelude-val">Ok</span>(info) =&gt; info,
@@ -398,18 +398,26 @@
 <a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(download_url) = update_info.download_url {
 <a href=#399 id=399 data-nosnippet>399</a>            <span class="kw">match </span><span class="kw">crate</span>::update::download_and_install_update(<span class="kw-2">&amp;</span>download_url) {
 <a href=#400 id=400 data-nosnippet>400</a>                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-<a href=#401 id=401 data-nosnippet>401</a>                    <span class="macro">println!</span>(<span class="string">"{}"</span>, <span class="string">"✓ Update completed! Please restart your terminal."</span>.green().bold());
-<a href=#402 id=402 data-nosnippet>402</a>                }
-<a href=#403 id=403 data-nosnippet>403</a>                <span class="prelude-val">Err</span>(e) =&gt; {
-<a href=#404 id=404 data-nosnippet>404</a>                    <span class="macro">println!</span>(<span class="string">"{} Update failed: {}"</span>, <span class="string">"✗"</span>.red(), e);
-<a href=#405 id=405 data-nosnippet>405</a>                    <span class="macro">println!</span>(<span class="string">"  {} Manual download: https://github.com/DIG-Network/digstore/releases"</span>, <span class="string">"→"</span>.cyan());
-<a href=#406 id=406 data-nosnippet>406</a>                }
-<a href=#407 id=407 data-nosnippet>407</a>            }
-<a href=#408 id=408 data-nosnippet>408</a>        }
-<a href=#409 id=409 data-nosnippet>409</a>    } <span class="kw">else </span>{
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="macro">println!</span>(<span class="string">"  {} Use 'digstore update' to update later"</span>, <span class="string">"→"</span>.cyan());
-<a href=#411 id=411 data-nosnippet>411</a>    }
-<a href=#412 id=412 data-nosnippet>412</a>
-<a href=#413 id=413 data-nosnippet>413</a>    <span class="macro">println!</span>();
-<a href=#414 id=414 data-nosnippet>414</a>    <span class="prelude-val">Ok</span>(())
-<a href=#415 id=415 data-nosnippet>415</a>}</code></pre></div></section></main></body></html>
+<a href=#401 id=401 data-nosnippet>401</a>                    <span class="macro">println!</span>(
+<a href=#402 id=402 data-nosnippet>402</a>                        <span class="string">"{}"</span>,
+<a href=#403 id=403 data-nosnippet>403</a>                        <span class="string">"✓ Update completed! Please restart your terminal."
+<a href=#404 id=404 data-nosnippet>404</a>                            </span>.green()
+<a href=#405 id=405 data-nosnippet>405</a>                            .bold()
+<a href=#406 id=406 data-nosnippet>406</a>                    );
+<a href=#407 id=407 data-nosnippet>407</a>                },
+<a href=#408 id=408 data-nosnippet>408</a>                <span class="prelude-val">Err</span>(e) =&gt; {
+<a href=#409 id=409 data-nosnippet>409</a>                    <span class="macro">println!</span>(<span class="string">"{} Update failed: {}"</span>, <span class="string">"✗"</span>.red(), e);
+<a href=#410 id=410 data-nosnippet>410</a>                    <span class="macro">println!</span>(
+<a href=#411 id=411 data-nosnippet>411</a>                        <span class="string">"  {} Manual download: https://github.com/DIG-Network/digstore/releases"</span>,
+<a href=#412 id=412 data-nosnippet>412</a>                        <span class="string">"→"</span>.cyan()
+<a href=#413 id=413 data-nosnippet>413</a>                    );
+<a href=#414 id=414 data-nosnippet>414</a>                },
+<a href=#415 id=415 data-nosnippet>415</a>            }
+<a href=#416 id=416 data-nosnippet>416</a>        }
+<a href=#417 id=417 data-nosnippet>417</a>    } <span class="kw">else </span>{
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="macro">println!</span>(<span class="string">"  {} Use 'digstore update' to update later"</span>, <span class="string">"→"</span>.cyan());
+<a href=#419 id=419 data-nosnippet>419</a>    }
+<a href=#420 id=420 data-nosnippet>420</a>
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="macro">println!</span>();
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="prelude-val">Ok</span>(())
+<a href=#423 id=423 data-nosnippet>423</a>}</code></pre></div></section></main></body></html>
