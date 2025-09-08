@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["global_config"]};
+window.SIDEBAR_ITEMS = {"mod":["global_config","store_config"]};

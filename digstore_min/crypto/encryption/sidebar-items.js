@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["decrypt_data","encrypt_data"]};
+window.SIDEBAR_ITEMS = {"fn":["decrypt_data","decrypt_data_with_key","encrypt_data","encrypt_data_with_key"]};
