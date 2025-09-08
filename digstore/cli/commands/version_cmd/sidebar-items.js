@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["execute","install_current_binary","install_current_version","list_versions","remove_version","set_active_version","show_current_version","show_version_info"]};

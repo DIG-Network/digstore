@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["installer","version_check"]};
+window.SIDEBAR_ITEMS = {"mod":["installer","version_check","version_manager"]};
