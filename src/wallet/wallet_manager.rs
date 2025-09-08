@@ -58,7 +58,7 @@ impl WalletManager {
         if self.ensure_dig_directory_exists().is_err() {
             return WalletStatus::NotInitialized;
         }
-        
+
         // Proactively check for and fix keyring issues
         if let Err(_) = self.verify_keyring_health() {
             // If keyring verification fails, try cleanup
@@ -135,7 +135,9 @@ impl WalletManager {
                         match serde_yaml::from_str::<serde_yaml::Value>(&content) {
                             Ok(yaml) => {
                                 // Check if it has the expected structure
-                                if !yaml.is_mapping() || !yaml.get("wallets").map_or(false, |w| w.is_mapping()) {
+                                if !yaml.is_mapping()
+                                    || !yaml.get("wallets").map_or(false, |w| w.is_mapping())
+                                {
                                     // Invalid structure, replace with proper format
                                     let proper_keyring = "wallets: {}\n";
                                     std::fs::write(&keyring_path, proper_keyring)?;
@@ -145,7 +147,7 @@ impl WalletManager {
                                 // YAML is invalid, replace with proper structure
                                 let proper_keyring = "wallets: {}\n";
                                 std::fs::write(&keyring_path, proper_keyring)?;
-                            }
+                            },
                         }
                     }
                 },
@@ -163,11 +165,11 @@ impl WalletManager {
     /// Verify keyring file health and fix any issues
     fn verify_keyring_health(&self) -> Result<()> {
         use directories::UserDirs;
-        
+
         let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
         let dig_dir = user_dirs.home_dir().join(".dig");
         let keyring_path = dig_dir.join("keyring.yaml");
-        
+
         if keyring_path.exists() {
             match std::fs::read_to_string(&keyring_path) {
                 Ok(content) => {
@@ -175,7 +177,8 @@ impl WalletManager {
                     if let Err(_) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
                         // Malformed YAML - recreate completely
                         return Err(DigstoreError::ConfigurationError {
-                            reason: "Keyring file is malformed and needs to be recreated".to_string(),
+                            reason: "Keyring file is malformed and needs to be recreated"
+                                .to_string(),
                         });
                     } else {
                         // YAML is valid, but check if it has basic structure we expect
@@ -194,10 +197,10 @@ impl WalletManager {
                     return Err(DigstoreError::ConfigurationError {
                         reason: "Keyring file is unreadable and needs to be recreated".to_string(),
                     });
-                }
+                },
             }
         }
-        
+
         Ok(())
     }
 
@@ -347,7 +350,7 @@ impl WalletManager {
     fn generate_new_wallet_with_context(&self, is_first_time: bool) -> Result<()> {
         // Ensure .dig directory and keyring exist before wallet creation
         self.ensure_dig_directory_exists()?;
-        
+
         // Additional safety: verify keyring is readable before proceeding
         self.verify_keyring_health()?;
 
@@ -471,7 +474,7 @@ impl WalletManager {
     fn import_existing_wallet(&self) -> Result<()> {
         // Ensure .dig directory and keyring exist before wallet import
         self.ensure_dig_directory_exists()?;
-        
+
         // Verify keyring health before import
         self.verify_keyring_health()?;
 
@@ -591,32 +594,31 @@ impl WalletManager {
     /// Manual wallet cleanup when keyring is unreadable or malformed
     fn manual_wallet_cleanup(&self) -> Result<()> {
         use directories::UserDirs;
-        
+
         let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
         let dig_dir = user_dirs.home_dir().join(".dig");
         let keyring_path = dig_dir.join("keyring.yaml");
-        
+
         // Completely remove and recreate the keyring file to ensure clean state
         if keyring_path.exists() {
             std::fs::remove_file(&keyring_path)?;
         }
-        
+
         // Ensure directory exists
         std::fs::create_dir_all(&dig_dir)?;
-        
+
         // Create a fresh, properly formatted keyring file
         let fresh_keyring = "wallets: {}\n";
         std::fs::write(&keyring_path, fresh_keyring)?;
-        
+
         Ok(())
     }
-
 
     /// Auto-generate wallet without prompts
     pub fn auto_generate_wallet(&self) -> Result<()> {
         // Ensure .dig directory exists first
         self.ensure_dig_directory_exists()?;
-        
+
         // Verify keyring health before auto-generation
         self.verify_keyring_health()?;
 
@@ -661,7 +663,7 @@ impl WalletManager {
     pub fn auto_import_wallet(&self, mnemonic: &str) -> Result<()> {
         // Ensure .dig directory exists first
         self.ensure_dig_directory_exists()?;
-        
+
         // Verify keyring health before auto-import
         self.verify_keyring_health()?;
 

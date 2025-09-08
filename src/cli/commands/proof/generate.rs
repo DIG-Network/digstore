@@ -268,8 +268,8 @@ mod tests {
     #[test]
     fn test_format_proof_as_text() {
         use crate::core::types::Hash;
-        use crate::proofs::proof::{ProofMetadata, ProofPosition};
         use crate::proofs::proof::ProofTarget;
+        use crate::proofs::proof::{ProofMetadata, ProofPosition};
 
         let proof = Proof {
             version: "1.0".to_string(),
