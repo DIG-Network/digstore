@@ -15,7 +15,7 @@ pub enum ScanPhase {
     Filtering,
     /// Processing filtered files
     Processing,
-    /// Scan completed
+    /// Scan completed successfully
     Complete,
 }
 
