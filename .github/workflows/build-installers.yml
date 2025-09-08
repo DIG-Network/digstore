@@ -22,21 +22,31 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Extract and set version
+    - name: Validate version consistency
       run: |
         # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
         $COMMIT_MSG = "${{ github.event.head_commit.message }}"
-        $VERSION = [regex]::Match($COMMIT_MSG, '[0-9]+\.[0-9]+\.[0-9]+').Value
-        Write-Host "Detected version: $VERSION"
+        $COMMIT_VERSION = [regex]::Match($COMMIT_MSG, '[0-9]+\.[0-9]+\.[0-9]+').Value
+        Write-Host "Version in commit message: $COMMIT_VERSION"
         
-        if ([string]::IsNullOrEmpty($VERSION)) {
+        if ([string]::IsNullOrEmpty($COMMIT_VERSION)) {
           Write-Host "No version found in commit message, skipping"
           exit 1
         }
         
-        # Update Cargo.toml with the EXACT version from commit message (no auto-increment)
-        (Get-Content Cargo.toml) -replace '^version = ".*"', "version = `"$VERSION`"" | Set-Content Cargo.toml
-        Write-Host "Updated Cargo.toml to EXACT version $VERSION (from commit message)"
+        # Check that Cargo.toml version matches commit message
+        $CARGO_VERSION = (Select-String -Path "Cargo.toml" -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+        Write-Host "Version in Cargo.toml: $CARGO_VERSION"
+        
+        if ($CARGO_VERSION -ne $COMMIT_VERSION) {
+          Write-Host "ERROR: Version mismatch!"
+          Write-Host "  Commit message version: $COMMIT_VERSION"
+          Write-Host "  Cargo.toml version: $CARGO_VERSION"
+          Write-Host "Please update Cargo.toml version to match commit message before releasing."
+          exit 1
+        }
+        
+        Write-Host "✓ Version consistency validated: $COMMIT_VERSION"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -196,21 +206,31 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Extract and set version
+    - name: Validate version consistency
       run: |
         # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
         COMMIT_MSG="${{ github.event.head_commit.message }}"
-        VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        echo "Detected version: $VERSION"
+        COMMIT_VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo "Version in commit message: $COMMIT_VERSION"
         
-        if [ -z "$VERSION" ]; then
+        if [ -z "$COMMIT_VERSION" ]; then
           echo "No version found in commit message, skipping"
           exit 1
         fi
         
-        # Update Cargo.toml with the EXACT version from commit message (no auto-increment)
-        sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-        echo "Updated Cargo.toml to EXACT version $VERSION (from commit message)"
+        # Check that Cargo.toml version matches commit message
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+        echo "Version in Cargo.toml: $CARGO_VERSION"
+        
+        if [ "$CARGO_VERSION" != "$COMMIT_VERSION" ]; then
+          echo "ERROR: Version mismatch!"
+          echo "  Commit message version: $COMMIT_VERSION"
+          echo "  Cargo.toml version: $CARGO_VERSION"
+          echo "Please update Cargo.toml version to match commit message before releasing."
+          exit 1
+        fi
+        
+        echo "✓ Version consistency validated: $COMMIT_VERSION"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -290,21 +310,31 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Extract and set version
+    - name: Validate version consistency
       run: |
         # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
         COMMIT_MSG="${{ github.event.head_commit.message }}"
-        VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        echo "Detected version: $VERSION"
+        COMMIT_VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo "Version in commit message: $COMMIT_VERSION"
         
-        if [ -z "$VERSION" ]; then
+        if [ -z "$COMMIT_VERSION" ]; then
           echo "No version found in commit message, skipping"
           exit 1
         fi
         
-        # Update Cargo.toml with the EXACT version from commit message (no auto-increment)
-        sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-        echo "Updated Cargo.toml to EXACT version $VERSION (from commit message)"
+        # Check that Cargo.toml version matches commit message
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+        echo "Version in Cargo.toml: $CARGO_VERSION"
+        
+        if [ "$CARGO_VERSION" != "$COMMIT_VERSION" ]; then
+          echo "ERROR: Version mismatch!"
+          echo "  Commit message version: $COMMIT_VERSION"
+          echo "  Cargo.toml version: $CARGO_VERSION"
+          echo "Please update Cargo.toml version to match commit message before releasing."
+          exit 1
+        fi
+        
+        echo "✓ Version consistency validated: $COMMIT_VERSION"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
