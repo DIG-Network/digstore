@@ -319,14 +319,18 @@ impl WalletManager {
             "Cancel",
         ];
 
-        let selection = Select::new()
-            .with_prompt("What would you like to do?")
-            .items(&options)
-            .default(0)
-            .interact()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to get user input: {}", e),
-            })?;
+        let selection = if crate::cli::context::CliContext::is_non_interactive() {
+            0 // Default to "Generate new mnemonic" in non-interactive mode
+        } else {
+            Select::new()
+                .with_prompt("What would you like to do?")
+                .items(&options)
+                .default(0)
+                .interact()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to get user input: {}", e),
+                })?
+        };
 
         match selection {
             0 => self.generate_new_wallet_with_context(is_first_time),
@@ -413,13 +417,17 @@ impl WalletManager {
         println!();
 
         // Confirm user has written down the mnemonic
-        let confirmed = Confirm::new()
-            .with_prompt("Have you securely written down your mnemonic phrase?")
-            .default(false)
-            .interact()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to get user confirmation: {}", e),
-            })?;
+        let confirmed = if crate::cli::context::CliContext::is_non_interactive() {
+            true // Auto-confirm in non-interactive mode
+        } else {
+            Confirm::new()
+                .with_prompt("Have you securely written down your mnemonic phrase?")
+                .default(false)
+                .interact()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to get user confirmation: {}", e),
+                })?
+        };
 
         if !confirmed {
             println!();
@@ -483,12 +491,18 @@ impl WalletManager {
         println!("Please enter your mnemonic phrase:");
         println!();
 
-        let mnemonic: String = Input::new()
-            .with_prompt("Mnemonic phrase")
-            .interact_text()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to get mnemonic input: {}", e),
-            })?;
+        let mnemonic: String = if crate::cli::context::CliContext::is_non_interactive() {
+            return Err(DigstoreError::ConfigurationError {
+                reason: "Cannot import wallet in non-interactive mode. Use --auto-import-mnemonic flag instead.".to_string(),
+            });
+        } else {
+            Input::new()
+                .with_prompt("Mnemonic phrase")
+                .interact_text()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to get mnemonic input: {}", e),
+                })?
+        };
 
         let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
             reason: format!("Failed to create tokio runtime: {}", e),
@@ -517,14 +531,18 @@ impl WalletManager {
             "Cancel",
         ];
 
-        let selection = Select::new()
-            .with_prompt("What would you like to do?")
-            .items(&options)
-            .default(0)
-            .interact()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to get user input: {}", e),
-            })?;
+        let selection = if crate::cli::context::CliContext::is_non_interactive() {
+            1 // Default to "Delete and create new wallet" in non-interactive mode
+        } else {
+            Select::new()
+                .with_prompt("What would you like to do?")
+                .items(&options)
+                .default(0)
+                .interact()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to get user input: {}", e),
+                })?
+        };
 
         match selection {
             0 => {
@@ -533,13 +551,17 @@ impl WalletManager {
             },
             1 => {
                 // Confirm deletion
-                let confirmed = Confirm::new()
-                    .with_prompt("This will permanently delete your current wallet. Are you sure?")
-                    .default(false)
-                    .interact()
-                    .map_err(|e| DigstoreError::ConfigurationError {
-                        reason: format!("Failed to get user confirmation: {}", e),
-                    })?;
+                let confirmed = if crate::cli::context::CliContext::should_auto_accept() {
+                    true // Auto-confirm in non-interactive or yes mode
+                } else {
+                    Confirm::new()
+                        .with_prompt("This will permanently delete your current wallet. Are you sure?")
+                        .default(false)
+                        .interact()
+                        .map_err(|e| DigstoreError::ConfigurationError {
+                            reason: format!("Failed to get user confirmation: {}", e),
+                        })?
+                };
 
                 if confirmed {
                     // Try to delete the wallet using dig-wallet API

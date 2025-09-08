@@ -36,6 +36,10 @@ pub struct Cli {
     #[arg(short = 'y', long, global = true)]
     pub yes: bool,
 
+    /// Non-interactive mode - suppress all prompts and use defaults
+    #[arg(long, global = true)]
+    pub non_interactive: bool,
+
     /// Path to store directory
     #[arg(long, global = true)]
     pub store: Option<PathBuf>,

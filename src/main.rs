@@ -62,6 +62,7 @@ fn main() -> Result<()> {
         verbose: cli.verbose,
         quiet: cli.quiet,
         yes: cli.yes,
+        non_interactive: cli.non_interactive,
         custom_encryption_key,
         custom_decryption_key,
     });
@@ -85,8 +86,8 @@ fn main() -> Result<()> {
         wallet_manager.ensure_wallet_initialized()?;
     }
 
-    // Check for updates (unless running update command or in quiet mode)
-    if !matches!(cli.command, Commands::Update { .. }) && !cli.quiet {
+    // Check for updates (unless running update command, in quiet mode, or non-interactive)
+    if !matches!(cli.command, Commands::Update { .. }) && !cli.quiet && !cli.non_interactive {
         check_and_prompt_for_updates()?;
     }
 
@@ -387,11 +388,15 @@ fn check_and_prompt_for_updates() -> Result<()> {
         update_info.latest_version.bright_green()
     );
 
-    let should_update = Confirm::new()
-        .with_prompt("Would you like to download and install the update now?")
-        .default(false)
-        .interact()
-        .unwrap_or(false);
+    let should_update = if crate::cli::context::CliContext::is_non_interactive() {
+        false // Don't auto-update in non-interactive mode
+    } else {
+        Confirm::new()
+            .with_prompt("Would you like to download and install the update now?")
+            .default(false)
+            .interact()
+            .unwrap_or(false)
+    };
 
     if should_update {
         println!();

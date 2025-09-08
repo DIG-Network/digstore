@@ -28,10 +28,14 @@ pub fn ask_recreate_store(archive_path: &Path, store_id_hex: &str, auto_yes: boo
     println!("  Store ID: {}", store_id_hex.cyan());
     println!();
 
-    let recreate = Confirm::new()
-        .with_prompt("Would you like to recreate this store?")
-        .default(true)
-        .interact()?;
+    let recreate = if crate::cli::context::CliContext::should_auto_accept() {
+        true // Auto-accept in non-interactive or yes mode
+    } else {
+        Confirm::new()
+            .with_prompt("Would you like to recreate this store?")
+            .default(true)
+            .interact()?
+    };
 
     Ok(recreate)
 }
@@ -60,10 +64,14 @@ pub fn ask_overwrite_digstore(digstore_path: &Path, auto_yes: bool) -> Result<bo
     );
     println!();
 
-    let overwrite = Confirm::new()
-        .with_prompt("Are you sure you want to overwrite the existing repository?")
-        .default(false)
-        .interact()?;
+    let overwrite = if crate::cli::context::CliContext::should_auto_accept() {
+        true // Auto-accept in non-interactive or yes mode
+    } else {
+        Confirm::new()
+            .with_prompt("Are you sure you want to overwrite the existing repository?")
+            .default(false)
+            .interact()?
+    };
 
     Ok(overwrite)
 }
@@ -79,10 +87,14 @@ pub fn interactive_store_recreation(project_path: &Path) -> Result<Store> {
         .and_then(|n| n.to_str())
         .unwrap_or("my-project");
 
-    let repo_name: String = Input::new()
-        .with_prompt("Repository name")
-        .default(default_name.to_string())
-        .interact_text()?;
+    let repo_name: String = if crate::cli::context::CliContext::is_non_interactive() {
+        default_name.to_string() // Use default in non-interactive mode
+    } else {
+        Input::new()
+            .with_prompt("Repository name")
+            .default(default_name.to_string())
+            .interact_text()?
+    };
 
     println!();
     println!("Creating repository '{}'...", repo_name.cyan());

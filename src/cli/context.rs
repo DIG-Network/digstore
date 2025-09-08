@@ -15,6 +15,7 @@ pub struct CliContext {
     pub verbose: bool,
     pub quiet: bool,
     pub yes: bool,
+    pub non_interactive: bool,
     pub custom_encryption_key: Option<String>,
     pub custom_decryption_key: Option<String>,
 }
@@ -50,6 +51,16 @@ impl CliContext {
     /// Check if auto-answer yes is enabled
     pub fn is_yes() -> bool {
         Self::get().map(|ctx| ctx.yes).unwrap_or(false)
+    }
+
+    /// Check if non-interactive mode is enabled
+    pub fn is_non_interactive() -> bool {
+        Self::get().map(|ctx| ctx.non_interactive).unwrap_or(false)
+    }
+
+    /// Check if we should auto-accept prompts (yes flag OR non-interactive mode)
+    pub fn should_auto_accept() -> bool {
+        Self::is_yes() || Self::is_non_interactive()
     }
 
     /// Get custom encryption key from the current context

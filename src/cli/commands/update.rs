@@ -57,6 +57,8 @@ fn execute_interactive_mode(check_only: bool, force: bool) -> Result<()> {
     println!();
     let should_update = if force {
         true
+    } else if crate::cli::context::CliContext::is_non_interactive() {
+        false // Don't auto-update in non-interactive mode unless forced
     } else {
         Confirm::new()
             .with_prompt("Would you like to download and install the update?")

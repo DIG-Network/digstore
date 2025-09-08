@@ -399,25 +399,33 @@ impl GlobalConfig {
                 .or_else(|_| std::env::var("USERNAME"))
                 .unwrap_or_else(|_| "".to_string());
 
-            let name: String = Input::new()
-                .with_prompt("Your name")
-                .default(default_name)
-                .interact_text()
-                .map_err(|e| DigstoreError::ConfigurationError {
-                    reason: format!("Failed to get user input: {}", e),
-                })?;
+            let name: String = if crate::cli::context::CliContext::is_non_interactive() {
+                default_name // Use default in non-interactive mode
+            } else {
+                Input::new()
+                    .with_prompt("Your name")
+                    .default(default_name)
+                    .interact_text()
+                    .map_err(|e| DigstoreError::ConfigurationError {
+                        reason: format!("Failed to get user input: {}", e),
+                    })?
+            };
 
             self.user.name = Some(name);
         }
 
         // Get email if not set
         if self.user.email.is_none() {
-            let email: String = Input::new()
-                .with_prompt("Your email")
-                .interact_text()
-                .map_err(|e| DigstoreError::ConfigurationError {
-                    reason: format!("Failed to get user input: {}", e),
-                })?;
+            let email: String = if crate::cli::context::CliContext::is_non_interactive() {
+                "user@example.com".to_string() // Use placeholder in non-interactive mode
+            } else {
+                Input::new()
+                    .with_prompt("Your email")
+                    .interact_text()
+                    .map_err(|e| DigstoreError::ConfigurationError {
+                        reason: format!("Failed to get user input: {}", e),
+                    })?
+            };
 
             self.user.email = Some(email);
         }

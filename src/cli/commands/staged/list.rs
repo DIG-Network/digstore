@@ -228,10 +228,14 @@ pub fn clear_staged(json: bool, force: bool) -> Result<()> {
         );
         println!();
 
-        let confirmed = Confirm::new()
-            .with_prompt("Are you sure you want to clear all staged files?")
-            .default(false)
-            .interact()?;
+        let confirmed = if crate::cli::context::CliContext::should_auto_accept() {
+            true // Auto-confirm in non-interactive or yes mode
+        } else {
+            Confirm::new()
+                .with_prompt("Are you sure you want to clear all staged files?")
+                .default(false)
+                .interact()?
+        };
 
         if !confirmed {
             if json {

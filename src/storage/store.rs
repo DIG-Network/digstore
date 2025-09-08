@@ -75,18 +75,29 @@ impl Store {
             if let Ok(existing_digstore) = crate::core::digstore_file::DigstoreFile::load(&digstore_path) {
                 if let Ok(existing_store_id) = existing_digstore.get_store_id() {
                     let archive_path = get_archive_path(&existing_store_id)?;
-                    // Force close any memory maps by attempting to truncate and sync
-                    if archive_path.exists() {
-                        let _ = std::fs::OpenOptions::new()
-                            .write(true)
-                            .open(&archive_path)
-                            .and_then(|file| file.sync_all());
+                    let staging_path = archive_path.with_extension("staging.bin");
+                    
+                    // Force close any memory maps and file handles
+                    for path in [&archive_path, &staging_path] {
+                        if path.exists() {
+                            // Try multiple approaches to release file locks
+                            let _ = std::fs::OpenOptions::new()
+                                .read(true)
+                                .open(path)
+                                .and_then(|file| file.sync_all());
+                            
+                            // Force garbage collection to release any Rust file handles
+                            drop(std::fs::File::open(path));
+                        }
                     }
                 }
             }
 
-            // Small delay to ensure file handles are released on Windows
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // Longer delay to ensure all file handles are released on Windows
+            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            // Try to force garbage collection
+            std::hint::black_box(());
 
             // Remove existing .digstore file to proceed with new initialization
             std::fs::remove_file(&digstore_path)?;
