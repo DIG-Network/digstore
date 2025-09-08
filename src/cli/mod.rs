@@ -75,6 +75,10 @@ pub enum Commands {
         /// Average chunk size in KB (default: 1024)
         #[arg(long, default_value = "1024")]
         chunk_size: u32,
+
+        /// Custom encryption key (hex) for truly secret storage - applies to entire store
+        #[arg(long)]
+        encryption_key: Option<String>,
     },
 
     /// Add files to the repository
@@ -102,10 +106,6 @@ pub enum Commands {
         #[arg(long)]
         from_stdin: bool,
 
-        /// Custom encryption key (hex) to override wallet public key
-        #[arg(long)]
-        encryption_key: Option<String>,
-
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -132,10 +132,6 @@ pub enum Commands {
         /// Open editor for message
         #[arg(short, long)]
         edit: bool,
-
-        /// Custom encryption key (hex) to override wallet public key
-        #[arg(long)]
-        encryption_key: Option<String>,
 
         /// Output as JSON
         #[arg(long)]

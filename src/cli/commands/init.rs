@@ -12,10 +12,20 @@ pub fn execute(
     name: Option<String>,
     no_compression: bool,
     chunk_size: u32,
+    encryption_key: Option<String>,
 ) -> Result<()> {
     let current_dir = env::current_dir()?;
 
     println!("{}", "Initializing repository...".bright_blue());
+
+    // Validate custom encryption key if provided
+    if let Some(ref key) = encryption_key {
+        // Validate hex format and length
+        if hex::decode(key).map_or(true, |bytes| bytes.len() != 32) {
+            return Err(anyhow::anyhow!("Encryption key must be 32 bytes (64 hex characters)"));
+        }
+        println!("  {} Using custom encryption key for store-wide secret storage", "🔐".cyan());
+    }
 
     // Check if custom store ID was provided
     let actual_store_id = if let Some(id_str) = store_id {
@@ -33,6 +43,17 @@ pub fn execute(
 
     // Initialize the store
     let store = Store::init(&current_dir)?;
+    
+    // Save custom encryption key to store config if provided
+    if let Some(custom_key) = encryption_key {
+        let mut store_config = crate::config::StoreConfig::load(&store.store_id)?;
+        store_config.set_custom_encryption_key(Some(custom_key));
+        store_config.name = name.clone();
+        store_config.created_at = Some(chrono::Utc::now().to_rfc3339());
+        store_config.save(&store.store_id)?;
+        
+        println!("  {} Saved custom encryption key to store configuration", "✓".green());
+    }
 
     println!(
         "  {} Created store directory: {}",

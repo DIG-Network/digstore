@@ -34,8 +34,6 @@ fn main() -> Result<()> {
 
     // Extract custom keys from the command arguments
     let (custom_encryption_key, custom_decryption_key) = match &cli.command {
-        Commands::Add { encryption_key, .. } => (encryption_key.clone(), None),
-        Commands::Commit { encryption_key, .. } => (encryption_key.clone(), None),
         Commands::Get { decryption_key, .. } => (None, decryption_key.clone()),
         Commands::Decrypt { decryption_key, .. } => (None, decryption_key.clone()),
         _ => (None, None),
@@ -79,7 +77,8 @@ fn main() -> Result<()> {
             name,
             no_compression,
             chunk_size,
-        } => cli::commands::init::execute(store_id, name, no_compression, chunk_size),
+            encryption_key,
+        } => cli::commands::init::execute(store_id, name, no_compression, chunk_size, encryption_key),
         Commands::Add {
             paths,
             recursive,
@@ -87,36 +86,18 @@ fn main() -> Result<()> {
             force,
             dry_run,
             from_stdin,
-            encryption_key,
             json,
-        } => {
-            // Update CLI context with encryption key before opening stores
-            if let Some(key) = &encryption_key {
-                let mut current_context = CliContext::get().unwrap_or_default();
-                current_context.custom_encryption_key = Some(key.clone());
-                CliContext::set(current_context);
-            }
-            cli::commands::add::execute(
-                paths, recursive, all, force, dry_run, from_stdin, encryption_key, cli.yes, json,
-            )
-        },
+        } => cli::commands::add::execute(
+            paths, recursive, all, force, dry_run, from_stdin, cli.yes, json,
+        ),
         Commands::Commit {
             message,
             full_layer,
             author,
             date,
             edit,
-            encryption_key,
             json,
-        } => {
-            // Update CLI context with encryption key before opening stores
-            if let Some(key) = &encryption_key {
-                let mut current_context = CliContext::get().unwrap_or_default();
-                current_context.custom_encryption_key = Some(key.clone());
-                CliContext::set(current_context);
-            }
-            cli::commands::commit::execute(message, full_layer, author, date, edit, encryption_key, json)
-        },
+        } => cli::commands::commit::execute(message, full_layer, author, date, edit, json),
         Commands::Status {
             short,
             porcelain,

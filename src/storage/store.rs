@@ -100,7 +100,7 @@ impl Store {
 
         // Create archive with optional encryption
         let dig_archive = DigArchive::create(archive_path.clone())?;
-        let archive = EncryptedArchive::new(dig_archive)?;
+        let archive = EncryptedArchive::new_with_store_id(dig_archive, Some(&store_id))?;
 
         // Initialize binary staging area (in same directory as archive)
         let staging_path = archive_path.with_extension("staging.bin");
@@ -158,7 +158,7 @@ impl Store {
         let archive = if archive_path.exists() {
             // Open existing archive with optional encryption
             let dig_archive = DigArchive::open(archive_path.clone())?;
-            EncryptedArchive::new(dig_archive)?
+            EncryptedArchive::new_with_store_id(dig_archive, Some(&store_id))?
         } else if old_global_path.exists() {
             // Migrate from old directory format
             println!("Migrating store from directory to archive format...");
@@ -167,7 +167,7 @@ impl Store {
 
             // Clean up old directory after successful migration
             std::fs::remove_dir_all(&old_global_path)?;
-            let archive = EncryptedArchive::new(dig_archive)?;
+            let archive = EncryptedArchive::new_with_store_id(dig_archive, Some(&store_id))?;
             println!("✓ Migration completed successfully");
             archive
         } else {
@@ -219,13 +219,13 @@ impl Store {
         let old_global_path = get_global_store_path(store_id)?;
         let archive = if archive_path.exists() {
             let dig_archive = DigArchive::open(archive_path.clone())?;
-            EncryptedArchive::new(dig_archive)?
+            EncryptedArchive::new_with_store_id(dig_archive, Some(store_id))?
         } else if old_global_path.exists() {
             // Migrate from old directory format
             let dig_archive =
                 DigArchive::migrate_from_directory(archive_path.clone(), &old_global_path)?;
             std::fs::remove_dir_all(&old_global_path)?;
-            EncryptedArchive::new(dig_archive)?
+            EncryptedArchive::new_with_store_id(dig_archive, Some(store_id))?
         } else {
             // Store archive not found - return error silently for zero-knowledge property
             return Err(DigstoreError::store_not_found(archive_path.clone()));

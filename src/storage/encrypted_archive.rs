@@ -24,6 +24,11 @@ pub struct EncryptedArchive {
 impl EncryptedArchive {
     /// Create new encrypted archive wrapper
     pub fn new(archive: DigArchive) -> Result<Self> {
+        Self::new_with_store_id(archive, None)
+    }
+    
+    /// Create new encrypted archive wrapper with store ID for config loading
+    pub fn new_with_store_id(archive: DigArchive, store_id: Option<&crate::core::types::StoreId>) -> Result<Self> {
         let config = GlobalConfig::load()?;
         
         // Try to get public key from wallet (using CLI context profile), fallback to config
@@ -42,9 +47,21 @@ impl EncryptedArchive {
         
         let encrypted_storage = config.crypto.encrypted_storage.unwrap_or(true);
         
-        // Check for custom encryption/decryption key from CLI context
+        // Check for custom encryption/decryption key from multiple sources:
+        // 1. CLI context (for current command)
+        // 2. Store config (for persistent store-wide encryption)
         let custom_encryption_key = CliContext::get_custom_encryption_key()
-            .or_else(|| CliContext::get_custom_decryption_key());
+            .or_else(|| CliContext::get_custom_decryption_key())
+            .or_else(|| {
+                // Load from store config if available
+                if let Some(store_id) = store_id {
+                    crate::config::StoreConfig::load(store_id)
+                        .ok()
+                        .and_then(|config| config.get_custom_encryption_key())
+                } else {
+                    None
+                }
+            });
         
         Ok(Self {
             archive,

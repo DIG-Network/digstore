@@ -12,19 +12,11 @@ pub fn execute(
     author: Option<String>,
     date: Option<String>,
     edit: bool,
-    encryption_key: Option<String>,
     json: bool,
 ) -> Result<()> {
     // Find repository root
     let repo_root = find_repository_root()?
         .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
-
-    // Set custom encryption key in CLI context if provided
-    if let Some(key) = encryption_key {
-        let mut current_context = crate::cli::context::CliContext::get().unwrap_or_default();
-        current_context.custom_encryption_key = Some(key);
-        crate::cli::context::CliContext::set(current_context);
-    }
 
     // Open the store
     let mut store = Store::open(&repo_root)?;
