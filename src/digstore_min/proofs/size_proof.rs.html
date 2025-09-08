@@ -561,57 +561,58 @@
 <a href=#561 id=561 data-nosnippet>561</a>            calculated_total_size: <span class="number">600000</span>,
 <a href=#562 id=562 data-nosnippet>562</a>            layer_sizes: <span class="macro">vec!</span>[<span class="number">200000</span>, <span class="number">200000</span>, <span class="number">200000</span>],
 <a href=#563 id=563 data-nosnippet>563</a>            layer_size_tree_root: Hash::from_bytes([<span class="number">3</span>; <span class="number">32</span>]),
-<a href=#564 id=564 data-nosnippet>564</a>            integrity_proofs: IntegrityProofs {
-<a href=#565 id=565 data-nosnippet>565</a>                archive_header_hash: Hash::from_bytes([<span class="number">4</span>; <span class="number">32</span>]),
-<a href=#566 id=566 data-nosnippet>566</a>                layer_index_hash: Hash::from_bytes([<span class="number">5</span>; <span class="number">32</span>]),
-<a href=#567 id=567 data-nosnippet>567</a>                root_hash_verification: Hash::from_bytes([<span class="number">6</span>; <span class="number">32</span>]),
-<a href=#568 id=568 data-nosnippet>568</a>                first_layer_content_hash: Hash::from_bytes([<span class="number">7</span>; <span class="number">32</span>]),
-<a href=#569 id=569 data-nosnippet>569</a>                last_layer_content_hash: Hash::from_bytes([<span class="number">8</span>; <span class="number">32</span>]),
-<a href=#570 id=570 data-nosnippet>570</a>            },
-<a href=#571 id=571 data-nosnippet>571</a>        };
-<a href=#572 id=572 data-nosnippet>572</a>
-<a href=#573 id=573 data-nosnippet>573</a>        <span class="comment">// Test correct verification
-<a href=#574 id=574 data-nosnippet>574</a>        </span><span class="kw">let </span>result = verify_archive_size_proof(
-<a href=#575 id=575 data-nosnippet>575</a>            <span class="kw-2">&amp;</span>proof,
-<a href=#576 id=576 data-nosnippet>576</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">1</span>; <span class="number">32</span>]),
-<a href=#577 id=577 data-nosnippet>577</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
-<a href=#578 id=578 data-nosnippet>578</a>            <span class="number">600000</span>,
-<a href=#579 id=579 data-nosnippet>579</a>            <span class="string">"test_publisher_key"</span>,
-<a href=#580 id=580 data-nosnippet>580</a>        )
-<a href=#581 id=581 data-nosnippet>581</a>        .unwrap();
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="macro">assert!</span>(result);
-<a href=#583 id=583 data-nosnippet>583</a>
-<a href=#584 id=584 data-nosnippet>584</a>        <span class="comment">// Test wrong size
-<a href=#585 id=585 data-nosnippet>585</a>        </span><span class="kw">let </span>result = verify_archive_size_proof(
-<a href=#586 id=586 data-nosnippet>586</a>            <span class="kw-2">&amp;</span>proof,
-<a href=#587 id=587 data-nosnippet>587</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">1</span>; <span class="number">32</span>]),
-<a href=#588 id=588 data-nosnippet>588</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
-<a href=#589 id=589 data-nosnippet>589</a>            <span class="number">500000</span>,
-<a href=#590 id=590 data-nosnippet>590</a>            <span class="string">"test_publisher_key"</span>,
-<a href=#591 id=591 data-nosnippet>591</a>        )
-<a href=#592 id=592 data-nosnippet>592</a>        .unwrap();
-<a href=#593 id=593 data-nosnippet>593</a>        <span class="macro">assert!</span>(!result);
-<a href=#594 id=594 data-nosnippet>594</a>
-<a href=#595 id=595 data-nosnippet>595</a>        <span class="comment">// Test wrong store_id
-<a href=#596 id=596 data-nosnippet>596</a>        </span><span class="kw">let </span>result = verify_archive_size_proof(
-<a href=#597 id=597 data-nosnippet>597</a>            <span class="kw-2">&amp;</span>proof,
-<a href=#598 id=598 data-nosnippet>598</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">99</span>; <span class="number">32</span>]),
-<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
-<a href=#600 id=600 data-nosnippet>600</a>            <span class="number">600000</span>,
-<a href=#601 id=601 data-nosnippet>601</a>            <span class="string">"test_publisher_key"</span>,
-<a href=#602 id=602 data-nosnippet>602</a>        )
-<a href=#603 id=603 data-nosnippet>603</a>        .unwrap();
-<a href=#604 id=604 data-nosnippet>604</a>        <span class="macro">assert!</span>(!result);
-<a href=#605 id=605 data-nosnippet>605</a>
-<a href=#606 id=606 data-nosnippet>606</a>        <span class="comment">// Test wrong publisher public key
-<a href=#607 id=607 data-nosnippet>607</a>        </span><span class="kw">let </span>result = verify_archive_size_proof(
-<a href=#608 id=608 data-nosnippet>608</a>            <span class="kw-2">&amp;</span>proof,
-<a href=#609 id=609 data-nosnippet>609</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">1</span>; <span class="number">32</span>]),
-<a href=#610 id=610 data-nosnippet>610</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
-<a href=#611 id=611 data-nosnippet>611</a>            <span class="number">600000</span>,
-<a href=#612 id=612 data-nosnippet>612</a>            <span class="string">"wrong_publisher_key"</span>,
-<a href=#613 id=613 data-nosnippet>613</a>        )
-<a href=#614 id=614 data-nosnippet>614</a>        .unwrap();
-<a href=#615 id=615 data-nosnippet>615</a>        <span class="macro">assert!</span>(!result);
-<a href=#616 id=616 data-nosnippet>616</a>    }
-<a href=#617 id=617 data-nosnippet>617</a>}</code></pre></div></section></main></body></html>
+<a href=#564 id=564 data-nosnippet>564</a>            publisher_public_key: <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">4</span>; <span class="number">32</span>]),
+<a href=#565 id=565 data-nosnippet>565</a>            integrity_proofs: IntegrityProofs {
+<a href=#566 id=566 data-nosnippet>566</a>                archive_header_hash: Hash::from_bytes([<span class="number">4</span>; <span class="number">32</span>]),
+<a href=#567 id=567 data-nosnippet>567</a>                layer_index_hash: Hash::from_bytes([<span class="number">5</span>; <span class="number">32</span>]),
+<a href=#568 id=568 data-nosnippet>568</a>                root_hash_verification: Hash::from_bytes([<span class="number">6</span>; <span class="number">32</span>]),
+<a href=#569 id=569 data-nosnippet>569</a>                first_layer_content_hash: Hash::from_bytes([<span class="number">7</span>; <span class="number">32</span>]),
+<a href=#570 id=570 data-nosnippet>570</a>                last_layer_content_hash: Hash::from_bytes([<span class="number">8</span>; <span class="number">32</span>]),
+<a href=#571 id=571 data-nosnippet>571</a>            },
+<a href=#572 id=572 data-nosnippet>572</a>        };
+<a href=#573 id=573 data-nosnippet>573</a>
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="comment">// Test correct verification
+<a href=#575 id=575 data-nosnippet>575</a>        </span><span class="kw">let </span>result = verify_archive_size_proof(
+<a href=#576 id=576 data-nosnippet>576</a>            <span class="kw-2">&amp;</span>proof,
+<a href=#577 id=577 data-nosnippet>577</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">1</span>; <span class="number">32</span>]),
+<a href=#578 id=578 data-nosnippet>578</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
+<a href=#579 id=579 data-nosnippet>579</a>            <span class="number">600000</span>,
+<a href=#580 id=580 data-nosnippet>580</a>            <span class="string">"test_publisher_key"</span>,
+<a href=#581 id=581 data-nosnippet>581</a>        )
+<a href=#582 id=582 data-nosnippet>582</a>        .unwrap();
+<a href=#583 id=583 data-nosnippet>583</a>        <span class="macro">assert!</span>(result);
+<a href=#584 id=584 data-nosnippet>584</a>
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="comment">// Test wrong size
+<a href=#586 id=586 data-nosnippet>586</a>        </span><span class="kw">let </span>result = verify_archive_size_proof(
+<a href=#587 id=587 data-nosnippet>587</a>            <span class="kw-2">&amp;</span>proof,
+<a href=#588 id=588 data-nosnippet>588</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">1</span>; <span class="number">32</span>]),
+<a href=#589 id=589 data-nosnippet>589</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
+<a href=#590 id=590 data-nosnippet>590</a>            <span class="number">500000</span>,
+<a href=#591 id=591 data-nosnippet>591</a>            <span class="string">"test_publisher_key"</span>,
+<a href=#592 id=592 data-nosnippet>592</a>        )
+<a href=#593 id=593 data-nosnippet>593</a>        .unwrap();
+<a href=#594 id=594 data-nosnippet>594</a>        <span class="macro">assert!</span>(!result);
+<a href=#595 id=595 data-nosnippet>595</a>
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="comment">// Test wrong store_id
+<a href=#597 id=597 data-nosnippet>597</a>        </span><span class="kw">let </span>result = verify_archive_size_proof(
+<a href=#598 id=598 data-nosnippet>598</a>            <span class="kw-2">&amp;</span>proof,
+<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">99</span>; <span class="number">32</span>]),
+<a href=#600 id=600 data-nosnippet>600</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
+<a href=#601 id=601 data-nosnippet>601</a>            <span class="number">600000</span>,
+<a href=#602 id=602 data-nosnippet>602</a>            <span class="string">"test_publisher_key"</span>,
+<a href=#603 id=603 data-nosnippet>603</a>        )
+<a href=#604 id=604 data-nosnippet>604</a>        .unwrap();
+<a href=#605 id=605 data-nosnippet>605</a>        <span class="macro">assert!</span>(!result);
+<a href=#606 id=606 data-nosnippet>606</a>
+<a href=#607 id=607 data-nosnippet>607</a>        <span class="comment">// Test wrong publisher public key
+<a href=#608 id=608 data-nosnippet>608</a>        </span><span class="kw">let </span>result = verify_archive_size_proof(
+<a href=#609 id=609 data-nosnippet>609</a>            <span class="kw-2">&amp;</span>proof,
+<a href=#610 id=610 data-nosnippet>610</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">1</span>; <span class="number">32</span>]),
+<a href=#611 id=611 data-nosnippet>611</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
+<a href=#612 id=612 data-nosnippet>612</a>            <span class="number">600000</span>,
+<a href=#613 id=613 data-nosnippet>613</a>            <span class="string">"wrong_publisher_key"</span>,
+<a href=#614 id=614 data-nosnippet>614</a>        )
+<a href=#615 id=615 data-nosnippet>615</a>        .unwrap();
+<a href=#616 id=616 data-nosnippet>616</a>        <span class="macro">assert!</span>(!result);
+<a href=#617 id=617 data-nosnippet>617</a>    }
+<a href=#618 id=618 data-nosnippet>618</a>}</code></pre></div></section></main></body></html>
