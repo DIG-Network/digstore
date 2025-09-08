@@ -34,9 +34,9 @@ jobs:
           exit 1
         }
         
-        # Update Cargo.toml with the version
+        # Update Cargo.toml with the EXACT version from commit message (no auto-increment)
         (Get-Content Cargo.toml) -replace '^version = ".*"', "version = `"$VERSION`"" | Set-Content Cargo.toml
-        Write-Host "Updated Cargo.toml to version $VERSION"
+        Write-Host "Updated Cargo.toml to EXACT version $VERSION (from commit message)"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -124,7 +124,7 @@ jobs:
             
             <Directory Id="TARGETDIR" Name="SourceDir">
               <Directory Id="ProgramFilesFolder">
-                <Directory Id="INSTALLFOLDER" Name="Digstore" />
+                <Directory Id="INSTALLFOLDER" Name="dig-network" />
               </Directory>
               <Directory Id="ProgramMenuFolder" Name="Programs">
                 <Directory Id="ProgramMenuDir" Name="Digstore Min" />
@@ -208,9 +208,9 @@ jobs:
           exit 1
         fi
         
-        # Update Cargo.toml with the version
+        # Update Cargo.toml with the EXACT version from commit message (no auto-increment)
         sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-        echo "Updated Cargo.toml to version $VERSION"
+        echo "Updated Cargo.toml to EXACT version $VERSION (from commit message)"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -234,7 +234,7 @@ jobs:
     - name: Create macOS App Bundle
       run: |
         mkdir -p installer/macos
-        APP_NAME="Digstore Min.app"
+        APP_NAME="DIG Network Digstore.app"
         APP_DIR="installer/macos/$APP_NAME"
         
         # Create app bundle structure
@@ -274,7 +274,7 @@ jobs:
         cd installer/macos
         
         # Create a temporary disk image
-        hdiutil create -volname "Digstore Min" -srcfolder "Digstore Min.app" -ov -format UDZO digstore-macos.dmg
+        hdiutil create -volname "DIG Network Digstore" -srcfolder "DIG Network Digstore.app" -ov -format UDZO digstore-macos.dmg
 
     - name: Upload macOS Installer
       uses: actions/upload-artifact@v4
@@ -302,9 +302,9 @@ jobs:
           exit 1
         fi
         
-        # Update Cargo.toml with the version
+        # Update Cargo.toml with the EXACT version from commit message (no auto-increment)
         sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-        echo "Updated Cargo.toml to version $VERSION"
+        echo "Updated Cargo.toml to EXACT version $VERSION (from commit message)"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -547,7 +547,7 @@ jobs:
         echo "### macOS" >> $GITHUB_STEP_SUMMARY
         echo "1. Mount the DMG file" >> $GITHUB_STEP_SUMMARY
         echo "2. Drag Digstore Min to Applications" >> $GITHUB_STEP_SUMMARY
-        echo "3. Add /Applications/Digstore Min.app/Contents/MacOS to PATH" >> $GITHUB_STEP_SUMMARY
+        echo "3. Add /Applications/DIG Network Digstore.app/Contents/MacOS to PATH" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Linux" >> $GITHUB_STEP_SUMMARY
         echo "- **Debian/Ubuntu**: \`sudo dpkg -i digstore_0.1.0_amd64.deb\`" >> $GITHUB_STEP_SUMMARY

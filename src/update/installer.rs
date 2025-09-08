@@ -154,7 +154,7 @@ fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
         })?;
 
     // Copy app to Applications
-    let app_name = "Digstore Min.app";
+    let app_name = "DIG Network Digstore.app";
     let source = format!("{}/{}", mount_point, app_name);
     let destination = format!("/Applications/{}", app_name);
 

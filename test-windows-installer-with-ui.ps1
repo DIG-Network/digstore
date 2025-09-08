@@ -68,7 +68,7 @@ Write-Host "Creating WiX file with UI..." -ForegroundColor Green
     
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFilesFolder">
-        <Directory Id="INSTALLFOLDER" Name="Digstore" />
+        <Directory Id="INSTALLFOLDER" Name="dig-network" />
       </Directory>
       <Directory Id="ProgramMenuFolder" Name="Programs">
         <Directory Id="ProgramMenuDir" Name="Digstore Min" />

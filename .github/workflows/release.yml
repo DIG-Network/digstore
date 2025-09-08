@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main ]
     # Only trigger on commits with version numbers in the message
+    # Version is extracted EXACTLY as specified - no automatic bumping
+    # Example: "1.2.3" or "Release 1.2.3" creates v1.2.3
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,15 +21,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Extract version from commit message
+    - name: Extract EXACT version from commit message
       id: version
       run: |
         COMMIT_MSG="${{ github.event.head_commit.message }}"
         VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        echo "Detected version: $VERSION"
+        echo "Using EXACT version from commit message: $VERSION"
+        echo "No automatic version bumping - using developer-specified version"
         
         if [ -z "$VERSION" ]; then
           echo "No version found in commit message"
+          echo "To create a release, include version number in commit message (e.g., '1.2.3')"
           exit 1
         fi
         
@@ -95,8 +99,8 @@ jobs:
           
           # Install
           hdiutil attach digstore.dmg
-          cp -r "/Volumes/Digstore/Digstore Min.app" /Applications/
-          hdiutil detach "/Volumes/Digstore"
+          cp -r "/Volumes/DIG Network Digstore/DIG Network Digstore.app" /Applications/
+          hdiutil detach "/Volumes/DIG Network Digstore"
           ```
           
           #### Linux
