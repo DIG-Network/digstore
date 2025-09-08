@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["main","needs_wallet_initialization"],"mod":["cli","config","core","crypto","ignore","proofs","security","storage","urn","wallet"]};
+window.SIDEBAR_ITEMS = {"fn":["check_and_prompt_for_updates","main","needs_wallet_initialization"],"mod":["cli","config","core","crypto","ignore","proofs","security","storage","update","urn","wallet"]};

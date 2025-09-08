@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_for_updates"],"struct":["GitHubAsset","UpdateInfo"]};

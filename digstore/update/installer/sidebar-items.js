@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InstallerType"],"fn":["determine_installer_type","download_and_install_update","download_installer","find_platform_download_url","install_linux_appimage","install_linux_deb","install_linux_rpm","install_macos_dmg","install_windows_msi"]};

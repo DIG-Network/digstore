@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["GITHUB_RELEASES_URL","UPDATE_CHECK_INTERVAL"],"fn":["check_for_updates","fetch_latest_release","find_platform_download_url","get_update_config_path","is_newer_version","should_check_for_updates","update_last_check_timestamp"],"struct":["GitHubAsset","GitHubRelease","UpdateInfo"]};

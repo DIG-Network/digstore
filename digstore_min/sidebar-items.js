@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["FORMAT_VERSION","PROTOCOL_VERSION","VERSION"],"mod":["cli","config","core","crypto","ignore","proofs","security","storage","urn","wallet"]};
+window.SIDEBAR_ITEMS = {"constant":["FORMAT_VERSION","PROTOCOL_VERSION","VERSION"],"mod":["cli","config","core","crypto","ignore","proofs","security","storage","update","urn","wallet"]};
