@@ -62,362 +62,367 @@
 <a href=#62 id=62 data-nosnippet>62</a>        verbose: cli.verbose,
 <a href=#63 id=63 data-nosnippet>63</a>        quiet: cli.quiet,
 <a href=#64 id=64 data-nosnippet>64</a>        yes: cli.yes,
-<a href=#65 id=65 data-nosnippet>65</a>        custom_encryption_key,
-<a href=#66 id=66 data-nosnippet>66</a>        custom_decryption_key,
-<a href=#67 id=67 data-nosnippet>67</a>    });
-<a href=#68 id=68 data-nosnippet>68</a>
-<a href=#69 id=69 data-nosnippet>69</a>    <span class="comment">// Handle auto-generation or auto-import flags first (these work regardless of command)
-<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="kw">if </span>cli.auto_generate_wallet || cli.auto_import_mnemonic.is_some() {
-<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">let </span>wallet_profile = cli.wallet_profile.clone();
-<a href=#72 id=72 data-nosnippet>72</a>        <span class="kw">let </span>wallet_manager = WalletManager::new_with_profile(wallet_profile)<span class="question-mark">?</span>;
-<a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">if </span>cli.auto_generate_wallet {
-<a href=#75 id=75 data-nosnippet>75</a>            wallet_manager.auto_generate_wallet()<span class="question-mark">?</span>;
-<a href=#76 id=76 data-nosnippet>76</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(mnemonic) = cli.auto_import_mnemonic.clone() {
-<a href=#77 id=77 data-nosnippet>77</a>            wallet_manager.auto_import_wallet(<span class="kw-2">&amp;</span>mnemonic)<span class="question-mark">?</span>;
-<a href=#78 id=78 data-nosnippet>78</a>        }
-<a href=#79 id=79 data-nosnippet>79</a>    }
-<a href=#80 id=80 data-nosnippet>80</a>
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="comment">// Check if wallet initialization is needed for this command
-<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="kw">if </span>needs_wallet_initialization(<span class="kw-2">&amp;</span>cli.command) {
-<a href=#83 id=83 data-nosnippet>83</a>        <span class="kw">let </span>wallet_profile = cli.wallet_profile.clone();
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">let </span>wallet_manager = WalletManager::new_with_profile(wallet_profile)<span class="question-mark">?</span>;
-<a href=#85 id=85 data-nosnippet>85</a>        wallet_manager.ensure_wallet_initialized()<span class="question-mark">?</span>;
-<a href=#86 id=86 data-nosnippet>86</a>    }
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="comment">// Check for updates (unless running update command or in quiet mode)
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">if </span>!<span class="macro">matches!</span>(cli.command, Commands::Update { .. }) &amp;&amp; !cli.quiet {
-<a href=#90 id=90 data-nosnippet>90</a>        check_and_prompt_for_updates()<span class="question-mark">?</span>;
-<a href=#91 id=91 data-nosnippet>91</a>    }
-<a href=#92 id=92 data-nosnippet>92</a>
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="comment">// Execute the command
-<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">match </span>cli.command {
-<a href=#95 id=95 data-nosnippet>95</a>        Commands::Init {
-<a href=#96 id=96 data-nosnippet>96</a>            store_id,
-<a href=#97 id=97 data-nosnippet>97</a>            name,
-<a href=#98 id=98 data-nosnippet>98</a>            no_compression,
-<a href=#99 id=99 data-nosnippet>99</a>            chunk_size,
-<a href=#100 id=100 data-nosnippet>100</a>            encryption_key,
-<a href=#101 id=101 data-nosnippet>101</a>        } =&gt; {
-<a href=#102 id=102 data-nosnippet>102</a>            cli::commands::init::execute(store_id, name, no_compression, chunk_size, encryption_key)
-<a href=#103 id=103 data-nosnippet>103</a>        },
-<a href=#104 id=104 data-nosnippet>104</a>        Commands::Add {
-<a href=#105 id=105 data-nosnippet>105</a>            paths,
-<a href=#106 id=106 data-nosnippet>106</a>            recursive,
-<a href=#107 id=107 data-nosnippet>107</a>            all,
-<a href=#108 id=108 data-nosnippet>108</a>            force,
-<a href=#109 id=109 data-nosnippet>109</a>            dry_run,
-<a href=#110 id=110 data-nosnippet>110</a>            from_stdin,
-<a href=#111 id=111 data-nosnippet>111</a>            json,
-<a href=#112 id=112 data-nosnippet>112</a>        } =&gt; cli::commands::add::execute(
-<a href=#113 id=113 data-nosnippet>113</a>            paths, recursive, all, force, dry_run, from_stdin, cli.yes, json,
-<a href=#114 id=114 data-nosnippet>114</a>        ),
-<a href=#115 id=115 data-nosnippet>115</a>        Commands::Commit {
-<a href=#116 id=116 data-nosnippet>116</a>            message,
-<a href=#117 id=117 data-nosnippet>117</a>            full_layer,
-<a href=#118 id=118 data-nosnippet>118</a>            author,
-<a href=#119 id=119 data-nosnippet>119</a>            date,
-<a href=#120 id=120 data-nosnippet>120</a>            edit,
-<a href=#121 id=121 data-nosnippet>121</a>            json,
-<a href=#122 id=122 data-nosnippet>122</a>        } =&gt; cli::commands::commit::execute(message, full_layer, author, date, edit, json),
-<a href=#123 id=123 data-nosnippet>123</a>        Commands::Status {
-<a href=#124 id=124 data-nosnippet>124</a>            short,
-<a href=#125 id=125 data-nosnippet>125</a>            porcelain,
-<a href=#126 id=126 data-nosnippet>126</a>            show_chunks,
-<a href=#127 id=127 data-nosnippet>127</a>            json,
-<a href=#128 id=128 data-nosnippet>128</a>        } =&gt; cli::commands::status::execute(short, porcelain, show_chunks, json),
-<a href=#129 id=129 data-nosnippet>129</a>        Commands::Get {
-<a href=#130 id=130 data-nosnippet>130</a>            path,
-<a href=#131 id=131 data-nosnippet>131</a>            output,
-<a href=#132 id=132 data-nosnippet>132</a>            verify,
-<a href=#133 id=133 data-nosnippet>133</a>            metadata,
-<a href=#134 id=134 data-nosnippet>134</a>            at,
-<a href=#135 id=135 data-nosnippet>135</a>            progress,
-<a href=#136 id=136 data-nosnippet>136</a>            decryption_key,
-<a href=#137 id=137 data-nosnippet>137</a>            json,
-<a href=#138 id=138 data-nosnippet>138</a>        } =&gt; {
-<a href=#139 id=139 data-nosnippet>139</a>            <span class="comment">// Update CLI context with decryption key before opening stores
-<a href=#140 id=140 data-nosnippet>140</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(key) = <span class="kw-2">&amp;</span>decryption_key {
-<a href=#141 id=141 data-nosnippet>141</a>                <span class="kw">let </span><span class="kw-2">mut </span>current_context = CliContext::get().unwrap_or_default();
-<a href=#142 id=142 data-nosnippet>142</a>                current_context.custom_decryption_key = <span class="prelude-val">Some</span>(key.clone());
-<a href=#143 id=143 data-nosnippet>143</a>                CliContext::set(current_context);
-<a href=#144 id=144 data-nosnippet>144</a>            }
-<a href=#145 id=145 data-nosnippet>145</a>            cli::commands::get::execute(
-<a href=#146 id=146 data-nosnippet>146</a>                path,
-<a href=#147 id=147 data-nosnippet>147</a>                output,
-<a href=#148 id=148 data-nosnippet>148</a>                verify,
-<a href=#149 id=149 data-nosnippet>149</a>                metadata,
-<a href=#150 id=150 data-nosnippet>150</a>                at,
-<a href=#151 id=151 data-nosnippet>151</a>                progress,
-<a href=#152 id=152 data-nosnippet>152</a>                decryption_key,
-<a href=#153 id=153 data-nosnippet>153</a>                json,
-<a href=#154 id=154 data-nosnippet>154</a>            )
-<a href=#155 id=155 data-nosnippet>155</a>        },
-<a href=#156 id=156 data-nosnippet>156</a>        Commands::Decrypt {
-<a href=#157 id=157 data-nosnippet>157</a>            path,
-<a href=#158 id=158 data-nosnippet>158</a>            output,
-<a href=#159 id=159 data-nosnippet>159</a>            urn,
-<a href=#160 id=160 data-nosnippet>160</a>            decryption_key,
-<a href=#161 id=161 data-nosnippet>161</a>            json,
-<a href=#162 id=162 data-nosnippet>162</a>        } =&gt; cli::commands::decrypt::execute(path, output, urn, decryption_key, json),
-<a href=#163 id=163 data-nosnippet>163</a>        Commands::Keygen {
-<a href=#164 id=164 data-nosnippet>164</a>            urn,
-<a href=#165 id=165 data-nosnippet>165</a>            output,
-<a href=#166 id=166 data-nosnippet>166</a>            storage_address,
-<a href=#167 id=167 data-nosnippet>167</a>            encryption_key,
-<a href=#168 id=168 data-nosnippet>168</a>            json,
-<a href=#169 id=169 data-nosnippet>169</a>        } =&gt; cli::commands::keygen::execute(urn, output, storage_address, encryption_key, json),
-<a href=#170 id=170 data-nosnippet>170</a>        Commands::Cat {
-<a href=#171 id=171 data-nosnippet>171</a>            path,
-<a href=#172 id=172 data-nosnippet>172</a>            at,
-<a href=#173 id=173 data-nosnippet>173</a>            number,
-<a href=#174 id=174 data-nosnippet>174</a>            no_pager,
-<a href=#175 id=175 data-nosnippet>175</a>            bytes,
-<a href=#176 id=176 data-nosnippet>176</a>            json,
-<a href=#177 id=177 data-nosnippet>177</a>        } =&gt; cli::commands::cat::execute(path, at, number, no_pager, bytes, json),
-<a href=#178 id=178 data-nosnippet>178</a>        Commands::Completion { shell } =&gt; cli::commands::completion::execute(shell),
-<a href=#179 id=179 data-nosnippet>179</a>
-<a href=#180 id=180 data-nosnippet>180</a>        Commands::Staged { command } =&gt; <span class="kw">match </span>command {
-<a href=#181 id=181 data-nosnippet>181</a>            StagedCommands::List {
-<a href=#182 id=182 data-nosnippet>182</a>                limit,
-<a href=#183 id=183 data-nosnippet>183</a>                page,
-<a href=#184 id=184 data-nosnippet>184</a>                detailed,
-<a href=#185 id=185 data-nosnippet>185</a>                json,
-<a href=#186 id=186 data-nosnippet>186</a>                all,
-<a href=#187 id=187 data-nosnippet>187</a>            } =&gt; cli::commands::staged::execute_list(limit, page, detailed, json, all),
-<a href=#188 id=188 data-nosnippet>188</a>            StagedCommands::Diff {
-<a href=#189 id=189 data-nosnippet>189</a>                name_only,
-<a href=#190 id=190 data-nosnippet>190</a>                json,
-<a href=#191 id=191 data-nosnippet>191</a>                stat,
-<a href=#192 id=192 data-nosnippet>192</a>                unified,
-<a href=#193 id=193 data-nosnippet>193</a>                file,
-<a href=#194 id=194 data-nosnippet>194</a>            } =&gt; cli::commands::staged::execute_diff(name_only, json, stat, unified, file),
-<a href=#195 id=195 data-nosnippet>195</a>            StagedCommands::Clear { json, force } =&gt; {
-<a href=#196 id=196 data-nosnippet>196</a>                cli::commands::staged::clear_staged(json, force)
-<a href=#197 id=197 data-nosnippet>197</a>            },
-<a href=#198 id=198 data-nosnippet>198</a>        },
-<a href=#199 id=199 data-nosnippet>199</a>
-<a href=#200 id=200 data-nosnippet>200</a>        Commands::Update {
-<a href=#201 id=201 data-nosnippet>201</a>            check_only,
-<a href=#202 id=202 data-nosnippet>202</a>            force,
-<a href=#203 id=203 data-nosnippet>203</a>            json,
-<a href=#204 id=204 data-nosnippet>204</a>        } =&gt; cli::commands::update::execute(check_only, force, json),
-<a href=#205 id=205 data-nosnippet>205</a>
-<a href=#206 id=206 data-nosnippet>206</a>        Commands::Layer { command } =&gt; <span class="kw">match </span>command {
-<a href=#207 id=207 data-nosnippet>207</a>            LayerCommands::List {
-<a href=#208 id=208 data-nosnippet>208</a>                json,
-<a href=#209 id=209 data-nosnippet>209</a>                size,
-<a href=#210 id=210 data-nosnippet>210</a>                files,
-<a href=#211 id=211 data-nosnippet>211</a>                chunks,
-<a href=#212 id=212 data-nosnippet>212</a>            } =&gt; cli::commands::layer::execute_list(<span class="prelude-val">None</span>, json, <span class="bool-val">true</span>, size, files, chunks),
-<a href=#213 id=213 data-nosnippet>213</a>            LayerCommands::Analyze {
-<a href=#214 id=214 data-nosnippet>214</a>                layer_hash,
-<a href=#215 id=215 data-nosnippet>215</a>                json,
-<a href=#216 id=216 data-nosnippet>216</a>                size,
-<a href=#217 id=217 data-nosnippet>217</a>                files,
-<a href=#218 id=218 data-nosnippet>218</a>                chunks,
-<a href=#219 id=219 data-nosnippet>219</a>            } =&gt; cli::commands::layer::execute_list(
-<a href=#220 id=220 data-nosnippet>220</a>                <span class="prelude-val">Some</span>(layer_hash),
-<a href=#221 id=221 data-nosnippet>221</a>                json,
-<a href=#222 id=222 data-nosnippet>222</a>                <span class="bool-val">false</span>,
-<a href=#223 id=223 data-nosnippet>223</a>                size,
-<a href=#224 id=224 data-nosnippet>224</a>                files,
-<a href=#225 id=225 data-nosnippet>225</a>                chunks,
-<a href=#226 id=226 data-nosnippet>226</a>            ),
-<a href=#227 id=227 data-nosnippet>227</a>            LayerCommands::Inspect {
-<a href=#228 id=228 data-nosnippet>228</a>                layer_hash,
-<a href=#229 id=229 data-nosnippet>229</a>                json,
-<a href=#230 id=230 data-nosnippet>230</a>                header,
-<a href=#231 id=231 data-nosnippet>231</a>                merkle,
-<a href=#232 id=232 data-nosnippet>232</a>                chunks,
-<a href=#233 id=233 data-nosnippet>233</a>                verify,
-<a href=#234 id=234 data-nosnippet>234</a>            } =&gt; cli::commands::layer::execute_inspect(
-<a href=#235 id=235 data-nosnippet>235</a>                layer_hash, json, header, merkle, chunks, verify,
-<a href=#236 id=236 data-nosnippet>236</a>            ),
-<a href=#237 id=237 data-nosnippet>237</a>        },
-<a href=#238 id=238 data-nosnippet>238</a>
-<a href=#239 id=239 data-nosnippet>239</a>        Commands::Store { command } =&gt; <span class="kw">match </span>command {
-<a href=#240 id=240 data-nosnippet>240</a>            StoreCommands::Info {
-<a href=#241 id=241 data-nosnippet>241</a>                json,
-<a href=#242 id=242 data-nosnippet>242</a>                config,
-<a href=#243 id=243 data-nosnippet>243</a>                paths,
-<a href=#244 id=244 data-nosnippet>244</a>                layer,
-<a href=#245 id=245 data-nosnippet>245</a>            } =&gt; {
-<a href=#246 id=246 data-nosnippet>246</a>                <span class="kw">if </span>layer.is_some() {
-<a href=#247 id=247 data-nosnippet>247</a>                    cli::commands::store::execute_info(json, layer)
-<a href=#248 id=248 data-nosnippet>248</a>                } <span class="kw">else </span>{
-<a href=#249 id=249 data-nosnippet>249</a>                    cli::commands::store::execute_store_info(json, config, paths)
-<a href=#250 id=250 data-nosnippet>250</a>                }
-<a href=#251 id=251 data-nosnippet>251</a>            },
-<a href=#252 id=252 data-nosnippet>252</a>            StoreCommands::Log {
-<a href=#253 id=253 data-nosnippet>253</a>                limit,
-<a href=#254 id=254 data-nosnippet>254</a>                oneline,
-<a href=#255 id=255 data-nosnippet>255</a>                graph,
-<a href=#256 id=256 data-nosnippet>256</a>                since,
-<a href=#257 id=257 data-nosnippet>257</a>            } =&gt; cli::commands::store::execute_log(limit, oneline, graph, since),
-<a href=#258 id=258 data-nosnippet>258</a>            StoreCommands::History {
-<a href=#259 id=259 data-nosnippet>259</a>                json,
-<a href=#260 id=260 data-nosnippet>260</a>                limit,
-<a href=#261 id=261 data-nosnippet>261</a>                stats,
-<a href=#262 id=262 data-nosnippet>262</a>                graph,
-<a href=#263 id=263 data-nosnippet>263</a>                since,
-<a href=#264 id=264 data-nosnippet>264</a>            } =&gt; cli::commands::store::execute_history(json, limit, stats, graph, since),
-<a href=#265 id=265 data-nosnippet>265</a>            StoreCommands::Root {
-<a href=#266 id=266 data-nosnippet>266</a>                json,
-<a href=#267 id=267 data-nosnippet>267</a>                verbose,
-<a href=#268 id=268 data-nosnippet>268</a>                hash_only,
-<a href=#269 id=269 data-nosnippet>269</a>            } =&gt; cli::commands::store::execute_root(json, verbose, hash_only),
-<a href=#270 id=270 data-nosnippet>270</a>            StoreCommands::Size {
-<a href=#271 id=271 data-nosnippet>271</a>                json,
-<a href=#272 id=272 data-nosnippet>272</a>                breakdown,
-<a href=#273 id=273 data-nosnippet>273</a>                efficiency,
-<a href=#274 id=274 data-nosnippet>274</a>                layers,
-<a href=#275 id=275 data-nosnippet>275</a>            } =&gt; cli::commands::store::execute_size(json, breakdown, efficiency, layers),
-<a href=#276 id=276 data-nosnippet>276</a>            StoreCommands::Stats {
-<a href=#277 id=277 data-nosnippet>277</a>                json,
-<a href=#278 id=278 data-nosnippet>278</a>                detailed,
-<a href=#279 id=279 data-nosnippet>279</a>                performance,
-<a href=#280 id=280 data-nosnippet>280</a>                security,
-<a href=#281 id=281 data-nosnippet>281</a>            } =&gt; cli::commands::store::execute_stats(json, detailed, performance, security),
-<a href=#282 id=282 data-nosnippet>282</a>        },
-<a href=#283 id=283 data-nosnippet>283</a>
-<a href=#284 id=284 data-nosnippet>284</a>        Commands::Proof { command } =&gt; <span class="kw">match </span>command {
-<a href=#285 id=285 data-nosnippet>285</a>            ProofCommands::Generate {
-<a href=#286 id=286 data-nosnippet>286</a>                target,
-<a href=#287 id=287 data-nosnippet>287</a>                output,
-<a href=#288 id=288 data-nosnippet>288</a>                format,
-<a href=#289 id=289 data-nosnippet>289</a>                at,
-<a href=#290 id=290 data-nosnippet>290</a>                bytes,
-<a href=#291 id=291 data-nosnippet>291</a>                compact,
-<a href=#292 id=292 data-nosnippet>292</a>            } =&gt; cli::commands::proof::execute_generate(target, output, format, at, bytes, compact),
-<a href=#293 id=293 data-nosnippet>293</a>            ProofCommands::Verify {
-<a href=#294 id=294 data-nosnippet>294</a>                proof,
-<a href=#295 id=295 data-nosnippet>295</a>                target,
-<a href=#296 id=296 data-nosnippet>296</a>                root,
-<a href=#297 id=297 data-nosnippet>297</a>                verbose,
-<a href=#298 id=298 data-nosnippet>298</a>                from_stdin,
-<a href=#299 id=299 data-nosnippet>299</a>            } =&gt; cli::commands::proof::execute_verify(proof, target, root, verbose, from_stdin),
-<a href=#300 id=300 data-nosnippet>300</a>            ProofCommands::GenerateArchiveSize {
-<a href=#301 id=301 data-nosnippet>301</a>                store_id,
-<a href=#302 id=302 data-nosnippet>302</a>                output,
-<a href=#303 id=303 data-nosnippet>303</a>                format,
-<a href=#304 id=304 data-nosnippet>304</a>                verbose,
-<a href=#305 id=305 data-nosnippet>305</a>                show_compression,
-<a href=#306 id=306 data-nosnippet>306</a>                json,
-<a href=#307 id=307 data-nosnippet>307</a>            } =&gt; cli::commands::proof::execute_generate_archive_size(
-<a href=#308 id=308 data-nosnippet>308</a>                store_id,
-<a href=#309 id=309 data-nosnippet>309</a>                output,
-<a href=#310 id=310 data-nosnippet>310</a>                format,
-<a href=#311 id=311 data-nosnippet>311</a>                verbose,
-<a href=#312 id=312 data-nosnippet>312</a>                show_compression,
-<a href=#313 id=313 data-nosnippet>313</a>                json,
-<a href=#314 id=314 data-nosnippet>314</a>            ),
-<a href=#315 id=315 data-nosnippet>315</a>            ProofCommands::VerifyArchiveSize {
-<a href=#316 id=316 data-nosnippet>316</a>                proof,
-<a href=#317 id=317 data-nosnippet>317</a>                store_id,
-<a href=#318 id=318 data-nosnippet>318</a>                root_hash,
-<a href=#319 id=319 data-nosnippet>319</a>                expected_size,
-<a href=#320 id=320 data-nosnippet>320</a>                publisher_public_key,
-<a href=#321 id=321 data-nosnippet>321</a>                from_file,
-<a href=#322 id=322 data-nosnippet>322</a>                verbose,
-<a href=#323 id=323 data-nosnippet>323</a>                json,
-<a href=#324 id=324 data-nosnippet>324</a>            } =&gt; cli::commands::proof::execute_verify_archive_size(
-<a href=#325 id=325 data-nosnippet>325</a>                proof,
-<a href=#326 id=326 data-nosnippet>326</a>                store_id,
-<a href=#327 id=327 data-nosnippet>327</a>                root_hash,
-<a href=#328 id=328 data-nosnippet>328</a>                expected_size,
-<a href=#329 id=329 data-nosnippet>329</a>                publisher_public_key,
-<a href=#330 id=330 data-nosnippet>330</a>                from_file,
-<a href=#331 id=331 data-nosnippet>331</a>                verbose,
-<a href=#332 id=332 data-nosnippet>332</a>                json,
-<a href=#333 id=333 data-nosnippet>333</a>            ),
-<a href=#334 id=334 data-nosnippet>334</a>        },
-<a href=#335 id=335 data-nosnippet>335</a>
-<a href=#336 id=336 data-nosnippet>336</a>        Commands::Config {
-<a href=#337 id=337 data-nosnippet>337</a>            key,
-<a href=#338 id=338 data-nosnippet>338</a>            value,
-<a href=#339 id=339 data-nosnippet>339</a>            list,
-<a href=#340 id=340 data-nosnippet>340</a>            unset,
-<a href=#341 id=341 data-nosnippet>341</a>            show_origin,
-<a href=#342 id=342 data-nosnippet>342</a>            edit,
-<a href=#343 id=343 data-nosnippet>343</a>            json,
-<a href=#344 id=344 data-nosnippet>344</a>        } =&gt; cli::commands::config::execute(key, value, list, unset, show_origin, edit, json),
-<a href=#345 id=345 data-nosnippet>345</a>
-<a href=#346 id=346 data-nosnippet>346</a>        Commands::Wallet { command } =&gt; {
-<a href=#347 id=347 data-nosnippet>347</a>            cli::commands::wallet::execute(command).map_err(|e| e.into())
-<a href=#348 id=348 data-nosnippet>348</a>        },
-<a href=#349 id=349 data-nosnippet>349</a>    }
-<a href=#350 id=350 data-nosnippet>350</a>}
-<a href=#351 id=351 data-nosnippet>351</a>
-<a href=#352 id=352 data-nosnippet>352</a><span class="doccomment">/// Determines if a command requires wallet initialization
-<a href=#353 id=353 data-nosnippet>353</a></span><span class="kw">fn </span>needs_wallet_initialization(command: <span class="kw-2">&amp;</span>Commands) -&gt; bool {
-<a href=#354 id=354 data-nosnippet>354</a>    <span class="kw">match </span>command {
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="comment">// Commands that don't need wallet initialization
-<a href=#356 id=356 data-nosnippet>356</a>        </span>Commands::Completion { .. } =&gt; <span class="bool-val">false</span>,
-<a href=#357 id=357 data-nosnippet>357</a>        Commands::Config { .. } =&gt; <span class="bool-val">false</span>,
-<a href=#358 id=358 data-nosnippet>358</a>        Commands::Update { .. } =&gt; <span class="bool-val">false</span>,
-<a href=#359 id=359 data-nosnippet>359</a>        Commands::Wallet { .. } =&gt; <span class="bool-val">false</span>, <span class="comment">// Wallet commands manage their own initialization
-<a href=#360 id=360 data-nosnippet>360</a>
-<a href=#361 id=361 data-nosnippet>361</a>        // All other commands require wallet initialization
-<a href=#362 id=362 data-nosnippet>362</a>        </span><span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
-<a href=#363 id=363 data-nosnippet>363</a>    }
-<a href=#364 id=364 data-nosnippet>364</a>}
-<a href=#365 id=365 data-nosnippet>365</a>
-<a href=#366 id=366 data-nosnippet>366</a><span class="doccomment">/// Check for updates and prompt user if available
-<a href=#367 id=367 data-nosnippet>367</a></span><span class="kw">fn </span>check_and_prompt_for_updates() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">use </span>colored::Colorize;
-<a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">use </span>dialoguer::Confirm;
-<a href=#370 id=370 data-nosnippet>370</a>
-<a href=#371 id=371 data-nosnippet>371</a>    <span class="comment">// Only check occasionally to avoid slowing down commands
-<a href=#372 id=372 data-nosnippet>372</a>    </span><span class="kw">let </span>update_info = <span class="kw">match </span><span class="kw">crate</span>::update::check_for_updates() {
-<a href=#373 id=373 data-nosnippet>373</a>        <span class="prelude-val">Ok</span>(info) =&gt; info,
-<a href=#374 id=374 data-nosnippet>374</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()), <span class="comment">// Silently ignore update check failures
-<a href=#375 id=375 data-nosnippet>375</a>    </span>};
-<a href=#376 id=376 data-nosnippet>376</a>
-<a href=#377 id=377 data-nosnippet>377</a>    <span class="kw">if </span>!update_info.update_available {
-<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#379 id=379 data-nosnippet>379</a>    }
-<a href=#380 id=380 data-nosnippet>380</a>
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="macro">println!</span>();
-<a href=#382 id=382 data-nosnippet>382</a>    <span class="macro">println!</span>(
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="string">"{} {} Update available: {} → {}"</span>,
-<a href=#384 id=384 data-nosnippet>384</a>        <span class="string">"🎉"</span>.bright_yellow(),
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="string">"Digstore"</span>.bright_cyan().bold(),
-<a href=#386 id=386 data-nosnippet>386</a>        update_info.current_version.dimmed(),
-<a href=#387 id=387 data-nosnippet>387</a>        update_info.latest_version.bright_green()
-<a href=#388 id=388 data-nosnippet>388</a>    );
-<a href=#389 id=389 data-nosnippet>389</a>
-<a href=#390 id=390 data-nosnippet>390</a>    <span class="kw">let </span>should_update = Confirm::new()
-<a href=#391 id=391 data-nosnippet>391</a>        .with_prompt(<span class="string">"Would you like to download and install the update now?"</span>)
-<a href=#392 id=392 data-nosnippet>392</a>        .default(<span class="bool-val">false</span>)
-<a href=#393 id=393 data-nosnippet>393</a>        .interact()
-<a href=#394 id=394 data-nosnippet>394</a>        .unwrap_or(<span class="bool-val">false</span>);
-<a href=#395 id=395 data-nosnippet>395</a>
-<a href=#396 id=396 data-nosnippet>396</a>    <span class="kw">if </span>should_update {
-<a href=#397 id=397 data-nosnippet>397</a>        <span class="macro">println!</span>();
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(download_url) = update_info.download_url {
-<a href=#399 id=399 data-nosnippet>399</a>            <span class="kw">match </span><span class="kw">crate</span>::update::download_and_install_update(<span class="kw-2">&amp;</span>download_url) {
-<a href=#400 id=400 data-nosnippet>400</a>                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-<a href=#401 id=401 data-nosnippet>401</a>                    <span class="macro">println!</span>(
-<a href=#402 id=402 data-nosnippet>402</a>                        <span class="string">"{}"</span>,
-<a href=#403 id=403 data-nosnippet>403</a>                        <span class="string">"✓ Update completed! Please restart your terminal."
-<a href=#404 id=404 data-nosnippet>404</a>                            </span>.green()
-<a href=#405 id=405 data-nosnippet>405</a>                            .bold()
-<a href=#406 id=406 data-nosnippet>406</a>                    );
-<a href=#407 id=407 data-nosnippet>407</a>                },
-<a href=#408 id=408 data-nosnippet>408</a>                <span class="prelude-val">Err</span>(e) =&gt; {
-<a href=#409 id=409 data-nosnippet>409</a>                    <span class="macro">println!</span>(<span class="string">"{} Update failed: {}"</span>, <span class="string">"✗"</span>.red(), e);
-<a href=#410 id=410 data-nosnippet>410</a>                    <span class="macro">println!</span>(
-<a href=#411 id=411 data-nosnippet>411</a>                        <span class="string">"  {} Manual download: https://github.com/DIG-Network/digstore/releases"</span>,
-<a href=#412 id=412 data-nosnippet>412</a>                        <span class="string">"→"</span>.cyan()
-<a href=#413 id=413 data-nosnippet>413</a>                    );
-<a href=#414 id=414 data-nosnippet>414</a>                },
-<a href=#415 id=415 data-nosnippet>415</a>            }
-<a href=#416 id=416 data-nosnippet>416</a>        }
-<a href=#417 id=417 data-nosnippet>417</a>    } <span class="kw">else </span>{
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="macro">println!</span>(<span class="string">"  {} Use 'digstore update' to update later"</span>, <span class="string">"→"</span>.cyan());
-<a href=#419 id=419 data-nosnippet>419</a>    }
-<a href=#420 id=420 data-nosnippet>420</a>
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="macro">println!</span>();
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="prelude-val">Ok</span>(())
-<a href=#423 id=423 data-nosnippet>423</a>}</code></pre></div></section></main></body></html>
+<a href=#65 id=65 data-nosnippet>65</a>        non_interactive: cli.non_interactive,
+<a href=#66 id=66 data-nosnippet>66</a>        custom_encryption_key,
+<a href=#67 id=67 data-nosnippet>67</a>        custom_decryption_key,
+<a href=#68 id=68 data-nosnippet>68</a>    });
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="comment">// Handle auto-generation or auto-import flags first (these work regardless of command)
+<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="kw">if </span>cli.auto_generate_wallet || cli.auto_import_mnemonic.is_some() {
+<a href=#72 id=72 data-nosnippet>72</a>        <span class="kw">let </span>wallet_profile = cli.wallet_profile.clone();
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">let </span>wallet_manager = WalletManager::new_with_profile(wallet_profile)<span class="question-mark">?</span>;
+<a href=#74 id=74 data-nosnippet>74</a>
+<a href=#75 id=75 data-nosnippet>75</a>        <span class="kw">if </span>cli.auto_generate_wallet {
+<a href=#76 id=76 data-nosnippet>76</a>            wallet_manager.auto_generate_wallet()<span class="question-mark">?</span>;
+<a href=#77 id=77 data-nosnippet>77</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(mnemonic) = cli.auto_import_mnemonic.clone() {
+<a href=#78 id=78 data-nosnippet>78</a>            wallet_manager.auto_import_wallet(<span class="kw-2">&amp;</span>mnemonic)<span class="question-mark">?</span>;
+<a href=#79 id=79 data-nosnippet>79</a>        }
+<a href=#80 id=80 data-nosnippet>80</a>    }
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="comment">// Check if wallet initialization is needed for this command
+<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">if </span>needs_wallet_initialization(<span class="kw-2">&amp;</span>cli.command) {
+<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">let </span>wallet_profile = cli.wallet_profile.clone();
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">let </span>wallet_manager = WalletManager::new_with_profile(wallet_profile)<span class="question-mark">?</span>;
+<a href=#86 id=86 data-nosnippet>86</a>        wallet_manager.ensure_wallet_initialized()<span class="question-mark">?</span>;
+<a href=#87 id=87 data-nosnippet>87</a>    }
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="comment">// Check for updates (unless running update command, in quiet mode, or non-interactive)
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="kw">if </span>!<span class="macro">matches!</span>(cli.command, Commands::Update { .. }) &amp;&amp; !cli.quiet &amp;&amp; !cli.non_interactive {
+<a href=#91 id=91 data-nosnippet>91</a>        check_and_prompt_for_updates()<span class="question-mark">?</span>;
+<a href=#92 id=92 data-nosnippet>92</a>    }
+<a href=#93 id=93 data-nosnippet>93</a>
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="comment">// Execute the command
+<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">match </span>cli.command {
+<a href=#96 id=96 data-nosnippet>96</a>        Commands::Init {
+<a href=#97 id=97 data-nosnippet>97</a>            store_id,
+<a href=#98 id=98 data-nosnippet>98</a>            name,
+<a href=#99 id=99 data-nosnippet>99</a>            no_compression,
+<a href=#100 id=100 data-nosnippet>100</a>            chunk_size,
+<a href=#101 id=101 data-nosnippet>101</a>            encryption_key,
+<a href=#102 id=102 data-nosnippet>102</a>        } =&gt; {
+<a href=#103 id=103 data-nosnippet>103</a>            cli::commands::init::execute(store_id, name, no_compression, chunk_size, encryption_key)
+<a href=#104 id=104 data-nosnippet>104</a>        },
+<a href=#105 id=105 data-nosnippet>105</a>        Commands::Add {
+<a href=#106 id=106 data-nosnippet>106</a>            paths,
+<a href=#107 id=107 data-nosnippet>107</a>            recursive,
+<a href=#108 id=108 data-nosnippet>108</a>            all,
+<a href=#109 id=109 data-nosnippet>109</a>            force,
+<a href=#110 id=110 data-nosnippet>110</a>            dry_run,
+<a href=#111 id=111 data-nosnippet>111</a>            from_stdin,
+<a href=#112 id=112 data-nosnippet>112</a>            json,
+<a href=#113 id=113 data-nosnippet>113</a>        } =&gt; cli::commands::add::execute(
+<a href=#114 id=114 data-nosnippet>114</a>            paths, recursive, all, force, dry_run, from_stdin, cli.yes, json,
+<a href=#115 id=115 data-nosnippet>115</a>        ),
+<a href=#116 id=116 data-nosnippet>116</a>        Commands::Commit {
+<a href=#117 id=117 data-nosnippet>117</a>            message,
+<a href=#118 id=118 data-nosnippet>118</a>            full_layer,
+<a href=#119 id=119 data-nosnippet>119</a>            author,
+<a href=#120 id=120 data-nosnippet>120</a>            date,
+<a href=#121 id=121 data-nosnippet>121</a>            edit,
+<a href=#122 id=122 data-nosnippet>122</a>            json,
+<a href=#123 id=123 data-nosnippet>123</a>        } =&gt; cli::commands::commit::execute(message, full_layer, author, date, edit, json),
+<a href=#124 id=124 data-nosnippet>124</a>        Commands::Status {
+<a href=#125 id=125 data-nosnippet>125</a>            short,
+<a href=#126 id=126 data-nosnippet>126</a>            porcelain,
+<a href=#127 id=127 data-nosnippet>127</a>            show_chunks,
+<a href=#128 id=128 data-nosnippet>128</a>            json,
+<a href=#129 id=129 data-nosnippet>129</a>        } =&gt; cli::commands::status::execute(short, porcelain, show_chunks, json),
+<a href=#130 id=130 data-nosnippet>130</a>        Commands::Get {
+<a href=#131 id=131 data-nosnippet>131</a>            path,
+<a href=#132 id=132 data-nosnippet>132</a>            output,
+<a href=#133 id=133 data-nosnippet>133</a>            verify,
+<a href=#134 id=134 data-nosnippet>134</a>            metadata,
+<a href=#135 id=135 data-nosnippet>135</a>            at,
+<a href=#136 id=136 data-nosnippet>136</a>            progress,
+<a href=#137 id=137 data-nosnippet>137</a>            decryption_key,
+<a href=#138 id=138 data-nosnippet>138</a>            json,
+<a href=#139 id=139 data-nosnippet>139</a>        } =&gt; {
+<a href=#140 id=140 data-nosnippet>140</a>            <span class="comment">// Update CLI context with decryption key before opening stores
+<a href=#141 id=141 data-nosnippet>141</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(key) = <span class="kw-2">&amp;</span>decryption_key {
+<a href=#142 id=142 data-nosnippet>142</a>                <span class="kw">let </span><span class="kw-2">mut </span>current_context = CliContext::get().unwrap_or_default();
+<a href=#143 id=143 data-nosnippet>143</a>                current_context.custom_decryption_key = <span class="prelude-val">Some</span>(key.clone());
+<a href=#144 id=144 data-nosnippet>144</a>                CliContext::set(current_context);
+<a href=#145 id=145 data-nosnippet>145</a>            }
+<a href=#146 id=146 data-nosnippet>146</a>            cli::commands::get::execute(
+<a href=#147 id=147 data-nosnippet>147</a>                path,
+<a href=#148 id=148 data-nosnippet>148</a>                output,
+<a href=#149 id=149 data-nosnippet>149</a>                verify,
+<a href=#150 id=150 data-nosnippet>150</a>                metadata,
+<a href=#151 id=151 data-nosnippet>151</a>                at,
+<a href=#152 id=152 data-nosnippet>152</a>                progress,
+<a href=#153 id=153 data-nosnippet>153</a>                decryption_key,
+<a href=#154 id=154 data-nosnippet>154</a>                json,
+<a href=#155 id=155 data-nosnippet>155</a>            )
+<a href=#156 id=156 data-nosnippet>156</a>        },
+<a href=#157 id=157 data-nosnippet>157</a>        Commands::Decrypt {
+<a href=#158 id=158 data-nosnippet>158</a>            path,
+<a href=#159 id=159 data-nosnippet>159</a>            output,
+<a href=#160 id=160 data-nosnippet>160</a>            urn,
+<a href=#161 id=161 data-nosnippet>161</a>            decryption_key,
+<a href=#162 id=162 data-nosnippet>162</a>            json,
+<a href=#163 id=163 data-nosnippet>163</a>        } =&gt; cli::commands::decrypt::execute(path, output, urn, decryption_key, json),
+<a href=#164 id=164 data-nosnippet>164</a>        Commands::Keygen {
+<a href=#165 id=165 data-nosnippet>165</a>            urn,
+<a href=#166 id=166 data-nosnippet>166</a>            output,
+<a href=#167 id=167 data-nosnippet>167</a>            storage_address,
+<a href=#168 id=168 data-nosnippet>168</a>            encryption_key,
+<a href=#169 id=169 data-nosnippet>169</a>            json,
+<a href=#170 id=170 data-nosnippet>170</a>        } =&gt; cli::commands::keygen::execute(urn, output, storage_address, encryption_key, json),
+<a href=#171 id=171 data-nosnippet>171</a>        Commands::Cat {
+<a href=#172 id=172 data-nosnippet>172</a>            path,
+<a href=#173 id=173 data-nosnippet>173</a>            at,
+<a href=#174 id=174 data-nosnippet>174</a>            number,
+<a href=#175 id=175 data-nosnippet>175</a>            no_pager,
+<a href=#176 id=176 data-nosnippet>176</a>            bytes,
+<a href=#177 id=177 data-nosnippet>177</a>            json,
+<a href=#178 id=178 data-nosnippet>178</a>        } =&gt; cli::commands::cat::execute(path, at, number, no_pager, bytes, json),
+<a href=#179 id=179 data-nosnippet>179</a>        Commands::Completion { shell } =&gt; cli::commands::completion::execute(shell),
+<a href=#180 id=180 data-nosnippet>180</a>
+<a href=#181 id=181 data-nosnippet>181</a>        Commands::Staged { command } =&gt; <span class="kw">match </span>command {
+<a href=#182 id=182 data-nosnippet>182</a>            StagedCommands::List {
+<a href=#183 id=183 data-nosnippet>183</a>                limit,
+<a href=#184 id=184 data-nosnippet>184</a>                page,
+<a href=#185 id=185 data-nosnippet>185</a>                detailed,
+<a href=#186 id=186 data-nosnippet>186</a>                json,
+<a href=#187 id=187 data-nosnippet>187</a>                all,
+<a href=#188 id=188 data-nosnippet>188</a>            } =&gt; cli::commands::staged::execute_list(limit, page, detailed, json, all),
+<a href=#189 id=189 data-nosnippet>189</a>            StagedCommands::Diff {
+<a href=#190 id=190 data-nosnippet>190</a>                name_only,
+<a href=#191 id=191 data-nosnippet>191</a>                json,
+<a href=#192 id=192 data-nosnippet>192</a>                stat,
+<a href=#193 id=193 data-nosnippet>193</a>                unified,
+<a href=#194 id=194 data-nosnippet>194</a>                file,
+<a href=#195 id=195 data-nosnippet>195</a>            } =&gt; cli::commands::staged::execute_diff(name_only, json, stat, unified, file),
+<a href=#196 id=196 data-nosnippet>196</a>            StagedCommands::Clear { json, force } =&gt; {
+<a href=#197 id=197 data-nosnippet>197</a>                cli::commands::staged::clear_staged(json, force)
+<a href=#198 id=198 data-nosnippet>198</a>            },
+<a href=#199 id=199 data-nosnippet>199</a>        },
+<a href=#200 id=200 data-nosnippet>200</a>
+<a href=#201 id=201 data-nosnippet>201</a>        Commands::Update {
+<a href=#202 id=202 data-nosnippet>202</a>            check_only,
+<a href=#203 id=203 data-nosnippet>203</a>            force,
+<a href=#204 id=204 data-nosnippet>204</a>            json,
+<a href=#205 id=205 data-nosnippet>205</a>        } =&gt; cli::commands::update::execute(check_only, force, json),
+<a href=#206 id=206 data-nosnippet>206</a>
+<a href=#207 id=207 data-nosnippet>207</a>        Commands::Layer { command } =&gt; <span class="kw">match </span>command {
+<a href=#208 id=208 data-nosnippet>208</a>            LayerCommands::List {
+<a href=#209 id=209 data-nosnippet>209</a>                json,
+<a href=#210 id=210 data-nosnippet>210</a>                size,
+<a href=#211 id=211 data-nosnippet>211</a>                files,
+<a href=#212 id=212 data-nosnippet>212</a>                chunks,
+<a href=#213 id=213 data-nosnippet>213</a>            } =&gt; cli::commands::layer::execute_list(<span class="prelude-val">None</span>, json, <span class="bool-val">true</span>, size, files, chunks),
+<a href=#214 id=214 data-nosnippet>214</a>            LayerCommands::Analyze {
+<a href=#215 id=215 data-nosnippet>215</a>                layer_hash,
+<a href=#216 id=216 data-nosnippet>216</a>                json,
+<a href=#217 id=217 data-nosnippet>217</a>                size,
+<a href=#218 id=218 data-nosnippet>218</a>                files,
+<a href=#219 id=219 data-nosnippet>219</a>                chunks,
+<a href=#220 id=220 data-nosnippet>220</a>            } =&gt; cli::commands::layer::execute_list(
+<a href=#221 id=221 data-nosnippet>221</a>                <span class="prelude-val">Some</span>(layer_hash),
+<a href=#222 id=222 data-nosnippet>222</a>                json,
+<a href=#223 id=223 data-nosnippet>223</a>                <span class="bool-val">false</span>,
+<a href=#224 id=224 data-nosnippet>224</a>                size,
+<a href=#225 id=225 data-nosnippet>225</a>                files,
+<a href=#226 id=226 data-nosnippet>226</a>                chunks,
+<a href=#227 id=227 data-nosnippet>227</a>            ),
+<a href=#228 id=228 data-nosnippet>228</a>            LayerCommands::Inspect {
+<a href=#229 id=229 data-nosnippet>229</a>                layer_hash,
+<a href=#230 id=230 data-nosnippet>230</a>                json,
+<a href=#231 id=231 data-nosnippet>231</a>                header,
+<a href=#232 id=232 data-nosnippet>232</a>                merkle,
+<a href=#233 id=233 data-nosnippet>233</a>                chunks,
+<a href=#234 id=234 data-nosnippet>234</a>                verify,
+<a href=#235 id=235 data-nosnippet>235</a>            } =&gt; cli::commands::layer::execute_inspect(
+<a href=#236 id=236 data-nosnippet>236</a>                layer_hash, json, header, merkle, chunks, verify,
+<a href=#237 id=237 data-nosnippet>237</a>            ),
+<a href=#238 id=238 data-nosnippet>238</a>        },
+<a href=#239 id=239 data-nosnippet>239</a>
+<a href=#240 id=240 data-nosnippet>240</a>        Commands::Store { command } =&gt; <span class="kw">match </span>command {
+<a href=#241 id=241 data-nosnippet>241</a>            StoreCommands::Info {
+<a href=#242 id=242 data-nosnippet>242</a>                json,
+<a href=#243 id=243 data-nosnippet>243</a>                config,
+<a href=#244 id=244 data-nosnippet>244</a>                paths,
+<a href=#245 id=245 data-nosnippet>245</a>                layer,
+<a href=#246 id=246 data-nosnippet>246</a>            } =&gt; {
+<a href=#247 id=247 data-nosnippet>247</a>                <span class="kw">if </span>layer.is_some() {
+<a href=#248 id=248 data-nosnippet>248</a>                    cli::commands::store::execute_info(json, layer)
+<a href=#249 id=249 data-nosnippet>249</a>                } <span class="kw">else </span>{
+<a href=#250 id=250 data-nosnippet>250</a>                    cli::commands::store::execute_store_info(json, config, paths)
+<a href=#251 id=251 data-nosnippet>251</a>                }
+<a href=#252 id=252 data-nosnippet>252</a>            },
+<a href=#253 id=253 data-nosnippet>253</a>            StoreCommands::Log {
+<a href=#254 id=254 data-nosnippet>254</a>                limit,
+<a href=#255 id=255 data-nosnippet>255</a>                oneline,
+<a href=#256 id=256 data-nosnippet>256</a>                graph,
+<a href=#257 id=257 data-nosnippet>257</a>                since,
+<a href=#258 id=258 data-nosnippet>258</a>            } =&gt; cli::commands::store::execute_log(limit, oneline, graph, since),
+<a href=#259 id=259 data-nosnippet>259</a>            StoreCommands::History {
+<a href=#260 id=260 data-nosnippet>260</a>                json,
+<a href=#261 id=261 data-nosnippet>261</a>                limit,
+<a href=#262 id=262 data-nosnippet>262</a>                stats,
+<a href=#263 id=263 data-nosnippet>263</a>                graph,
+<a href=#264 id=264 data-nosnippet>264</a>                since,
+<a href=#265 id=265 data-nosnippet>265</a>            } =&gt; cli::commands::store::execute_history(json, limit, stats, graph, since),
+<a href=#266 id=266 data-nosnippet>266</a>            StoreCommands::Root {
+<a href=#267 id=267 data-nosnippet>267</a>                json,
+<a href=#268 id=268 data-nosnippet>268</a>                verbose,
+<a href=#269 id=269 data-nosnippet>269</a>                hash_only,
+<a href=#270 id=270 data-nosnippet>270</a>            } =&gt; cli::commands::store::execute_root(json, verbose, hash_only),
+<a href=#271 id=271 data-nosnippet>271</a>            StoreCommands::Size {
+<a href=#272 id=272 data-nosnippet>272</a>                json,
+<a href=#273 id=273 data-nosnippet>273</a>                breakdown,
+<a href=#274 id=274 data-nosnippet>274</a>                efficiency,
+<a href=#275 id=275 data-nosnippet>275</a>                layers,
+<a href=#276 id=276 data-nosnippet>276</a>            } =&gt; cli::commands::store::execute_size(json, breakdown, efficiency, layers),
+<a href=#277 id=277 data-nosnippet>277</a>            StoreCommands::Stats {
+<a href=#278 id=278 data-nosnippet>278</a>                json,
+<a href=#279 id=279 data-nosnippet>279</a>                detailed,
+<a href=#280 id=280 data-nosnippet>280</a>                performance,
+<a href=#281 id=281 data-nosnippet>281</a>                security,
+<a href=#282 id=282 data-nosnippet>282</a>            } =&gt; cli::commands::store::execute_stats(json, detailed, performance, security),
+<a href=#283 id=283 data-nosnippet>283</a>        },
+<a href=#284 id=284 data-nosnippet>284</a>
+<a href=#285 id=285 data-nosnippet>285</a>        Commands::Proof { command } =&gt; <span class="kw">match </span>command {
+<a href=#286 id=286 data-nosnippet>286</a>            ProofCommands::Generate {
+<a href=#287 id=287 data-nosnippet>287</a>                target,
+<a href=#288 id=288 data-nosnippet>288</a>                output,
+<a href=#289 id=289 data-nosnippet>289</a>                format,
+<a href=#290 id=290 data-nosnippet>290</a>                at,
+<a href=#291 id=291 data-nosnippet>291</a>                bytes,
+<a href=#292 id=292 data-nosnippet>292</a>                compact,
+<a href=#293 id=293 data-nosnippet>293</a>            } =&gt; cli::commands::proof::execute_generate(target, output, format, at, bytes, compact),
+<a href=#294 id=294 data-nosnippet>294</a>            ProofCommands::Verify {
+<a href=#295 id=295 data-nosnippet>295</a>                proof,
+<a href=#296 id=296 data-nosnippet>296</a>                target,
+<a href=#297 id=297 data-nosnippet>297</a>                root,
+<a href=#298 id=298 data-nosnippet>298</a>                verbose,
+<a href=#299 id=299 data-nosnippet>299</a>                from_stdin,
+<a href=#300 id=300 data-nosnippet>300</a>            } =&gt; cli::commands::proof::execute_verify(proof, target, root, verbose, from_stdin),
+<a href=#301 id=301 data-nosnippet>301</a>            ProofCommands::GenerateArchiveSize {
+<a href=#302 id=302 data-nosnippet>302</a>                store_id,
+<a href=#303 id=303 data-nosnippet>303</a>                output,
+<a href=#304 id=304 data-nosnippet>304</a>                format,
+<a href=#305 id=305 data-nosnippet>305</a>                verbose,
+<a href=#306 id=306 data-nosnippet>306</a>                show_compression,
+<a href=#307 id=307 data-nosnippet>307</a>                json,
+<a href=#308 id=308 data-nosnippet>308</a>            } =&gt; cli::commands::proof::execute_generate_archive_size(
+<a href=#309 id=309 data-nosnippet>309</a>                store_id,
+<a href=#310 id=310 data-nosnippet>310</a>                output,
+<a href=#311 id=311 data-nosnippet>311</a>                format,
+<a href=#312 id=312 data-nosnippet>312</a>                verbose,
+<a href=#313 id=313 data-nosnippet>313</a>                show_compression,
+<a href=#314 id=314 data-nosnippet>314</a>                json,
+<a href=#315 id=315 data-nosnippet>315</a>            ),
+<a href=#316 id=316 data-nosnippet>316</a>            ProofCommands::VerifyArchiveSize {
+<a href=#317 id=317 data-nosnippet>317</a>                proof,
+<a href=#318 id=318 data-nosnippet>318</a>                store_id,
+<a href=#319 id=319 data-nosnippet>319</a>                root_hash,
+<a href=#320 id=320 data-nosnippet>320</a>                expected_size,
+<a href=#321 id=321 data-nosnippet>321</a>                publisher_public_key,
+<a href=#322 id=322 data-nosnippet>322</a>                from_file,
+<a href=#323 id=323 data-nosnippet>323</a>                verbose,
+<a href=#324 id=324 data-nosnippet>324</a>                json,
+<a href=#325 id=325 data-nosnippet>325</a>            } =&gt; cli::commands::proof::execute_verify_archive_size(
+<a href=#326 id=326 data-nosnippet>326</a>                proof,
+<a href=#327 id=327 data-nosnippet>327</a>                store_id,
+<a href=#328 id=328 data-nosnippet>328</a>                root_hash,
+<a href=#329 id=329 data-nosnippet>329</a>                expected_size,
+<a href=#330 id=330 data-nosnippet>330</a>                publisher_public_key,
+<a href=#331 id=331 data-nosnippet>331</a>                from_file,
+<a href=#332 id=332 data-nosnippet>332</a>                verbose,
+<a href=#333 id=333 data-nosnippet>333</a>                json,
+<a href=#334 id=334 data-nosnippet>334</a>            ),
+<a href=#335 id=335 data-nosnippet>335</a>        },
+<a href=#336 id=336 data-nosnippet>336</a>
+<a href=#337 id=337 data-nosnippet>337</a>        Commands::Config {
+<a href=#338 id=338 data-nosnippet>338</a>            key,
+<a href=#339 id=339 data-nosnippet>339</a>            value,
+<a href=#340 id=340 data-nosnippet>340</a>            list,
+<a href=#341 id=341 data-nosnippet>341</a>            unset,
+<a href=#342 id=342 data-nosnippet>342</a>            show_origin,
+<a href=#343 id=343 data-nosnippet>343</a>            edit,
+<a href=#344 id=344 data-nosnippet>344</a>            json,
+<a href=#345 id=345 data-nosnippet>345</a>        } =&gt; cli::commands::config::execute(key, value, list, unset, show_origin, edit, json),
+<a href=#346 id=346 data-nosnippet>346</a>
+<a href=#347 id=347 data-nosnippet>347</a>        Commands::Wallet { command } =&gt; {
+<a href=#348 id=348 data-nosnippet>348</a>            cli::commands::wallet::execute(command).map_err(|e| e.into())
+<a href=#349 id=349 data-nosnippet>349</a>        },
+<a href=#350 id=350 data-nosnippet>350</a>    }
+<a href=#351 id=351 data-nosnippet>351</a>}
+<a href=#352 id=352 data-nosnippet>352</a>
+<a href=#353 id=353 data-nosnippet>353</a><span class="doccomment">/// Determines if a command requires wallet initialization
+<a href=#354 id=354 data-nosnippet>354</a></span><span class="kw">fn </span>needs_wallet_initialization(command: <span class="kw-2">&amp;</span>Commands) -&gt; bool {
+<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">match </span>command {
+<a href=#356 id=356 data-nosnippet>356</a>        <span class="comment">// Commands that don't need wallet initialization
+<a href=#357 id=357 data-nosnippet>357</a>        </span>Commands::Completion { .. } =&gt; <span class="bool-val">false</span>,
+<a href=#358 id=358 data-nosnippet>358</a>        Commands::Config { .. } =&gt; <span class="bool-val">false</span>,
+<a href=#359 id=359 data-nosnippet>359</a>        Commands::Update { .. } =&gt; <span class="bool-val">false</span>,
+<a href=#360 id=360 data-nosnippet>360</a>        Commands::Wallet { .. } =&gt; <span class="bool-val">false</span>, <span class="comment">// Wallet commands manage their own initialization
+<a href=#361 id=361 data-nosnippet>361</a>
+<a href=#362 id=362 data-nosnippet>362</a>        // All other commands require wallet initialization
+<a href=#363 id=363 data-nosnippet>363</a>        </span><span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
+<a href=#364 id=364 data-nosnippet>364</a>    }
+<a href=#365 id=365 data-nosnippet>365</a>}
+<a href=#366 id=366 data-nosnippet>366</a>
+<a href=#367 id=367 data-nosnippet>367</a><span class="doccomment">/// Check for updates and prompt user if available
+<a href=#368 id=368 data-nosnippet>368</a></span><span class="kw">fn </span>check_and_prompt_for_updates() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">use </span>colored::Colorize;
+<a href=#370 id=370 data-nosnippet>370</a>    <span class="kw">use </span>dialoguer::Confirm;
+<a href=#371 id=371 data-nosnippet>371</a>
+<a href=#372 id=372 data-nosnippet>372</a>    <span class="comment">// Only check occasionally to avoid slowing down commands
+<a href=#373 id=373 data-nosnippet>373</a>    </span><span class="kw">let </span>update_info = <span class="kw">match </span><span class="kw">crate</span>::update::check_for_updates() {
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="prelude-val">Ok</span>(info) =&gt; info,
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()), <span class="comment">// Silently ignore update check failures
+<a href=#376 id=376 data-nosnippet>376</a>    </span>};
+<a href=#377 id=377 data-nosnippet>377</a>
+<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">if </span>!update_info.update_available {
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#380 id=380 data-nosnippet>380</a>    }
+<a href=#381 id=381 data-nosnippet>381</a>
+<a href=#382 id=382 data-nosnippet>382</a>    <span class="macro">println!</span>();
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="macro">println!</span>(
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="string">"{} {} Update available: {} → {}"</span>,
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="string">"🎉"</span>.bright_yellow(),
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="string">"Digstore"</span>.bright_cyan().bold(),
+<a href=#387 id=387 data-nosnippet>387</a>        update_info.current_version.dimmed(),
+<a href=#388 id=388 data-nosnippet>388</a>        update_info.latest_version.bright_green()
+<a href=#389 id=389 data-nosnippet>389</a>    );
+<a href=#390 id=390 data-nosnippet>390</a>
+<a href=#391 id=391 data-nosnippet>391</a>    <span class="kw">let </span>should_update = <span class="kw">if </span><span class="kw">crate</span>::cli::context::CliContext::is_non_interactive() {
+<a href=#392 id=392 data-nosnippet>392</a>        <span class="bool-val">false </span><span class="comment">// Don't auto-update in non-interactive mode
+<a href=#393 id=393 data-nosnippet>393</a>    </span>} <span class="kw">else </span>{
+<a href=#394 id=394 data-nosnippet>394</a>        Confirm::new()
+<a href=#395 id=395 data-nosnippet>395</a>            .with_prompt(<span class="string">"Would you like to download and install the update now?"</span>)
+<a href=#396 id=396 data-nosnippet>396</a>            .default(<span class="bool-val">false</span>)
+<a href=#397 id=397 data-nosnippet>397</a>            .interact()
+<a href=#398 id=398 data-nosnippet>398</a>            .unwrap_or(<span class="bool-val">false</span>)
+<a href=#399 id=399 data-nosnippet>399</a>    };
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a>    <span class="kw">if </span>should_update {
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="macro">println!</span>();
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(download_url) = update_info.download_url {
+<a href=#404 id=404 data-nosnippet>404</a>            <span class="kw">match </span><span class="kw">crate</span>::update::download_and_install_update(<span class="kw-2">&amp;</span>download_url) {
+<a href=#405 id=405 data-nosnippet>405</a>                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
+<a href=#406 id=406 data-nosnippet>406</a>                    <span class="macro">println!</span>(
+<a href=#407 id=407 data-nosnippet>407</a>                        <span class="string">"{}"</span>,
+<a href=#408 id=408 data-nosnippet>408</a>                        <span class="string">"✓ Update completed! Please restart your terminal."
+<a href=#409 id=409 data-nosnippet>409</a>                            </span>.green()
+<a href=#410 id=410 data-nosnippet>410</a>                            .bold()
+<a href=#411 id=411 data-nosnippet>411</a>                    );
+<a href=#412 id=412 data-nosnippet>412</a>                },
+<a href=#413 id=413 data-nosnippet>413</a>                <span class="prelude-val">Err</span>(e) =&gt; {
+<a href=#414 id=414 data-nosnippet>414</a>                    <span class="macro">println!</span>(<span class="string">"{} Update failed: {}"</span>, <span class="string">"✗"</span>.red(), e);
+<a href=#415 id=415 data-nosnippet>415</a>                    <span class="macro">println!</span>(
+<a href=#416 id=416 data-nosnippet>416</a>                        <span class="string">"  {} Manual download: https://github.com/DIG-Network/digstore/releases"</span>,
+<a href=#417 id=417 data-nosnippet>417</a>                        <span class="string">"→"</span>.cyan()
+<a href=#418 id=418 data-nosnippet>418</a>                    );
+<a href=#419 id=419 data-nosnippet>419</a>                },
+<a href=#420 id=420 data-nosnippet>420</a>            }
+<a href=#421 id=421 data-nosnippet>421</a>        }
+<a href=#422 id=422 data-nosnippet>422</a>    } <span class="kw">else </span>{
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="macro">println!</span>(<span class="string">"  {} Use 'digstore update' to update later"</span>, <span class="string">"→"</span>.cyan());
+<a href=#424 id=424 data-nosnippet>424</a>    }
+<a href=#425 id=425 data-nosnippet>425</a>
+<a href=#426 id=426 data-nosnippet>426</a>    <span class="macro">println!</span>();
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="prelude-val">Ok</span>(())
+<a href=#428 id=428 data-nosnippet>428</a>}</code></pre></div></section></main></body></html>
