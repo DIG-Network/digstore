@@ -641,10 +641,18 @@ impl DigArchive {
         self.dirty = true;
         Ok(())
     }
+
+    /// Close memory maps (useful before file operations on Windows)
+    pub fn close_memory_maps(&mut self) {
+        self.mmap = None;
+    }
 }
 
 impl Drop for DigArchive {
     fn drop(&mut self) {
+        // Explicitly close memory map to prevent Windows file locking issues
+        self.mmap = None;
+        
         if self.dirty {
             let _ = self.flush();
         }
