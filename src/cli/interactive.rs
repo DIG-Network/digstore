@@ -9,7 +9,7 @@ use colored::Colorize;
 use dialoguer::{Confirm, Input};
 use std::path::Path;
 
-/// Ask user if they want to recreate a missing store and if they want to overwrite the existing store
+/// Ask user if they want to recreate a missing store
 pub fn ask_recreate_store(archive_path: &Path, store_id_hex: &str, auto_yes: bool) -> Result<bool> {
     if auto_yes {
         println!(
