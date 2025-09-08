@@ -46,9 +46,12 @@ Write-Host "Creating WiX file with UI..." -ForegroundColor Green
     <UIRef Id="WixUI_FeatureTree" />
     <UIRef Id="WixUI_ErrorProgressText" />
     
-    <!-- Skip license dialog since we don't have a license file -->
-    <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Order="2">1</Publish>
-    <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+    <!-- Custom UI to skip license dialog -->
+    <UI>
+      <!-- Skip license dialog since we don't have a license file -->
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Order="2">1</Publish>
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+    </UI>
     
     <!-- Custom dialog text -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Digstore has been successfully installed. If you selected 'Add to PATH', please restart your terminal or log out and back in for PATH changes to take effect." />
