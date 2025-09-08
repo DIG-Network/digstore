@@ -39,7 +39,7 @@ pub fn parse_urn(urn_str: &str) -> Result<Urn> {
     };
 
     // Parse resource path if present
-    let resource_path = path_str.map(|p| PathBuf::from(p));
+    let resource_path = path_str.map(PathBuf::from);
 
     // Split store ID and root hash by ':'
     let (store_id_str, root_hash_str) = if let Some(pos) = id_part.find(':') {
@@ -81,16 +81,14 @@ pub fn parse_byte_range(range_str: &str) -> Result<ByteRange> {
 
     let range_part = &range_str[7..]; // "#bytes=".len() == 7
 
-    if range_part.starts_with('-') {
+    if let Some(count_str) = range_part.strip_prefix('-') {
         // Last N bytes: #bytes=-1024
-        let count_str = &range_part[1..];
         let count = count_str.parse::<u64>().map_err(|_| {
             DigstoreError::invalid_urn(format!("Invalid byte count: {}", count_str))
         })?;
         Ok(ByteRange::last_bytes(count))
-    } else if range_part.ends_with('-') {
+    } else if let Some(start_str) = range_part.strip_suffix('-') {
         // From start to end: #bytes=1024-
-        let start_str = &range_part[..range_part.len() - 1];
         let start = start_str.parse::<u64>().map_err(|_| {
             DigstoreError::invalid_urn(format!("Invalid start byte: {}", start_str))
         })?;

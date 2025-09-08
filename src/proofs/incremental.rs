@@ -19,6 +19,12 @@ pub struct IncrementalMerkleBuilder {
     dirty: bool,
 }
 
+impl Default for IncrementalMerkleBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IncrementalMerkleBuilder {
     pub fn new() -> Self {
         Self {
@@ -137,6 +143,12 @@ pub struct StreamingLayerWriter {
     compression_threshold: usize,
 }
 
+impl Default for StreamingLayerWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamingLayerWriter {
     pub fn new() -> Self {
         Self {
@@ -193,6 +205,12 @@ pub struct IndexCacheStats {
     pub cache_misses: u64,
 }
 
+impl Default for IndexCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IndexCache {
     pub fn new() -> Self {
         Self {
@@ -227,7 +245,7 @@ impl IndexCache {
 
             self.chunk_index
                 .entry(chunk.hash)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(location);
         }
 

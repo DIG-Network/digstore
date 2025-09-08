@@ -113,7 +113,7 @@ fn edit_commit_message(initial_message: &str) -> Result<String> {
     // Create temporary file with initial message
     let mut temp_file = NamedTempFile::new()?;
     writeln!(temp_file, "{}", initial_message)?;
-    writeln!(temp_file, "")?;
+    writeln!(temp_file)?;
     writeln!(
         temp_file,
         "# Please enter the commit message for your changes."

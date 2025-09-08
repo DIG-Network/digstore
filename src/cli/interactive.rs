@@ -113,13 +113,12 @@ pub fn handle_missing_store(
         let digstore_path = project_path.join(".digstore");
 
         // Check if .digstore file exists and ask for confirmation
-        if digstore_path.exists() {
-            if !ask_overwrite_digstore(&digstore_path, auto_yes)? {
+        if digstore_path.exists()
+            && !ask_overwrite_digstore(&digstore_path, auto_yes)? {
                 println!();
                 println!("{}", "Operation cancelled".yellow());
                 return Err(anyhow::anyhow!("User cancelled store recreation"));
             }
-        }
 
         // Proceed with interactive recreation
         interactive_store_recreation(project_path)

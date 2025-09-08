@@ -1,7 +1,6 @@
 //! Store management for Digstore Min
 
 use crate::core::{digstore_file::DigstoreFile, error::*, types::*};
-use crate::security::{AccessController, StoreAccessControl};
 use crate::storage::{
     batch::BatchProcessor,
     binary_staging::{BinaryStagedFile, BinaryStagingArea},
@@ -14,7 +13,6 @@ use crate::storage::{
 use colored::Colorize;
 use directories::UserDirs;
 use sha2::Digest;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Main store structure
@@ -880,7 +878,7 @@ impl Store {
             return Ok(None);
         }
 
-        let content = std::fs::read(layer_zero_path).map_err(|e| DigstoreError::Io(e))?;
+        let content = std::fs::read(layer_zero_path).map_err(DigstoreError::Io)?;
 
         let metadata: serde_json::Value = serde_json::from_slice(&content)?;
 

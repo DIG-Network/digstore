@@ -6,7 +6,7 @@ use crate::core::error::{DigstoreError, Result};
 use directories::UserDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Global configuration for Digstore
 #[derive(Debug, Clone, Serialize, Deserialize)]

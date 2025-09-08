@@ -2,7 +2,7 @@
 
 use crate::core::{error::*, types::*};
 use crate::proofs::merkle::{DigstoreProof, MerkleTree};
-use crate::storage::{layer::Layer, store::Store};
+use crate::storage::store::Store;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

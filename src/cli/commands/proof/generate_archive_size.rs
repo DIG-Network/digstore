@@ -2,7 +2,6 @@
 
 use crate::cli::commands::find_repository_root;
 use crate::cli::context::CliContext;
-use crate::config::global_config::{ConfigKey, ConfigValue, GlobalConfig};
 use crate::core::digstore_file::DigstoreFile;
 use crate::core::types::Hash;
 use crate::proofs::size_proof::ArchiveSizeProof;
@@ -10,7 +9,6 @@ use crate::storage::{dig_archive::get_archive_path, Store};
 use crate::wallet::WalletManager;
 use anyhow::Result;
 use colored::Colorize;
-use std::io::Write;
 use std::path::PathBuf;
 
 /// Execute the proof generate-archive-size command

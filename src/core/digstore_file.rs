@@ -38,7 +38,7 @@ impl DigstoreFile {
 
     /// Load .digstore file from disk
     pub fn load(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path).map_err(|e| DigstoreError::Io(e))?;
+        let content = std::fs::read_to_string(path).map_err(DigstoreError::Io)?;
 
         let digstore_file: DigstoreFile =
             toml::from_str(&content).map_err(|e| DigstoreError::ConfigurationError {
@@ -70,7 +70,7 @@ impl DigstoreFile {
                 reason: format!("Failed to serialize .digstore file: {}", e),
             })?;
 
-        std::fs::write(path, content).map_err(|e| DigstoreError::Io(e))?;
+        std::fs::write(path, content).map_err(DigstoreError::Io)?;
 
         Ok(())
     }

@@ -145,23 +145,21 @@ pub fn execute(
                 } else {
                     println!("{}", value_str);
                 }
+            } else if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "key": key_str,
+                        "value": null,
+                        "error": "not set"
+                    })
+                );
             } else {
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "key": key_str,
-                            "value": null,
-                            "error": "not set"
-                        })
-                    );
-                } else {
-                    eprintln!(
-                        "{}",
-                        format!("Configuration key '{}' is not set", key_str).yellow()
-                    );
-                    return Err(anyhow::anyhow!("Configuration key not found"));
-                }
+                eprintln!(
+                    "{}",
+                    format!("Configuration key '{}' is not set", key_str).yellow()
+                );
+                return Err(anyhow::anyhow!("Configuration key not found"));
             }
         }
     } else {
@@ -204,24 +202,22 @@ fn list_configuration(config: &GlobalConfig, json: bool) -> Result<()> {
     if json {
         let config_map: std::collections::HashMap<String, String> = entries.into_iter().collect();
         println!("{}", serde_json::to_string_pretty(&config_map)?);
+    } else if entries.is_empty() {
+        println!("{}", "No configuration values set".yellow());
+        println!();
+        println!("{}", "To set configuration:".bold());
+        println!("  {}", "digstore config user.name \"Your Name\"".cyan());
+        println!(
+            "  {}",
+            "digstore config user.email \"your@email.com\"".cyan()
+        );
     } else {
-        if entries.is_empty() {
-            println!("{}", "No configuration values set".yellow());
-            println!();
-            println!("{}", "To set configuration:".bold());
-            println!("  {}", "digstore config user.name \"Your Name\"".cyan());
-            println!(
-                "  {}",
-                "digstore config user.email \"your@email.com\"".cyan()
-            );
-        } else {
-            println!("{}", "Global Configuration".green().bold());
-            println!("{}", "═".repeat(40));
-            println!();
+        println!("{}", "Global Configuration".green().bold());
+        println!("{}", "═".repeat(40));
+        println!();
 
-            for (key, value) in entries {
-                println!("{} = {}", key.bold(), value.cyan());
-            }
+        for (key, value) in entries {
+            println!("{} = {}", key.bold(), value.cyan());
         }
     }
 

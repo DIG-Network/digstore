@@ -18,7 +18,7 @@ use crc32fast::Hasher as Crc32Hasher;
 use memmap2::{Mmap, MmapOptions};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Magic bytes for .dig archive format
@@ -47,6 +47,12 @@ pub struct ArchiveHeader {
     pub flags: u8,
     /// Reserved for future use
     pub reserved: [u8; 23],
+}
+
+impl Default for ArchiveHeader {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ArchiveHeader {
@@ -288,7 +294,7 @@ impl DigArchive {
             ArchiveHeader::SIZE as u64
         } else {
             // Append after existing data
-            let mut file = File::open(&self.archive_path)?;
+            let file = File::open(&self.archive_path)?;
             file.metadata()?.len()
         };
 
@@ -426,11 +432,7 @@ impl DigArchive {
         let data_size = self.index.values().map(|entry| entry.size).sum::<u64>();
 
         let index_size = self.header.index_size;
-        let overhead = if total_size >= data_size {
-            total_size - data_size
-        } else {
-            0 // Prevent overflow
-        };
+        let overhead = total_size.saturating_sub(data_size);
 
         ArchiveStats {
             layer_count: self.index.len(),

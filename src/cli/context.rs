@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 thread_local! {
-    static CLI_CONTEXT: RefCell<Option<CliContext>> = RefCell::new(None);
+    static CLI_CONTEXT: RefCell<Option<CliContext>> = const { RefCell::new(None) };
 }
 
 /// Context containing global CLI options

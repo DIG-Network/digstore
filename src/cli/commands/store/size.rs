@@ -1,5 +1,3 @@
-use crate::cli::commands::find_repository_root;
-use crate::core::error::DigstoreError;
 use crate::storage::Store;
 use anyhow::Result;
 use clap::Args;

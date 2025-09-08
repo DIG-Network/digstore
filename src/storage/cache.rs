@@ -5,7 +5,7 @@ use lru::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Intelligent chunk cache with LRU eviction
 pub struct ChunkCache {
@@ -78,7 +78,7 @@ impl ChunkCache {
 
             // Check if should promote to hot cache
             if self.should_promote_to_hot(hash) {
-                self.promote_to_hot_cache(hash.clone(), chunk.clone());
+                self.promote_to_hot_cache(*hash, chunk.clone());
             }
 
             self.update_access_metadata(hash);

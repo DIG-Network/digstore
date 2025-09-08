@@ -40,6 +40,12 @@ pub struct BulkStagingResult {
     pub persistence_time: Duration,
 }
 
+impl Default for OptimizedStagingArea {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OptimizedStagingArea {
     pub fn new() -> Self {
         Self {
@@ -256,6 +262,12 @@ pub struct PathInterner {
     paths: IndexMap<String, u32>,
     reverse_map: Vec<String>,
     next_id: u32,
+}
+
+impl Default for PathInterner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PathInterner {

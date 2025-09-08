@@ -1,5 +1,3 @@
-use crate::cli::commands::find_repository_root;
-use crate::core::error::DigstoreError;
 use crate::storage::Store;
 use anyhow::Result;
 use clap::Args;
@@ -43,19 +41,17 @@ pub fn execute(json: bool, verbose: bool, hash_only: bool) -> Result<()> {
         } else {
             show_root_human(&store, current_root, args.verbose)?;
         }
+    } else if args.json {
+        println!(
+            "{}",
+            json!({"error": "No commits found", "current_root": null})
+        );
     } else {
-        if args.json {
-            println!(
-                "{}",
-                json!({"error": "No commits found", "current_root": null})
-            );
-        } else {
-            println!("{}", "No commits found".yellow());
-            println!(
-                "  {} Use 'digstore commit' to create the first commit",
-                "→".cyan()
-            );
-        }
+        println!("{}", "No commits found".yellow());
+        println!(
+            "  {} Use 'digstore commit' to create the first commit",
+            "→".cyan()
+        );
     }
 
     Ok(())

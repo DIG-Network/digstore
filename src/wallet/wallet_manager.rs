@@ -2,14 +2,12 @@
 //!
 //! Provides wallet initialization checks and user prompts for mnemonic management
 
-use crate::config::{ConfigKey, ConfigValue, GlobalConfig};
+use crate::config::GlobalConfig;
 use crate::core::error::{DigstoreError, Result};
 use crate::crypto::PublicKey;
 use colored::Colorize;
 use dialoguer::{Confirm, Input, Select};
 use dig_wallet::Wallet;
-use directories::UserDirs;
-use std::path::PathBuf;
 
 /// Wallet status enumeration
 #[derive(Debug, Clone, PartialEq)]
@@ -57,7 +55,7 @@ impl WalletManager {
     /// Check the current wallet status
     pub fn check_status(&self) -> WalletStatus {
         // Ensure .dig directory exists before checking wallet status
-        if let Err(_) = self.ensure_dig_directory_exists() {
+        if self.ensure_dig_directory_exists().is_err() {
             return WalletStatus::NotInitialized;
         }
 
@@ -73,12 +71,8 @@ impl WalletManager {
                 {
                     Ok(_) => WalletStatus::Initialized,
                     Err(dig_wallet::WalletError::WalletNotFound(_)) => {
-                        // Check if this is truly first time vs corrupted
-                        if Self::is_first_time_user() {
-                            WalletStatus::NotInitialized
-                        } else {
-                            WalletStatus::NotInitialized
-                        }
+                        // Always return NotInitialized for WalletNotFound
+                        WalletStatus::NotInitialized
                     },
                     Err(_) => {
                         // Check if this is first time user to avoid "corrupted" message
@@ -132,7 +126,7 @@ impl WalletManager {
                         std::fs::write(&keyring_path, proper_keyring)?;
                     } else {
                         // Try to parse as YAML to ensure it's valid
-                        if let Err(_) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                        if serde_yaml::from_str::<serde_yaml::Value>(&content).is_err() {
                             // YAML is invalid, replace with proper structure
                             let proper_keyring = "wallets: {}\n";
                             std::fs::write(&keyring_path, proper_keyring)?;
@@ -541,7 +535,7 @@ impl WalletManager {
 
         // Check if wallet already exists
         match rt.block_on(async { Wallet::load(Some(self.wallet_name.clone()), false).await }) {
-            Ok(_) => return Ok(()), // Wallet already exists, nothing to do
+            Ok(_) => Ok(()), // Wallet already exists, nothing to do
             Err(dig_wallet::WalletError::WalletNotFound(_)) => {
                 // Wallet doesn't exist, create it
                 let _mnemonic = rt
@@ -574,7 +568,7 @@ impl WalletManager {
 
         // Check if wallet already exists
         match rt.block_on(async { Wallet::load(Some(self.wallet_name.clone()), false).await }) {
-            Ok(_) => return Ok(()), // Wallet already exists, nothing to do
+            Ok(_) => Ok(()), // Wallet already exists, nothing to do
             Err(dig_wallet::WalletError::WalletNotFound(_)) => {
                 // Wallet doesn't exist, import it
                 rt.block_on(async {

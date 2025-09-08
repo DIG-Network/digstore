@@ -1,6 +1,6 @@
 //! URN-based access control system
 
-use crate::core::types::{Hash, StoreId};
+use crate::core::types::Hash;
 use crate::security::error::{SecurityError, SecurityResult};
 use crate::storage::Store;
 use crate::urn::{ByteRange, Urn};

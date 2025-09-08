@@ -62,6 +62,12 @@ pub struct PerformanceSnapshot {
     pub processing_time: std::time::Duration,
 }
 
+impl Default for BatchProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BatchProcessor {
     pub fn new() -> Self {
         Self {
@@ -444,6 +450,12 @@ pub struct OptimizedFileScanner {
     ignore_patterns: Vec<String>,
     max_file_size: u64,
     min_file_size: u64,
+}
+
+impl Default for OptimizedFileScanner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OptimizedFileScanner {

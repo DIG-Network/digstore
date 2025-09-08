@@ -1,13 +1,13 @@
 //! Streaming file processing that never loads entire files into memory
 
 use crate::core::error::Result;
-use crate::core::types::{Chunk, ChunkRef};
-use crate::core::{error::*, types::*};
+use crate::core::types::Chunk;
+use crate::core::types::*;
 use crate::storage::chunk::ChunkConfig;
 use memmap2::{Mmap, MmapOptions};
 use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// Streaming chunking engine that processes files without loading them entirely
@@ -15,6 +15,12 @@ pub struct StreamingChunkingEngine {
     config: ChunkConfig,
     buffer_size: usize,
     mmap_threshold: u64, // Use memory mapping for files larger than this
+}
+
+impl Default for StreamingChunkingEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StreamingChunkingEngine {
@@ -60,7 +66,7 @@ impl StreamingChunkingEngine {
     fn chunk_small_file_streaming(&self, mut file: File) -> Result<Vec<Chunk>> {
         let mut buffer = vec![0u8; self.buffer_size];
         let mut chunks = Vec::new();
-        let mut offset = 0u64;
+        let offset = 0u64;
         let mut hasher = Sha256::new();
         let mut chunk_data = Vec::new();
 
@@ -201,6 +207,12 @@ impl StreamingChunkingEngine {
 /// Simple rolling hash for content-defined chunking
 pub struct RollingHash {
     window_size: usize,
+}
+
+impl Default for RollingHash {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RollingHash {

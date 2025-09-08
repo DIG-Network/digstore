@@ -6,12 +6,10 @@ use crate::cli::context::CliContext;
 use crate::config::GlobalConfig;
 use crate::core::error::{DigstoreError, Result};
 use crate::core::types::Hash;
-use crate::core::types::{FileEntry, FileMetadata};
 use crate::crypto::{transform_urn, PublicKey};
 use crate::storage::dig_archive::{self, DigArchive};
 use crate::storage::layer::Layer;
 use crate::wallet::WalletManager;
-use std::path::PathBuf;
 
 /// Wrapper around DigArchive that handles address transformation
 pub struct EncryptedArchive {
@@ -54,7 +52,7 @@ impl EncryptedArchive {
         // 1. CLI context (for current command)
         // 2. Store config (for persistent store-wide encryption)
         let custom_encryption_key = CliContext::get_custom_encryption_key()
-            .or_else(|| CliContext::get_custom_decryption_key())
+            .or_else(CliContext::get_custom_decryption_key)
             .or_else(|| {
                 // Load from store config if available
                 if let Some(store_id) = store_id {
@@ -286,7 +284,7 @@ impl EncryptedArchive {
 
         while result.len() < random_size {
             let mut current_hasher = hasher.clone();
-            current_hasher.update(&counter.to_le_bytes());
+            current_hasher.update(counter.to_le_bytes());
             let hash = current_hasher.finalize();
 
             let bytes_needed = random_size - result.len();
@@ -301,7 +299,7 @@ impl EncryptedArchive {
 
     /// Generate deterministic random layer for invalid content addresses
     fn generate_random_layer_data(&self, layer_hash: &Hash) -> Result<Layer> {
-        use crate::core::types::{FileEntry, FileMetadata, LayerMetadata, LayerType};
+        use crate::core::types::{FileEntry, FileMetadata};
         use std::path::PathBuf;
 
         // Create a fake layer with random data that appears legitimate

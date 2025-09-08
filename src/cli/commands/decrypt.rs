@@ -1,9 +1,7 @@
 //! Decrypt command implementation
 
 use crate::cli::commands::find_repository_root;
-use crate::core::types::Hash;
 use crate::storage::store::Store;
-use crate::urn::{parse_urn, Urn};
 use anyhow::Result;
 use colored::Colorize;
 use std::io::Write;

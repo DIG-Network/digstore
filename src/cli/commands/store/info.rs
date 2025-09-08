@@ -3,8 +3,7 @@ use crate::storage::Store;
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
-use serde_json::{json, Value};
-use std::path::Path;
+use serde_json::json;
 
 #[derive(Args)]
 pub struct InfoArgs {

@@ -9,6 +9,3 @@ pub mod parser;
 pub mod scanner;
 
 // Re-export commonly used items
-pub use checker::{IgnoreChecker, IgnoreResult};
-pub use parser::{CompiledPattern, DigignoreParser, PatternType};
-pub use scanner::{FilteredFileScanner, ScanPhase, ScanProgress, ScanResult};

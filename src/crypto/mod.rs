@@ -11,7 +11,7 @@ pub mod transform;
 pub use encryption::{decrypt_data, decrypt_data_with_key, encrypt_data, encrypt_data_with_key};
 pub use transform::{transform_urn, PublicKey};
 
-use crate::core::error::{DigstoreError, Result};
+use crate::core::error::Result;
 use sha2::{Digest, Sha256};
 
 /// Derive an encryption key from a URN

@@ -1,7 +1,7 @@
 //! Data scrambling engine with URN-based key derivation
 
 use crate::core::types::{Hash, StoreId};
-use crate::security::error::{SecurityError, SecurityResult};
+use crate::security::error::SecurityResult;
 use crate::urn::{ByteRange, Urn};
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -27,7 +27,7 @@ impl DataScrambler {
         let key = derive_scrambling_key(
             &urn.store_id,
             urn.root_hash.as_ref(),
-            urn.resource_path.as_ref().map(|p| p.as_path()),
+            urn.resource_path.as_deref(),
             urn.byte_range.as_ref(),
         );
 
@@ -105,8 +105,8 @@ impl ScrambleState {
 
         // Reset cipher state based on position
         let mut hasher = Sha256::new();
-        hasher.update(&self.key);
-        hasher.update(&position.to_le_bytes());
+        hasher.update(self.key);
+        hasher.update(position.to_le_bytes());
         self.cipher_state = hasher.finalize().into();
     }
 
@@ -123,8 +123,8 @@ impl ScrambleState {
 
         // Update cipher state for next byte using position-dependent hash
         let mut hasher = Sha256::new();
-        hasher.update(&self.cipher_state);
-        hasher.update(&self.position.to_le_bytes());
+        hasher.update(self.cipher_state);
+        hasher.update(self.position.to_le_bytes());
 
         let hash = hasher.finalize();
         self.cipher_state = hash.into();

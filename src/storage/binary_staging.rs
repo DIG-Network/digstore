@@ -14,7 +14,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Magic bytes for binary staging format
@@ -43,6 +43,12 @@ pub struct StagingHeader {
     pub compression: u32,
     /// Reserved for future use
     pub reserved: [u8; 32],
+}
+
+impl Default for StagingHeader {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StagingHeader {
@@ -81,8 +87,7 @@ impl StagingHeader {
             return Err(DigstoreError::InvalidFormat {
                 format: "staging".to_string(),
                 reason: "Invalid magic bytes".to_string(),
-            }
-            .into());
+            });
         }
 
         self.version = reader.read_u32::<LittleEndian>()?;
@@ -90,8 +95,7 @@ impl StagingHeader {
             return Err(DigstoreError::UnsupportedVersion {
                 version: self.version,
                 supported: STAGING_VERSION,
-            }
-            .into());
+            });
         }
 
         self.file_count = reader.read_u64::<LittleEndian>()?;
@@ -239,7 +243,7 @@ impl BinaryStagedFile {
     }
 
     pub fn serialized_size(&self) -> usize {
-        let path_bytes = self.path.to_string_lossy().as_bytes().len();
+        let path_bytes = self.path.to_string_lossy().len();
         2 + path_bytes + // path
         32 + // hash
         8 + // size
@@ -421,7 +425,7 @@ impl BinaryStagingArea {
         let mut files = Vec::with_capacity(self.index.len());
 
         if let Some(ref mmap) = self.mmap {
-            for (_, (_, entry)) in &self.index {
+            for (_, entry) in self.index.values() {
                 let start = entry.data_offset as usize;
                 let end = start + entry.data_size as usize;
 
@@ -535,7 +539,7 @@ impl BinaryStagingArea {
         header.index_offset = temp_file.stream_position()?;
         let mut index_size = 0u64;
 
-        for (_, (_, entry)) in &updated_index {
+        for (_, entry) in updated_index.values() {
             entry.write_to(&mut temp_file)?;
             index_size += IndexEntry::SIZE as u64;
         }

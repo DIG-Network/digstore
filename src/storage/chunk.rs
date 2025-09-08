@@ -110,7 +110,7 @@ impl ChunkingEngine {
 
     /// Chunk a file by path
     pub fn chunk_file(&self, path: &std::path::Path) -> Result<Vec<Chunk>> {
-        let data = std::fs::read(path).map_err(|e| DigstoreError::Io(e))?;
+        let data = std::fs::read(path).map_err(DigstoreError::Io)?;
         self.chunk_data(&data)
     }
 

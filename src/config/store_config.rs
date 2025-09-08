@@ -6,7 +6,7 @@ use crate::core::error::{DigstoreError, Result};
 use crate::core::types::StoreId;
 use directories::UserDirs;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Store-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

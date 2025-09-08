@@ -1,5 +1,5 @@
 use crate::core::error::DigstoreError;
-use crate::proofs::{Proof, ProofElement, ProofMetadata, ProofPosition, ProofTarget};
+use crate::proofs::{Proof, ProofPosition};
 use crate::storage::Store;
 use crate::urn::parse_urn;
 use anyhow::Result;
@@ -177,7 +177,7 @@ fn handle_urn_prove(args: &ProveArgs) -> Result<()> {
         let root_hash = urn.root_hash.unwrap_or_else(|| {
             store
                 .current_root()
-                .unwrap_or_else(|| crate::core::types::Hash::zero())
+                .unwrap_or_else(crate::core::types::Hash::zero)
         });
         Proof::new_layer_proof(&store, root_hash)?
     };
@@ -202,7 +202,7 @@ fn output_proof(proof: &Proof, args: &ProveArgs) -> Result<()> {
         "binary" => {
             // Serialize proof to binary format using bincode
             bincode::serialize(proof)
-                .map_err(|e| DigstoreError::Serialization(e))?
+                .map_err(DigstoreError::Serialization)?
                 .into_iter()
                 .map(|b| b as char)
                 .collect::<String>()

@@ -4,7 +4,7 @@ use crate::ignore::checker::{IgnoreChecker, IgnoreResult};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use walkdir::{DirEntry, WalkDir};
+use walkdir::WalkDir;
 
 /// Phase of file scanning operation
 #[derive(Debug, Clone, PartialEq)]

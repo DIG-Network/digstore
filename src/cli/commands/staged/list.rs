@@ -37,7 +37,7 @@ pub fn execute(limit: usize, page: usize, detailed: bool, json: bool, all: bool)
         .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
 
     // Open the store
-    let mut store = Store::open(&repo_root)?;
+    let store = Store::open(&repo_root)?;
 
     // Get all staged files
     let staged_files = store.staging.get_all_staged_files()?;
@@ -97,7 +97,7 @@ pub fn execute(limit: usize, page: usize, detailed: bool, json: bool, all: bool)
                     "size": f.size,
                     "hash": f.hash.to_hex(),
                     "chunks": f.chunks.len(),
-                    "modified_time": f.modified_time.map(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())).flatten()
+                    "modified_time": f.modified_time.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))
                 })
             } else {
                 json!(f.path.display().to_string())

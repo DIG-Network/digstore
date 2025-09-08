@@ -8,10 +8,8 @@
 //! 5. Specialized compression dictionary for cryptographic data
 
 use crate::core::error::{DigstoreError, Result};
-use crate::core::types::{Hash, StoreId};
+use crate::core::types::Hash;
 use crate::proofs::size_proof::ArchiveSizeProof;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io::Cursor;
 
 /// Ultra-compressed proof format (minimum possible size)
 #[derive(Debug, Clone)]
@@ -375,7 +373,7 @@ impl UltraCompressedProof {
             publisher_key_bytes[i] = self.xor_publisher_key[i] ^ self.store_id[i];
         }
         let publisher_public_key = if publisher_key_bytes != [0u8; 32] {
-            Some(hex::encode(&publisher_key_bytes))
+            Some(hex::encode(publisher_key_bytes))
         } else {
             None
         };
@@ -438,9 +436,9 @@ pub fn calculate_minimum_theoretical_size() -> usize {
 
     let base_size = 32 + 32 + 1 + 32 + 32 + 16 + 1; // 146 bytes minimum
     let compression_ratio = 0.7; // Zstd with custom dictionary achieves ~30% compression
-    let compressed_size = (base_size as f64 * compression_ratio) as usize;
+    
 
-    compressed_size // ~102 bytes theoretical minimum
+    (base_size as f64 * compression_ratio) as usize // ~102 bytes theoretical minimum
 }
 
 #[cfg(test)]

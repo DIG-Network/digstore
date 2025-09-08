@@ -2,7 +2,6 @@ use crate::storage::Store;
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
-use serde_json::json;
 use std::collections::HashMap;
 
 #[derive(Args)]

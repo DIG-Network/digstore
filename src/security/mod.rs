@@ -9,6 +9,5 @@ pub mod error;
 pub mod scrambler;
 
 // Re-export commonly used items
-pub use access_control::{AccessController, AccessPermission, StoreAccessControl};
 pub use error::{SecurityError, SecurityResult};
-pub use scrambler::{DataScrambler, ScrambleState};
+pub use scrambler::DataScrambler;

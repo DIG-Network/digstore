@@ -1,8 +1,7 @@
 //! Layer format implementation
 
 use crate::core::{error::*, hash::*, types::*};
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Read;
 use std::path::Path;
 
 /// Layer structure with binary format support

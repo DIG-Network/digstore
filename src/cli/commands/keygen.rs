@@ -1,8 +1,7 @@
 //! Key generation command implementation
 
 use crate::cli::context::CliContext;
-use crate::config::GlobalConfig;
-use crate::crypto::{derive_key_from_urn, derive_storage_address, transform_urn, PublicKey};
+use crate::crypto::{derive_key_from_urn, derive_storage_address, transform_urn};
 use crate::wallet::WalletManager;
 use anyhow::Result;
 use colored::Colorize;
@@ -31,7 +30,7 @@ pub fn execute_with_profile(
     println!("{}", "Generating content key...".bright_blue());
 
     // Get wallet profile from CLI context if not provided
-    let effective_wallet_profile = wallet_profile.or_else(|| CliContext::get_wallet_profile());
+    let effective_wallet_profile = wallet_profile.or_else(CliContext::get_wallet_profile);
 
     // Get public key from specified wallet profile or active wallet
     let public_key =

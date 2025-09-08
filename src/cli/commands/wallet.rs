@@ -1,9 +1,8 @@
 //! Wallet management commands
 
 use crate::cli::{context::CliContext, WalletCommands};
-use crate::config::{ConfigKey, ConfigValue, GlobalConfig};
+use crate::config::GlobalConfig;
 use crate::core::error::{DigstoreError, Result};
-use crate::wallet::WalletManager;
 use colored::Colorize;
 use dialoguer::Confirm;
 use dig_wallet::Wallet;
@@ -87,7 +86,7 @@ fn execute_info(profile: Option<String>, json: bool, show_mnemonic: bool) -> Res
     let cli_profile = CliContext::get_wallet_profile();
     let wallet_profile = profile
         .as_deref()
-        .or_else(|| cli_profile.as_deref())
+        .or(cli_profile.as_deref())
         .or(config.wallet.active_profile.as_deref())
         .unwrap_or("default");
 
@@ -272,7 +271,7 @@ fn execute_delete(profile: String, force: bool, json: bool) -> Result<()> {
             false // JSON mode requires --force flag
         } else {
             Confirm::new()
-                .with_prompt(&format!(
+                .with_prompt(format!(
                     "Are you sure you want to delete wallet '{}'?",
                     profile
                 ))
@@ -402,7 +401,7 @@ fn execute_export(profile: Option<String>, json: bool) -> Result<()> {
     let cli_profile = CliContext::get_wallet_profile();
     let wallet_profile = profile
         .as_deref()
-        .or_else(|| cli_profile.as_deref())
+        .or(cli_profile.as_deref())
         .or(config.wallet.active_profile.as_deref())
         .unwrap_or("default");
 

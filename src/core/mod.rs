@@ -9,7 +9,3 @@ pub mod hash;
 pub mod types;
 
 // Re-export commonly used items
-pub use digstore_file::DigstoreFile;
-pub use error::{DigstoreError, Result};
-pub use hash::{hash_bytes, hash_file, sha256};
-pub use types::{Chunk, CommitInfo, FileEntry, Hash, LayerType, StoreId};

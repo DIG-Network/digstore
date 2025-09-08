@@ -1,9 +1,7 @@
-use crate::core::error::DigstoreError;
 use crate::storage::Store;
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
-use std::path::Path;
 
 #[derive(Args)]
 pub struct LogArgs {

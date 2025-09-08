@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use clap::Parser;
-use tracing_subscriber;
 
 mod cli;
 mod config;
@@ -19,7 +18,7 @@ mod wallet;
 
 use cli::{
     context::CliContext, Cli, Commands, LayerCommands, ProofCommands, StagedCommands,
-    StoreCommands, WalletCommands,
+    StoreCommands,
 };
 use wallet::WalletManager;
 
@@ -57,7 +56,7 @@ fn main() -> Result<()> {
     // Handle auto-generation or auto-import flags first (these work regardless of command)
     if cli.auto_generate_wallet || cli.auto_import_mnemonic.is_some() {
         let wallet_profile = cli.wallet_profile.clone();
-        let mut wallet_manager = WalletManager::new_with_profile(wallet_profile)?;
+        let wallet_manager = WalletManager::new_with_profile(wallet_profile)?;
 
         if cli.auto_generate_wallet {
             wallet_manager.auto_generate_wallet()?;

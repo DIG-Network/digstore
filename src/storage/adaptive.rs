@@ -2,14 +2,14 @@
 
 use crate::core::{error::*, types::*};
 use crate::storage::{
-    batch::{BatchProcessor, BatchResult},
+    batch::BatchProcessor,
     chunk::ChunkingEngine,
     streaming::StreamingChunkingEngine,
 };
 use indicatif::ProgressBar;
 use sha2::Digest;
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// Adaptive processor that automatically chooses the best strategy
@@ -78,6 +78,12 @@ pub struct ProcessingConfig {
     pub batch_size: usize,
     pub use_parallel: bool,
     pub mmap_threshold: u64,
+}
+
+impl Default for AdaptiveProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AdaptiveProcessor {
@@ -421,6 +427,12 @@ pub struct WorkloadAnalyzer {
     batch_threshold: usize,
 }
 
+impl Default for WorkloadAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WorkloadAnalyzer {
     pub fn new() -> Self {
         Self {
@@ -529,6 +541,12 @@ impl WorkloadAnalyzer {
         };
 
         Duration::from_secs_f64(estimated_seconds.max(1.0))
+    }
+}
+
+impl Default for PerformanceMonitor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

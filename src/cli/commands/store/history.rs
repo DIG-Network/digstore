@@ -1,5 +1,3 @@
-use crate::cli::commands::find_repository_root;
-use crate::core::error::DigstoreError;
 use crate::storage::Store;
 use anyhow::Result;
 use clap::Args;
@@ -68,15 +66,13 @@ pub fn execute(
         } else {
             show_history_human(&store, root_history, &args)?;
         }
+    } else if args.json {
+        println!(
+            "{}",
+            json!({"error": "No commit history found", "history": []})
+        );
     } else {
-        if args.json {
-            println!(
-                "{}",
-                json!({"error": "No commit history found", "history": []})
-            );
-        } else {
-            println!("{}", "No commit history found".yellow());
-        }
+        println!("{}", "No commit history found".yellow());
     }
 
     Ok(())

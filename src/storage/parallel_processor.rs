@@ -12,14 +12,13 @@ use crate::core::{
     error::{DigstoreError, Result},
     types::*,
 };
-use crate::ignore::scanner::{FilteredFileScanner, ScanResult};
+use crate::ignore::scanner::FilteredFileScanner;
 use crate::storage::{
     binary_staging::{BinaryStagedFile, BinaryStagingArea},
     chunk::ChunkingEngine,
     streaming::StreamingChunkingEngine,
 };
 use crossbeam_channel::{bounded, Receiver, Sender};
-use dashmap::DashMap;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -72,6 +71,12 @@ pub struct ParallelProgress {
     pub start_time: Instant,
     /// Current phase
     pub current_phase: Arc<Mutex<String>>,
+}
+
+impl Default for ParallelProgress {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ParallelProgress {

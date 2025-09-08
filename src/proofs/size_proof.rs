@@ -8,7 +8,6 @@ use crate::core::{error::*, types::*};
 use crate::proofs::merkle::MerkleTree;
 use crate::storage::dig_archive::{get_archive_path, DigArchive};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 /// Tamper-proof archive size proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -400,7 +399,7 @@ impl CompressedSizeProof {
 
         // Convert publisher public key back to hex string
         let publisher_public_key = if self.publisher_public_key != [0u8; 32] {
-            Some(hex::encode(&self.publisher_public_key))
+            Some(hex::encode(self.publisher_public_key))
         } else {
             None
         };

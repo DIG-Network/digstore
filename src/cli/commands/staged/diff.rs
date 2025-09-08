@@ -5,7 +5,6 @@ use crate::storage::Store;
 use anyhow::Result;
 use colored::Colorize;
 use serde_json::json;
-use std::path::Path;
 
 /// File change status for diff display
 #[derive(Debug, Clone, serde::Serialize)]
@@ -57,7 +56,7 @@ pub fn execute(
         .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
 
     // Open the store
-    let mut store = Store::open(&repo_root)?;
+    let store = Store::open(&repo_root)?;
 
     // Get staged files
     let staged_files = store.staging.get_all_staged_files()?;

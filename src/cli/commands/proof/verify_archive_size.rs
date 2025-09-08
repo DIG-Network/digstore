@@ -1,10 +1,9 @@
 //! Verify archive size proof command (moved from verify_archive_size.rs)
 
 use crate::core::types::Hash;
-use crate::proofs::size_proof::{verify_compressed_hex_proof, ArchiveSizeProof};
+use crate::proofs::size_proof::verify_compressed_hex_proof;
 use anyhow::Result;
 use colored::Colorize;
-use std::path::PathBuf;
 
 /// Execute the proof verify-archive-size command
 pub fn execute(
@@ -60,18 +59,16 @@ pub fn execute(
             .map_err(|e| anyhow::anyhow!("Failed to read proof file '{}': {}", proof_input, e))?
             .trim()
             .to_string()
-    } else {
-        if proof_input == "-" {
-            if verbose {
-                println!("  {} Reading proof from stdin", "•".cyan());
-            }
-            use std::io::Read;
-            let mut buffer = String::new();
-            std::io::stdin().read_to_string(&mut buffer)?;
-            buffer.trim().to_string()
-        } else {
-            proof_input
+    } else if proof_input == "-" {
+        if verbose {
+            println!("  {} Reading proof from stdin", "•".cyan());
         }
+        use std::io::Read;
+        let mut buffer = String::new();
+        std::io::stdin().read_to_string(&mut buffer)?;
+        buffer.trim().to_string()
+    } else {
+        proof_input
     };
 
     if verbose {

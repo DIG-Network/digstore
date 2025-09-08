@@ -6,4 +6,4 @@
 pub mod wallet_manager;
 
 // Re-export commonly used items
-pub use wallet_manager::{WalletManager, WalletStatus};
+pub use wallet_manager::WalletManager;

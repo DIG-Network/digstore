@@ -3,9 +3,8 @@
 use crate::cli::commands::find_repository_root;
 use crate::core::types::Hash;
 use crate::storage::store::Store;
-use crate::urn::{parse_urn, Urn};
+use crate::urn::parse_urn;
 use anyhow::Result;
-use base64;
 use colored::Colorize;
 use sha2::{Digest, Sha256};
 use std::io::Write;
@@ -75,7 +74,7 @@ fn generate_deterministic_random_bytes(seed: &str, size: usize) -> Vec<u8> {
 
     while result.len() < size {
         let mut current_hasher = hasher.clone();
-        current_hasher.update(&counter.to_le_bytes());
+        current_hasher.update(counter.to_le_bytes());
         let hash = current_hasher.finalize();
 
         let bytes_needed = size - result.len();

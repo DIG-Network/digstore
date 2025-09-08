@@ -1,15 +1,13 @@
 //! Add command implementation
 
 use crate::cli::commands::find_repository_root;
-use crate::ignore::scanner::{FilteredFileScanner, ScanPhase};
+use crate::ignore::scanner::FilteredFileScanner;
 use crate::storage::parallel_processor::add_all_parallel;
 use crate::storage::store::Store;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 /// Execute the add command
 pub fn execute(

@@ -81,13 +81,11 @@ pub fn execute(
         // Show current layer
         if let Some(current_root) = store.current_root() {
             analyze_specific_layer(&store, current_root, &args)?;
+        } else if args.json {
+            println!("{}", json!({"error": "No current layer found"}));
         } else {
-            if args.json {
-                println!("{}", json!({"error": "No current layer found"}));
-            } else {
-                println!("{}", "No current layer found".yellow());
-                println!("  {} Use 'digstore commit' to create a layer", "→".cyan());
-            }
+            println!("{}", "No current layer found".yellow());
+            println!("  {} Use 'digstore commit' to create a layer", "→".cyan());
         }
     }
 

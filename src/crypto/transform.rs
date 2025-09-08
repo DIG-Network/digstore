@@ -55,12 +55,12 @@ pub fn transform_urn(urn: &str, public_key: &PublicKey) -> Result<String> {
     hasher.update(b"digstore_urn_transform_v1:");
 
     // Add the public key
-    hasher.update(&public_key.algorithm.as_bytes());
-    hasher.update(&(public_key.bytes.len() as u32).to_le_bytes());
+    hasher.update(public_key.algorithm.as_bytes());
+    hasher.update((public_key.bytes.len() as u32).to_le_bytes());
     hasher.update(&public_key.bytes);
 
     // Add the URN
-    hasher.update(&(urn.len() as u32).to_le_bytes());
+    hasher.update((urn.len() as u32).to_le_bytes());
     hasher.update(urn.as_bytes());
 
     // Get the hash
