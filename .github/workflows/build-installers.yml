@@ -18,8 +18,25 @@ jobs:
   build-windows-installer:
     name: Build Windows Installer
     runs-on: windows-latest
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '.')
     steps:
     - uses: actions/checkout@v4
+
+    - name: Extract and set version
+      run: |
+        # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
+        $COMMIT_MSG = "${{ github.event.head_commit.message }}"
+        $VERSION = [regex]::Match($COMMIT_MSG, '[0-9]+\.[0-9]+\.[0-9]+').Value
+        Write-Host "Detected version: $VERSION"
+        
+        if ([string]::IsNullOrEmpty($VERSION)) {
+          Write-Host "No version found in commit message, skipping"
+          exit 1
+        }
+        
+        # Update Cargo.toml with the version
+        (Get-Content Cargo.toml) -replace '^version = ".*"', "version = `"$VERSION`"" | Set-Content Cargo.toml
+        Write-Host "Updated Cargo.toml to version $VERSION"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -175,8 +192,25 @@ jobs:
   build-macos-installer:
     name: Build macOS Installer
     runs-on: macos-latest
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '.')
     steps:
     - uses: actions/checkout@v4
+
+    - name: Extract and set version
+      run: |
+        # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo "Detected version: $VERSION"
+        
+        if [ -z "$VERSION" ]; then
+          echo "No version found in commit message, skipping"
+          exit 1
+        fi
+        
+        # Update Cargo.toml with the version
+        sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+        echo "Updated Cargo.toml to version $VERSION"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -252,8 +286,25 @@ jobs:
   build-linux-packages:
     name: Build Linux Packages
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '.')
     steps:
     - uses: actions/checkout@v4
+
+    - name: Extract and set version
+      run: |
+        # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo "Detected version: $VERSION"
+        
+        if [ -z "$VERSION" ]; then
+          echo "No version found in commit message, skipping"
+          exit 1
+        fi
+        
+        # Update Cargo.toml with the version
+        sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+        echo "Updated Cargo.toml to version $VERSION"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
