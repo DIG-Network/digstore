@@ -33,7 +33,7 @@ jobs:
         
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    - name: Create GitHub Release
+    - name: Create Versioned GitHub Release
       id: release
       uses: actions/create-release@v1
       env:
@@ -87,6 +87,41 @@ jobs:
         draft: false
         prerelease: false
 
+    - name: Update Latest Build Release
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        # Delete existing latest-build tag and release if it exists
+        gh release delete latest-build --yes || echo "No existing latest-build release"
+        git push --delete origin latest-build || echo "No existing latest-build tag"
+        
+        # Create new latest-build release
+        gh release create latest-build \
+          --title "Latest Build (Development)" \
+          --notes "## Latest Development Build
+
+        This is the latest development build of Digstore.
+        
+        **Current Version**: $VERSION
+        **Build Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        **Commit**: ${{ github.sha }}
+        
+        ### Downloads
+        - **Windows**: [digstore-windows-x64.msi](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-windows-x64.msi)
+        - **macOS**: [digstore-macos.dmg](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-macos.dmg)  
+        - **Linux**: [digstore-linux-x86_64.AppImage](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-linux-x86_64.AppImage)
+        
+        ### Auto-Update
+        \`\`\`bash
+        digstore update
+        \`\`\`
+        
+        ---
+        **⚠️ Development Build**: This build may contain experimental features and should be used for testing only." \
+          --prerelease
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+
   wait-for-installers:
     name: Wait for Installers
     runs-on: ubuntu-latest
@@ -127,24 +162,29 @@ jobs:
     
     - name: Upload Release Assets
       run: |
-        # Upload all installer files to the release
+        # Upload all installer files to both versioned and latest-build releases
         VERSION="${{ needs.create-release.outputs.version }}"
         
         # Upload Windows MSI
         if [ -f "./installers/digstore-windows-x64.msi" ]; then
           gh release upload "v$VERSION" "./installers/digstore-windows-x64.msi" --clobber
+          gh release upload "latest-build" "./installers/digstore-windows-x64.msi" --clobber
         fi
         
         # Upload macOS DMG
         if [ -f "./installers/digstore-macos.dmg" ]; then
           gh release upload "v$VERSION" "./installers/digstore-macos.dmg" --clobber
+          gh release upload "latest-build" "./installers/digstore-macos.dmg" --clobber
         fi
         
         # Upload Linux packages
         for file in ./installers/*.{deb,rpm,AppImage}; do
           if [ -f "$file" ]; then
             gh release upload "v$VERSION" "$file" --clobber
+            gh release upload "latest-build" "$file" --clobber
           fi
         done
+        
+        echo "✓ Uploaded assets to both v$VERSION and latest-build releases"
       env:
         GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
