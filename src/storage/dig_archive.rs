@@ -317,6 +317,9 @@ impl DigArchive {
         hasher.update(layer_data);
         let checksum = hasher.finalize();
 
+        // Close memory map before file operations to prevent Windows file locking issues
+        self.mmap = None;
+
         // If this is the first layer, we need to write after the header
         let offset = if self.index.is_empty() {
             ArchiveHeader::SIZE as u64
@@ -497,6 +500,9 @@ impl DigArchive {
             return Ok(());
         }
 
+        // Close memory map before file operations to prevent Windows file locking issues
+        self.mmap = None;
+
         // Rebuild the archive with updated header and index
         let temp_path = self.archive_path.with_extension("tmp");
         let mut temp_file = File::create(&temp_path)?;
@@ -555,10 +561,42 @@ impl DigArchive {
         temp_file.sync_all()?;
         drop(temp_file);
 
-        // Replace original file
+        // Replace original file with Windows-specific handling
+        #[cfg(windows)]
+        {
+            // On Windows, ensure any remaining file handles are released
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            
+            // Try to remove the original file first, then rename
+            if self.archive_path.exists() {
+                std::fs::remove_file(&self.archive_path)?;
+            }
+            std::fs::rename(&temp_path, &self.archive_path)?;
+        }
+        
+        #[cfg(not(windows))]
         std::fs::rename(&temp_path, &self.archive_path)?;
 
-        // Reload
+        // Reload with retry logic for Windows
+        #[cfg(windows)]
+        {
+            let mut attempts = 0;
+            const MAX_ATTEMPTS: usize = 3;
+            
+            loop {
+                match self.load() {
+                    Ok(()) => break,
+                    Err(e) if attempts < MAX_ATTEMPTS => {
+                        attempts += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(100 * attempts as u64));
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        
+        #[cfg(not(windows))]
         self.load()?;
 
         Ok(())

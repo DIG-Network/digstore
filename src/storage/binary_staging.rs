@@ -284,6 +284,12 @@ impl BinaryStagingArea {
         let header = StagingHeader::new();
         header.write_to(&mut file)?;
         file.sync_all()?;
+        drop(file); // Explicitly drop file handle
+
+        // On Windows, add a small delay to ensure file handle is fully released
+        // before attempting to memory-map the file
+        #[cfg(windows)]
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         self.reload()?;
         Ok(())
@@ -305,6 +311,35 @@ impl BinaryStagingArea {
         self.mmap_mut = None;
         self.index.clear();
 
+        // On Windows, retry memory mapping with backoff to handle file locking issues
+        #[cfg(windows)]
+        {
+            let mut attempts = 0;
+            const MAX_ATTEMPTS: usize = 5;
+            
+            loop {
+                match self.try_load_mmap() {
+                    Ok(()) => break,
+                    Err(e) if attempts < MAX_ATTEMPTS => {
+                        attempts += 1;
+                        // Exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
+                        let delay = 50 * (1 << attempts);
+                        std::thread::sleep(std::time::Duration::from_millis(delay));
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        #[cfg(not(windows))]
+        self.try_load_mmap()?;
+
+        Ok(())
+    }
+
+    /// Try to load memory map (helper for retry logic)
+    fn try_load_mmap(&mut self) -> Result<()> {
         let file = File::open(&self.staging_path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 

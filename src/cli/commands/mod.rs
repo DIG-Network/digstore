@@ -12,6 +12,7 @@ pub mod init;
 pub mod keygen;
 pub mod status;
 pub mod update;
+pub mod version_cmd;
 pub mod wallet;
 
 // Command subtrees

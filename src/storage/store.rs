@@ -77,17 +77,35 @@ impl Store {
                     let archive_path = get_archive_path(&existing_store_id)?;
                     let staging_path = archive_path.with_extension("staging.bin");
                     
-                    // Force close any memory maps and file handles
-                    for path in [&archive_path, &staging_path] {
-                        if path.exists() {
-                            // Try multiple approaches to release file locks
-                            let _ = std::fs::OpenOptions::new()
-                                .read(true)
-                                .open(path)
-                                .and_then(|file| file.sync_all());
-                            
-                            // Force garbage collection to release any Rust file handles
-                            drop(std::fs::File::open(path));
+                    // On Windows, don't try to access the files - just remove them directly
+                    // after ensuring any handles are released
+                    #[cfg(windows)]
+                    {
+                        // Force garbage collection to release any potential file handles
+                        for _ in 0..3 {
+                            std::hint::black_box(());
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                        
+                        // Remove old archive files directly without opening them
+                        for path in [&archive_path, &staging_path] {
+                            if path.exists() {
+                                let _ = std::fs::remove_file(path);
+                            }
+                        }
+                    }
+                    
+                    #[cfg(not(windows))]
+                    {
+                        // On non-Windows, try to sync files before removal
+                        for path in [&archive_path, &staging_path] {
+                            if path.exists() {
+                                let _ = std::fs::OpenOptions::new()
+                                    .read(true)
+                                    .open(path)
+                                    .and_then(|file| file.sync_all());
+                                let _ = std::fs::remove_file(path);
+                            }
                         }
                     }
                 }

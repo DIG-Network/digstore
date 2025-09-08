@@ -305,6 +305,15 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Version management (install, list, switch versions)
+    Version {
+        /// Version management subcommand
+        subcommand: Option<String>,
+        
+        /// Version number for set/remove commands
+        version: Option<String>,
+    },
+
     /// Staging area management
     Staged {
         #[command(subcommand)]

@@ -204,6 +204,11 @@ fn main() -> Result<()> {
             json,
         } => cli::commands::update::execute(check_only, force, json),
 
+        Commands::Version { subcommand, version } => {
+            cli::commands::version_cmd::execute(subcommand, version)
+                .map_err(|e| anyhow::anyhow!("Version command failed: {}", e))
+        },
+
         Commands::Layer { command } => match command {
             LayerCommands::List {
                 json,
@@ -357,6 +362,7 @@ fn needs_wallet_initialization(command: &Commands) -> bool {
         Commands::Completion { .. } => false,
         Commands::Config { .. } => false,
         Commands::Update { .. } => false,
+        Commands::Version { .. } => false,
         Commands::Wallet { .. } => false, // Wallet commands manage their own initialization
 
         // All other commands require wallet initialization
