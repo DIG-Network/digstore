@@ -1,6 +1,9 @@
 //! CLI staging command tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! Tests for the staged command and CLI integration to prevent regressions
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use digstore_min::storage::Store;

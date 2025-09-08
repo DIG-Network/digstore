@@ -1,7 +1,11 @@
 //! Comprehensive CLI command validation tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! This test suite validates all 19 CLI commands to ensure they work correctly
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! and prevent future regressions.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use std::fs;

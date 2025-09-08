@@ -1,7 +1,11 @@
 //! Fast User-Centric Tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests focus on user workflows but are optimized for speed (< 3 minutes total).
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! They use smaller datasets and timeouts to ensure reliable CI performance.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;

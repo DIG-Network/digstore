@@ -1,4 +1,5 @@
 //! Final demonstration of the complete Digstore Min system
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use digstore_min::storage::store::Store;

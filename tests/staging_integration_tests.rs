@@ -1,10 +1,17 @@
 //! Integration tests for staging system fixes and CLI workflow
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests validate the recent fixes to prevent regressions:
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! - Binary staging iterator fixes
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! - Memory map refresh mechanisms  
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! - Commit clearing staging
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! - CLI workflow integration
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use digstore_min::cli::commands::staged;

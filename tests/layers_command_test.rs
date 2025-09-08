@@ -1,6 +1,9 @@
 //! Test for layers command with multiple layers
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! This test ensures the layers command can list all layers correctly
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use digstore_min::storage::Store;

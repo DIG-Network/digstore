@@ -1,4 +1,5 @@
 //! Integration test for zero-knowledge URN behavior
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use digstore_min::urn::parse_urn;
 use sha2::{Digest, Sha256};

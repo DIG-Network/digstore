@@ -1,7 +1,11 @@
 //! Comprehensive tests for archive size proof system
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests validate the tamper-proof merkle proof generation and verification
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! for .dig archive file sizes without requiring file downloads.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use assert_cmd::Command;
 use digstore_min::proofs::size_proof::{

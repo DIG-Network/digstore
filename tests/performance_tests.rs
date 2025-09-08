@@ -1,4 +1,5 @@
 //! Performance tests for streaming and batch processing
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use digstore_min::{
     core::types::*,

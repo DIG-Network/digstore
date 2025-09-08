@@ -561,6 +561,7 @@ mod tests {
             calculated_total_size: 600000,
             layer_sizes: vec![200000, 200000, 200000],
             layer_size_tree_root: Hash::from_bytes([3; 32]),
+            publisher_public_key: Some(vec![4; 32]),
             integrity_proofs: IntegrityProofs {
                 archive_header_hash: Hash::from_bytes([4; 32]),
                 layer_index_hash: Hash::from_bytes([5; 32]),

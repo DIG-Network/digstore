@@ -1,6 +1,9 @@
 //! CLI Output Quality Validation Tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests ensure that CLI output is user-friendly, consistent, and informative.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;

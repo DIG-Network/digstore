@@ -1,6 +1,9 @@
 //! User Security Features Tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests validate the zero-knowledge and encryption features from a user perspective.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;

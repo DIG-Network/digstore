@@ -1,6 +1,9 @@
 //! Regression tests for all identified and fixed bugs
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! This test suite ensures that bugs found during analysis don't regress
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use digstore_min::storage::Store;

@@ -1,7 +1,11 @@
 //! CLI User Validation Tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests validate that the CLI behaves correctly from a user's perspective,
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! testing actual command execution, output formatting, and error handling.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;

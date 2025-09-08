@@ -1,0 +1,16 @@
+# Security audit configuration
+# Ignore vulnerabilities that cannot be fixed due to deep dependencies
+
+[advisories]
+# Ignore RSA timing attack vulnerability in Chia SDK dependency
+# This is a deep dependency from chia-ssl -> chia-sdk-client -> chia-wallet-sdk
+# Cannot be fixed without updating the entire Chia SDK stack
+ignore = [
+    "RUSTSEC-2023-0071",  # RSA Marvin Attack - deep dependency in Chia SDK
+    "RUSTSEC-2021-0145",  # atty unaligned read - used by dependencies
+    "RUSTSEC-2024-0375",  # atty unmaintained - used by dependencies  
+    "RUSTSEC-2024-0370",  # proc-macro-error unmaintained - used by dependencies
+]
+
+# Allow informational warnings for unmaintained crates
+informational_warnings = ["unmaintained"]

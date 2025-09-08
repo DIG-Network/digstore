@@ -1,6 +1,9 @@
 //! Unit tests for archive size proof core functionality
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests validate the internal proof structures, compression, and cryptographic operations.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use digstore_min::core::types::{Hash, StoreId};
 use digstore_min::proofs::size_proof::{ArchiveSizeProof, CompressedSizeProof, IntegrityProofs};

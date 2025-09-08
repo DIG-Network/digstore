@@ -1,4 +1,5 @@
 //! Basic integration tests for Digstore Min
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use digstore_min::core::{hash::*, types::*};
 

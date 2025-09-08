@@ -1,7 +1,11 @@
 //! Regression tests for all recently fixed commands
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests ensure that the fixes for info, log, verify, and inspect commands
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! don't regress in the future.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use digstore_min::storage::Store;

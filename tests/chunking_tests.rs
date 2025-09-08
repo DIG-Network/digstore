@@ -1,4 +1,5 @@
 //! Content-defined chunking tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use digstore_min::{

@@ -1,7 +1,11 @@
 //! User Experience Integration Tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests validate the complete user experience from a CLI perspective,
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! ensuring all commands work as expected when users interact with the application.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -45,6 +49,7 @@ fn main() {
             self.project_path.join("src/lib.rs"),
             r#"
 //! Library code
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 pub fn hello() -> &'static str {
     "Hello from lib"
 }

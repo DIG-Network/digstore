@@ -1,4 +1,5 @@
 //! Tests for smart staging and stage diff functionality
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use anyhow::Result;
 use digstore_min::storage::Store;

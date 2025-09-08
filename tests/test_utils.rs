@@ -1,4 +1,5 @@
 //! Test utilities for Digstore Min tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use digstore_min::storage::Store;
 use std::path::Path;

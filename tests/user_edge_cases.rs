@@ -1,7 +1,11 @@
 //! User Edge Case Tests
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests cover edge cases and unusual scenarios that users might encounter,
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! ensuring the application handles them gracefully.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;

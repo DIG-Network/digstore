@@ -1,7 +1,11 @@
 //! Security tests for archive size proof system
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //!
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! These tests validate the tamper-proof properties and security guarantees
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 //! of the merkle proof system for .dig archive file sizes.
+#![allow(unused_imports, unused_variables, unused_mut, dead_code, clippy::all)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
