@@ -17,6 +17,7 @@ use std::path::PathBuf;
 pub struct EncryptedArchive {
     archive: DigArchive,
     public_key: Option<PublicKey>,
+    custom_encryption_key: Option<String>,
     encrypted_storage: bool,
 }
 
@@ -41,21 +42,55 @@ impl EncryptedArchive {
         
         let encrypted_storage = config.crypto.encrypted_storage.unwrap_or(true);
         
+        // Check for custom encryption/decryption key from CLI context
+        let custom_encryption_key = CliContext::get_custom_encryption_key()
+            .or_else(|| CliContext::get_custom_decryption_key());
+        
         Ok(Self {
             archive,
             public_key,
+            custom_encryption_key,
             encrypted_storage,
         })
     }
     
     /// Check if transformation is enabled
     pub fn is_encrypted(&self) -> bool {
-        self.encrypted_storage && self.public_key.is_some()
+        self.encrypted_storage && (self.public_key.is_some() || self.custom_encryption_key.is_some())
+    }
+    
+    /// Get the encryption key to use (custom key takes priority over wallet public key)
+    pub fn get_encryption_key(&self) -> Option<String> {
+        self.custom_encryption_key.clone()
+    }
+    
+    /// Check if using custom encryption (not wallet-based)
+    pub fn is_using_custom_encryption(&self) -> bool {
+        self.custom_encryption_key.is_some()
+    }
+    
+    /// Check if the archive was created with custom encryption (from header flag)
+    pub fn archive_has_custom_encryption(&self) -> bool {
+        self.archive.has_custom_encryption()
+    }
+    
+    /// Check if we need a custom decryption key to read this archive
+    pub fn requires_custom_decryption_key(&self) -> bool {
+        self.archive_has_custom_encryption() && self.custom_encryption_key.is_none()
     }
     
     /// Transform a layer hash for storage
     fn transform_layer_hash(&self, layer_hash: &Hash) -> Result<Hash> {
-        if let Some(public_key) = &self.public_key {
+        if let Some(custom_key) = &self.custom_encryption_key {
+            // For custom encryption, use the key directly as a transformation seed
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(layer_hash.as_bytes());
+            hasher.update(custom_key.as_bytes());
+            hasher.update(b"layer_transform");
+            let transformed_bytes = hasher.finalize();
+            Ok(Hash::from_bytes(transformed_bytes.into()))
+        } else if let Some(public_key) = &self.public_key {
             // Create URN from layer hash
             let layer_urn = format!("urn:dig:layer:{}", layer_hash.to_hex());
             
@@ -72,6 +107,11 @@ impl EncryptedArchive {
     
     /// Add a layer with optional transformation
     pub fn add_layer(&mut self, layer_hash: Hash, layer_data: &[u8]) -> Result<()> {
+        // Set custom encryption flag in archive header if using custom key
+        if self.custom_encryption_key.is_some() {
+            self.archive.set_custom_encryption(true)?;
+        }
+        
         let storage_hash = if self.is_encrypted() {
             self.transform_layer_hash(&layer_hash)?
         } else {

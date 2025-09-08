@@ -7,7 +7,7 @@ thread_local! {
 }
 
 /// Context containing global CLI options
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CliContext {
     pub wallet_profile: Option<String>,
     pub auto_generate_wallet: bool,
@@ -15,6 +15,8 @@ pub struct CliContext {
     pub verbose: bool,
     pub quiet: bool,
     pub yes: bool,
+    pub custom_encryption_key: Option<String>,
+    pub custom_decryption_key: Option<String>,
 }
 
 impl CliContext {
@@ -48,5 +50,15 @@ impl CliContext {
     /// Check if auto-answer yes is enabled
     pub fn is_yes() -> bool {
         Self::get().map(|ctx| ctx.yes).unwrap_or(false)
+    }
+
+    /// Get custom encryption key from the current context
+    pub fn get_custom_encryption_key() -> Option<String> {
+        Self::get().and_then(|ctx| ctx.custom_encryption_key)
+    }
+
+    /// Get custom decryption key from the current context
+    pub fn get_custom_decryption_key() -> Option<String> {
+        Self::get().and_then(|ctx| ctx.custom_decryption_key)
     }
 }

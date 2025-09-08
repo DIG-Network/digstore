@@ -43,8 +43,10 @@ pub struct ArchiveHeader {
     pub data_offset: u64,
     /// Size of data section in bytes
     pub data_size: u64,
+    /// Flags byte: bit 0 = custom encryption used
+    pub flags: u8,
     /// Reserved for future use
-    pub reserved: [u8; 24],
+    pub reserved: [u8; 23],
 }
 
 impl ArchiveHeader {
@@ -59,7 +61,22 @@ impl ArchiveHeader {
             index_size: 0,
             data_offset: Self::SIZE as u64,
             data_size: 0,
-            reserved: [0; 24],
+            flags: 0,
+            reserved: [0; 23],
+        }
+    }
+    
+    /// Check if custom encryption flag is set
+    pub fn has_custom_encryption(&self) -> bool {
+        (self.flags & 0x01) != 0
+    }
+    
+    /// Set custom encryption flag
+    pub fn set_custom_encryption(&mut self, enabled: bool) {
+        if enabled {
+            self.flags |= 0x01;
+        } else {
+            self.flags &= !0x01;
         }
     }
 
@@ -71,6 +88,7 @@ impl ArchiveHeader {
         writer.write_u64::<LittleEndian>(self.index_size)?;
         writer.write_u64::<LittleEndian>(self.data_offset)?;
         writer.write_u64::<LittleEndian>(self.data_size)?;
+        writer.write_u8(self.flags)?;
         writer.write_all(&self.reserved)?;
         Ok(())
     }
@@ -97,6 +115,7 @@ impl ArchiveHeader {
         self.index_size = reader.read_u64::<LittleEndian>()?;
         self.data_offset = reader.read_u64::<LittleEndian>()?;
         self.data_size = reader.read_u64::<LittleEndian>()?;
+        self.flags = reader.read_u8()?;
         reader.read_exact(&mut self.reserved)?;
         Ok(())
     }
@@ -606,6 +625,18 @@ impl DigArchive {
     /// Get archive file path
     pub fn path(&self) -> &Path {
         &self.archive_path
+    }
+    
+    /// Check if archive uses custom encryption
+    pub fn has_custom_encryption(&self) -> bool {
+        self.header.has_custom_encryption()
+    }
+    
+    /// Set custom encryption flag in archive header
+    pub fn set_custom_encryption(&mut self, enabled: bool) -> Result<()> {
+        self.header.set_custom_encryption(enabled);
+        self.dirty = true;
+        Ok(())
     }
 }
 

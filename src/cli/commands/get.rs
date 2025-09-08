@@ -96,6 +96,7 @@ pub fn execute(
     metadata: bool,
     at: Option<String>,
     progress: bool,
+    decryption_key: Option<String>,
     json: bool,
 ) -> Result<()> {
     println!("{}", "Retrieving content...".bright_blue());

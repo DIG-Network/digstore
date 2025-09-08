@@ -14,6 +14,7 @@ pub fn execute(
     path: String,
     output: Option<PathBuf>,
     urn: Option<String>,
+    decryption_key: Option<String>,
     json: bool,
 ) -> Result<()> {
     println!("{}", "Decrypting content...".bright_blue());
@@ -48,8 +49,13 @@ pub fn execute(
 
     println!("  {} Using URN for decryption: {}", "•".cyan(), decryption_urn.dimmed());
 
-    // Decrypt the data
-    let decrypted_data = crate::crypto::decrypt_data(&encrypted_data, &decryption_urn)?;
+    // Decrypt the data using custom key if provided, otherwise use URN
+    let decrypted_data = if let Some(custom_key) = decryption_key {
+        println!("  {} Using custom decryption key", "•".cyan());
+        crate::crypto::decrypt_data_with_key(&encrypted_data, &custom_key)?
+    } else {
+        crate::crypto::decrypt_data(&encrypted_data, &decryption_urn)?
+    };
 
     println!("  {} Decrypted {} bytes", "✓".green(), decrypted_data.len());
 

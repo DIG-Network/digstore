@@ -57,6 +57,68 @@ pub fn decrypt_data(encrypted_data: &[u8], urn: &str) -> Result<Vec<u8>> {
     Ok(plaintext)
 }
 
+/// Encrypt data using a custom encryption key (hex string)
+pub fn encrypt_data_with_key(data: &[u8], custom_key_hex: &str) -> Result<Vec<u8>> {
+    // Parse hex key
+    let key_bytes = hex::decode(custom_key_hex)
+        .map_err(|_| DigstoreError::encryption_error("Invalid hex encryption key"))?;
+    
+    if key_bytes.len() != 32 {
+        return Err(DigstoreError::encryption_error("Encryption key must be 32 bytes (64 hex characters)"));
+    }
+    
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    
+    // Create cipher
+    let cipher = Aes256Gcm::new(key);
+    
+    // Generate random nonce
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    
+    // Encrypt
+    let ciphertext = cipher
+        .encrypt(&nonce, data)
+        .map_err(|e| DigstoreError::encryption_error(format!("Encryption failed: {}", e)))?;
+    
+    // Prepend nonce to ciphertext
+    let mut result = nonce.to_vec();
+    result.extend_from_slice(&ciphertext);
+    
+    Ok(result)
+}
+
+/// Decrypt data using a custom decryption key (hex string)
+pub fn decrypt_data_with_key(encrypted_data: &[u8], custom_key_hex: &str) -> Result<Vec<u8>> {
+    // Check minimum size (nonce + at least some data)
+    if encrypted_data.len() < 12 {
+        return Err(DigstoreError::decryption_error("Invalid encrypted data: too short"));
+    }
+    
+    // Extract nonce and ciphertext
+    let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
+    let nonce = Nonce::from_slice(nonce_bytes);
+    
+    // Parse hex key
+    let key_bytes = hex::decode(custom_key_hex)
+        .map_err(|_| DigstoreError::decryption_error("Invalid hex decryption key"))?;
+    
+    if key_bytes.len() != 32 {
+        return Err(DigstoreError::decryption_error("Decryption key must be 32 bytes (64 hex characters)"));
+    }
+    
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    
+    // Create cipher
+    let cipher = Aes256Gcm::new(key);
+    
+    // Decrypt
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| DigstoreError::decryption_error(format!("Decryption failed: {}", e)))?;
+    
+    Ok(plaintext)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

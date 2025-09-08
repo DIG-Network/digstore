@@ -32,6 +32,15 @@ fn main() -> Result<()> {
     // Parse command line arguments
     let cli = Cli::parse();
 
+    // Extract custom keys from the command arguments
+    let (custom_encryption_key, custom_decryption_key) = match &cli.command {
+        Commands::Add { encryption_key, .. } => (encryption_key.clone(), None),
+        Commands::Commit { encryption_key, .. } => (encryption_key.clone(), None),
+        Commands::Get { decryption_key, .. } => (None, decryption_key.clone()),
+        Commands::Decrypt { decryption_key, .. } => (None, decryption_key.clone()),
+        _ => (None, None),
+    };
+
     // Set CLI context for commands to access
     CliContext::set(CliContext {
         wallet_profile: cli.wallet_profile.clone(),
@@ -40,6 +49,8 @@ fn main() -> Result<()> {
         verbose: cli.verbose,
         quiet: cli.quiet,
         yes: cli.yes,
+        custom_encryption_key,
+        custom_decryption_key,
     });
 
     // Handle auto-generation or auto-import flags first (these work regardless of command)
@@ -76,18 +87,36 @@ fn main() -> Result<()> {
             force,
             dry_run,
             from_stdin,
+            encryption_key,
             json,
-        } => cli::commands::add::execute(
-            paths, recursive, all, force, dry_run, from_stdin, cli.yes, json,
-        ),
+        } => {
+            // Update CLI context with encryption key before opening stores
+            if let Some(key) = &encryption_key {
+                let mut current_context = CliContext::get().unwrap_or_default();
+                current_context.custom_encryption_key = Some(key.clone());
+                CliContext::set(current_context);
+            }
+            cli::commands::add::execute(
+                paths, recursive, all, force, dry_run, from_stdin, encryption_key, cli.yes, json,
+            )
+        },
         Commands::Commit {
             message,
             full_layer,
             author,
             date,
             edit,
+            encryption_key,
             json,
-        } => cli::commands::commit::execute(message, full_layer, author, date, edit, json),
+        } => {
+            // Update CLI context with encryption key before opening stores
+            if let Some(key) = &encryption_key {
+                let mut current_context = CliContext::get().unwrap_or_default();
+                current_context.custom_encryption_key = Some(key.clone());
+                CliContext::set(current_context);
+            }
+            cli::commands::commit::execute(message, full_layer, author, date, edit, encryption_key, json)
+        },
         Commands::Status {
             short,
             porcelain,
@@ -101,14 +130,24 @@ fn main() -> Result<()> {
             metadata,
             at,
             progress,
+            decryption_key,
             json,
-        } => cli::commands::get::execute(path, output, verify, metadata, at, progress, json),
+        } => {
+            // Update CLI context with decryption key before opening stores
+            if let Some(key) = &decryption_key {
+                let mut current_context = CliContext::get().unwrap_or_default();
+                current_context.custom_decryption_key = Some(key.clone());
+                CliContext::set(current_context);
+            }
+            cli::commands::get::execute(path, output, verify, metadata, at, progress, decryption_key, json)
+        },
         Commands::Decrypt {
             path,
             output,
             urn,
+            decryption_key,
             json,
-        } => cli::commands::decrypt::execute(path, output, urn, json),
+        } => cli::commands::decrypt::execute(path, output, urn, decryption_key, json),
         Commands::Keygen {
             urn,
             output,

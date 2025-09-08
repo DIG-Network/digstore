@@ -599,23 +599,23 @@ impl Store {
                     let mut chunk_data = vec![0u8; chunk.size as usize];
                     file.read_exact(&mut chunk_data)?;
                     
-                    // Check if encrypted storage is enabled
-                    let global_config = crate::config::GlobalConfig::load()?;
-                    let should_encrypt = global_config.crypto.encrypted_storage.unwrap_or(true);
-                    
-                    // Check if we have an active wallet (for encrypted storage)
-                    let has_wallet = crate::wallet::WalletManager::get_active_wallet_public_key().is_ok();
-                    
-                    let final_data = if should_encrypt && has_wallet {
-                        // Create URN for this chunk (use store ID and chunk hash)
-                        let chunk_urn = format!(
-                            "urn:dig:chia:{}/chunk/{}",
-                            self.store_id.to_hex(),
-                            chunk.hash.to_hex()
-                        );
-                        
-                        // Encrypt chunk data using URN
-                        crate::crypto::encrypt_data(&chunk_data, &chunk_urn)?
+                    // Check if the archive is configured for encryption
+                    let final_data = if self.archive.is_encrypted() {
+                        // Check if we're using custom encryption (store-level secret)
+                        if let Some(custom_key) = self.archive.get_encryption_key() {
+                            // Use custom encryption key for truly secret data (store-level)
+                            crate::crypto::encrypt_data_with_key(&chunk_data, &custom_key)?
+                        } else {
+                            // Create URN for this chunk (use store ID and chunk hash)
+                            let chunk_urn = format!(
+                                "urn:dig:chia:{}/chunk/{}",
+                                self.store_id.to_hex(),
+                                chunk.hash.to_hex()
+                            );
+                            
+                            // Encrypt chunk data using URN (wallet-based encryption)
+                            crate::crypto::encrypt_data(&chunk_data, &chunk_urn)?
+                        }
                     } else {
                         chunk_data
                     };
@@ -714,7 +714,7 @@ impl Store {
         self.get_file_at(file_path, self.current_root)
     }
 
-    /// Get a file at a specific root hash
+    /// Get a file at a specific root hash (returns encrypted data as-is)
     pub fn get_file_at(&self, file_path: &Path, root_hash: Option<RootHash>) -> Result<Vec<u8>> {
         let target_root = root_hash.unwrap_or(
             self.current_root
@@ -727,13 +727,14 @@ impl Store {
         // Find file in layer
         for file_entry in &layer.files {
             if file_entry.path == file_path {
-                // Reconstruct file from chunks
+                // Reconstruct file from chunks (return encrypted data as-is)
                 let mut file_chunks = Vec::new();
 
                 for chunk_ref in &file_entry.chunks {
                     // Find chunk in layer
                     for chunk in &layer.chunks {
                         if chunk.hash == chunk_ref.hash {
+                            // Return encrypted chunk data as-is - no decryption here
                             file_chunks.push(chunk.clone());
                             break;
                         }

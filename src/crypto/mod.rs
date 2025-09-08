@@ -9,7 +9,7 @@ pub mod transform;
 pub mod encryption;
 
 pub use transform::{transform_urn, PublicKey};
-pub use encryption::{encrypt_data, decrypt_data};
+pub use encryption::{encrypt_data, decrypt_data, encrypt_data_with_key, decrypt_data_with_key};
 
 use crate::core::error::{DigstoreError, Result};
 use sha2::{Sha256, Digest};

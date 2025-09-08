@@ -102,6 +102,10 @@ pub enum Commands {
         #[arg(long)]
         from_stdin: bool,
 
+        /// Custom encryption key (hex) to override wallet public key
+        #[arg(long)]
+        encryption_key: Option<String>,
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -128,6 +132,10 @@ pub enum Commands {
         /// Open editor for message
         #[arg(short, long)]
         edit: bool,
+
+        /// Custom encryption key (hex) to override wallet public key
+        #[arg(long)]
+        encryption_key: Option<String>,
 
         /// Output as JSON
         #[arg(long)]
@@ -178,6 +186,10 @@ pub enum Commands {
         #[arg(long)]
         progress: bool,
 
+        /// Custom decryption key (hex) to override wallet public key
+        #[arg(long)]
+        decryption_key: Option<String>,
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -195,6 +207,10 @@ pub enum Commands {
         /// URN to use for decryption (if not auto-detected)
         #[arg(long)]
         urn: Option<String>,
+
+        /// Custom decryption key (hex) to override wallet public key
+        #[arg(long)]
+        decryption_key: Option<String>,
 
         /// Output as JSON
         #[arg(long)]
