@@ -130,11 +130,11 @@
 <a href=#130 id=130 data-nosnippet>130</a>
 <a href=#131 id=131 data-nosnippet>131</a>    <span class="attr">#[error(<span class="string">"Checksum mismatch: expected {expected}, got {actual}"</span>)]
 <a href=#132 id=132 data-nosnippet>132</a>    </span>ChecksumMismatch { expected: String, actual: String },
-<a href=#133 id=133 data-nosnippet>133</a>    
+<a href=#133 id=133 data-nosnippet>133</a>
 <a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Encryption errors
 <a href=#135 id=135 data-nosnippet>135</a>    </span><span class="attr">#[error(<span class="string">"Encryption error: {message}"</span>)]
 <a href=#136 id=136 data-nosnippet>136</a>    </span>EncryptionError { message: String },
-<a href=#137 id=137 data-nosnippet>137</a>    
+<a href=#137 id=137 data-nosnippet>137</a>
 <a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// Decryption errors
 <a href=#139 id=139 data-nosnippet>139</a>    </span><span class="attr">#[error(<span class="string">"Decryption error: {message}"</span>)]
 <a href=#140 id=140 data-nosnippet>140</a>    </span>DecryptionError { message: String },
@@ -217,14 +217,14 @@
 <a href=#217 id=217 data-nosnippet>217</a>            message: message.into(),
 <a href=#218 id=218 data-nosnippet>218</a>        }
 <a href=#219 id=219 data-nosnippet>219</a>    }
-<a href=#220 id=220 data-nosnippet>220</a>    
+<a href=#220 id=220 data-nosnippet>220</a>
 <a href=#221 id=221 data-nosnippet>221</a>    <span class="doccomment">/// Create a new encryption error
 <a href=#222 id=222 data-nosnippet>222</a>    </span><span class="kw">pub fn </span>encryption_error(message: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; <span class="self">Self </span>{
 <a href=#223 id=223 data-nosnippet>223</a>        <span class="self">Self</span>::EncryptionError {
 <a href=#224 id=224 data-nosnippet>224</a>            message: message.into(),
 <a href=#225 id=225 data-nosnippet>225</a>        }
 <a href=#226 id=226 data-nosnippet>226</a>    }
-<a href=#227 id=227 data-nosnippet>227</a>    
+<a href=#227 id=227 data-nosnippet>227</a>
 <a href=#228 id=228 data-nosnippet>228</a>    <span class="doccomment">/// Create a new decryption error
 <a href=#229 id=229 data-nosnippet>229</a>    </span><span class="kw">pub fn </span>decryption_error(message: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; <span class="self">Self </span>{
 <a href=#230 id=230 data-nosnippet>230</a>        <span class="self">Self</span>::DecryptionError {
