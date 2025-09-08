@@ -23,7 +23,7 @@ fn execute_interactive_mode(check_only: bool, force: bool) -> Result<()> {
         Err(e) => {
             println!("{} Failed to check for updates: {}", "✗".red(), e);
             return Ok(());
-        }
+        },
     };
 
     if !update_info.update_available {
@@ -73,20 +73,23 @@ fn execute_interactive_mode(check_only: bool, force: bool) -> Result<()> {
         match download_and_install_update(&download_url) {
             Ok(_) => {
                 println!();
-                println!("{}", "🎊 Update completed successfully!".bright_green().bold());
+                println!(
+                    "{}",
+                    "🎊 Update completed successfully!".bright_green().bold()
+                );
                 println!(
                     "  {} Version {} is now installed",
                     "→".cyan(),
                     update_info.latest_version.bright_white()
                 );
-            }
+            },
             Err(e) => {
                 println!("{} Update failed: {}", "✗".red(), e);
                 println!(
                     "  {} You can manually download from: https://github.com/DIG-Network/digstore/releases",
                     "→".cyan()
                 );
-            }
+            },
         }
     } else {
         println!("{} No installer available for your platform", "⚠".yellow());
@@ -128,7 +131,7 @@ fn execute_json_mode(check_only: bool, force: bool) -> Result<()> {
                     "status": "success"
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
-            }
+            },
             Err(e) => {
                 let output = serde_json::json!({
                     "action": "update_failed",
@@ -138,7 +141,7 @@ fn execute_json_mode(check_only: bool, force: bool) -> Result<()> {
                     "manual_download": "https://github.com/DIG-Network/digstore/releases"
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
-            }
+            },
         }
     } else {
         let output = serde_json::json!({

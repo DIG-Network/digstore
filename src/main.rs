@@ -202,7 +202,7 @@ fn main() -> Result<()> {
             force,
             json,
         } => cli::commands::update::execute(check_only, force, json),
-        
+
         Commands::Layer { command } => match command {
             LayerCommands::List {
                 json,
@@ -367,7 +367,7 @@ fn needs_wallet_initialization(command: &Commands) -> bool {
 fn check_and_prompt_for_updates() -> Result<()> {
     use colored::Colorize;
     use dialoguer::Confirm;
-    
+
     // Only check occasionally to avoid slowing down commands
     let update_info = match crate::update::check_for_updates() {
         Ok(info) => info,
@@ -398,12 +398,20 @@ fn check_and_prompt_for_updates() -> Result<()> {
         if let Some(download_url) = update_info.download_url {
             match crate::update::download_and_install_update(&download_url) {
                 Ok(_) => {
-                    println!("{}", "✓ Update completed! Please restart your terminal.".green().bold());
-                }
+                    println!(
+                        "{}",
+                        "✓ Update completed! Please restart your terminal."
+                            .green()
+                            .bold()
+                    );
+                },
                 Err(e) => {
                     println!("{} Update failed: {}", "✗".red(), e);
-                    println!("  {} Manual download: https://github.com/DIG-Network/digstore/releases", "→".cyan());
-                }
+                    println!(
+                        "  {} Manual download: https://github.com/DIG-Network/digstore/releases",
+                        "→".cyan()
+                    );
+                },
             }
         }
     } else {
