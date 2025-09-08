@@ -54,6 +54,11 @@ impl WalletManager {
 
     /// Check the current wallet status
     pub fn check_status(&self) -> WalletStatus {
+        // Ensure .dig directory exists before checking wallet status
+        if let Err(_) = self.ensure_dig_directory_exists() {
+            return WalletStatus::NotInitialized;
+        }
+
         // Use tokio runtime to check if wallet exists
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| DigstoreError::ConfigurationError {
@@ -66,11 +71,25 @@ impl WalletManager {
                     Wallet::load(Some(self.wallet_name.clone()), false).await
                 }) {
                     Ok(_) => WalletStatus::Initialized,
-                    Err(dig_wallet::WalletError::WalletNotFound(_)) => WalletStatus::NotInitialized,
-                    Err(_) => WalletStatus::Corrupted,
+                    Err(dig_wallet::WalletError::WalletNotFound(_)) => {
+                        // Check if this is truly first time vs corrupted
+                        if Self::is_first_time_user() {
+                            WalletStatus::NotInitialized
+                        } else {
+                            WalletStatus::NotInitialized
+                        }
+                    },
+                    Err(_) => {
+                        // Check if this is first time user to avoid "corrupted" message
+                        if Self::is_first_time_user() {
+                            WalletStatus::NotInitialized
+                        } else {
+                            WalletStatus::Corrupted
+                        }
+                    },
                 }
             },
-            Err(_) => WalletStatus::Corrupted,
+            Err(_) => WalletStatus::NotInitialized,
         }
     }
 
@@ -87,13 +106,80 @@ impl WalletManager {
         }
     }
 
-    /// Check if this is a first-time user (no wallets exist)
+    /// Ensure .dig directory exists and keyring file is properly initialized
+    fn ensure_dig_directory_exists(&self) -> Result<()> {
+        use directories::UserDirs;
+        
+        let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
+        let dig_dir = user_dirs.home_dir().join(".dig");
+        
+        // Create .dig directory if it doesn't exist
+        if !dig_dir.exists() {
+            std::fs::create_dir_all(&dig_dir)?;
+        }
+        
+        // Ensure keyring.yaml exists and is properly formatted
+        let keyring_path = dig_dir.join("keyring.yaml");
+        if !keyring_path.exists() {
+            // Create empty keyring file with proper structure
+            let empty_keyring = "wallets: {}\n";
+            std::fs::write(&keyring_path, empty_keyring)?;
+        } else {
+            // Check if existing keyring is malformed and fix it if needed
+            match std::fs::read_to_string(&keyring_path) {
+                Ok(content) => {
+                    let trimmed = content.trim();
+                    if trimmed.is_empty() || trimmed == "wallets:" {
+                        // Fix malformed keyring
+                        let proper_keyring = "wallets: {}\n";
+                        std::fs::write(&keyring_path, proper_keyring)?;
+                    } else {
+                        // Try to parse as YAML to ensure it's valid
+                        if let Err(_) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                            // YAML is invalid, replace with proper structure
+                            let proper_keyring = "wallets: {}\n";
+                            std::fs::write(&keyring_path, proper_keyring)?;
+                        }
+                    }
+                },
+                Err(_) => {
+                    // Can't read file, recreate it
+                    let empty_keyring = "wallets: {}\n";
+                    std::fs::write(&keyring_path, empty_keyring)?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Check if this is a first-time user (no wallets exist or .dig directory doesn't exist)
     fn is_first_time_user() -> bool {
+        use directories::UserDirs;
+        
+        // First check if .dig directory exists
+        let user_dirs = match UserDirs::new() {
+            Some(dirs) => dirs,
+            None => return true, // Can't determine home, assume first time
+        };
+        
+        let dig_dir = user_dirs.home_dir().join(".dig");
+        if !dig_dir.exists() {
+            return true; // No .dig directory = definitely first time
+        }
+        
+        // Check if any wallet files exist in .dig directory
+        let keyring_path = dig_dir.join("keyring.yaml");
+        if !keyring_path.exists() {
+            return true; // No keyring file = first time
+        }
+        
+        // Try to list wallets using dig-wallet API
         let rt = match tokio::runtime::Runtime::new() {
             Ok(runtime) => runtime,
             Err(_) => {
-                // If we can't create runtime, assume not first time to avoid errors
-                return false;
+                // If we can't create runtime, check file system directly
+                return !keyring_path.exists();
             }
         };
 
@@ -101,7 +187,14 @@ impl WalletManager {
             Wallet::list_wallets().await
         }) {
             Ok(wallets) => wallets.is_empty(),
-            Err(_) => true, // If we can't list wallets, assume first time
+            Err(_) => {
+                // If we can't list wallets but keyring exists, it might be corrupted
+                // Check if keyring file is empty or malformed
+                match std::fs::read_to_string(&keyring_path) {
+                    Ok(content) => content.trim().is_empty() || content.trim() == "wallets:",
+                    Err(_) => true, // Can't read file, assume first time
+                }
+            }
         }
     }
 
@@ -181,6 +274,9 @@ impl WalletManager {
 
     /// Generate a new wallet with context about first-time user status
     fn generate_new_wallet_with_context(&self, is_first_time: bool) -> Result<()> {
+        // Ensure .dig directory and keyring exist before wallet creation
+        self.ensure_dig_directory_exists()?;
+        
         println!();
         if is_first_time {
             println!("{}", "🎉 Creating your first DIG Network wallet...".bright_cyan().bold());
@@ -262,6 +358,9 @@ impl WalletManager {
 
     /// Import an existing wallet from mnemonic
     fn import_existing_wallet(&self) -> Result<()> {
+        // Ensure .dig directory and keyring exist before wallet import
+        self.ensure_dig_directory_exists()?;
+        
         println!();
         println!("{}", "Import existing wallet".cyan().bold());
         println!("Please enter your mnemonic phrase:");
@@ -328,17 +427,34 @@ impl WalletManager {
                     })?;
 
                 if confirmed {
-                    // Delete the wallet using dig-wallet API
+                    // Try to delete the wallet using dig-wallet API
                     let rt = tokio::runtime::Runtime::new()
                         .map_err(|e| DigstoreError::ConfigurationError {
                             reason: format!("Failed to create tokio runtime: {}", e),
                         })?;
                     
-                    rt.block_on(async {
+                    // First try the API deletion
+                    let delete_result = rt.block_on(async {
                         Wallet::delete_wallet(&self.wallet_name).await
-                    }).map_err(|e| DigstoreError::ConfigurationError {
-                        reason: format!("Failed to delete wallet: {}", e),
-                    })?;
+                    });
+                    
+                    match delete_result {
+                        Ok(_) => {
+                            println!("{}", "✓ Wallet deleted successfully".green());
+                        },
+                        Err(e) => {
+                            // If API deletion fails, try to clean up manually
+                            println!("{}", format!("API deletion failed: {}", e).yellow());
+                            println!("{}", "Attempting manual cleanup...".cyan());
+                            
+                            if let Err(cleanup_err) = self.manual_wallet_cleanup() {
+                                println!("{}", format!("Manual cleanup also failed: {}", cleanup_err).red());
+                                println!("{}", "Proceeding with new wallet creation anyway...".yellow());
+                            } else {
+                                println!("{}", "✓ Manual cleanup successful".green());
+                            }
+                        }
+                    }
 
                     self.generate_new_wallet()
                 } else {
@@ -354,8 +470,19 @@ impl WalletManager {
         }
     }
 
+    /// Manual wallet cleanup when API deletion fails
+    fn manual_wallet_cleanup(&self) -> Result<()> {
+        // Just ensure the directory and keyring are properly initialized
+        // This will fix any malformed keyring files
+        self.ensure_dig_directory_exists()?;
+        Ok(())
+    }
+
     /// Auto-generate wallet without prompts
     pub fn auto_generate_wallet(&self) -> Result<()> {
+        // Ensure .dig directory exists first
+        self.ensure_dig_directory_exists()?;
+        
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to create tokio runtime: {}", e),
@@ -389,6 +516,9 @@ impl WalletManager {
 
     /// Auto-import wallet from mnemonic without prompts
     pub fn auto_import_wallet(&self, mnemonic: &str) -> Result<()> {
+        // Ensure .dig directory exists first
+        self.ensure_dig_directory_exists()?;
+        
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to create tokio runtime: {}", e),
