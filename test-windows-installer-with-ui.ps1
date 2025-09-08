@@ -43,22 +43,24 @@ Write-Host "Creating WiX file with UI..." -ForegroundColor Green
     <MediaTemplate EmbedCab="yes" />
     
     <!-- Add UI Reference -->
-    <UIRef Id="WixUI_InstallDir" />
+    <UIRef Id="WixUI_FeatureTree" />
     <UIRef Id="WixUI_ErrorProgressText" />
     
-    <!-- Set the default installation directory -->
-    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
-    
-    <!-- License file (optional - we'll skip it for now) -->
-    <WixVariable Id="WixUILicenseRtf" Value="installer\windows\license.rtf" Overridable="yes" />
+    <!-- Skip license dialog since we don't have a license file -->
+    <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Order="2">1</Publish>
+    <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
     
     <!-- Custom dialog text -->
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Digstore has been successfully installed. Please restart your terminal or log out and back in for PATH changes to take effect." />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Digstore has been successfully installed. If you selected 'Add to PATH', please restart your terminal or log out and back in for PATH changes to take effect." />
     
     <Feature Id="ProductFeature" Title="Digstore Min" Level="1" Display="expand" ConfigurableDirectory="INSTALLFOLDER">
       <ComponentGroupRef Id="ProductComponents" />
-      <ComponentRef Id="Path" />
       <ComponentRef Id="ProgramMenuDir" />
+      
+      <!-- Separate feature for PATH addition - optional but default enabled -->
+      <Feature Id="PathFeature" Title="Add to PATH" Description="Add Digstore to system PATH environment variable" Level="1" Display="expand">
+        <ComponentRef Id="Path" />
+      </Feature>
     </Feature>
     
     <Directory Id="TARGETDIR" Name="SourceDir">
