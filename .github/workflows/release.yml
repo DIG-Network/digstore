@@ -48,20 +48,52 @@ jobs:
           - **Windows**: [digstore-windows-x64.msi](https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/digstore-windows-x64.msi)
           - **macOS**: [digstore-macos.dmg](https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/digstore-macos.dmg)  
           - **Linux**: [digstore-linux-x86_64.AppImage](https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/digstore-linux-x86_64.AppImage)
+          - **Checksums**: [checksums.txt](https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/checksums.txt)
+          
+          ### Verification
+          
+          **Always verify checksums before installation:**
+          ```bash
+          # Download checksums
+          curl -L -o checksums.txt "https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/checksums.txt"
+          
+          # Verify Windows MSI
+          sha256sum digstore-windows-x64.msi | grep -f checksums.txt
+          
+          # Verify macOS DMG  
+          sha256sum digstore-macos.dmg | grep -f checksums.txt
+          
+          # Verify Linux AppImage
+          sha256sum digstore-linux-x86_64.AppImage | grep -f checksums.txt
+          ```
           
           ### Installation
           
           #### Windows
           ```powershell
-          # Download and install silently
+          # Download and verify
           Invoke-WebRequest -Uri "https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/digstore-windows-x64.msi" -OutFile "digstore.msi"
+          Invoke-WebRequest -Uri "https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/checksums.txt" -OutFile "checksums.txt"
+          
+          # Verify checksum (PowerShell)
+          $hash = Get-FileHash digstore.msi -Algorithm SHA256
+          $expected = (Get-Content checksums.txt | Select-String "digstore-windows-x64.msi").ToString().Split(":")[1].Trim()
+          if ($hash.Hash.ToLower() -eq $expected.ToLower()) { Write-Host "✓ Checksum verified" } else { Write-Host "✗ Checksum mismatch"; exit 1 }
+          
+          # Install silently
           msiexec /i digstore.msi /quiet /norestart
           ```
           
           #### macOS
           ```bash
-          # Download and install
+          # Download and verify
           curl -L -o digstore.dmg "https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/digstore-macos.dmg"
+          curl -L -o checksums.txt "https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/checksums.txt"
+          
+          # Verify checksum
+          echo "$(grep 'digstore-macos.dmg' checksums.txt | cut -d':' -f2 | tr -d ' ')  digstore.dmg" | shasum -a 256 -c
+          
+          # Install
           hdiutil attach digstore.dmg
           cp -r "/Volumes/Digstore/Digstore Min.app" /Applications/
           hdiutil detach "/Volumes/Digstore"
@@ -69,8 +101,14 @@ jobs:
           
           #### Linux
           ```bash
-          # AppImage (universal)
+          # Download and verify
           curl -L -o digstore "https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/digstore-linux-x86_64.AppImage"
+          curl -L -o checksums.txt "https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/checksums.txt"
+          
+          # Verify checksum
+          echo "$(grep 'digstore-linux-x86_64.AppImage' checksums.txt | cut -d':' -f2 | tr -d ' ')  digstore" | sha256sum -c
+          
+          # Install
           chmod +x digstore
           sudo mv digstore /usr/local/bin/
           ```
@@ -81,9 +119,18 @@ jobs:
           digstore update
           ```
           
+          ### Non-Interactive Installation
+          For CI/CD and automation:
+          ```bash
+          digstore --non-interactive init --name "My Project"
+          digstore --non-interactive update --force
+          ```
+          
           ---
           
-          **Full Changelog**: https://github.com/DIG-Network/digstore/compare/v${{ steps.version.outputs.version }}...main
+          **🔒 Security**: Always verify checksums before installation  
+          **📁 Checksums**: [Download checksums.txt](https://github.com/DIG-Network/digstore/releases/download/v${{ steps.version.outputs.version }}/checksums.txt)  
+          **📋 Full Changelog**: https://github.com/DIG-Network/digstore/compare/v${{ steps.version.outputs.version }}...main
         draft: false
         prerelease: false
 
@@ -110,14 +157,28 @@ jobs:
         - **Windows**: [digstore-windows-x64.msi](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-windows-x64.msi)
         - **macOS**: [digstore-macos.dmg](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-macos.dmg)  
         - **Linux**: [digstore-linux-x86_64.AppImage](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-linux-x86_64.AppImage)
+        - **Checksums**: [checksums.txt](https://github.com/DIG-Network/digstore/releases/download/latest-build/checksums.txt)
+        
+        ### Verification
+        **Always verify checksums before installation:**
+        \`\`\`bash
+        curl -L -o checksums.txt https://github.com/DIG-Network/digstore/releases/download/latest-build/checksums.txt
+        sha256sum <installer-file> | grep -f checksums.txt
+        \`\`\`
         
         ### Auto-Update
         \`\`\`bash
         digstore update
         \`\`\`
         
+        ### Non-Interactive Mode
+        \`\`\`bash
+        digstore --non-interactive update --force
+        \`\`\`
+        
         ---
-        **⚠️ Development Build**: This build may contain experimental features and should be used for testing only." \
+        **⚠️ Development Build**: This build may contain experimental features and should be used for testing only.
+        **🔒 Security**: Always verify checksums before installation." \
           --prerelease
       env:
         GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
@@ -160,19 +221,27 @@ jobs:
         name: digstore-linux-packages
         path: ./installers/
     
-    - name: Upload Release Assets
+    - name: Generate Checksums and Upload Assets
       run: |
         # Upload all installer files to both versioned and latest-build releases
         VERSION="${{ needs.create-release.outputs.version }}"
         
+        # Create checksums file
+        echo "# Digstore v$VERSION - SHA256 Checksums" > checksums.txt
+        echo "" >> checksums.txt
+        
         # Upload Windows MSI
         if [ -f "./installers/digstore-windows-x64.msi" ]; then
+          CHECKSUM=$(sha256sum "./installers/digstore-windows-x64.msi" | cut -d' ' -f1)
+          echo "digstore-windows-x64.msi: $CHECKSUM" >> checksums.txt
           gh release upload "v$VERSION" "./installers/digstore-windows-x64.msi" --clobber
           gh release upload "latest-build" "./installers/digstore-windows-x64.msi" --clobber
         fi
         
         # Upload macOS DMG
         if [ -f "./installers/digstore-macos.dmg" ]; then
+          CHECKSUM=$(sha256sum "./installers/digstore-macos.dmg" | cut -d' ' -f1)
+          echo "digstore-macos.dmg: $CHECKSUM" >> checksums.txt
           gh release upload "v$VERSION" "./installers/digstore-macos.dmg" --clobber
           gh release upload "latest-build" "./installers/digstore-macos.dmg" --clobber
         fi
@@ -180,11 +249,20 @@ jobs:
         # Upload Linux packages
         for file in ./installers/*.{deb,rpm,AppImage}; do
           if [ -f "$file" ]; then
+            FILENAME=$(basename "$file")
+            CHECKSUM=$(sha256sum "$file" | cut -d' ' -f1)
+            echo "$FILENAME: $CHECKSUM" >> checksums.txt
             gh release upload "v$VERSION" "$file" --clobber
             gh release upload "latest-build" "$file" --clobber
           fi
         done
         
-        echo "✓ Uploaded assets to both v$VERSION and latest-build releases"
+        # Upload checksums file to both releases
+        if [ -f "checksums.txt" ]; then
+          gh release upload "v$VERSION" "checksums.txt" --clobber
+          gh release upload "latest-build" "checksums.txt" --clobber
+        fi
+        
+        echo "✓ Uploaded assets and checksums to both v$VERSION and latest-build releases"
       env:
         GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
