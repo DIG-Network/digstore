@@ -437,6 +437,100 @@ jobs:
           installer/linux/digstore-linux-x86_64.AppImage
         retention-days: 30
 
+  create-release:
+    name: Create Release and Upload Assets
+    runs-on: ubuntu-latest
+    needs: [build-windows-installer, build-macos-installer, build-linux-packages]
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '.')
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate version consistency
+      id: version
+      run: |
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        COMMIT_VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        
+        if [ -z "$COMMIT_VERSION" ]; then
+          echo "No version found in commit message"
+          exit 1
+        fi
+        
+        # Check that Cargo.toml version matches commit message
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+        
+        if [ "$CARGO_VERSION" != "$COMMIT_VERSION" ]; then
+          echo "ERROR: Version mismatch! Commit: $COMMIT_VERSION, Cargo.toml: $CARGO_VERSION"
+          exit 1
+        fi
+        
+        echo "version=$COMMIT_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts/
+
+    - name: Prepare Release Assets
+      run: |
+        mkdir -p ./release-assets/
+        
+        # Copy installer files
+        find ./artifacts/ -name "*.msi" -exec cp {} ./release-assets/ \;
+        find ./artifacts/ -name "*.dmg" -exec cp {} ./release-assets/ \;
+        find ./artifacts/ -name "*.deb" -exec cp {} ./release-assets/ \;
+        find ./artifacts/ -name "*.rpm" -exec cp {} ./release-assets/ \;
+        find ./artifacts/ -name "*.AppImage" -exec cp {} ./release-assets/ \;
+        
+        cd ./release-assets/
+        
+        # Generate checksums
+        echo "# Digstore v${{ steps.version.outputs.version }} - SHA256 Checksums" > checksums.txt
+        echo "" >> checksums.txt
+        
+        for file in *; do
+          if [ -f "$file" ] && [ "$file" != "checksums.txt" ]; then
+            CHECKSUM=$(sha256sum "$file" | cut -d' ' -f1)
+            echo "$file: $CHECKSUM" >> checksums.txt
+          fi
+        done
+        
+        echo "Release assets prepared:"
+        ls -la
+
+    - name: Create GitHub Releases
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        # Create versioned release
+        gh release create "v$VERSION" \
+          --title "Digstore v$VERSION" \
+          --notes "## Digstore v$VERSION
+
+        ### Downloads
+        - **Windows**: [digstore-windows-x64.msi](https://github.com/DIG-Network/digstore/releases/download/v$VERSION/digstore-windows-x64.msi)
+        - **macOS**: [digstore-macos.dmg](https://github.com/DIG-Network/digstore/releases/download/v$VERSION/digstore-macos.dmg)  
+        - **Linux**: [digstore-linux-x86_64.AppImage](https://github.com/DIG-Network/digstore/releases/download/v$VERSION/digstore-linux-x86_64.AppImage)
+        - **Checksums**: [checksums.txt](https://github.com/DIG-Network/digstore/releases/download/v$VERSION/checksums.txt)
+
+        **🔒 Security**: Always verify checksums before installation" \
+          ./release-assets/*
+
+        # Update latest-build release  
+        gh release delete latest-build --yes || true
+        git push --delete origin latest-build || true
+        
+        gh release create latest-build \
+          --title "Latest Build (Development)" \
+          --notes "**Version**: $VERSION | **Build**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        
+        🔒 **Security**: Verify checksums | ⚠️ **Development Build**" \
+          --prerelease \
+          ./release-assets/*
+
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+
   create-universal-install-script:
     name: Create Universal Install Script
     runs-on: ubuntu-latest
