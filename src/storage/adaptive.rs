@@ -2,9 +2,7 @@
 
 use crate::core::{error::*, types::*};
 use crate::storage::{
-    batch::BatchProcessor,
-    chunk::ChunkingEngine,
-    streaming::StreamingChunkingEngine,
+    batch::BatchProcessor, chunk::ChunkingEngine, streaming::StreamingChunkingEngine,
 };
 use indicatif::ProgressBar;
 use sha2::Digest;

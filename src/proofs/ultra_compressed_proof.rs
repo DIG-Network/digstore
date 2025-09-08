@@ -436,7 +436,6 @@ pub fn calculate_minimum_theoretical_size() -> usize {
 
     let base_size = 32 + 32 + 1 + 32 + 32 + 16 + 1; // 146 bytes minimum
     let compression_ratio = 0.7; // Zstd with custom dictionary achieves ~30% compression
-    
 
     (base_size as f64 * compression_ratio) as usize // ~102 bytes theoretical minimum
 }

@@ -17,8 +17,7 @@ mod urn;
 mod wallet;
 
 use cli::{
-    context::CliContext, Cli, Commands, LayerCommands, ProofCommands, StagedCommands,
-    StoreCommands,
+    context::CliContext, Cli, Commands, LayerCommands, ProofCommands, StagedCommands, StoreCommands,
 };
 use wallet::WalletManager;
 
