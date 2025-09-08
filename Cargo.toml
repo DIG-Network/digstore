@@ -1,6 +1,6 @@
 [package]
 name = "digstore_min"
-version = "0.4.1"
+version = "0.4.3"
 edition = "2021"
 rust-version = "1.70"
 authors = ["DIG Network"]
