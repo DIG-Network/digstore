@@ -22,7 +22,6 @@ pub fn execute(
     auto_yes: bool,
     json: bool,
 ) -> Result<()> {
-
     // Find repository root
     let repo_root = find_repository_root()?
         .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;

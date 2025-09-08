@@ -30,7 +30,8 @@ fn test_new_user_onboarding() {
         .stdout(predicate::str::contains("init"));
 
     // 2. User tries status before init (should get helpful error)
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("status")
         .assert()
@@ -39,7 +40,8 @@ fn test_new_user_onboarding() {
         .stderr(predicate::str::contains("init"));
 
     // 3. User initializes repository
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init"])
         .assert()
@@ -49,7 +51,8 @@ fn test_new_user_onboarding() {
         .stdout(predicate::str::contains("✓"));
 
     // 4. User checks status (should be clean)
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("status")
         .assert()
@@ -58,7 +61,8 @@ fn test_new_user_onboarding() {
         .stdout(predicate::str::contains("No changes staged"));
 
     // 5. User adds file
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "hello.txt"])
         .assert()
@@ -67,7 +71,8 @@ fn test_new_user_onboarding() {
         .stdout(predicate::str::contains("✓"));
 
     // 6. User checks what's staged
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("staged")
         .assert()
@@ -76,7 +81,8 @@ fn test_new_user_onboarding() {
         .stdout(predicate::str::contains("commit"));
 
     // 7. User commits
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "My first commit"])
         .assert()
@@ -85,7 +91,8 @@ fn test_new_user_onboarding() {
         .stdout(predicate::str::contains("✓"));
 
     // 8. User verifies commit
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("log")
         .assert()
@@ -93,7 +100,8 @@ fn test_new_user_onboarding() {
         .stdout(predicate::str::contains("My first commit"));
 
     // 9. User retrieves file
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["get", "hello.txt"])
         .assert()
@@ -113,47 +121,54 @@ fn test_collaborative_workflow() {
     fs::write(project_path.join("user2.txt"), "User 2 file").unwrap();
 
     // User 1 initializes project
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Collaborative Project"])
         .assert()
         .success();
 
     // User 1 adds their files
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "shared.txt", "user1.txt"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "User 1 initial commit"])
         .assert()
         .success();
 
     // User 2 adds their files to the same repository
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "user2.txt"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "User 2 contribution"])
         .assert()
         .success();
 
     // Both users can access all files
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["get", "user1.txt"])
         .assert()
         .success()
         .stdout(predicate::str::contains("User 1 file"));
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["get", "user2.txt"])
         .assert()
@@ -161,7 +176,8 @@ fn test_collaborative_workflow() {
         .stdout(predicate::str::contains("User 2 file"));
 
     // History shows both contributions
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("log")
         .assert()
@@ -176,21 +192,28 @@ fn test_file_versioning_user_story() {
     let project_path = temp_dir.path();
 
     // Create initial version
-    fs::write(project_path.join("document.txt"), "Version 1.0\nInitial content").unwrap();
+    fs::write(
+        project_path.join("document.txt"),
+        "Version 1.0\nInitial content",
+    )
+    .unwrap();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Version Test"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "document.txt"])
         .assert()
         .success();
 
-    let v1_commit = Command::cargo_bin("digstore").unwrap()
+    let v1_commit = Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Version 1.0"])
         .assert()
@@ -199,7 +222,8 @@ fn test_file_versioning_user_story() {
 
     // Extract commit ID for later use
     let v1_stdout = String::from_utf8_lossy(&v1_commit.stdout);
-    let commit_line = v1_stdout.lines()
+    let commit_line = v1_stdout
+        .lines()
         .find(|line| line.contains("Commit ID:"))
         .expect("Should have commit ID");
     let v1_hash = commit_line.split_whitespace()
@@ -211,22 +235,29 @@ fn test_file_versioning_user_story() {
         .collect::<String>();
 
     // User updates document
-    fs::write(project_path.join("document.txt"), "Version 2.0\nUpdated content\nNew features").unwrap();
+    fs::write(
+        project_path.join("document.txt"),
+        "Version 2.0\nUpdated content\nNew features",
+    )
+    .unwrap();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "document.txt"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Version 2.0"])
         .assert()
         .success();
 
     // User can access current version
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["get", "document.txt"])
         .assert()
@@ -236,7 +267,8 @@ fn test_file_versioning_user_story() {
 
     // User can access historical version
     if v1_hash.len() >= 8 {
-        Command::cargo_bin("digstore").unwrap()
+        Command::cargo_bin("digstore")
+            .unwrap()
             .current_dir(project_path)
             .args(&["get", "document.txt", "--at", &v1_hash[..8]])
             .assert()
@@ -245,7 +277,8 @@ fn test_file_versioning_user_story() {
     }
 
     // User can see version history
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("log")
         .assert()
@@ -267,29 +300,37 @@ fn test_repository_analysis_workflow() {
     fs::write(project_path.join("src/small.rs"), "fn main() {}").unwrap();
     fs::write(project_path.join("src/medium.rs"), "// ".repeat(1000)).unwrap();
     fs::write(project_path.join("assets/data.bin"), vec![0u8; 10000]).unwrap();
-    fs::write(project_path.join("README.md"), "# Project\n\nDescription here.").unwrap();
+    fs::write(
+        project_path.join("README.md"),
+        "# Project\n\nDescription here.",
+    )
+    .unwrap();
 
     // Setup repository
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Analysis Test"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "-A"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Diverse content"])
         .assert()
         .success();
 
     // User analyzes repository size
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["size", "--breakdown"])
         .assert()
@@ -298,7 +339,8 @@ fn test_repository_analysis_workflow() {
         .stdout(predicate::str::contains("Layer Files"));
 
     // User checks efficiency metrics
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["size", "--efficiency"])
         .assert()
@@ -306,7 +348,8 @@ fn test_repository_analysis_workflow() {
         .stdout(predicate::str::contains("Efficiency Metrics"));
 
     // User gets detailed statistics
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["stats", "--detailed"])
         .assert()
@@ -314,7 +357,8 @@ fn test_repository_analysis_workflow() {
         .stdout(predicate::str::contains("Growth Metrics"));
 
     // User inspects layers
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["layers", "--list", "--size"])
         .assert()
@@ -331,19 +375,22 @@ fn test_data_integrity_user_workflow() {
     fs::write(project_path.join("important.txt"), "Critical business data").unwrap();
 
     // Setup repository
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Integrity Test"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "important.txt"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Important data"])
         .assert()
@@ -351,7 +398,8 @@ fn test_data_integrity_user_workflow() {
 
     // User generates proof for data integrity
     let proof_file = project_path.join("proof.json");
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["prove", "important.txt", "-o", proof_file.to_str().unwrap()])
         .assert()
@@ -366,7 +414,8 @@ fn test_data_integrity_user_workflow() {
     assert!(proof_content.contains("target"));
 
     // User verifies proof
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["verify", proof_file.to_str().unwrap()])
         .assert()
@@ -381,7 +430,8 @@ fn test_troubleshooting_user_scenarios() {
     let project_path = temp_dir.path();
 
     // Scenario 1: User in wrong directory
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("status")
         .assert()
@@ -389,13 +439,15 @@ fn test_troubleshooting_user_scenarios() {
         .stderr(predicate::str::contains("repository"));
 
     // Scenario 2: User tries to add non-existent file
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["add", "missing.txt"])
         .assert()
@@ -403,7 +455,8 @@ fn test_troubleshooting_user_scenarios() {
         .stderr(predicate::str::contains("not found"));
 
     // Scenario 3: User tries to commit without staging
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Empty"])
         .assert()
@@ -412,7 +465,8 @@ fn test_troubleshooting_user_scenarios() {
         .stderr(predicate::str::contains("add"));
 
     // Scenario 4: User gets help for specific command
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["add", "--help"])
         .assert()
@@ -430,19 +484,22 @@ fn test_output_formatting_consistency() {
     fs::write(project_path.join("format.txt"), "Formatting test").unwrap();
 
     // Setup repository
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Format Test"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "format.txt"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Format test"])
         .assert()
@@ -460,7 +517,8 @@ fn test_output_formatting_consistency() {
     ];
 
     for (command, expected_elements) in commands_with_formatting {
-        let output = Command::cargo_bin("digstore").unwrap()
+        let output = Command::cargo_bin("digstore")
+            .unwrap()
             .current_dir(project_path)
             .args(&command)
             .assert()
@@ -489,14 +547,16 @@ fn test_large_file_user_experience() {
     fs::write(project_path.join("large.txt"), &large_content).unwrap();
 
     // Setup repository
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Large File Test"])
         .assert()
         .success();
 
     // User adds large file - should handle efficiently
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "large.txt"])
         .assert()
@@ -504,7 +564,8 @@ fn test_large_file_user_experience() {
         .stdout(predicate::str::contains("files added to staging"));
 
     // User commits large file
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Large file commit"])
         .assert()
@@ -512,7 +573,8 @@ fn test_large_file_user_experience() {
         .stdout(predicate::str::contains("Commit created"));
 
     // User can retrieve large file
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["get", "large.txt", "-o", "retrieved_large.txt"])
         .assert()
@@ -524,7 +586,8 @@ fn test_large_file_user_experience() {
     assert_eq!(retrieved, large_content);
 
     // User can analyze storage efficiency
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["size", "--efficiency"])
         .assert()
@@ -538,7 +601,8 @@ fn test_configuration_user_workflow() {
     let project_path = temp_dir.path();
 
     // User explores configuration
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["config", "--help"])
         .assert()
@@ -546,28 +610,32 @@ fn test_configuration_user_workflow() {
         .stdout(predicate::str::contains("Configuration"));
 
     // User checks current config (should show defaults or empty)
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["config", "--list"])
         .assert()
         .success();
 
     // User sets their identity (optional)
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["config", "user.name", "Test User"])
         .assert()
         .success()
         .stdout(predicate::str::contains("✓"));
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["config", "user.email", "test@example.com"])
         .assert()
         .success();
 
     // User verifies configuration
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["config", "--list"])
         .assert()
@@ -576,7 +644,8 @@ fn test_configuration_user_workflow() {
         .stdout(predicate::str::contains("test@example.com"));
 
     // User can get specific values
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["config", "user.name"])
         .assert()
@@ -584,7 +653,8 @@ fn test_configuration_user_workflow() {
         .stdout(predicate::str::contains("Test User"));
 
     // User can see where config is stored
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["config", "--show-origin"])
         .assert()
@@ -601,7 +671,8 @@ fn test_interactive_features() {
     fs::write(project_path.join("interactive.txt"), "Interactive test").unwrap();
 
     // Test auto-yes flag for non-interactive usage
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "init", "--name", "Interactive Test"])
         .assert()
@@ -609,14 +680,16 @@ fn test_interactive_features() {
         .stdout(predicate::str::contains("Repository initialized"));
 
     // Test that commands work with --yes flag
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "interactive.txt"])
         .assert()
         .success();
 
     // Test dry-run mode
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["add", "--dry-run", "-A"])
         .assert()
@@ -624,7 +697,8 @@ fn test_interactive_features() {
         .stdout(predicate::str::contains("Would process"));
 
     // Test quiet mode
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--quiet", "commit", "-m", "Quiet commit"])
         .assert()
@@ -639,42 +713,50 @@ fn test_advanced_user_features() {
     // Create complex project structure
     fs::create_dir_all(project_path.join("src/modules")).unwrap();
     fs::create_dir_all(project_path.join("tests/integration")).unwrap();
-    
+
     for i in 0..20 {
         fs::write(
-            project_path.join("src/modules").join(format!("mod{}.rs", i)),
+            project_path
+                .join("src/modules")
+                .join(format!("mod{}.rs", i)),
             format!("// Module {}", i),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // Setup repository
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Advanced Test"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "-A"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Advanced test setup"])
         .assert()
         .success();
 
     // Advanced analysis commands
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["size", "--breakdown", "--efficiency", "--layers"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Layer Breakdown"));
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["stats", "--detailed", "--performance", "--security"])
         .assert()
@@ -683,7 +765,8 @@ fn test_advanced_user_features() {
         .stdout(predicate::str::contains("Security Metrics"));
 
     // Layer inspection
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["layers", "--list", "--files", "--chunks"])
         .assert()
@@ -692,7 +775,8 @@ fn test_advanced_user_features() {
         .stdout(predicate::str::contains("chunks"));
 
     // Detailed store information
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["store-info", "--config", "--paths"])
         .assert()
@@ -708,9 +792,10 @@ fn test_shell_completion_user_experience() {
 
     // Test completion generation for all shells
     let shells = ["bash", "zsh", "fish", "powershell"];
-    
+
     for shell in &shells {
-        Command::cargo_bin("digstore").unwrap()
+        Command::cargo_bin("digstore")
+            .unwrap()
             .current_dir(project_path)
             .args(&["completion", shell])
             .assert()
@@ -721,7 +806,8 @@ fn test_shell_completion_user_experience() {
     }
 
     // Bash completion should include specific instructions
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["completion", "bash"])
         .assert()
@@ -730,7 +816,8 @@ fn test_shell_completion_user_experience() {
         .stdout(predicate::str::contains("eval"));
 
     // Zsh completion should include zsh-specific instructions
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["completion", "zsh"])
         .assert()
@@ -749,19 +836,22 @@ fn test_repository_portability() {
     // User creates repository in first location
     fs::write(project1.join("portable.txt"), "Portable content").unwrap();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project1)
         .args(&["init", "--name", "Portable Test"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project1)
         .args(&["--yes", "add", "portable.txt"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project1)
         .args(&["commit", "-m", "Portable commit"])
         .assert()
@@ -772,14 +862,16 @@ fn test_repository_portability() {
     fs::write(project2.join("portable.txt"), "Portable content").unwrap();
 
     // User should be able to access repository from new location
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project2)
         .arg("status")
         .assert()
         .success()
         .stdout(predicate::str::contains("Repository Status"));
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project2)
         .args(&["get", "portable.txt"])
         .assert()
@@ -797,17 +889,20 @@ fn test_performance_user_feedback() {
         fs::write(
             project_path.join(format!("perf{:03}.txt", i)),
             format!("Performance test file {}", i),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Performance Test"])
         .assert()
         .success();
 
     // User should see performance feedback for large operations
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "-A"])
         .assert()
@@ -816,7 +911,8 @@ fn test_performance_user_feedback() {
         .stdout(predicate::str::contains("files/s").or(predicate::str::contains("Processing")));
 
     // User should see commit performance
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Performance test commit"])
         .assert()
@@ -824,7 +920,8 @@ fn test_performance_user_feedback() {
         .stdout(predicate::str::contains("Commit created"));
 
     // User can analyze performance
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["stats", "--performance"])
         .assert()
@@ -846,14 +943,16 @@ fn test_file_filtering_user_experience() {
     // Create .digignore
     fs::write(project_path.join(".digignore"), "*.tmp\n*.log\n").unwrap();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Filter Test"])
         .assert()
         .success();
 
     // User sees filtering in action
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["add", "--dry-run", "-A"])
         .assert()
@@ -861,14 +960,16 @@ fn test_file_filtering_user_experience() {
         .stdout(predicate::str::contains("Would process"));
 
     // User adds all (with filtering)
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "-A"])
         .assert()
         .success();
 
     // User verifies only correct files were added
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("staged")
         .assert()
@@ -879,14 +980,16 @@ fn test_file_filtering_user_experience() {
         .stdout(predicate::str::not(predicate::str::contains("debug.log")));
 
     // User can force add ignored files if needed
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["add", "--force", "ignore.tmp"])
         .assert()
         .success();
 
     // Now ignored file should appear in staging
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("staged")
         .assert()
@@ -900,7 +1003,8 @@ fn test_zero_knowledge_user_experience() {
     let project_path = temp_dir.path();
 
     // Setup repository
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "ZK Test"])
         .assert()
@@ -929,7 +1033,10 @@ fn test_zero_knowledge_user_experience() {
         .get_output();
 
     // Should return same deterministic data
-    assert_eq!(output1.stdout, output2.stdout, "Same invalid URN should return same data");
+    assert_eq!(
+        output1.stdout, output2.stdout,
+        "Same invalid URN should return same data"
+    );
 
     // Different invalid URNs should return different data
     let output3 = Command::cargo_bin("digstore").unwrap()
@@ -939,7 +1046,10 @@ fn test_zero_knowledge_user_experience() {
         .success()
         .get_output();
 
-    assert_ne!(output1.stdout, output3.stdout, "Different invalid URNs should return different data");
+    assert_ne!(
+        output1.stdout, output3.stdout,
+        "Different invalid URNs should return different data"
+    );
 }
 
 #[test]
@@ -951,33 +1061,42 @@ fn test_encryption_user_workflow() {
     fs::write(project_path.join("secret.txt"), "Secret content").unwrap();
 
     // User sets up encryption
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
-        .args(&["config", "crypto.public_key", "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"])
+        .args(&[
+            "config",
+            "crypto.public_key",
+            "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        ])
         .assert()
         .success();
 
     // User initializes repository (encryption enabled by default)
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Encryption Test"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "secret.txt"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Encrypted commit"])
         .assert()
         .success();
 
     // User generates keys for the content
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["keygen", "urn:dig:chia:abc123/secret.txt"])
         .assert()
@@ -987,7 +1106,8 @@ fn test_encryption_user_workflow() {
         .stdout(predicate::str::contains("Encryption Key"));
 
     // User can get JSON format
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["keygen", "urn:dig:chia:abc123/secret.txt", "--json"])
         .assert()
@@ -1007,20 +1127,23 @@ fn test_user_workflow_persistence() {
     fs::write(project_path.join("persist2.txt"), "Persistent file 2").unwrap();
 
     // Session 1: Initialize and stage files
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["init", "--name", "Persistence Test"])
         .assert()
         .success();
 
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "persist1.txt"])
         .assert()
         .success();
 
     // Session 2: Check that staging persisted
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("staged")
         .assert()
@@ -1028,14 +1151,16 @@ fn test_user_workflow_persistence() {
         .stdout(predicate::str::contains("persist1.txt"));
 
     // Session 3: Add more files
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["--yes", "add", "persist2.txt"])
         .assert()
         .success();
 
     // Session 4: Both files should be staged
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("staged")
         .assert()
@@ -1044,14 +1169,16 @@ fn test_user_workflow_persistence() {
         .stdout(predicate::str::contains("persist2.txt"));
 
     // Session 5: Commit
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["commit", "-m", "Persistent commit"])
         .assert()
         .success();
 
     // Session 6: Verify staging is cleared
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .arg("staged")
         .assert()
@@ -1059,11 +1186,11 @@ fn test_user_workflow_persistence() {
         .stdout(predicate::str::contains("No files staged"));
 
     // Session 7: Files should be accessible
-    Command::cargo_bin("digstore").unwrap()
+    Command::cargo_bin("digstore")
+        .unwrap()
         .current_dir(project_path)
         .args(&["get", "persist1.txt"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Persistent file 1"));
 }
-

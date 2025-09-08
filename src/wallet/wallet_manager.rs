@@ -6,7 +6,7 @@ use crate::config::{ConfigKey, ConfigValue, GlobalConfig};
 use crate::core::error::{DigstoreError, Result};
 use crate::crypto::PublicKey;
 use colored::Colorize;
-use dialoguer::{Select, Input, Confirm};
+use dialoguer::{Confirm, Input, Select};
 use dig_wallet::Wallet;
 use directories::UserDirs;
 use std::path::PathBuf;
@@ -31,11 +31,12 @@ impl WalletManager {
     /// Create a new wallet manager with default profile
     pub fn new() -> Result<Self> {
         let config = GlobalConfig::load().unwrap_or_default();
-        let wallet_name = config.wallet.active_profile.unwrap_or_else(|| "default".to_string());
-        
-        Ok(Self { 
-            wallet_name,
-        })
+        let wallet_name = config
+            .wallet
+            .active_profile
+            .unwrap_or_else(|| "default".to_string());
+
+        Ok(Self { wallet_name })
     }
 
     /// Create a new wallet manager with specific profile
@@ -44,12 +45,13 @@ impl WalletManager {
             profile
         } else {
             let config = GlobalConfig::load().unwrap_or_default();
-            config.wallet.active_profile.unwrap_or_else(|| "default".to_string())
+            config
+                .wallet
+                .active_profile
+                .unwrap_or_else(|| "default".to_string())
         };
-        
-        Ok(Self { 
-            wallet_name,
-        })
+
+        Ok(Self { wallet_name })
     }
 
     /// Check the current wallet status
@@ -60,16 +62,15 @@ impl WalletManager {
         }
 
         // Use tokio runtime to check if wallet exists
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
-            });
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
+        });
 
         match rt {
             Ok(runtime) => {
-                match runtime.block_on(async {
-                    Wallet::load(Some(self.wallet_name.clone()), false).await
-                }) {
+                match runtime
+                    .block_on(async { Wallet::load(Some(self.wallet_name.clone()), false).await })
+                {
                     Ok(_) => WalletStatus::Initialized,
                     Err(dig_wallet::WalletError::WalletNotFound(_)) => {
                         // Check if this is truly first time vs corrupted
@@ -97,27 +98,23 @@ impl WalletManager {
     pub fn ensure_wallet_initialized(&self) -> Result<()> {
         match self.check_status() {
             WalletStatus::Initialized => Ok(()),
-            WalletStatus::NotInitialized => {
-                self.prompt_wallet_initialization()
-            },
-            WalletStatus::Corrupted => {
-                self.handle_corrupted_wallet()
-            },
+            WalletStatus::NotInitialized => self.prompt_wallet_initialization(),
+            WalletStatus::Corrupted => self.handle_corrupted_wallet(),
         }
     }
 
     /// Ensure .dig directory exists and keyring file is properly initialized
     fn ensure_dig_directory_exists(&self) -> Result<()> {
         use directories::UserDirs;
-        
+
         let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
         let dig_dir = user_dirs.home_dir().join(".dig");
-        
+
         // Create .dig directory if it doesn't exist
         if !dig_dir.exists() {
             std::fs::create_dir_all(&dig_dir)?;
         }
-        
+
         // Ensure keyring.yaml exists and is properly formatted
         let keyring_path = dig_dir.join("keyring.yaml");
         if !keyring_path.exists() {
@@ -146,46 +143,44 @@ impl WalletManager {
                     // Can't read file, recreate it
                     let empty_keyring = "wallets: {}\n";
                     std::fs::write(&keyring_path, empty_keyring)?;
-                }
+                },
             }
         }
-        
+
         Ok(())
     }
 
     /// Check if this is a first-time user (no wallets exist or .dig directory doesn't exist)
     fn is_first_time_user() -> bool {
         use directories::UserDirs;
-        
+
         // First check if .dig directory exists
         let user_dirs = match UserDirs::new() {
             Some(dirs) => dirs,
             None => return true, // Can't determine home, assume first time
         };
-        
+
         let dig_dir = user_dirs.home_dir().join(".dig");
         if !dig_dir.exists() {
             return true; // No .dig directory = definitely first time
         }
-        
+
         // Check if any wallet files exist in .dig directory
         let keyring_path = dig_dir.join("keyring.yaml");
         if !keyring_path.exists() {
             return true; // No keyring file = first time
         }
-        
+
         // Try to list wallets using dig-wallet API
         let rt = match tokio::runtime::Runtime::new() {
             Ok(runtime) => runtime,
             Err(_) => {
                 // If we can't create runtime, check file system directly
                 return !keyring_path.exists();
-            }
+            },
         };
 
-        match rt.block_on(async {
-            Wallet::list_wallets().await
-        }) {
+        match rt.block_on(async { Wallet::list_wallets().await }) {
             Ok(wallets) => wallets.is_empty(),
             Err(_) => {
                 // If we can't list wallets but keyring exists, it might be corrupted
@@ -194,20 +189,40 @@ impl WalletManager {
                     Ok(content) => content.trim().is_empty() || content.trim() == "wallets:",
                     Err(_) => true, // Can't read file, assume first time
                 }
-            }
+            },
         }
     }
 
     /// Display welcome message for first-time users
     fn display_welcome_message() {
         println!();
-        println!("{}", "╔══════════════════════════════════════════════════════════╗".bright_cyan());
-        println!("{}", "║                                                          ║".bright_cyan());
-        println!("{}", "║                🌐 Welcome to the DIG Network! 🌐         ║".bright_cyan());
-        println!("{}", "║                                                          ║".bright_cyan());
-        println!("{}", "╚══════════════════════════════════════════════════════════╝".bright_cyan());
+        println!(
+            "{}",
+            "╔══════════════════════════════════════════════════════════╗".bright_cyan()
+        );
+        println!(
+            "{}",
+            "║                                                          ║".bright_cyan()
+        );
+        println!(
+            "{}",
+            "║                🌐 Welcome to the DIG Network! 🌐         ║".bright_cyan()
+        );
+        println!(
+            "{}",
+            "║                                                          ║".bright_cyan()
+        );
+        println!(
+            "{}",
+            "╚══════════════════════════════════════════════════════════╝".bright_cyan()
+        );
         println!();
-        println!("{}", "🚀 You're about to join the decentralized data revolution!".bright_green().bold());
+        println!(
+            "{}",
+            "🚀 You're about to join the decentralized data revolution!"
+                .bright_green()
+                .bold()
+        );
         println!();
         println!("The DIG Network is a decentralized content-addressable storage system");
         println!("that provides zero-knowledge data storage with cryptographic proofs.");
@@ -219,7 +234,12 @@ impl WalletManager {
         println!("  📋 Merkle proofs - cryptographically verifiable data");
         println!("  🎯 URN-based retrieval - permanent, reliable addressing");
         println!();
-        println!("{}", "To get started, you'll need a wallet to manage your cryptographic keys.".bright_white().bold());
+        println!(
+            "{}",
+            "To get started, you'll need a wallet to manage your cryptographic keys."
+                .bright_white()
+                .bold()
+        );
         println!("Your wallet contains a unique mnemonic phrase that secures your data.");
         println!();
     }
@@ -276,10 +296,15 @@ impl WalletManager {
     fn generate_new_wallet_with_context(&self, is_first_time: bool) -> Result<()> {
         // Ensure .dig directory and keyring exist before wallet creation
         self.ensure_dig_directory_exists()?;
-        
+
         println!();
         if is_first_time {
-            println!("{}", "🎉 Creating your first DIG Network wallet...".bright_cyan().bold());
+            println!(
+                "{}",
+                "🎉 Creating your first DIG Network wallet..."
+                    .bright_cyan()
+                    .bold()
+            );
             println!();
             println!("This wallet will be used to:");
             println!("  • Secure your data with zero-knowledge encryption");
@@ -290,21 +315,25 @@ impl WalletManager {
             println!("{}", "Generating new wallet...".cyan());
         }
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
-            })?;
-
-        let mnemonic = rt.block_on(async {
-            Wallet::create_new_wallet(&self.wallet_name).await
-        }).map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to generate wallet: {}", e),
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
         })?;
+
+        let mnemonic = rt
+            .block_on(async { Wallet::create_new_wallet(&self.wallet_name).await })
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Failed to generate wallet: {}", e),
+            })?;
 
         println!();
         println!("{}", "✓ Wallet created successfully!".green().bold());
         println!();
-        println!("{}", "🔑 IMPORTANT: Please write down your mnemonic phrase:".red().bold());
+        println!(
+            "{}",
+            "🔑 IMPORTANT: Please write down your mnemonic phrase:"
+                .red()
+                .bold()
+        );
         println!();
         println!("   ┌─────────────────────────────────────────────────────────────┐");
         println!("   │  {}  │", mnemonic.bright_white().bold());
@@ -328,7 +357,12 @@ impl WalletManager {
 
         if !confirmed {
             println!();
-            println!("{}", "⚠️  Please write down your mnemonic phrase before continuing.".yellow().bold());
+            println!(
+                "{}",
+                "⚠️  Please write down your mnemonic phrase before continuing."
+                    .yellow()
+                    .bold()
+            );
             println!();
             println!("   ┌─────────────────────────────────────────────────────────────┐");
             println!("   │  {}  │", mnemonic.bright_white().bold());
@@ -341,12 +375,26 @@ impl WalletManager {
 
         println!();
         if is_first_time {
-            println!("{}", "🎊 Welcome to the DIG Network! Your wallet is ready.".bright_green().bold());
+            println!(
+                "{}",
+                "🎊 Welcome to the DIG Network! Your wallet is ready."
+                    .bright_green()
+                    .bold()
+            );
             println!();
             println!("You can now:");
-            println!("  • Initialize repositories with {}", "digstore init".cyan());
-            println!("  • Add and commit files with {}", "digstore add <files>".cyan());
-            println!("  • Generate proofs with {}", "digstore proof generate".cyan());
+            println!(
+                "  • Initialize repositories with {}",
+                "digstore init".cyan()
+            );
+            println!(
+                "  • Add and commit files with {}",
+                "digstore add <files>".cyan()
+            );
+            println!(
+                "  • Generate proofs with {}",
+                "digstore proof generate".cyan()
+            );
             println!("  • Manage wallets with {}", "digstore wallet".cyan());
             println!();
             println!("For help at any time, use: {}", "digstore --help".cyan());
@@ -360,7 +408,7 @@ impl WalletManager {
     fn import_existing_wallet(&self) -> Result<()> {
         // Ensure .dig directory and keyring exist before wallet import
         self.ensure_dig_directory_exists()?;
-        
+
         println!();
         println!("{}", "Import existing wallet".cyan().bold());
         println!("Please enter your mnemonic phrase:");
@@ -373,16 +421,14 @@ impl WalletManager {
                 reason: format!("Failed to get mnemonic input: {}", e),
             })?;
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
-            })?;
-
-        rt.block_on(async {
-            Wallet::import_wallet(&self.wallet_name, Some(&mnemonic)).await
-        }).map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Invalid mnemonic phrase: {}", e),
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
         })?;
+
+        rt.block_on(async { Wallet::import_wallet(&self.wallet_name, Some(&mnemonic)).await })
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Invalid mnemonic phrase: {}", e),
+            })?;
 
         println!();
         println!("{}", "✓ Wallet imported successfully!".green().bold());
@@ -428,16 +474,16 @@ impl WalletManager {
 
                 if confirmed {
                     // Try to delete the wallet using dig-wallet API
-                    let rt = tokio::runtime::Runtime::new()
-                        .map_err(|e| DigstoreError::ConfigurationError {
+                    let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                        DigstoreError::ConfigurationError {
                             reason: format!("Failed to create tokio runtime: {}", e),
-                        })?;
-                    
+                        }
+                    })?;
+
                     // First try the API deletion
-                    let delete_result = rt.block_on(async {
-                        Wallet::delete_wallet(&self.wallet_name).await
-                    });
-                    
+                    let delete_result =
+                        rt.block_on(async { Wallet::delete_wallet(&self.wallet_name).await });
+
                     match delete_result {
                         Ok(_) => {
                             println!("{}", "✓ Wallet deleted successfully".green());
@@ -446,14 +492,20 @@ impl WalletManager {
                             // If API deletion fails, try to clean up manually
                             println!("{}", format!("API deletion failed: {}", e).yellow());
                             println!("{}", "Attempting manual cleanup...".cyan());
-                            
+
                             if let Err(cleanup_err) = self.manual_wallet_cleanup() {
-                                println!("{}", format!("Manual cleanup also failed: {}", cleanup_err).red());
-                                println!("{}", "Proceeding with new wallet creation anyway...".yellow());
+                                println!(
+                                    "{}",
+                                    format!("Manual cleanup also failed: {}", cleanup_err).red()
+                                );
+                                println!(
+                                    "{}",
+                                    "Proceeding with new wallet creation anyway...".yellow()
+                                );
                             } else {
                                 println!("{}", "✓ Manual cleanup successful".green());
                             }
-                        }
+                        },
                     }
 
                     self.generate_new_wallet()
@@ -482,30 +534,27 @@ impl WalletManager {
     pub fn auto_generate_wallet(&self) -> Result<()> {
         // Ensure .dig directory exists first
         self.ensure_dig_directory_exists()?;
-        
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
-            })?;
+
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
+        })?;
 
         // Check if wallet already exists
-        match rt.block_on(async {
-            Wallet::load(Some(self.wallet_name.clone()), false).await
-        }) {
+        match rt.block_on(async { Wallet::load(Some(self.wallet_name.clone()), false).await }) {
             Ok(_) => return Ok(()), // Wallet already exists, nothing to do
             Err(dig_wallet::WalletError::WalletNotFound(_)) => {
                 // Wallet doesn't exist, create it
-                let _mnemonic = rt.block_on(async {
-                    Wallet::create_new_wallet(&self.wallet_name).await
-                }).map_err(|e| DigstoreError::ConfigurationError {
-                    reason: format!("Failed to generate wallet: {}", e),
-                })?;
-                
+                let _mnemonic = rt
+                    .block_on(async { Wallet::create_new_wallet(&self.wallet_name).await })
+                    .map_err(|e| DigstoreError::ConfigurationError {
+                        reason: format!("Failed to generate wallet: {}", e),
+                    })?;
+
                 // Set as active profile in config
                 let mut config = GlobalConfig::load().unwrap_or_default();
                 config.wallet.active_profile = Some(self.wallet_name.clone());
                 config.save()?;
-                
+
                 Ok(())
             },
             Err(e) => Err(DigstoreError::ConfigurationError {
@@ -518,30 +567,28 @@ impl WalletManager {
     pub fn auto_import_wallet(&self, mnemonic: &str) -> Result<()> {
         // Ensure .dig directory exists first
         self.ensure_dig_directory_exists()?;
-        
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
-            })?;
+
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
+        })?;
 
         // Check if wallet already exists
-        match rt.block_on(async {
-            Wallet::load(Some(self.wallet_name.clone()), false).await
-        }) {
+        match rt.block_on(async { Wallet::load(Some(self.wallet_name.clone()), false).await }) {
             Ok(_) => return Ok(()), // Wallet already exists, nothing to do
             Err(dig_wallet::WalletError::WalletNotFound(_)) => {
                 // Wallet doesn't exist, import it
                 rt.block_on(async {
                     Wallet::import_wallet(&self.wallet_name, Some(mnemonic)).await
-                }).map_err(|e| DigstoreError::ConfigurationError {
+                })
+                .map_err(|e| DigstoreError::ConfigurationError {
                     reason: format!("Failed to import wallet: {}", e),
                 })?;
-                
+
                 // Set as active profile in config
                 let mut config = GlobalConfig::load().unwrap_or_default();
                 config.wallet.active_profile = Some(self.wallet_name.clone());
                 config.save()?;
-                
+
                 Ok(())
             },
             Err(e) => Err(DigstoreError::ConfigurationError {
@@ -558,16 +605,14 @@ impl WalletManager {
             });
         }
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
-            })?;
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
+        })?;
 
-        rt.block_on(async {
-            Wallet::load(Some(self.wallet_name.clone()), false).await
-        }).map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to load wallet: {}", e),
-        })
+        rt.block_on(async { Wallet::load(Some(self.wallet_name.clone()), false).await })
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Failed to load wallet: {}", e),
+            })
     }
 
     /// Get the public key from the active wallet or specified profile
@@ -579,25 +624,30 @@ impl WalletManager {
     pub fn get_wallet_public_key(profile: Option<String>) -> Result<PublicKey> {
         let config = GlobalConfig::load().unwrap_or_default();
         let wallet_name = profile.unwrap_or_else(|| {
-            config.wallet.active_profile.unwrap_or_else(|| "default".to_string())
+            config
+                .wallet
+                .active_profile
+                .unwrap_or_else(|| "default".to_string())
         });
 
-        let rt = tokio::runtime::Runtime::new()
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
+        })?;
+
+        let wallet = rt
+            .block_on(async { Wallet::load(Some(wallet_name.clone()), false).await })
             .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
+                reason: format!(
+                    "Failed to load wallet '{}': {}. Use 'digstore wallet create {}' to create it.",
+                    wallet_name, e, wallet_name
+                ),
             })?;
 
-        let wallet = rt.block_on(async {
-            Wallet::load(Some(wallet_name.clone()), false).await
-        }).map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to load wallet '{}': {}. Use 'digstore wallet create {}' to create it.", wallet_name, e, wallet_name),
-        })?;
-
-        let dig_wallet_public_key = rt.block_on(async {
-            wallet.get_public_synthetic_key().await
-        }).map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to get public key from wallet: {}", e),
-        })?;
+        let dig_wallet_public_key = rt
+            .block_on(async { wallet.get_public_synthetic_key().await })
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Failed to get public key from wallet: {}", e),
+            })?;
 
         // Convert dig-wallet PublicKey to our crypto::PublicKey
         let public_key_bytes = dig_wallet_public_key.to_bytes().to_vec();
@@ -607,12 +657,14 @@ impl WalletManager {
     /// Get the private key from the active wallet
     pub fn get_active_wallet_private_key() -> Result<dig_wallet::SecretKey> {
         let config = GlobalConfig::load().unwrap_or_default();
-        let wallet_name = config.wallet.active_profile.unwrap_or_else(|| "default".to_string());
+        let wallet_name = config
+            .wallet
+            .active_profile
+            .unwrap_or_else(|| "default".to_string());
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
-            })?;
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
+        })?;
 
         let wallet = rt.block_on(async {
             Wallet::load(Some(wallet_name.clone()), false).await
@@ -620,22 +672,23 @@ impl WalletManager {
             reason: format!("Failed to load active wallet '{}': {}. Use 'digstore wallet create {}' to create it.", wallet_name, e, wallet_name),
         })?;
 
-        rt.block_on(async {
-            wallet.get_private_synthetic_key().await
-        }).map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to get private key from wallet: {}", e),
-        })
+        rt.block_on(async { wallet.get_private_synthetic_key().await })
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Failed to get private key from wallet: {}", e),
+            })
     }
 
     /// Get the active wallet instance
     pub fn get_active_wallet() -> Result<Wallet> {
         let config = GlobalConfig::load().unwrap_or_default();
-        let wallet_name = config.wallet.active_profile.unwrap_or_else(|| "default".to_string());
+        let wallet_name = config
+            .wallet
+            .active_profile
+            .unwrap_or_else(|| "default".to_string());
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| DigstoreError::ConfigurationError {
-                reason: format!("Failed to create tokio runtime: {}", e),
-            })?;
+        let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to create tokio runtime: {}", e),
+        })?;
 
         rt.block_on(async {
             Wallet::load(Some(wallet_name.clone()), false).await

@@ -6,7 +6,7 @@ fn main() {
         println!("cargo:rerun-if-changed=build.rs");
         println!("cargo:rerun-if-changed=DIG.ico");
         println!("cargo:rerun-if-changed=digstore.rc");
-        
+
         // Create resource file with icon and version info
         let rc_content = r#"
 #pragma code_page(65001)
@@ -41,11 +41,11 @@ BEGIN
     END
 END
 "#;
-        
+
         // Write RC file
         std::fs::write("digstore.rc", rc_content).expect("Failed to write RC file");
         println!("cargo:warning=Created digstore.rc file");
-        
+
         // Use embed-resource to compile and link the resources
         embed_resource::compile("digstore.rc", embed_resource::NONE);
         println!("cargo:warning=Resources compiled and will be linked into executable");

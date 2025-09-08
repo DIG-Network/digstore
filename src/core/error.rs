@@ -130,11 +130,11 @@ pub enum DigstoreError {
 
     #[error("Checksum mismatch: expected {expected}, got {actual}")]
     ChecksumMismatch { expected: String, actual: String },
-    
+
     /// Encryption errors
     #[error("Encryption error: {message}")]
     EncryptionError { message: String },
-    
+
     /// Decryption errors
     #[error("Decryption error: {message}")]
     DecryptionError { message: String },
@@ -217,14 +217,14 @@ impl DigstoreError {
             message: message.into(),
         }
     }
-    
+
     /// Create a new encryption error
     pub fn encryption_error(message: impl Into<String>) -> Self {
         Self::EncryptionError {
             message: message.into(),
         }
     }
-    
+
     /// Create a new decryption error
     pub fn decryption_error(message: impl Into<String>) -> Self {
         Self::DecryptionError {

@@ -2,7 +2,7 @@
 
 use crate::cli::context::CliContext;
 use crate::config::GlobalConfig;
-use crate::crypto::{PublicKey, transform_urn, derive_key_from_urn, derive_storage_address};
+use crate::crypto::{derive_key_from_urn, derive_storage_address, transform_urn, PublicKey};
 use crate::wallet::WalletManager;
 use anyhow::Result;
 use colored::Colorize;
@@ -32,23 +32,32 @@ pub fn execute_with_profile(
 
     // Get wallet profile from CLI context if not provided
     let effective_wallet_profile = wallet_profile.or_else(|| CliContext::get_wallet_profile());
-    
+
     // Get public key from specified wallet profile or active wallet
-    let public_key = WalletManager::get_wallet_public_key(effective_wallet_profile)
-        .map_err(|e| anyhow::anyhow!("Failed to get public key from wallet: {}. Ensure you have a wallet initialized.", e))?;
-    
+    let public_key =
+        WalletManager::get_wallet_public_key(effective_wallet_profile).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to get public key from wallet: {}. Ensure you have a wallet initialized.",
+                e
+            )
+        })?;
+
     let public_key_hex = public_key.to_hex();
-    
+
     println!("  {} URN: {}", "•".cyan(), urn.dimmed());
     println!("  {} Public Key: {}", "•".cyan(), public_key_hex.dimmed());
 
     // Generate transformed address for storage
     let transformed_address = transform_urn(&urn, &public_key)?;
-    println!("  {} Transformed Address: {}", "•".cyan(), transformed_address.dimmed());
+    println!(
+        "  {} Transformed Address: {}",
+        "•".cyan(),
+        transformed_address.dimmed()
+    );
 
     // Generate storage address from transformed URN
     let storage_addr = derive_storage_address(&urn, &public_key)?;
-    
+
     // Generate encryption key from original URN
     let encryption_key_bytes = derive_key_from_urn(&urn);
     let encryption_key_hex = hex::encode(encryption_key_bytes);
@@ -63,10 +72,14 @@ pub fn execute_with_profile(
             "key_derivation": "SHA256(urn)",
             "address_derivation": "SHA256(transform(urn + public_key))"
         });
-        
+
         if let Some(output_path) = &output {
             std::fs::write(output_path, serde_json::to_string_pretty(&output_data)?)?;
-            println!("  {} Key information written to: {}", "✓".green(), output_path.display());
+            println!(
+                "  {} Key information written to: {}",
+                "✓".green(),
+                output_path.display()
+            );
         } else {
             println!("{}", serde_json::to_string_pretty(&output_data)?);
         }
@@ -74,14 +87,14 @@ pub fn execute_with_profile(
         println!();
         println!("{}", "Generated Keys:".green().bold());
         println!("{}", "═".repeat(50));
-        
+
         if storage_address || (!storage_address && !encryption_key) {
             println!("\n{}", "Storage Address:".bold());
             println!("  Address: {}", storage_addr.bright_cyan());
             println!("  Purpose: Where encrypted data is stored");
             println!("  Derivation: SHA256(transform(URN + public_key))");
         }
-        
+
         if encryption_key || (!storage_address && !encryption_key) {
             println!("\n{}", "Encryption Key:".bold());
             println!("  Key: {}", encryption_key_hex.bright_yellow());
@@ -100,7 +113,11 @@ pub fn execute_with_profile(
                 urn, public_key_hex, transformed_address, storage_addr, encryption_key_hex
             );
             std::fs::write(output_path, output_content)?;
-            println!("\n  {} Key information written to: {}", "✓".green(), output_path.display());
+            println!(
+                "\n  {} Key information written to: {}",
+                "✓".green(),
+                output_path.display()
+            );
         }
     }
 

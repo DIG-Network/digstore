@@ -13,5 +13,8 @@ pub mod ultra_compressed_proof;
 pub use incremental::{IncrementalMerkleBuilder, IndexCache, StreamingLayerWriter};
 pub use merkle::{DigstoreProof, MerkleTree};
 pub use proof::{Proof, ProofElement, ProofGenerator, ProofMetadata, ProofPosition, ProofTarget};
-pub use size_proof::{ArchiveSizeProof, CompressedSizeProof, IntegrityProofs, verify_archive_size_proof, verify_compressed_hex_proof};
-pub use ultra_compressed_proof::{UltraCompressedProof, calculate_minimum_theoretical_size};
+pub use size_proof::{
+    verify_archive_size_proof, verify_compressed_hex_proof, ArchiveSizeProof, CompressedSizeProof,
+    IntegrityProofs,
+};
+pub use ultra_compressed_proof::{calculate_minimum_theoretical_size, UltraCompressedProof};

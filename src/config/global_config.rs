@@ -191,10 +191,9 @@ impl GlobalConfig {
                 .public_key
                 .as_ref()
                 .map(|s| ConfigValue::String(s.clone())),
-            ConfigKey::CryptoEncryptedStorage => self
-                .crypto
-                .encrypted_storage
-                .map(ConfigValue::Boolean),
+            ConfigKey::CryptoEncryptedStorage => {
+                self.crypto.encrypted_storage.map(ConfigValue::Boolean)
+            },
             ConfigKey::WalletActiveProfile => self
                 .wallet
                 .active_profile
@@ -257,7 +256,9 @@ impl GlobalConfig {
                     // Validate it's a valid hex string
                     if pubkey.len() != 64 || hex::decode(&pubkey).is_err() {
                         return Err(DigstoreError::ConfigurationError {
-                            reason: "crypto.public_key must be a 64-character hex string (32 bytes)".to_string(),
+                            reason:
+                                "crypto.public_key must be a 64-character hex string (32 bytes)"
+                                    .to_string(),
                         });
                     }
                     self.crypto.public_key = Some(pubkey);
@@ -332,7 +333,10 @@ impl GlobalConfig {
             entries.push(("crypto.public_key".to_string(), public_key.clone()));
         }
         if let Some(encrypted_storage) = self.crypto.encrypted_storage {
-            entries.push(("crypto.encrypted_storage".to_string(), encrypted_storage.to_string()));
+            entries.push((
+                "crypto.encrypted_storage".to_string(),
+                encrypted_storage.to_string(),
+            ));
         }
         if let Some(active_profile) = &self.wallet.active_profile {
             entries.push(("wallet.active_profile".to_string(), active_profile.clone()));

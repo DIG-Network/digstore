@@ -22,7 +22,11 @@ pub fn execute(
     // Read the encrypted file from input path
     let encrypted_data = std::fs::read(&path)?;
 
-    println!("  {} Read {} bytes of encrypted data", "•".cyan(), encrypted_data.len());
+    println!(
+        "  {} Read {} bytes of encrypted data",
+        "•".cyan(),
+        encrypted_data.len()
+    );
 
     // Determine the URN to use for decryption
     let decryption_urn = if let Some(provided_urn) = urn {
@@ -35,10 +39,10 @@ pub fn execute(
         // Try to construct a URN from the file path
         let repo_root = find_repository_root()?
             .ok_or_else(|| anyhow::anyhow!("Not in a repository (no .digstore file found)"))?;
-        
+
         let store = Store::open(&repo_root)?;
         let file_path = PathBuf::from(&path);
-        
+
         // Construct URN from store ID and file path
         format!(
             "urn:dig:chia:{}/{}",
@@ -47,7 +51,11 @@ pub fn execute(
         )
     };
 
-    println!("  {} Using URN for decryption: {}", "•".cyan(), decryption_urn.dimmed());
+    println!(
+        "  {} Using URN for decryption: {}",
+        "•".cyan(),
+        decryption_urn.dimmed()
+    );
 
     // Decrypt the data using custom key if provided, otherwise use URN
     let decrypted_data = if let Some(custom_key) = decryption_key {

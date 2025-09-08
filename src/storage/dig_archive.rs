@@ -65,12 +65,12 @@ impl ArchiveHeader {
             reserved: [0; 23],
         }
     }
-    
+
     /// Check if custom encryption flag is set
     pub fn has_custom_encryption(&self) -> bool {
         (self.flags & 0x01) != 0
     }
-    
+
     /// Set custom encryption flag
     pub fn set_custom_encryption(&mut self, enabled: bool) {
         if enabled {
@@ -626,12 +626,12 @@ impl DigArchive {
     pub fn path(&self) -> &Path {
         &self.archive_path
     }
-    
+
     /// Check if archive uses custom encryption
     pub fn has_custom_encryption(&self) -> bool {
         self.header.has_custom_encryption()
     }
-    
+
     /// Set custom encryption flag in archive header
     pub fn set_custom_encryption(&mut self, enabled: bool) -> Result<()> {
         self.header.set_custom_encryption(enabled);

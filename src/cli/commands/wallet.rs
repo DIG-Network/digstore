@@ -13,11 +13,22 @@ use serde_json::json;
 pub fn execute(command: WalletCommands) -> Result<()> {
     match command {
         WalletCommands::List { json } => execute_list(json),
-        WalletCommands::Info { profile, json, show_mnemonic } => execute_info(profile, json, show_mnemonic),
-        WalletCommands::Create { profile, from_mnemonic, set_active, json } => {
-            execute_create(profile, from_mnemonic, set_active, json)
-        },
-        WalletCommands::Delete { profile, force, json } => execute_delete(profile, force, json),
+        WalletCommands::Info {
+            profile,
+            json,
+            show_mnemonic,
+        } => execute_info(profile, json, show_mnemonic),
+        WalletCommands::Create {
+            profile,
+            from_mnemonic,
+            set_active,
+            json,
+        } => execute_create(profile, from_mnemonic, set_active, json),
+        WalletCommands::Delete {
+            profile,
+            force,
+            json,
+        } => execute_delete(profile, force, json),
         WalletCommands::SetActive { profile, json } => execute_set_active(profile, json),
         WalletCommands::Active { json } => execute_active(json),
         WalletCommands::Export { profile, json } => execute_export(profile, json),
@@ -26,16 +37,15 @@ pub fn execute(command: WalletCommands) -> Result<()> {
 
 /// List all wallets
 fn execute_list(json: bool) -> Result<()> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to create tokio runtime: {}", e),
-        })?;
-
-    let wallets = rt.block_on(async {
-        Wallet::list_wallets().await
-    }).map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to list wallets: {}", e),
+    let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+        reason: format!("Failed to create tokio runtime: {}", e),
     })?;
+
+    let wallets = rt
+        .block_on(async { Wallet::list_wallets().await })
+        .map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to list wallets: {}", e),
+        })?;
 
     let config = GlobalConfig::load().unwrap_or_default();
     let active_profile = config.wallet.active_profile.as_deref().unwrap_or("default");
@@ -49,7 +59,7 @@ fn execute_list(json: bool) -> Result<()> {
     } else {
         println!("{}", "Wallet Profiles".cyan().bold());
         println!("{}", "═══════════════".cyan());
-        
+
         if wallets.is_empty() {
             println!("No wallets found.");
             println!("Use 'digstore wallet create <profile>' to create a new wallet.");
@@ -61,7 +71,7 @@ fn execute_list(json: bool) -> Result<()> {
                     println!("  {}", wallet);
                 }
             }
-            
+
             println!();
             println!("Active profile: {}", active_profile.green());
             println!("Total wallets: {}", wallets.len());
@@ -75,38 +85,42 @@ fn execute_list(json: bool) -> Result<()> {
 fn execute_info(profile: Option<String>, json: bool, show_mnemonic: bool) -> Result<()> {
     let config = GlobalConfig::load().unwrap_or_default();
     let cli_profile = CliContext::get_wallet_profile();
-    let wallet_profile = profile.as_deref()
+    let wallet_profile = profile
+        .as_deref()
         .or_else(|| cli_profile.as_deref())
         .or(config.wallet.active_profile.as_deref())
         .unwrap_or("default");
 
-    let rt = tokio::runtime::Runtime::new()
+    let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+        reason: format!("Failed to create tokio runtime: {}", e),
+    })?;
+
+    let wallet = rt
+        .block_on(async { Wallet::load(Some(wallet_profile.to_string()), false).await })
         .map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to create tokio runtime: {}", e),
+            reason: format!("Failed to load wallet '{}': {}", wallet_profile, e),
         })?;
 
-    let wallet = rt.block_on(async {
-        Wallet::load(Some(wallet_profile.to_string()), false).await
-    }).map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to load wallet '{}': {}", wallet_profile, e),
-    })?;
+    let public_key = rt
+        .block_on(async { wallet.get_public_synthetic_key().await })
+        .map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to get public key: {}", e),
+        })?;
 
-    let public_key = rt.block_on(async {
-        wallet.get_public_synthetic_key().await
-    }).map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to get public key: {}", e),
-    })?;
-
-    let address = rt.block_on(async {
-        wallet.get_owner_public_key().await
-    }).map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to get address: {}", e),
-    })?;
+    let address = rt
+        .block_on(async { wallet.get_owner_public_key().await })
+        .map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to get address: {}", e),
+        })?;
 
     let mnemonic = if show_mnemonic {
-        Some(wallet.get_mnemonic().map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to get mnemonic: {}", e),
-        })?)
+        Some(
+            wallet
+                .get_mnemonic()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to get mnemonic: {}", e),
+                })?,
+        )
     } else {
         None
     };
@@ -121,7 +135,10 @@ fn execute_info(profile: Option<String>, json: bool, show_mnemonic: bool) -> Res
         });
 
         if let Some(mnemonic) = mnemonic {
-            output.as_object_mut().unwrap().insert("mnemonic".to_string(), json!(mnemonic));
+            output
+                .as_object_mut()
+                .unwrap()
+                .insert("mnemonic".to_string(), json!(mnemonic));
         }
 
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -132,7 +149,7 @@ fn execute_info(profile: Option<String>, json: bool, show_mnemonic: bool) -> Res
         println!("Name: {}", wallet.get_wallet_name());
         println!("Public Key: {}", hex::encode(public_key.to_bytes()));
         println!("Address: {}", address.bright_blue());
-        
+
         if config.wallet.active_profile.as_deref() == Some(wallet_profile) {
             println!("Status: {} {}", "Active".green().bold(), "✓".green());
         } else {
@@ -150,18 +167,22 @@ fn execute_info(profile: Option<String>, json: bool, show_mnemonic: bool) -> Res
 }
 
 /// Create a new wallet
-fn execute_create(profile: String, from_mnemonic: Option<String>, set_active: bool, json: bool) -> Result<()> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to create tokio runtime: {}", e),
-        })?;
+fn execute_create(
+    profile: String,
+    from_mnemonic: Option<String>,
+    set_active: bool,
+    json: bool,
+) -> Result<()> {
+    let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+        reason: format!("Failed to create tokio runtime: {}", e),
+    })?;
 
     // Check if wallet already exists
-    let existing_wallets = rt.block_on(async {
-        Wallet::list_wallets().await
-    }).map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to list wallets: {}", e),
-    })?;
+    let existing_wallets = rt
+        .block_on(async { Wallet::list_wallets().await })
+        .map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to list wallets: {}", e),
+        })?;
 
     if existing_wallets.contains(&profile) {
         return Err(DigstoreError::ConfigurationError {
@@ -172,19 +193,17 @@ fn execute_create(profile: String, from_mnemonic: Option<String>, set_active: bo
     let was_imported = from_mnemonic.is_some();
     let mnemonic = if let Some(mnemonic) = from_mnemonic {
         // Import from provided mnemonic
-        rt.block_on(async {
-            Wallet::import_wallet(&profile, Some(&mnemonic)).await
-        }).map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to import wallet: {}", e),
-        })?;
+        rt.block_on(async { Wallet::import_wallet(&profile, Some(&mnemonic)).await })
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Failed to import wallet: {}", e),
+            })?;
         mnemonic
     } else {
         // Generate new wallet
-        rt.block_on(async {
-            Wallet::create_new_wallet(&profile).await
-        }).map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to create wallet: {}", e),
-        })?
+        rt.block_on(async { Wallet::create_new_wallet(&profile).await })
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Failed to create wallet: {}", e),
+            })?
     };
 
     // Set as active if requested
@@ -208,13 +227,21 @@ fn execute_create(profile: String, from_mnemonic: Option<String>, set_active: bo
         } else {
             println!("{}", "✓ Wallet created successfully!".green().bold());
             println!();
-            println!("{}", "IMPORTANT: Please write down your mnemonic phrase:".red().bold());
+            println!(
+                "{}",
+                "IMPORTANT: Please write down your mnemonic phrase:"
+                    .red()
+                    .bold()
+            );
             println!();
             println!("  {}", mnemonic.bright_white().on_black());
             println!();
-            println!("{}", "Keep this phrase safe and secure. You'll need it to recover your wallet.".yellow());
+            println!(
+                "{}",
+                "Keep this phrase safe and secure. You'll need it to recover your wallet.".yellow()
+            );
         }
-        
+
         println!("Profile: {}", profile.green());
         if set_active {
             println!("Status: {} {}", "Active".green().bold(), "✓".green());
@@ -227,20 +254,28 @@ fn execute_create(profile: String, from_mnemonic: Option<String>, set_active: bo
 /// Delete a wallet
 fn execute_delete(profile: String, force: bool, json: bool) -> Result<()> {
     let config = GlobalConfig::load().unwrap_or_default();
-    
+
     // Don't allow deleting the active profile without confirmation
     if config.wallet.active_profile.as_deref() == Some(&profile) && !force {
         if !json {
-            println!("{}", "Warning: You are about to delete the active wallet profile.".yellow().bold());
+            println!(
+                "{}",
+                "Warning: You are about to delete the active wallet profile."
+                    .yellow()
+                    .bold()
+            );
             println!("This will permanently delete the wallet and all its data.");
             println!();
         }
-        
+
         let confirmed = if json {
             false // JSON mode requires --force flag
         } else {
             Confirm::new()
-                .with_prompt(&format!("Are you sure you want to delete wallet '{}'?", profile))
+                .with_prompt(&format!(
+                    "Are you sure you want to delete wallet '{}'?",
+                    profile
+                ))
                 .default(false)
                 .interact()
                 .map_err(|e| DigstoreError::ConfigurationError {
@@ -261,16 +296,15 @@ fn execute_delete(profile: String, force: bool, json: bool) -> Result<()> {
         }
     }
 
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to create tokio runtime: {}", e),
-        })?;
-
-    let deleted = rt.block_on(async {
-        Wallet::delete_wallet(&profile).await
-    }).map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to delete wallet: {}", e),
+    let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+        reason: format!("Failed to create tokio runtime: {}", e),
     })?;
+
+    let deleted = rt
+        .block_on(async { Wallet::delete_wallet(&profile).await })
+        .map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to delete wallet: {}", e),
+        })?;
 
     if !deleted {
         if json {
@@ -298,7 +332,10 @@ fn execute_delete(profile: String, force: bool, json: bool) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!("{}", format!("✓ Wallet profile '{}' deleted successfully.", profile).green());
+        println!(
+            "{}",
+            format!("✓ Wallet profile '{}' deleted successfully.", profile).green()
+        );
     }
 
     Ok(())
@@ -306,17 +343,16 @@ fn execute_delete(profile: String, force: bool, json: bool) -> Result<()> {
 
 /// Set active wallet profile
 fn execute_set_active(profile: String, json: bool) -> Result<()> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to create tokio runtime: {}", e),
-        })?;
+    let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+        reason: format!("Failed to create tokio runtime: {}", e),
+    })?;
 
     // Verify wallet exists
-    let wallets = rt.block_on(async {
-        Wallet::list_wallets().await
-    }).map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to list wallets: {}", e),
-    })?;
+    let wallets = rt
+        .block_on(async { Wallet::list_wallets().await })
+        .map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to list wallets: {}", e),
+        })?;
 
     if !wallets.contains(&profile) {
         return Err(DigstoreError::ConfigurationError {
@@ -334,7 +370,10 @@ fn execute_set_active(profile: String, json: bool) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!("{}", format!("✓ Active wallet profile set to '{}'", profile).green());
+        println!(
+            "{}",
+            format!("✓ Active wallet profile set to '{}'", profile).green()
+        );
     }
 
     Ok(())
@@ -361,25 +400,27 @@ fn execute_active(json: bool) -> Result<()> {
 fn execute_export(profile: Option<String>, json: bool) -> Result<()> {
     let config = GlobalConfig::load().unwrap_or_default();
     let cli_profile = CliContext::get_wallet_profile();
-    let wallet_profile = profile.as_deref()
+    let wallet_profile = profile
+        .as_deref()
         .or_else(|| cli_profile.as_deref())
         .or(config.wallet.active_profile.as_deref())
         .unwrap_or("default");
 
-    let rt = tokio::runtime::Runtime::new()
+    let rt = tokio::runtime::Runtime::new().map_err(|e| DigstoreError::ConfigurationError {
+        reason: format!("Failed to create tokio runtime: {}", e),
+    })?;
+
+    let wallet = rt
+        .block_on(async { Wallet::load(Some(wallet_profile.to_string()), false).await })
         .map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to create tokio runtime: {}", e),
+            reason: format!("Failed to load wallet '{}': {}", wallet_profile, e),
         })?;
 
-    let wallet = rt.block_on(async {
-        Wallet::load(Some(wallet_profile.to_string()), false).await
-    }).map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to load wallet '{}': {}", wallet_profile, e),
-    })?;
-
-    let mnemonic = wallet.get_mnemonic().map_err(|e| DigstoreError::ConfigurationError {
-        reason: format!("Failed to get mnemonic: {}", e),
-    })?;
+    let mnemonic = wallet
+        .get_mnemonic()
+        .map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to get mnemonic: {}", e),
+        })?;
 
     if json {
         let output = json!({

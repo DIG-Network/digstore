@@ -33,20 +33,28 @@ impl UserScenario {
         fs::create_dir_all(self.project_path.join("assets"))?;
 
         // Source files
-        fs::write(self.project_path.join("src/main.rs"), r#"
+        fs::write(
+            self.project_path.join("src/main.rs"),
+            r#"
 fn main() {
     println!("Hello, world!");
 }
-"#)?;
-        fs::write(self.project_path.join("src/lib.rs"), r#"
+"#,
+        )?;
+        fs::write(
+            self.project_path.join("src/lib.rs"),
+            r#"
 //! Library code
 pub fn hello() -> &'static str {
     "Hello from lib"
 }
-"#)?;
+"#,
+        )?;
 
         // Documentation
-        fs::write(self.project_path.join("README.md"), r#"
+        fs::write(
+            self.project_path.join("README.md"),
+            r#"
 # My Project
 
 This is a test project for Digstore validation.
@@ -54,22 +62,35 @@ This is a test project for Digstore validation.
 ## Features
 - Feature 1
 - Feature 2
-"#)?;
-        fs::write(self.project_path.join("docs/guide.md"), "User guide content")?;
+"#,
+        )?;
+        fs::write(
+            self.project_path.join("docs/guide.md"),
+            "User guide content",
+        )?;
 
         // Configuration files
-        fs::write(self.project_path.join("Cargo.toml"), r#"
+        fs::write(
+            self.project_path.join("Cargo.toml"),
+            r#"
 [package]
 name = "test-project"
 version = "0.1.0"
 edition = "2021"
-"#)?;
+"#,
+        )?;
 
         // Test files
-        fs::write(self.project_path.join("tests/integration.rs"), "// Integration tests")?;
+        fs::write(
+            self.project_path.join("tests/integration.rs"),
+            "// Integration tests",
+        )?;
 
         // Assets
-        fs::write(self.project_path.join("assets/data.json"), r#"{"key": "value"}"#)?;
+        fs::write(
+            self.project_path.join("assets/data.json"),
+            r#"{"key": "value"}"#,
+        )?;
 
         // Files that should be ignored
         fs::write(self.project_path.join("target/debug/binary"), "Binary data")?;
@@ -77,7 +98,9 @@ edition = "2021"
         fs::write(self.project_path.join("temp.tmp"), "Temporary file")?;
 
         // Create .digignore
-        fs::write(self.project_path.join(".digignore"), r#"
+        fs::write(
+            self.project_path.join(".digignore"),
+            r#"
 # Build artifacts
 target/
 *.tmp
@@ -90,7 +113,8 @@ Thumbs.db
 # IDE files
 .vscode/
 .idea/
-"#)?;
+"#,
+        )?;
 
         Ok(())
     }
@@ -114,7 +138,8 @@ fn test_complete_user_workflow() {
     scenario.create_realistic_project().unwrap();
 
     // Step 1: User initializes repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "My Test Project"])
         .assert()
         .success()
@@ -123,7 +148,8 @@ fn test_complete_user_workflow() {
         .stdout(predicate::str::contains("✓"));
 
     // Step 2: User checks status (should be empty)
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("status")
         .assert()
         .success()
@@ -131,7 +157,8 @@ fn test_complete_user_workflow() {
         .stdout(predicate::str::contains("No changes staged"));
 
     // Step 3: User adds all files (with .digignore filtering)
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "-A"])
         .assert()
         .success()
@@ -139,7 +166,8 @@ fn test_complete_user_workflow() {
         .stdout(predicate::str::contains("✓"));
 
     // Step 4: User checks what was staged
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--detailed"])
         .assert()
         .success()
@@ -148,7 +176,8 @@ fn test_complete_user_workflow() {
         .stdout(predicate::str::contains("README.md"));
 
     // Step 5: User commits changes
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Initial project setup"])
         .assert()
         .success()
@@ -156,14 +185,16 @@ fn test_complete_user_workflow() {
         .stdout(predicate::str::contains("✓"));
 
     // Step 6: User checks status after commit (should be clean)
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("status")
         .assert()
         .success()
         .stdout(predicate::str::contains("No changes staged"));
 
     // Step 7: User views commit history
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("log")
         .assert()
         .success()
@@ -171,20 +202,23 @@ fn test_complete_user_workflow() {
         .stdout(predicate::str::contains("commit"));
 
     // Step 8: User retrieves files
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "src/main.rs"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Hello, world!"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["cat", "README.md"])
         .assert()
         .success()
         .stdout(predicate::str::contains("My Project"));
 
     // Step 9: User generates proof
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["prove", "src/main.rs"])
         .assert()
         .success()
@@ -197,41 +231,43 @@ fn test_user_error_scenarios() {
     let scenario = UserScenario::new().unwrap();
 
     // Error 1: Commands without repository should guide user
-    scenario.cmd()
-        .arg("status")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("No repository found").or(
-            predicate::str::contains("Not in a repository")
-        ));
+    scenario.cmd().arg("status").assert().failure().stderr(
+        predicate::str::contains("No repository found")
+            .or(predicate::str::contains("Not in a repository")),
+    );
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["add", "file.txt"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("repository"));
 
     // Initialize for further error tests
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Error Test"])
         .assert()
         .success();
 
     // Error 2: Commit without staged files
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Empty commit"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("No files staged"));
 
     // Error 3: Get non-existent file
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "nonexistent.txt"])
         .assert()
         .failure();
 
     // Error 4: Invalid command options
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--page", "0"])
         .assert()
         .failure()
@@ -244,23 +280,27 @@ fn test_json_output_consistency() {
     scenario.create_realistic_project().unwrap();
 
     // Initialize and commit some data
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "JSON Test"])
         .assert()
         .success();
 
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "src/main.rs", "README.md"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "JSON test commit"])
         .assert()
         .success();
 
     // Test JSON output for various commands
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["status", "--json"])
         .assert()
         .success()
@@ -268,25 +308,29 @@ fn test_json_output_consistency() {
         .stdout(predicate::str::contains("store_id"))
         .stdout(predicate::str::contains("current_root"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"staged_files\""));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["root", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("root_hash"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["size", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("total_size"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["stats", "--json"])
         .assert()
         .success()
@@ -299,24 +343,28 @@ fn test_file_output_and_piping() {
     scenario.create_realistic_project().unwrap();
 
     // Setup repository with data
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Output Test"])
         .assert()
         .success();
 
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "src/main.rs"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Output test"])
         .assert()
         .success();
 
     // Test file output with -o flag
     let output_file = scenario.project_path.join("output.txt");
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "src/main.rs", "-o", output_file.to_str().unwrap()])
         .assert()
         .success()
@@ -329,7 +377,8 @@ fn test_file_output_and_piping() {
 
     // Test JSON output to file
     let json_file = scenario.project_path.join("status.json");
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["status", "--json", ">", json_file.to_str().unwrap()])
         .assert()
         .success();
@@ -342,7 +391,8 @@ fn test_progressive_disclosure_workflow() {
     scenario.create_realistic_project().unwrap();
 
     // Step 1: User runs help
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("--help")
         .assert()
         .success()
@@ -350,76 +400,88 @@ fn test_progressive_disclosure_workflow() {
         .stdout(predicate::str::contains("Commands:"));
 
     // Step 2: User initializes repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Initialize"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Progressive Test"])
         .assert()
         .success();
 
     // Step 3: User explores add command
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["add", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Add files"));
 
     // User tries dry run first
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["add", "--dry-run", "-A"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Would process"));
 
     // Step 4: User adds files for real
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "-A"])
         .assert()
         .success();
 
     // Step 5: User explores staging
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--help"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("staged")
         .assert()
         .success()
         .stdout(predicate::str::contains("Staged Files"));
 
     // Step 6: User commits
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Learning commit"])
         .assert()
         .success();
 
     // Step 7: User explores history
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("log")
         .assert()
         .success()
         .stdout(predicate::str::contains("Learning commit"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("history")
         .assert()
         .success()
         .stdout(predicate::str::contains("Root History"));
 
     // Step 8: User explores analysis commands
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("size")
         .assert()
         .success()
         .stdout(predicate::str::contains("Storage Analytics"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("stats")
         .assert()
         .success()
@@ -433,32 +495,37 @@ fn test_power_user_workflow() {
     scenario.create_realistic_project().unwrap();
 
     // Setup
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Power User Test"])
         .assert()
         .success();
 
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "-A"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Initial commit"])
         .assert()
         .success();
 
     // Power user operations
-    
+
     // 1. Detailed analysis
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["size", "--breakdown", "--efficiency", "--layers"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Storage Analytics"))
         .stdout(predicate::str::contains("Efficiency Metrics"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["stats", "--detailed", "--performance", "--security"])
         .assert()
         .success()
@@ -466,21 +533,24 @@ fn test_power_user_workflow() {
         .stdout(predicate::str::contains("Security Metrics"));
 
     // 2. Layer inspection
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["layers", "--list", "--size", "--files"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Layer List"));
 
     // 3. Root analysis
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["root", "--verbose"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Current Root Information"));
 
     // 4. Store information
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["store-info", "--config", "--paths"])
         .assert()
         .success()
@@ -488,27 +558,31 @@ fn test_power_user_workflow() {
         .stdout(predicate::str::contains("Paths:"));
 
     // 5. Proof generation
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["prove", "src/main.rs", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Proof generated"));
 
     // 6. All JSON outputs should be valid
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["status", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("{"))
         .stdout(predicate::str::contains("}"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["root", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("{"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["size", "--json"])
         .assert()
         .success()
@@ -523,66 +597,80 @@ fn test_file_modification_workflow() {
     fs::write(scenario.project_path.join("evolving.txt"), "Version 1").unwrap();
 
     // Initialize and commit
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Evolution Test"])
         .assert()
         .success();
 
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "evolving.txt"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Version 1"])
         .assert()
         .success();
 
     // Modify file
-    fs::write(scenario.project_path.join("evolving.txt"), "Version 2 - Updated").unwrap();
+    fs::write(
+        scenario.project_path.join("evolving.txt"),
+        "Version 2 - Updated",
+    )
+    .unwrap();
 
     // User checks status (should show no staged changes yet)
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("status")
         .assert()
         .success()
         .stdout(predicate::str::contains("No changes staged"));
 
     // User adds modified file
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "evolving.txt"])
         .assert()
         .success();
 
     // User checks what's staged
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("staged")
         .assert()
         .success()
         .stdout(predicate::str::contains("evolving.txt"));
 
     // User can see the difference
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "diff"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Stage Diff"));
 
     // User commits the change
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Version 2 update"])
         .assert()
         .success();
 
     // User can retrieve both versions
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "evolving.txt"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Version 2"));
 
     // User can view history
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("log")
         .assert()
         .success()
@@ -595,27 +683,31 @@ fn test_error_recovery_guidance() {
     let scenario = UserScenario::new().unwrap();
 
     // Test 1: User tries to use commands before init
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("status")
         .assert()
         .failure()
         .stderr(predicate::str::contains("repository"))
         .stderr(predicate::str::contains("init").or(predicate::str::contains("digstore init")));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["add", "file.txt"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("repository"));
 
     // Test 2: User initializes repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Recovery Test"])
         .assert()
         .success();
 
     // Test 3: User tries to commit without staging
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Empty"])
         .assert()
         .failure()
@@ -623,13 +715,15 @@ fn test_error_recovery_guidance() {
         .stderr(predicate::str::contains("add"));
 
     // Test 4: User tries to access non-existent file
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "missing.txt"])
         .assert()
         .failure();
 
     // Test 5: User gets helpful completion
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["completion", "bash"])
         .assert()
         .success()
@@ -643,22 +737,34 @@ fn test_large_repository_user_experience() {
 
     // Create a larger repository (100 files)
     for i in 0..100 {
-        let dir = if i < 30 { "src" } else if i < 60 { "tests" } else { "docs" };
+        let dir = if i < 30 {
+            "src"
+        } else if i < 60 {
+            "tests"
+        } else {
+            "docs"
+        };
         fs::create_dir_all(scenario.project_path.join(dir)).unwrap();
         fs::write(
-            scenario.project_path.join(dir).join(format!("file{:03}.txt", i)),
+            scenario
+                .project_path
+                .join(dir)
+                .join(format!("file{:03}.txt", i)),
             format!("Content of file {}", i),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // User initializes repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Large Repo Test"])
         .assert()
         .success();
 
     // User adds all files - should show progress
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "-A"])
         .assert()
         .success()
@@ -666,40 +772,46 @@ fn test_large_repository_user_experience() {
         .stdout(predicate::str::contains("files/s").or(predicate::str::contains("Processing")));
 
     // User checks staging with pagination
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--limit", "20"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Page 1 of"))
         .stdout(predicate::str::contains("next page"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--page", "2"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Page 2"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--all"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Showing 100 staged files"));
 
     // User commits large repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Large repository commit"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Commit created"));
 
     // User analyzes repository efficiency
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["size", "--efficiency"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Deduplication"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["stats", "--detailed"])
         .assert()
         .success()
@@ -711,32 +823,37 @@ fn test_configuration_user_workflow() {
     let scenario = UserScenario::new().unwrap();
 
     // User explores configuration
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["config", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Configuration"));
 
     // User views current config
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["config", "--list"])
         .assert()
         .success();
 
     // User sets configuration
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["config", "user.name", "Test User"])
         .assert()
         .success()
         .stdout(predicate::str::contains("✓"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["config", "user.email", "test@example.com"])
         .assert()
         .success();
 
     // User views updated config
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["config", "--list"])
         .assert()
         .success()
@@ -744,14 +861,16 @@ fn test_configuration_user_workflow() {
         .stdout(predicate::str::contains("test@example.com"));
 
     // User gets specific config value
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["config", "user.name"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Test User"));
 
     // User can see config file location
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["config", "--show-origin"])
         .assert()
         .success()
@@ -764,9 +883,10 @@ fn test_completion_integration() {
 
     // Test completion for all major shells
     let shells = ["bash", "zsh", "fish", "powershell"];
-    
+
     for shell in &shells {
-        scenario.cmd()
+        scenario
+            .cmd()
             .args(&["completion", shell])
             .assert()
             .success()
@@ -775,7 +895,8 @@ fn test_completion_integration() {
     }
 
     // Completion should include helpful installation instructions
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["completion", "bash"])
         .assert()
         .success()
@@ -789,17 +910,20 @@ fn test_urn_based_access() {
     scenario.create_realistic_project().unwrap();
 
     // Setup repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "URN Test"])
         .assert()
         .success();
 
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "src/main.rs"])
         .assert()
         .success();
 
-    let commit_output = scenario.cmd()
+    let commit_output = scenario
+        .cmd()
         .args(&["commit", "-m", "URN test commit"])
         .assert()
         .success()
@@ -807,16 +931,18 @@ fn test_urn_based_access() {
 
     // Extract store ID and commit ID for URN construction
     let commit_stdout = String::from_utf8_lossy(&commit_output.stdout);
-    
+
     // Test that files are accessible (URN construction happens internally)
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "src/main.rs"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Hello, world!"));
 
     // Test that root command shows valid hash
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("root")
         .assert()
         .success()
@@ -832,50 +958,58 @@ fn test_binary_staging_user_experience() {
         fs::write(
             scenario.project_path.join(format!("stress{:03}.txt", i)),
             format!("Stress test content {}", i),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Staging Stress Test"])
         .assert()
         .success();
 
     // User adds many files - should be fast and efficient
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "-A"])
         .assert()
         .success()
         .stdout(predicate::str::contains("files added to staging"));
 
     // User can paginate through staged files
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--limit", "50"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Page 1 of 4"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--page", "4"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Page 4"));
 
     // User can view all files at once
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--all"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Showing 200 staged files"));
 
     // User can commit large staging area efficiently
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Large staging commit"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Commit created"));
 
     // Staging should be cleared after commit
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("staged")
         .assert()
         .success()
@@ -887,26 +1021,30 @@ fn test_directory_operations() {
     let scenario = UserScenario::new().unwrap();
     scenario.create_realistic_project().unwrap();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Directory Test"])
         .assert()
         .success();
 
     // Test adding specific directory
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "-r", "src/"])
         .assert()
         .success()
         .stdout(predicate::str::contains("files added"));
 
     // Test adding individual files
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "README.md", "Cargo.toml"])
         .assert()
         .success();
 
     // User checks what was staged
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("staged")
         .assert()
         .success()
@@ -914,13 +1052,15 @@ fn test_directory_operations() {
         .stdout(predicate::str::contains("README.md"));
 
     // User commits
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Directory test"])
         .assert()
         .success();
 
     // User can retrieve files from subdirectories
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "src/main.rs"])
         .assert()
         .success()
@@ -936,31 +1076,36 @@ fn test_user_feedback_and_progress() {
         fs::write(
             scenario.project_path.join(format!("progress{:02}.txt", i)),
             format!("Progress test {}", i),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Progress Test"])
         .assert()
         .success()
         .stdout(predicate::str::contains("✓")); // Success indicators
 
     // User should see progress feedback for large operations
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "-A"])
         .assert()
         .success()
         .stdout(predicate::str::contains("files/s").or(predicate::str::contains("Processing")));
 
     // User should see helpful summaries
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("staged")
         .assert()
         .success()
         .stdout(predicate::str::contains("Total size"))
         .stdout(predicate::str::contains("commit"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Progress test commit"])
         .assert()
         .success()
@@ -968,7 +1113,8 @@ fn test_user_feedback_and_progress() {
         .stdout(predicate::str::contains("Commit created"));
 
     // User should see informative output
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("log")
         .assert()
         .success()
@@ -981,39 +1127,30 @@ fn test_cross_command_consistency() {
     scenario.create_realistic_project().unwrap();
 
     // Setup repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Consistency Test"])
         .assert()
         .success();
 
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "-A"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Consistency test"])
         .assert()
         .success();
 
     // All information commands should show consistent data
-    let status_output = scenario.cmd()
-        .arg("status")
-        .assert()
-        .success()
-        .get_output();
+    let status_output = scenario.cmd().arg("status").assert().success().get_output();
 
-    let root_output = scenario.cmd()
-        .arg("root")
-        .assert()
-        .success()
-        .get_output();
+    let root_output = scenario.cmd().arg("root").assert().success().get_output();
 
-    let log_output = scenario.cmd()
-        .arg("log")
-        .assert()
-        .success()
-        .get_output();
+    let log_output = scenario.cmd().arg("log").assert().success().get_output();
 
     // Extract information from outputs
     let status_stdout = String::from_utf8_lossy(&status_output.stdout);
@@ -1040,7 +1177,8 @@ fn test_user_help_and_discovery() {
     let scenario = UserScenario::new().unwrap();
 
     // Test main help
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("--help")
         .assert()
         .success()
@@ -1051,7 +1189,8 @@ fn test_user_help_and_discovery() {
         .stdout(predicate::str::contains("commit"));
 
     // Test subcommand help
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["add", "--help"])
         .assert()
         .success()
@@ -1059,14 +1198,16 @@ fn test_user_help_and_discovery() {
         .stdout(predicate::str::contains("--recursive"))
         .stdout(predicate::str::contains("--all"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Create a new commit"))
         .stdout(predicate::str::contains("--message"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "--help"])
         .assert()
         .success()
@@ -1075,7 +1216,8 @@ fn test_user_help_and_discovery() {
         .stdout(predicate::str::contains("diff"));
 
     // Test nested subcommand help
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["staged", "list", "--help"])
         .assert()
         .success()
@@ -1091,35 +1233,41 @@ fn test_realistic_development_workflow() {
     scenario.create_realistic_project().unwrap();
 
     // Developer starts new project
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "MyApp"])
         .assert()
         .success();
 
     // Developer adds initial files
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "src/", "Cargo.toml", "README.md"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Initial project structure"])
         .assert()
         .success();
 
     // Developer adds more files
-    scenario.cmd_with_yes()
+    scenario
+        .cmd_with_yes()
         .args(&["add", "docs/", "tests/"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Add documentation and tests"])
         .assert()
         .success();
 
     // Developer checks project history
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("log")
         .assert()
         .success()
@@ -1127,32 +1275,37 @@ fn test_realistic_development_workflow() {
         .stdout(predicate::str::contains("Add documentation and tests"));
 
     // Developer analyzes repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("size")
         .assert()
         .success()
         .stdout(predicate::str::contains("Storage Analytics"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("stats")
         .assert()
         .success()
         .stdout(predicate::str::contains("Repository Statistics"));
 
     // Developer generates proof for important file
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["prove", "src/main.rs"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Proof generated"));
 
     // Developer can access any file
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "src/main.rs"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["cat", "README.md"])
         .assert()
         .success()
@@ -1164,18 +1317,21 @@ fn test_edge_case_user_scenarios() {
     let scenario = UserScenario::new().unwrap();
 
     // Edge case 1: Empty repository
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["init", "--name", "Empty Test"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("status")
         .assert()
         .success()
         .stdout(predicate::str::contains("No changes staged"));
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .arg("log")
         .assert()
         .success()
@@ -1183,40 +1339,49 @@ fn test_edge_case_user_scenarios() {
 
     // Edge case 2: Very small files
     fs::write(scenario.project_path.join("tiny.txt"), "x").unwrap();
-    
-    scenario.cmd_with_yes()
+
+    scenario
+        .cmd_with_yes()
         .args(&["add", "tiny.txt"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Tiny file"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "tiny.txt"])
         .assert()
         .success()
         .stdout(predicate::str::contains("x"));
 
     // Edge case 3: Files with special characters
-    fs::write(scenario.project_path.join("special chars & symbols.txt"), "special content").unwrap();
-    
-    scenario.cmd_with_yes()
+    fs::write(
+        scenario.project_path.join("special chars & symbols.txt"),
+        "special content",
+    )
+    .unwrap();
+
+    scenario
+        .cmd_with_yes()
         .args(&["add", "special chars & symbols.txt"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["commit", "-m", "Special characters"])
         .assert()
         .success();
 
-    scenario.cmd()
+    scenario
+        .cmd()
         .args(&["get", "special chars & symbols.txt"])
         .assert()
         .success()
         .stdout(predicate::str::contains("special content"));
 }
-

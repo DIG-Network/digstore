@@ -21,11 +21,14 @@ where
     let start = Instant::now();
     let result = test_fn();
     let elapsed = start.elapsed();
-    
+
     if elapsed > TEST_TIMEOUT {
-        panic!("Test exceeded timeout of {:?}, took {:?}", TEST_TIMEOUT, elapsed);
+        panic!(
+            "Test exceeded timeout of {:?}, took {:?}",
+            TEST_TIMEOUT, elapsed
+        );
     }
-    
+
     result
 }
 
@@ -78,23 +81,23 @@ fn test_core_staging_commands() -> Result<()> {
     with_timeout(|| {
         let repo = TestRepository::new()?;
 
-    // Test status command
-    let output = repo.run_command(&["status"])?;
-    assert!(output.status.success(), "Status command should succeed");
-    let stdout = String::from_utf8(output.stdout)?;
-    assert!(
-        stdout.contains("No changes staged"),
-        "Should show no staged changes after commit"
-    );
+        // Test status command
+        let output = repo.run_command(&["status"])?;
+        assert!(output.status.success(), "Status command should succeed");
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(
+            stdout.contains("No changes staged"),
+            "Should show no staged changes after commit"
+        );
 
-    // Test staged command (should show empty)
-    let output = repo.run_command(&["staged"])?;
-    assert!(output.status.success(), "Staged command should succeed");
-    let stdout = String::from_utf8(output.stdout)?;
-    assert!(
-        stdout.contains("No files staged"),
-        "Should show no staged files"
-    );
+        // Test staged command (should show empty)
+        let output = repo.run_command(&["staged"])?;
+        assert!(output.status.success(), "Staged command should succeed");
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(
+            stdout.contains("No files staged"),
+            "Should show no staged files"
+        );
 
         Ok(())
     })

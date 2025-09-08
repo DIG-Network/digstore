@@ -7,7 +7,7 @@ use crate::urn::{parse_urn, Urn};
 use anyhow::Result;
 use base64;
 use colored::Colorize;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -19,21 +19,21 @@ fn generate_deterministic_random_size(seed: &str) -> usize {
     hasher.update(seed.as_bytes());
     hasher.update(b"size_generation");
     let hash = hasher.finalize();
-    
+
     // Use first 8 bytes as a u64 for randomness
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&hash[0..8]);
     let random_value = u64::from_le_bytes(bytes);
-    
+
     // Create realistic file size distribution:
     // 40% small files (1KB - 100KB)
-    // 35% medium files (100KB - 1MB) 
+    // 35% medium files (100KB - 1MB)
     // 20% large files (1MB - 10MB)
     // 5% very large files (10MB - 20MB)
-    
+
     let size_category = random_value % 100;
     let size_random = (random_value >> 8) % 1000000; // Use remaining bits for size within category
-    
+
     match size_category {
         0..=39 => {
             // Small files: 1KB - 100KB
@@ -58,13 +58,13 @@ fn generate_deterministic_random_size(seed: &str) -> usize {
             let base = 10 * 1024 * 1024; // 10MB
             let range = 10 * 1024 * 1024; // up to 20MB
             base + (size_random % range as u64) as usize
-        }
+        },
     }
 }
 
 /// Generate deterministic random bytes from a seed string
 /// This provides zero-knowledge property by returning consistent random data for invalid URNs
-/// 
+///
 /// The same invalid URN will always return the same random bytes, making it impossible
 /// for a host to distinguish between valid and invalid URNs based on the response.
 fn generate_deterministic_random_bytes(seed: &str, size: usize) -> Vec<u8> {
@@ -72,19 +72,19 @@ fn generate_deterministic_random_bytes(seed: &str, size: usize) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(seed.as_bytes());
     let mut counter = 0u64;
-    
+
     while result.len() < size {
         let mut current_hasher = hasher.clone();
         current_hasher.update(&counter.to_le_bytes());
         let hash = current_hasher.finalize();
-        
+
         let bytes_needed = size - result.len();
         let bytes_to_copy = bytes_needed.min(hash.len());
         result.extend_from_slice(&hash[..bytes_to_copy]);
-        
+
         counter += 1;
     }
-    
+
     result
 }
 
@@ -114,7 +114,7 @@ pub fn execute(
     let content = if path.starts_with("urn:dig:chia:") {
         // Full URN provided - parse and resolve
         println!("  {} Parsing URN: {}", "•".cyan(), path.dimmed());
-        
+
         // Try to resolve the URN, but if it fails, return deterministic random bytes
         match parse_urn(&path) {
             Ok(urn) => {
@@ -132,7 +132,8 @@ pub fn execute(
                                         (Some(start), Some(end)) => (end - start + 1) as usize,
                                         (Some(start), None) => {
                                             // Generate realistic file size and subtract start offset
-                                            let total_size = generate_deterministic_random_size(&path);
+                                            let total_size =
+                                                generate_deterministic_random_size(&path);
                                             if total_size > start as usize {
                                                 total_size - start as usize
                                             } else {
@@ -146,9 +147,9 @@ pub fn execute(
                                     generate_deterministic_random_size(&path)
                                 };
                                 generate_deterministic_random_bytes(&path, size)
-                            }
+                            },
                         }
-                    }
+                    },
                     Err(_) => {
                         // Store not found - return deterministic random bytes
                         let size = if let Some(range) = &urn.byte_range {
@@ -170,13 +171,16 @@ pub fn execute(
                             generate_deterministic_random_size(&path)
                         };
                         generate_deterministic_random_bytes(&path, size)
-                    }
+                    },
                 }
-            }
+            },
             Err(_) => {
                 // Invalid URN format - return deterministic random bytes
-                generate_deterministic_random_bytes(&path, generate_deterministic_random_size(&path))
-            }
+                generate_deterministic_random_bytes(
+                    &path,
+                    generate_deterministic_random_size(&path),
+                )
+            },
         }
     } else {
         // Simple path - find repository and resolve

@@ -320,7 +320,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: WalletCommands,
     },
-
 }
 
 /// Staging area subcommands

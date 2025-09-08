@@ -590,15 +590,15 @@ impl Store {
             if full_path.exists() {
                 use std::fs::File;
                 use std::io::{Read, Seek, SeekFrom};
-                
+
                 let mut file = File::open(&full_path)?;
-                
+
                 for chunk in &staged_file.chunks {
                     // Read chunk data from the file at the specified offset
                     file.seek(SeekFrom::Start(chunk.offset))?;
                     let mut chunk_data = vec![0u8; chunk.size as usize];
                     file.read_exact(&mut chunk_data)?;
-                    
+
                     // Check if the archive is configured for encryption
                     let final_data = if self.archive.is_encrypted() {
                         // Check if we're using custom encryption (store-level secret)
@@ -612,14 +612,14 @@ impl Store {
                                 self.store_id.to_hex(),
                                 chunk.hash.to_hex()
                             );
-                            
+
                             // Encrypt chunk data using URN (wallet-based encryption)
                             crate::crypto::encrypt_data(&chunk_data, &chunk_urn)?
                         }
                     } else {
                         chunk_data
                     };
-                    
+
                     // Create chunk with actual data
                     let chunk_with_data = Chunk {
                         hash: chunk.hash,
@@ -627,7 +627,7 @@ impl Store {
                         size: chunk.size,
                         data: final_data,
                     };
-                    
+
                     layer.add_chunk(chunk_with_data);
                 }
             } else {

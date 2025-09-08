@@ -17,7 +17,10 @@ mod storage;
 mod urn;
 mod wallet;
 
-use cli::{context::CliContext, Cli, Commands, LayerCommands, ProofCommands, StagedCommands, StoreCommands, WalletCommands};
+use cli::{
+    context::CliContext, Cli, Commands, LayerCommands, ProofCommands, StagedCommands,
+    StoreCommands, WalletCommands,
+};
 use wallet::WalletManager;
 
 fn main() -> Result<()> {
@@ -55,14 +58,14 @@ fn main() -> Result<()> {
     if cli.auto_generate_wallet || cli.auto_import_mnemonic.is_some() {
         let wallet_profile = cli.wallet_profile.clone();
         let mut wallet_manager = WalletManager::new_with_profile(wallet_profile)?;
-        
+
         if cli.auto_generate_wallet {
             wallet_manager.auto_generate_wallet()?;
         } else if let Some(mnemonic) = cli.auto_import_mnemonic.clone() {
             wallet_manager.auto_import_wallet(&mnemonic)?;
         }
     }
-    
+
     // Check if wallet initialization is needed for this command
     if needs_wallet_initialization(&cli.command) {
         let wallet_profile = cli.wallet_profile.clone();
@@ -78,7 +81,9 @@ fn main() -> Result<()> {
             no_compression,
             chunk_size,
             encryption_key,
-        } => cli::commands::init::execute(store_id, name, no_compression, chunk_size, encryption_key),
+        } => {
+            cli::commands::init::execute(store_id, name, no_compression, chunk_size, encryption_key)
+        },
         Commands::Add {
             paths,
             recursive,
@@ -120,7 +125,16 @@ fn main() -> Result<()> {
                 current_context.custom_decryption_key = Some(key.clone());
                 CliContext::set(current_context);
             }
-            cli::commands::get::execute(path, output, verify, metadata, at, progress, decryption_key, json)
+            cli::commands::get::execute(
+                path,
+                output,
+                verify,
+                metadata,
+                at,
+                progress,
+                decryption_key,
+                json,
+            )
         },
         Commands::Decrypt {
             path,
@@ -268,7 +282,12 @@ fn main() -> Result<()> {
                 show_compression,
                 json,
             } => cli::commands::proof::execute_generate_archive_size(
-                store_id, output, format, verbose, show_compression, json
+                store_id,
+                output,
+                format,
+                verbose,
+                show_compression,
+                json,
             ),
             ProofCommands::VerifyArchiveSize {
                 proof,
@@ -280,7 +299,14 @@ fn main() -> Result<()> {
                 verbose,
                 json,
             } => cli::commands::proof::execute_verify_archive_size(
-                proof, store_id, root_hash, expected_size, publisher_public_key, from_file, verbose, json
+                proof,
+                store_id,
+                root_hash,
+                expected_size,
+                publisher_public_key,
+                from_file,
+                verbose,
+                json,
             ),
         },
 
@@ -294,7 +320,9 @@ fn main() -> Result<()> {
             json,
         } => cli::commands::config::execute(key, value, list, unset, show_origin, edit, json),
 
-        Commands::Wallet { command } => cli::commands::wallet::execute(command).map_err(|e| e.into()),
+        Commands::Wallet { command } => {
+            cli::commands::wallet::execute(command).map_err(|e| e.into())
+        },
     }
 }
 
@@ -305,7 +333,7 @@ fn needs_wallet_initialization(command: &Commands) -> bool {
         Commands::Completion { .. } => false,
         Commands::Config { .. } => false,
         Commands::Wallet { .. } => false, // Wallet commands manage their own initialization
-        
+
         // All other commands require wallet initialization
         _ => true,
     }

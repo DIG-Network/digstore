@@ -22,9 +22,14 @@ pub fn execute(
     if let Some(ref key) = encryption_key {
         // Validate hex format and length
         if hex::decode(key).map_or(true, |bytes| bytes.len() != 32) {
-            return Err(anyhow::anyhow!("Encryption key must be 32 bytes (64 hex characters)"));
+            return Err(anyhow::anyhow!(
+                "Encryption key must be 32 bytes (64 hex characters)"
+            ));
         }
-        println!("  {} Using custom encryption key for store-wide secret storage", "🔐".cyan());
+        println!(
+            "  {} Using custom encryption key for store-wide secret storage",
+            "🔐".cyan()
+        );
     }
 
     // Check if custom store ID was provided
@@ -43,7 +48,7 @@ pub fn execute(
 
     // Initialize the store
     let store = Store::init(&current_dir)?;
-    
+
     // Save custom encryption key to store config if provided
     if let Some(custom_key) = encryption_key {
         let mut store_config = crate::config::StoreConfig::load(&store.store_id)?;
@@ -51,8 +56,11 @@ pub fn execute(
         store_config.name = name.clone();
         store_config.created_at = Some(chrono::Utc::now().to_rfc3339());
         store_config.save(&store.store_id)?;
-        
-        println!("  {} Saved custom encryption key to store configuration", "✓".green());
+
+        println!(
+            "  {} Saved custom encryption key to store configuration",
+            "✓".green()
+        );
     }
 
     println!(
