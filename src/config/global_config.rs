@@ -376,7 +376,7 @@ impl GlobalConfig {
 
     /// Check if user configuration is complete
     pub fn is_user_configured(&self) -> bool {
-        self.user.name.is_some() && self.user.email.is_some()
+        self.user.name.is_some() // Only name is required, email is optional
     }
 
     /// Prompt user to configure if not set
@@ -414,19 +414,21 @@ impl GlobalConfig {
             self.user.name = Some(name);
         }
 
-        // Get email if not set
+        // Get email if not set (optional) - only ask once
         if self.user.email.is_none() {
             let email: String = if crate::cli::context::CliContext::is_non_interactive() {
-                "user@example.com".to_string() // Use placeholder in non-interactive mode
+                "".to_string() // Use empty string in non-interactive mode
             } else {
                 Input::new()
-                    .with_prompt("Your email")
+                    .with_prompt("Your email (optional)")
+                    .allow_empty(true)
                     .interact_text()
                     .map_err(|e| DigstoreError::ConfigurationError {
                         reason: format!("Failed to get user input: {}", e),
                     })?
             };
 
+            // Always set email to mark that we asked (empty string means user chose not to provide)
             self.user.email = Some(email);
         }
 
@@ -436,7 +438,12 @@ impl GlobalConfig {
         println!();
         println!("{}", "✓ Configuration saved".green());
         println!("  Name: {}", self.user.name.as_ref().unwrap().cyan());
-        println!("  Email: {}", self.user.email.as_ref().unwrap().cyan());
+        let email_display = self.user.email.as_ref().unwrap();
+        if email_display.is_empty() {
+            println!("  Email: {}", "(not set)".dimmed());
+        } else {
+            println!("  Email: {}", email_display.cyan());
+        }
         println!();
         println!("You can change these settings anytime with:");
         println!("  {}", "digstore config user.name \"Your Name\"".cyan());

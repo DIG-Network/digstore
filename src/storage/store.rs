@@ -909,7 +909,14 @@ impl Store {
 
         // Get Layer 0 metadata
         let metadata_bytes = archive.get_layer_data(&layer_zero_hash)?;
-        let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)?;
+        
+        // Debug: Check if metadata is empty
+        if metadata_bytes.is_empty() {
+            return Err(DigstoreError::internal("Layer 0 metadata is empty"));
+        }
+        
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)
+            .map_err(|e| DigstoreError::internal(format!("Failed to parse Layer 0 metadata: {}. Data length: {}", e, metadata_bytes.len())))?;
 
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
             if let Some(latest_root) = root_history.last() {
