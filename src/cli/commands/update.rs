@@ -159,27 +159,17 @@ fn execute_json_mode(check_only: bool, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Download and install update using versioned installation system
+/// Download and install update using nvm-style versioned installation
 fn download_and_install_update_versioned(download_url: &str, version: &str) -> Result<()> {
-    use crate::update::installer::download_installer;
-    
     println!("{}", "Downloading update...".bright_blue());
+    println!("{}", "Installing with nvm-style version management...".bright_green());
 
-    // Download the installer
-    let temp_file = download_installer(download_url)
-        .map_err(|e| anyhow::anyhow!("Download failed: {}", e))?;
-
-    println!("{}", "Installing update with version management...".bright_green());
-
-    // Use version manager for installation
+    // Use version manager's nvm-style installation
     let mut vm = VersionManager::new()
         .map_err(|e| anyhow::anyhow!("Failed to create version manager: {}", e))?;
     
-    vm.install_from_msi(version, &temp_file)
+    vm.install_version_from_url(version, download_url)
         .map_err(|e| anyhow::anyhow!("Installation failed: {}", e))?;
-
-    // Clean up temp file
-    let _ = std::fs::remove_file(&temp_file);
 
     Ok(())
 }

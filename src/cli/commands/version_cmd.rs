@@ -18,6 +18,12 @@ pub fn execute(subcommand: Option<String>, version: Option<String>) -> Result<()
             })?;
             install_from_msi(&msi_path)
         }
+        Some("install-version") => {
+            let version_to_install = version.ok_or_else(|| DigstoreError::ConfigurationError {
+                reason: "Version required for 'install-version' command".to_string(),
+            })?;
+            install_specific_version(&version_to_install)
+        }
         Some("set") => {
             let version = version.ok_or_else(|| DigstoreError::ConfigurationError {
                 reason: "Version required for 'set' command".to_string(),
@@ -76,6 +82,7 @@ fn show_version_info() -> Result<()> {
     println!("  {} - Install current version with version manager", "digstore version install".green());
     println!("  {} - Install currently running binary", "digstore version install-current".green());
     println!("  {} - Install from MSI file", "digstore version install-msi <path>".green());
+    println!("  {} - Install specific version from GitHub", "digstore version install-version <version>".green());
     println!("  {} - List system-installed versions", "digstore version list-system".green());
     println!("  {} - Set active version", "digstore version set <version>".green());
     println!("  {} - Update PATH for version", "digstore version update-path <version>".green());
@@ -219,6 +226,51 @@ fn install_from_msi(msi_path: &str) -> Result<()> {
     vm.install_from_msi(&version, msi_file)?;
     
     Ok(())
+}
+
+/// Install a specific version from GitHub releases
+fn install_specific_version(version: &str) -> Result<()> {
+    println!(
+        "{}",
+        format!("Installing digstore version {} from GitHub...", version).bright_blue()
+    );
+    
+    // Construct GitHub release URL for the version
+    let download_url = construct_github_download_url(version)?;
+    
+    println!("  {} Download URL: {}", "•".cyan(), download_url.dimmed());
+    
+    let mut vm = VersionManager::new()?;
+    vm.install_version_from_url(version, &download_url)?;
+    
+    println!();
+    println!("{}", "✓ Version installation completed successfully!".green().bold());
+    
+    Ok(())
+}
+
+/// Construct GitHub download URL for a specific version
+fn construct_github_download_url(version: &str) -> Result<String> {
+    let base_url = "https://github.com/DIG-Network/digstore/releases/download";
+    let tag = if version == "latest" {
+        "latest".to_string()
+    } else {
+        format!("v{}", version)
+    };
+    
+    #[cfg(windows)]
+    let filename = "digstore-windows-x64.msi";
+    
+    #[cfg(target_os = "macos")]
+    let filename = "digstore-macos.dmg";
+    
+    #[cfg(target_os = "linux")]
+    let filename = "digstore-linux-x86_64.AppImage";
+    
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    let filename = "digstore-linux-x86_64.AppImage"; // Default fallback
+    
+    Ok(format!("{}/{}/{}", base_url, tag, filename))
 }
 
 /// Set the active version

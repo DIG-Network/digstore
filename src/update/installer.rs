@@ -127,8 +127,10 @@ fn install_windows_msi(msi_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Install macOS DMG
+/// Install macOS DMG with version management
 fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
+    use crate::update::VersionManager;
+    
     // Mount the DMG
     let mount_output = Command::new("hdiutil")
         .args(&["attach", dmg_path.to_str().unwrap(), "-nobrowse"])
@@ -153,16 +155,43 @@ fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
             reason: "Failed to determine mount point".to_string(),
         })?;
 
-    // Copy app to Applications
-    let app_name = "DIG Network Digstore.app";
-    let source = format!("{}/{}", mount_point, app_name);
-    let destination = format!("/Applications/{}", app_name);
+    // Extract version from DMG filename
+    let version = if let Some(filename) = dmg_path.file_name().and_then(|n| n.to_str()) {
+        if filename.contains("digstore-macos.dmg") {
+            "latest".to_string()
+        } else if let Some(start) = filename.find("v") {
+            if let Some(end) = filename[start..].find(".dmg") {
+                let version_part = &filename[start + 1..start + end];
+                version_part.to_string()
+            } else {
+                "latest".to_string()
+            }
+        } else {
+            "latest".to_string()
+        }
+    } else {
+        "latest".to_string()
+    };
 
+    // Use version manager for organized installation
+    let mut vm = VersionManager::new()?;
+    let version_dir = vm.get_version_dir(&version);
+    
+    // Create versioned directory in system location
+    fs::create_dir_all(&version_dir)?;
+
+    // Find the digstore binary in the DMG
+    let app_name = "DIG Network Digstore.app";
+    let source_app = format!("{}/{}", mount_point, app_name);
+    let binary_source = format!("{}/Contents/MacOS/digstore", source_app);
+    let binary_target = version_dir.join("digstore");
+
+    // Copy the binary to versioned directory
     let copy_output = Command::new("cp")
-        .args(&["-r", &source, &destination])
+        .args(&[&binary_source, &binary_target.to_string_lossy()])
         .output()
         .map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to copy app: {}", e),
+            reason: format!("Failed to copy binary: {}", e),
         })?;
 
     // Unmount DMG
@@ -172,15 +201,50 @@ fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
 
     if !copy_output.status.success() {
         return Err(DigstoreError::ConfigurationError {
-            reason: "Failed to install app to Applications folder".to_string(),
+            reason: "Failed to copy digstore binary from DMG".to_string(),
         });
     }
+
+    // Make binary executable
+    let _ = Command::new("chmod")
+        .args(&["+x", &binary_target.to_string_lossy()])
+        .output();
+
+    println!("  {} macOS version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
+
+    // Update PATH and set as active
+    vm.update_path_to_version(&version)?;
+    vm.set_active_version(&version)?;
 
     Ok(())
 }
 
-/// Install Linux DEB package
+/// Install Linux DEB package with version management
 fn install_linux_deb(deb_path: &Path) -> Result<()> {
+    use crate::update::VersionManager;
+    
+    // Extract version from DEB filename
+    let version = if let Some(filename) = deb_path.file_name().and_then(|n| n.to_str()) {
+        if filename.contains("digstore_") {
+            // Extract version from filename like "digstore_0.4.7_amd64.deb"
+            if let Some(start) = filename.find("_") {
+                if let Some(end) = filename[start + 1..].find("_") {
+                    let version_part = &filename[start + 1..start + 1 + end];
+                    version_part.to_string()
+                } else {
+                    "latest".to_string()
+                }
+            } else {
+                "latest".to_string()
+            }
+        } else {
+            "latest".to_string()
+        }
+    } else {
+        "latest".to_string()
+    };
+
+    // Install DEB package to system location first
     let output = Command::new("sudo")
         .args(&["dpkg", "-i", deb_path.to_str().unwrap()])
         .output()
@@ -195,11 +259,83 @@ fn install_linux_deb(deb_path: &Path) -> Result<()> {
         });
     }
 
+    // Use version manager to organize the installation
+    let mut vm = VersionManager::new()?;
+    let version_dir = vm.get_version_dir(&version);
+    fs::create_dir_all(&version_dir)?;
+
+    // Check common DEB installation locations and move to versioned directory
+    let deb_locations = [
+        PathBuf::from("/usr/local/bin/digstore"),
+        PathBuf::from("/usr/bin/digstore"),
+        PathBuf::from("/opt/digstore/bin/digstore"),
+    ];
+
+    let mut found = false;
+    for deb_location in &deb_locations {
+        if deb_location.exists() {
+            let target_binary = version_dir.join("digstore");
+            
+            // Copy to versioned directory
+            let copy_output = Command::new("sudo")
+                .args(&["cp", &deb_location.to_string_lossy(), &target_binary.to_string_lossy()])
+                .output()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to copy binary: {}", e),
+                })?;
+
+            if copy_output.status.success() {
+                // Make sure it's executable
+                let _ = Command::new("sudo")
+                    .args(&["chmod", "+x", &target_binary.to_string_lossy()])
+                    .output();
+
+                println!("  {} Linux version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if !found {
+        return Err(DigstoreError::ConfigurationError {
+            reason: "Could not find installed digstore binary after DEB installation".to_string(),
+        });
+    }
+
+    // Update PATH and set as active
+    vm.update_path_to_version(&version)?;
+    vm.set_active_version(&version)?;
+
     Ok(())
 }
 
-/// Install Linux RPM package
+/// Install Linux RPM package with version management
 fn install_linux_rpm(rpm_path: &Path) -> Result<()> {
+    use crate::update::VersionManager;
+    
+    // Extract version from RPM filename
+    let version = if let Some(filename) = rpm_path.file_name().and_then(|n| n.to_str()) {
+        if filename.contains("digstore-") {
+            // Extract version from filename like "digstore-0.4.7-1.x86_64.rpm"
+            if let Some(start) = filename.find("-") {
+                if let Some(end) = filename[start + 1..].find("-") {
+                    let version_part = &filename[start + 1..start + 1 + end];
+                    version_part.to_string()
+                } else {
+                    "latest".to_string()
+                }
+            } else {
+                "latest".to_string()
+            }
+        } else {
+            "latest".to_string()
+        }
+    } else {
+        "latest".to_string()
+    };
+
+    // Install RPM package to system location first
     let output = Command::new("sudo")
         .args(&["rpm", "-U", rpm_path.to_str().unwrap()])
         .output()
@@ -214,11 +350,79 @@ fn install_linux_rpm(rpm_path: &Path) -> Result<()> {
         });
     }
 
+    // Use version manager to organize the installation
+    let mut vm = VersionManager::new()?;
+    let version_dir = vm.get_version_dir(&version);
+    fs::create_dir_all(&version_dir)?;
+
+    // Check common RPM installation locations and move to versioned directory
+    let rpm_locations = [
+        PathBuf::from("/usr/local/bin/digstore"),
+        PathBuf::from("/usr/bin/digstore"),
+        PathBuf::from("/opt/digstore/bin/digstore"),
+    ];
+
+    let mut found = false;
+    for rpm_location in &rpm_locations {
+        if rpm_location.exists() {
+            let target_binary = version_dir.join("digstore");
+            
+            // Copy to versioned directory
+            let copy_output = Command::new("sudo")
+                .args(&["cp", &rpm_location.to_string_lossy(), &target_binary.to_string_lossy()])
+                .output()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to copy binary: {}", e),
+                })?;
+
+            if copy_output.status.success() {
+                // Make sure it's executable
+                let _ = Command::new("sudo")
+                    .args(&["chmod", "+x", &target_binary.to_string_lossy()])
+                    .output();
+
+                println!("  {} Linux version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if !found {
+        return Err(DigstoreError::ConfigurationError {
+            reason: "Could not find installed digstore binary after RPM installation".to_string(),
+        });
+    }
+
+    // Update PATH and set as active
+    vm.update_path_to_version(&version)?;
+    vm.set_active_version(&version)?;
+
     Ok(())
 }
 
-/// Install Linux AppImage
+/// Install Linux AppImage with version management
 fn install_linux_appimage(appimage_path: &Path) -> Result<()> {
+    use crate::update::VersionManager;
+    
+    // Extract version from AppImage filename
+    let version = if let Some(filename) = appimage_path.file_name().and_then(|n| n.to_str()) {
+        if filename.contains("digstore-linux-x86_64.AppImage") {
+            "latest".to_string()
+        } else if let Some(start) = filename.find("v") {
+            if let Some(end) = filename[start..].find(".AppImage") {
+                let version_part = &filename[start + 1..start + end];
+                version_part.to_string()
+            } else {
+                "latest".to_string()
+            }
+        } else {
+            "latest".to_string()
+        }
+    } else {
+        "latest".to_string()
+    };
+
     // Make executable
     let chmod_output = Command::new("chmod")
         .args(&["+x", appimage_path.to_str().unwrap()])
@@ -233,16 +437,23 @@ fn install_linux_appimage(appimage_path: &Path) -> Result<()> {
         });
     }
 
-    // Copy to /usr/local/bin (requires sudo)
+    // Use version manager for organized installation
+    let mut vm = VersionManager::new()?;
+    let version_dir = vm.get_version_dir(&version);
+    fs::create_dir_all(&version_dir)?;
+
+    let target_binary = version_dir.join("digstore");
+
+    // Copy AppImage to versioned directory
     let copy_output = Command::new("sudo")
         .args(&[
             "cp",
             appimage_path.to_str().unwrap(),
-            "/usr/local/bin/digstore",
+            &target_binary.to_string_lossy(),
         ])
         .output()
         .map_err(|e| DigstoreError::ConfigurationError {
-            reason: format!("Failed to install AppImage: {}", e),
+            reason: format!("Failed to copy AppImage: {}", e),
         })?;
 
     if !copy_output.status.success() {
@@ -251,6 +462,17 @@ fn install_linux_appimage(appimage_path: &Path) -> Result<()> {
             reason: format!("AppImage installation failed: {}", stderr),
         });
     }
+
+    // Ensure it's executable
+    let _ = Command::new("sudo")
+        .args(&["chmod", "+x", &target_binary.to_string_lossy()])
+        .output();
+
+    println!("  {} Linux AppImage version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
+
+    // Update PATH and set as active
+    vm.update_path_to_version(&version)?;
+    vm.set_active_version(&version)?;
 
     Ok(())
 }

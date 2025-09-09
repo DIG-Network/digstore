@@ -2,6 +2,19 @@
 
 Complete command reference for Digstore - a content-addressable storage system with Git-like semantics.
 
+## Installation
+
+### Quick Install
+```bash
+# Windows (PowerShell as Administrator)
+iex (iwr -Uri "https://raw.githubusercontent.com/DIG-Network/digstore/main/install.ps1").Content
+
+# Linux/macOS
+curl -fsSL https://raw.githubusercontent.com/DIG-Network/digstore/main/install.sh | bash
+```
+
+See [INSTALL.md](INSTALL.md) for detailed installation instructions.
+
 ## Quick Start
 
 ```bash
@@ -259,6 +272,7 @@ digstore version list-system              # System-installed versions
 # Install and manage versions
 digstore version install-current           # Install current binary
 digstore version install-msi installer.msi # Install from MSI
+digstore version install-version 0.4.8     # Install specific version from GitHub
 digstore version set 0.4.5                # Set active version
 digstore version remove 0.4.3             # Remove version
 
@@ -273,6 +287,7 @@ digstore version fix-path-auto            # Auto-fix PATH ordering
 - `list-system` - List system-installed versions
 - `install-current` - Install currently running binary
 - `install-msi <PATH>` - Install from MSI file
+- `install-version <VERSION>` - Install specific version from GitHub
 - `set <VERSION>` - Set active version
 - `remove <VERSION>` - Remove a version
 - `update-path <VERSION>` - Update PATH for version
