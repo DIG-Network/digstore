@@ -539,3 +539,16 @@ digstore add --help
 digstore proof generate --help
 digstore store info --help
 ```
+
+
+## Download Latest Build
+
+You can download the latest development build installers:
+
+- [Windows Installer (MSI)](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-windows-x64.msi)
+- [macOS Installer (DMG)](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-macos.dmg)
+- [Linux DEB Package](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore_0.1.0_amd64.deb)
+- [Linux RPM Package](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-0.1.0-1.x86_64.rpm)
+- [Linux AppImage](https://github.com/DIG-Network/digstore/releases/download/latest-build/digstore-linux-x86_64.AppImage)
+
+For stable releases, visit the [Releases](https://github.com/DIG-Network/digstore/releases) page.
