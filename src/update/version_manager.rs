@@ -247,12 +247,12 @@ impl VersionManager {
     }
 
     /// Get the directory for a specific version
-    fn get_version_dir(&self, version: &str) -> PathBuf {
+    pub fn get_version_dir(&self, version: &str) -> PathBuf {
         self.versions_dir.join(version)
     }
 
     /// Get the binary name for the current platform
-    fn get_binary_name(&self) -> &'static str {
+    pub fn get_binary_name(&self) -> &'static str {
         if cfg!(windows) {
             "digstore.exe"
         } else {
@@ -290,19 +290,59 @@ impl VersionManager {
     }
 
     /// Get the path for the active version link
-    fn get_active_link_path(&self) -> Result<PathBuf> {
-        let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
-        let bin_dir = user_dirs.home_dir().join(".local").join("bin");
-        
-        // Create bin directory if it doesn't exist
-        fs::create_dir_all(&bin_dir)?;
-
+    pub fn get_active_link_path(&self) -> Result<PathBuf> {
         #[cfg(windows)]
-        let link_path = bin_dir.join("digstore.bat");
+        {
+            // Try system-wide first, fall back to user-level
+            let program_files = std::env::var("ProgramFiles(x86)")
+                .or_else(|_| std::env::var("ProgramFiles"))
+                .unwrap_or_else(|_| "C:\\Program Files".to_string());
+            
+            let system_bin_dir = PathBuf::from(program_files).join("dig-network");
+            
+            // Test if we can write to system directory
+            if fs::create_dir_all(&system_bin_dir).is_ok() {
+                let test_file = system_bin_dir.join("access_test.tmp");
+                if fs::write(&test_file, "test").is_ok() {
+                    let _ = fs::remove_file(&test_file);
+                    return Ok(system_bin_dir.join("digstore.bat"));
+                }
+            }
+            
+            // Fall back to user directory
+            let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
+            let user_bin_dir = user_dirs.home_dir().join(".local").join("bin");
+            fs::create_dir_all(&user_bin_dir)?;
+            Ok(user_bin_dir.join("digstore.bat"))
+        }
+        
         #[cfg(not(windows))]
-        let link_path = bin_dir.join("digstore");
+        {
+            let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
+            let bin_dir = user_dirs.home_dir().join(".local").join("bin");
+            
+            // Create bin directory if it doesn't exist
+            fs::create_dir_all(&bin_dir)?;
+            
+            Ok(bin_dir.join("digstore"))
+        }
+    }
 
-        Ok(link_path)
+    /// Get the system-wide installation directory for a version
+    pub fn get_system_install_dir(&self, version: &str) -> PathBuf {
+        #[cfg(windows)]
+        {
+            let program_files = std::env::var("ProgramFiles(x86)")
+                .or_else(|_| std::env::var("ProgramFiles"))
+                .unwrap_or_else(|_| "C:\\Program Files".to_string());
+            
+            PathBuf::from(program_files).join("dig-network").join(format!("v{}", version))
+        }
+        
+        #[cfg(not(windows))]
+        {
+            PathBuf::from("/usr/local/lib/digstore").join(format!("v{}", version))
+        }
     }
 
     /// Save the active version to a config file
@@ -354,6 +394,256 @@ impl VersionManager {
         println!("     {}", "digstore --version".bright_green());
 
         Ok(())
+    }
+
+    /// Install a version from an MSI file to the user versioned directory
+    pub fn install_from_msi(&mut self, version: &str, msi_path: &Path) -> Result<()> {
+        println!(
+            "{}",
+            format!("Installing digstore {} from MSI to user directory...", version).bright_blue()
+        );
+
+        // Always use user-level versioned installation to avoid conflicts
+        self.install_from_msi_user_level(version, msi_path)
+    }
+
+    /// Install from MSI by extracting contents to user versioned directory
+    fn install_from_msi_user_level(&mut self, version: &str, msi_path: &Path) -> Result<()> {
+        println!("  {} Extracting MSI to versioned directory", "•".cyan());
+        
+        let user_install_dir = self.get_version_dir(version);
+        fs::create_dir_all(&user_install_dir)?;
+        
+        // Create a temporary directory for extraction
+        let temp_extract_dir = std::env::temp_dir().join(format!("digstore_extract_{}", version));
+        fs::create_dir_all(&temp_extract_dir)?;
+        
+        // Extract MSI contents using msiexec
+        let output = Command::new("msiexec")
+            .args(&[
+                "/a", msi_path.to_str().unwrap(),  // Administrative install (extract only)
+                "/quiet",
+                &format!("TARGETDIR={}", temp_extract_dir.display()),
+            ])
+            .output()
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Failed to extract MSI: {}", e),
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            
+            // Cleanup temp directory
+            let _ = fs::remove_dir_all(&temp_extract_dir);
+            
+            return Err(DigstoreError::ConfigurationError {
+                reason: format!("MSI extraction failed. Stderr: {}, Stdout: {}", stderr, stdout),
+            });
+        }
+
+        // Find the digstore.exe in the extracted files
+        let binary_path = user_install_dir.join(self.get_binary_name());
+        let mut found = false;
+        
+        // Search for digstore.exe in the extracted directory recursively
+        found = self.find_and_copy_binary(&temp_extract_dir, &binary_path)?;
+        
+        // Cleanup temp directory
+        let _ = fs::remove_dir_all(&temp_extract_dir);
+        
+        if !found {
+            return Err(DigstoreError::ConfigurationError {
+                reason: format!("Could not find digstore.exe in MSI contents"),
+            });
+        }
+
+        println!(
+            "  {} Version {} extracted to: {}",
+            "✓".green(),
+            version.bright_cyan(),
+            user_install_dir.display().to_string().dimmed()
+        );
+
+        // Set as active version
+        self.set_active_version(version)?;
+
+        Ok(())
+    }
+
+    /// Recursively find and copy the digstore binary from extracted MSI
+    fn find_and_copy_binary(&self, search_dir: &Path, target_path: &Path) -> Result<bool> {
+        if let Ok(entries) = fs::read_dir(search_dir) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                
+                if entry_path.is_file() && entry.file_name() == self.get_binary_name() {
+                    fs::copy(&entry_path, target_path)?;
+                    return Ok(true);
+                }
+                
+                if entry_path.is_dir() {
+                    if self.find_and_copy_binary(&entry_path, target_path)? {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Check if we have administrator privileges
+    fn has_admin_privileges(&self) -> bool {
+        #[cfg(windows)]
+        {
+            // Try to create a file in Program Files to test admin privileges
+            let program_files = std::env::var("ProgramFiles(x86)")
+                .or_else(|_| std::env::var("ProgramFiles"))
+                .unwrap_or_else(|_| "C:\\Program Files".to_string());
+            
+            let test_path = PathBuf::from(program_files).join("dig-network").join("admin_test.tmp");
+            
+            if let Some(parent) = test_path.parent() {
+                if fs::create_dir_all(parent).is_ok() {
+                    if fs::write(&test_path, "test").is_ok() {
+                        let _ = fs::remove_file(&test_path);
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        
+        #[cfg(not(windows))]
+        {
+            // On Unix, check if we can write to /usr/local
+            fs::write("/usr/local/digstore_admin_test.tmp", "test").is_ok()
+        }
+    }
+
+    /// Update system PATH to point to a specific version
+    pub fn update_system_path(&self, version: &str) -> Result<()> {
+        let install_dir = self.get_system_install_dir(version);
+        let binary_path = install_dir.join(self.get_binary_name());
+
+        // Verify binary exists
+        if !binary_path.exists() {
+            return Err(DigstoreError::ConfigurationError {
+                reason: format!("Version {} binary not found at: {}", version, binary_path.display()),
+            });
+        }
+
+        #[cfg(windows)]
+        {
+            // Update system PATH on Windows
+            let output = Command::new("setx")
+                .args(&[
+                    "/M", // Machine-wide
+                    "PATH", 
+                    &format!("{};%PATH%", install_dir.display())
+                ])
+                .output()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to update system PATH: {}", e),
+                })?;
+
+            if !output.status.success() {
+                // Try user-level PATH update as fallback
+                let user_output = Command::new("setx")
+                    .args(&[
+                        "PATH", 
+                        &format!("{};%PATH%", install_dir.display())
+                    ])
+                    .output()
+                    .map_err(|e| DigstoreError::ConfigurationError {
+                        reason: format!("Failed to update user PATH: {}", e),
+                    })?;
+
+                if !user_output.status.success() {
+                    return Err(DigstoreError::ConfigurationError {
+                        reason: "Failed to update both system and user PATH".to_string(),
+                    });
+                }
+                
+                println!("  {} Updated user PATH (system PATH update requires admin)", "✓".yellow());
+            } else {
+                println!("  {} Updated system PATH", "✓".green());
+            }
+        }
+
+        #[cfg(not(windows))]
+        {
+            // On Unix systems, we can't automatically update PATH
+            println!("  {} Add this to your shell profile:", "→".cyan());
+            println!("     export PATH=\"{}:$PATH\"", install_dir.display());
+        }
+
+        Ok(())
+    }
+
+    /// List all system-installed versions
+    pub fn list_system_versions(&self) -> Result<Vec<String>> {
+        let mut versions = Vec::new();
+
+        #[cfg(windows)]
+        let base_dir = {
+            let program_files = std::env::var("ProgramFiles(x86)")
+                .or_else(|_| std::env::var("ProgramFiles"))
+                .unwrap_or_else(|_| "C:\\Program Files".to_string());
+            PathBuf::from(program_files).join("dig-network")
+        };
+
+        #[cfg(not(windows))]
+        let base_dir = PathBuf::from("/usr/local/lib/digstore");
+
+        if !base_dir.exists() {
+            return Ok(versions);
+        }
+
+        for entry in fs::read_dir(&base_dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                if let Some(dir_name) = entry.file_name().to_str() {
+                    if dir_name.starts_with('v') && dir_name.len() > 1 {
+                        let version = &dir_name[1..]; // Remove 'v' prefix
+                        
+                        // Verify binary exists
+                        let binary_path = entry.path().join(self.get_binary_name());
+                        if binary_path.exists() {
+                            versions.push(version.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        versions.sort();
+        Ok(versions)
+    }
+
+    /// Check which version is currently active in PATH
+    pub fn get_active_version_from_path(&self) -> Result<Option<String>> {
+        // Try to run digstore --version to see what's in PATH
+        let output = Command::new("digstore")
+            .arg("--version")
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let version_output = String::from_utf8_lossy(&output.stdout);
+                // Parse "digstore X.Y.Z" format
+                if let Some(version) = version_output
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                {
+                    Ok(Some(version.to_string()))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Ok(None), // digstore not in PATH or error
+        }
     }
 }
 

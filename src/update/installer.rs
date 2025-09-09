@@ -69,7 +69,7 @@ fn determine_installer_type(url: &str) -> Result<InstallerType> {
 }
 
 /// Download installer to temp file
-fn download_installer(url: &str) -> Result<std::path::PathBuf> {
+pub fn download_installer(url: &str) -> Result<std::path::PathBuf> {
     let client = reqwest::blocking::Client::builder()
         .user_agent("digstore-cli")
         .timeout(std::time::Duration::from_secs(300)) // 5 minutes for download

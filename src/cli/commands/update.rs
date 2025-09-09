@@ -1,6 +1,6 @@
 //! Update command implementation
 
-use crate::update::{check_for_updates, download_and_install_update};
+use crate::update::{check_for_updates, download_and_install_update, VersionManager};
 use anyhow::Result;
 use colored::Colorize;
 use dialoguer::Confirm;
@@ -72,7 +72,7 @@ fn execute_interactive_mode(check_only: bool, force: bool) -> Result<()> {
     }
 
     if let Some(download_url) = update_info.download_url {
-        match download_and_install_update(&download_url) {
+        match download_and_install_update_versioned(&download_url, &update_info.latest_version) {
             Ok(_) => {
                 println!();
                 println!(
@@ -155,6 +155,31 @@ fn execute_json_mode(check_only: bool, force: bool) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     }
+
+    Ok(())
+}
+
+/// Download and install update using versioned installation system
+fn download_and_install_update_versioned(download_url: &str, version: &str) -> Result<()> {
+    use crate::update::installer::download_installer;
+    
+    println!("{}", "Downloading update...".bright_blue());
+
+    // Download the installer
+    let temp_file = download_installer(download_url)
+        .map_err(|e| anyhow::anyhow!("Download failed: {}", e))?;
+
+    println!("{}", "Installing update with version management...".bright_green());
+
+    // Use version manager for installation
+    let mut vm = VersionManager::new()
+        .map_err(|e| anyhow::anyhow!("Failed to create version manager: {}", e))?;
+    
+    vm.install_from_msi(version, &temp_file)
+        .map_err(|e| anyhow::anyhow!("Installation failed: {}", e))?;
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_file);
 
     Ok(())
 }

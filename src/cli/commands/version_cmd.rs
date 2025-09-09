@@ -9,8 +9,15 @@ use std::env;
 pub fn execute(subcommand: Option<String>, version: Option<String>) -> Result<()> {
     match subcommand.as_deref() {
         Some("list") => list_versions(),
+        Some("list-system") => list_system_versions(),
         Some("install") => install_current_version(),
         Some("install-current") => install_current_binary(),
+        Some("install-msi") => {
+            let msi_path = version.ok_or_else(|| DigstoreError::ConfigurationError {
+                reason: "MSI path required for 'install-msi' command".to_string(),
+            })?;
+            install_from_msi(&msi_path)
+        }
         Some("set") => {
             let version = version.ok_or_else(|| DigstoreError::ConfigurationError {
                 reason: "Version required for 'set' command".to_string(),
@@ -23,6 +30,14 @@ pub fn execute(subcommand: Option<String>, version: Option<String>) -> Result<()
             })?;
             remove_version(&version)
         }
+        Some("update-path") => {
+            let version = version.ok_or_else(|| DigstoreError::ConfigurationError {
+                reason: "Version required for 'update-path' command".to_string(),
+            })?;
+            update_path_for_version(&version)
+        }
+        Some("fix-path") => fix_path_ordering(),
+        Some("fix-path-auto") => fix_path_ordering_automatically(),
         Some("current") => show_current_version(),
         _ => show_version_info(),
     }
@@ -60,8 +75,13 @@ fn show_version_info() -> Result<()> {
     println!("  {} - List all installed versions", "digstore version list".green());
     println!("  {} - Install current version with version manager", "digstore version install".green());
     println!("  {} - Install currently running binary", "digstore version install-current".green());
+    println!("  {} - Install from MSI file", "digstore version install-msi <path>".green());
+    println!("  {} - List system-installed versions", "digstore version list-system".green());
     println!("  {} - Set active version", "digstore version set <version>".green());
+    println!("  {} - Update PATH for version", "digstore version update-path <version>".green());
     println!("  {} - Remove a version", "digstore version remove <version>".green());
+    println!("  {} - Fix PATH ordering", "digstore version fix-path".green());
+    println!("  {} - Auto-fix PATH ordering", "digstore version fix-path-auto".green());
     
     Ok(())
 }
@@ -123,6 +143,80 @@ fn install_current_binary() -> Result<()> {
     Ok(())
 }
 
+/// List system-installed versions
+fn list_system_versions() -> Result<()> {
+    let vm = VersionManager::new()?;
+    let versions = vm.list_system_versions()?;
+    
+    if versions.is_empty() {
+        println!("{}", "No system versions installed".yellow());
+        println!("Run {} to install a version", "digstore version install-msi <path>".green());
+        return Ok(());
+    }
+    
+    println!("{}", "System-Installed Versions:".bright_blue().bold());
+    println!();
+    
+    // Show active version
+    if let Ok(Some(active)) = vm.get_active_version_from_path() {
+        println!("  {} {} (active)", "→".green(), active.bright_cyan());
+        
+        for version in &versions {
+            if version != &active {
+                println!("  • {}", version.bright_cyan());
+            }
+        }
+    } else {
+        for version in &versions {
+            println!("  • {}", version.bright_cyan());
+        }
+        println!();
+        println!("{}", "No version currently active in PATH".yellow());
+    }
+    
+    println!();
+    println!("Total: {} version(s)", versions.len().to_string().bright_white());
+    
+    Ok(())
+}
+
+/// Install from MSI file
+fn install_from_msi(msi_path: &str) -> Result<()> {
+    let msi_file = std::path::Path::new(msi_path);
+    
+    if !msi_file.exists() {
+        return Err(DigstoreError::ConfigurationError {
+            reason: format!("MSI file not found: {}", msi_path),
+        });
+    }
+    
+    // Extract version from MSI filename or ask user
+    let version = if let Some(filename) = msi_file.file_name().and_then(|n| n.to_str()) {
+        // Try to extract version from filename like "digstore-windows-x64-v0.4.4.msi"
+        if let Some(start) = filename.find("v") {
+            if let Some(end) = filename[start..].find(".msi") {
+                let version_part = &filename[start + 1..start + end];
+                if version_part.chars().all(|c| c.is_ascii_alphanumeric() || c == '.') {
+                    version_part.to_string()
+                } else {
+                    "unknown".to_string()
+                }
+            } else {
+                "unknown".to_string()
+            }
+        } else {
+            "unknown".to_string()
+        }
+    } else {
+        "unknown".to_string()
+    };
+    
+    let mut vm = VersionManager::new()?;
+    vm.install_from_msi(&version, msi_file)?;
+    
+    Ok(())
+}
+
 /// Set the active version
 fn set_active_version(version: &str) -> Result<()> {
     let mut vm = VersionManager::new()?;
@@ -142,6 +236,207 @@ fn remove_version(version: &str) -> Result<()> {
     
     println!();
     println!("{}", "✓ Version removed successfully!".green().bold());
+    
+    Ok(())
+}
+
+/// Update PATH to point to a specific version
+fn update_path_for_version(version: &str) -> Result<()> {
+    let vm = VersionManager::new()?;
+    
+    // Check if version exists
+    let versions = vm.list_versions()?;
+    if !versions.contains(&version.to_string()) {
+        return Err(DigstoreError::ConfigurationError {
+            reason: format!("Version {} is not installed", version),
+        });
+    }
+    
+    let version_dir = vm.get_version_dir(version);
+    let binary_path = version_dir.join(vm.get_binary_name());
+    
+    if !binary_path.exists() {
+        return Err(DigstoreError::ConfigurationError {
+            reason: format!("Binary not found for version {}: {}", version, binary_path.display()),
+        });
+    }
+    
+    println!(
+        "{}",
+        format!("Updating PATH for digstore version {}...", version).bright_blue()
+    );
+    
+    // Get the directory that should be in PATH (where the batch file is)
+    let link_path = vm.get_active_link_path()?;
+    let bin_dir = link_path.parent().unwrap();
+    
+    println!("  {} Version directory: {}", "•".cyan(), version_dir.display().to_string().dimmed());
+    println!("  {} PATH directory: {}", "•".cyan(), bin_dir.display().to_string().dimmed());
+    
+    // Update the batch file to point to this version
+    let mut vm_mut = vm;
+    vm_mut.set_active_version(version)?;
+    
+    // Show PATH instructions
+    println!();
+    println!("{}", "PATH Update Instructions:".bright_yellow().bold());
+    println!("  Add this directory to your PATH if not already added:");
+    println!("     {}", bin_dir.display().to_string().bright_cyan());
+    println!();
+    
+    #[cfg(windows)]
+    {
+        println!("  For PowerShell, run:");
+        println!("     $env:PATH += \";{}\"", bin_dir.display());
+        println!();
+        println!("  For permanent PATH update, run:");
+        println!("     setx PATH \"%PATH%;{}\"", bin_dir.display());
+        println!();
+        println!("  {} After updating PATH, restart your terminal and run:", "→".cyan());
+        println!("     {}", "digstore --version".bright_green());
+    }
+    
+    Ok(())
+}
+
+/// Fix PATH ordering to prioritize version-managed digstore
+fn fix_path_ordering() -> Result<()> {
+    println!(
+        "{}",
+        "Analyzing PATH for digstore conflicts...".bright_blue()
+    );
+    
+    // Check current PATH
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let path_entries: Vec<&str> = current_path.split(';').collect();
+    
+    let mut digstore_locations = Vec::new();
+    
+    // Find all directories in PATH that might contain digstore
+    for (index, entry) in path_entries.iter().enumerate() {
+        let entry_path = std::path::Path::new(entry);
+        let digstore_exe = entry_path.join("digstore.exe");
+        let digstore_bat = entry_path.join("digstore.bat");
+        
+        if digstore_exe.exists() || digstore_bat.exists() {
+            digstore_locations.push((index, entry, digstore_exe.exists(), digstore_bat.exists()));
+        }
+    }
+    
+    if digstore_locations.is_empty() {
+        println!("  {} No digstore installations found in PATH", "!".yellow());
+        return Ok(());
+    }
+    
+    println!("  {} Found digstore installations:", "•".cyan());
+    for (index, path, has_exe, has_bat) in &digstore_locations {
+        let file_type = match (has_exe, has_bat) {
+            (true, true) => "exe + bat",
+            (true, false) => "exe",
+            (false, true) => "bat (version-managed)",
+            (false, false) => "none",
+        };
+        println!("    {} Position {}: {} ({})", 
+                if *index == 0 { "→".green() } else { "•".dimmed() }, 
+                index, 
+                path, 
+                file_type);
+    }
+    
+    // Check if version-managed directory is first
+    let vm = VersionManager::new()?;
+    let link_path = vm.get_active_link_path()?;
+    let bin_dir = link_path.parent().unwrap();
+    
+    let version_managed_index = digstore_locations.iter()
+        .find(|(_, path, _, has_bat)| *has_bat && std::path::Path::new(path) == bin_dir)
+        .map(|(index, _, _, _)| *index);
+    
+    match version_managed_index {
+        Some(0) => {
+            println!();
+            println!("  {} Version-managed digstore is already first in PATH", "✓".green());
+            println!("  {} Current setup is optimal", "✓".green());
+        }
+        Some(index) => {
+            println!();
+            println!("  {} Version-managed digstore found at position {}", "!".yellow(), index);
+            println!("  {} Earlier installations are taking precedence", "!".yellow());
+            println!();
+            println!("{}", "Recommended fixes:".bright_yellow().bold());
+            println!("  1. {} Remove old installations:", "Option".cyan());
+            
+            for (i, path, has_exe, _) in &digstore_locations {
+                if *i < index && *has_exe {
+                    println!("     Remove: {}", path);
+                }
+            }
+            
+            println!();
+            println!("  2. {} Move version-managed directory to front of PATH:", "Option".cyan());
+            println!("     setx PATH \"{};%PATH%\"", bin_dir.display());
+        }
+        None => {
+            println!();
+            println!("  {} Version-managed digstore not found in PATH", "!".yellow());
+            println!("  {} Add this directory to your PATH:", "→".cyan());
+            println!("     {}", bin_dir.display().to_string().bright_cyan());
+            println!();
+            println!("  {} Run this command:", "→".cyan());
+            println!("     setx PATH \"%PATH%;{}\"", bin_dir.display());
+        }
+    }
+    
+    Ok(())
+}
+
+/// Automatically fix PATH ordering to prioritize version-managed digstore
+fn fix_path_ordering_automatically() -> Result<()> {
+    println!(
+        "{}",
+        "Automatically fixing PATH ordering...".bright_blue()
+    );
+    
+    let vm = VersionManager::new()?;
+    let link_path = vm.get_active_link_path()?;
+    let bin_dir = link_path.parent().unwrap();
+    
+    // Move version-managed directory to front of PATH
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let bin_dir_str = bin_dir.to_string_lossy();
+    
+    // Remove existing occurrence of this directory from PATH
+    let path_entries: Vec<&str> = current_path.split(';').collect();
+    let filtered_entries: Vec<&str> = path_entries
+        .into_iter()
+        .filter(|entry| entry.trim() != bin_dir_str)
+        .collect();
+    
+    // Create new PATH with version-managed directory first
+    let new_path = format!("{};{}", bin_dir_str, filtered_entries.join(";"));
+    
+    println!("  {} Moving {} to front of PATH", "•".cyan(), bin_dir_str);
+    
+    // Update PATH
+    let output = std::process::Command::new("setx")
+        .args(&["PATH", &new_path])
+        .output()
+        .map_err(|e| DigstoreError::ConfigurationError {
+            reason: format!("Failed to update PATH: {}", e),
+        })?;
+    
+    if output.status.success() {
+        println!("  {} PATH updated successfully", "✓".green());
+        println!();
+        println!("{}", "✓ PATH ordering fixed!".green().bold());
+        println!("  {} Restart your terminal and run: {}", "→".cyan(), "digstore --version".bright_green());
+        println!("  {} The version-managed binary should now take precedence", "→".cyan());
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DigstoreError::ConfigurationError {
+            reason: format!("Failed to update PATH: {}", stderr),
+        });
+    }
     
     Ok(())
 }
