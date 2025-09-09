@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["InstallerType"],"fn":["download_and_install_update"]};
+window.SIDEBAR_ITEMS = {"enum":["InstallerType"],"fn":["download_and_install_update","download_installer"]};

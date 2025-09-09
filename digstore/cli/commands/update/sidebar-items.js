@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["execute","execute_interactive_mode","execute_json_mode"]};
+window.SIDEBAR_ITEMS = {"fn":["download_and_install_update_versioned","execute","execute_interactive_mode","execute_json_mode"]};

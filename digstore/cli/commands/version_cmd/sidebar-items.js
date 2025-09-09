@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["execute","install_current_binary","install_current_version","list_versions","remove_version","set_active_version","show_current_version","show_version_info"]};
+window.SIDEBAR_ITEMS = {"fn":["execute","fix_path_ordering","fix_path_ordering_automatically","install_current_binary","install_current_version","install_from_msi","list_system_versions","list_versions","remove_version","set_active_version","show_current_version","show_version_info","update_path_for_version"]};
