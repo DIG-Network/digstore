@@ -1,6 +1,6 @@
-# Digstore CLI Commands
+# DigStore CLI Commands
 
-Complete command reference for Digstore - a content-addressable storage system with Git-like semantics.
+Complete command reference for DigStore - a content-addressable storage system with Git-like semantics.
 
 ## Installation
 

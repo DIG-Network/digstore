@@ -1,5 +1,5 @@
-# Digstore Bootstrap Installer
-# This script downloads and installs the latest version of Digstore with version management
+# DigStore Bootstrap Installer
+# This script downloads and installs the latest version of DigStore with version management
 
 param(
     [string]$Version = "latest",
@@ -8,8 +8,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "🚀 Digstore Bootstrap Installer" -ForegroundColor Cyan
-Write-Host "=================================" -ForegroundColor Cyan
+Write-Host "🚀 DigStore Bootstrap Installer" -ForegroundColor Cyan
+Write-Host "==================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Determine installation directory
@@ -129,7 +129,7 @@ Set-Content -Path $ActiveFile -Value $Version -Force
 Remove-Item $TempMsi -ErrorAction SilentlyContinue
 
 Write-Host ""
-Write-Host "🎉 Digstore $Version installed successfully!" -ForegroundColor Green
+Write-Host "🎉 DigStore $Version installed successfully!" -ForegroundColor Green
 Write-Host "Location: $VersionDir" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Usage:" -ForegroundColor Yellow

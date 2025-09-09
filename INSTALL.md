@@ -1,4 +1,4 @@
-# Digstore Installation
+# DigStore Installation
 
 ## Quick Install (Recommended)
 
@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/DIG-Network/digstore/main/install.s
 
 ## What the Bootstrap Installer Does
 
-1. **Downloads** the latest digstore binary for your platform
+1. **Downloads** the latest DigStore binary for your platform
 2. **Installs** to versioned directory structure:
    - Windows: `C:\Program Files (x86)\dig-network\v0.4.7\digstore.exe`
    - macOS: `/usr/local/lib/digstore/v0.4.7/digstore`

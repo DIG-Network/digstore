@@ -3,7 +3,8 @@
 use crate::core::error::{DigstoreError, Result};
 use crate::update::version_check::GitHubAsset;
 use colored::Colorize;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Types of installers we support
@@ -187,8 +188,9 @@ fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
     let binary_target = version_dir.join("digstore");
 
     // Copy the binary to versioned directory
+    let binary_target_str = binary_target.to_string_lossy().to_string();
     let copy_output = Command::new("cp")
-        .args(&[&binary_source, &binary_target.to_string_lossy()])
+        .args(&[&binary_source, &binary_target_str])
         .output()
         .map_err(|e| DigstoreError::ConfigurationError {
             reason: format!("Failed to copy binary: {}", e),
@@ -278,7 +280,7 @@ fn install_linux_deb(deb_path: &Path) -> Result<()> {
             
             // Copy to versioned directory
             let copy_output = Command::new("sudo")
-                .args(&["cp", &deb_location.to_string_lossy(), &target_binary.to_string_lossy()])
+                .args(&["cp", &deb_location.to_string_lossy(), &target_binary.to_string_lossy().to_string()])
                 .output()
                 .map_err(|e| DigstoreError::ConfigurationError {
                     reason: format!("Failed to copy binary: {}", e),
@@ -287,7 +289,7 @@ fn install_linux_deb(deb_path: &Path) -> Result<()> {
             if copy_output.status.success() {
                 // Make sure it's executable
                 let _ = Command::new("sudo")
-                    .args(&["chmod", "+x", &target_binary.to_string_lossy()])
+                    .args(&["chmod", "+x", &target_binary.to_string_lossy().to_string()])
                     .output();
 
                 println!("  {} Linux version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
@@ -369,7 +371,7 @@ fn install_linux_rpm(rpm_path: &Path) -> Result<()> {
             
             // Copy to versioned directory
             let copy_output = Command::new("sudo")
-                .args(&["cp", &rpm_location.to_string_lossy(), &target_binary.to_string_lossy()])
+                .args(&["cp", &rpm_location.to_string_lossy(), &target_binary.to_string_lossy().to_string()])
                 .output()
                 .map_err(|e| DigstoreError::ConfigurationError {
                     reason: format!("Failed to copy binary: {}", e),
@@ -378,7 +380,7 @@ fn install_linux_rpm(rpm_path: &Path) -> Result<()> {
             if copy_output.status.success() {
                 // Make sure it's executable
                 let _ = Command::new("sudo")
-                    .args(&["chmod", "+x", &target_binary.to_string_lossy()])
+                    .args(&["chmod", "+x", &target_binary.to_string_lossy().to_string()])
                     .output();
 
                 println!("  {} Linux version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
@@ -449,7 +451,7 @@ fn install_linux_appimage(appimage_path: &Path) -> Result<()> {
         .args(&[
             "cp",
             appimage_path.to_str().unwrap(),
-            &target_binary.to_string_lossy(),
+            &target_binary.to_string_lossy().to_string(),
         ])
         .output()
         .map_err(|e| DigstoreError::ConfigurationError {
@@ -465,7 +467,7 @@ fn install_linux_appimage(appimage_path: &Path) -> Result<()> {
 
     // Ensure it's executable
     let _ = Command::new("sudo")
-        .args(&["chmod", "+x", &target_binary.to_string_lossy()])
+        .args(&["chmod", "+x", &target_binary.to_string_lossy().to_string()])
         .output();
 
     println!("  {} Linux AppImage version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());

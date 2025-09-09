@@ -53,7 +53,7 @@ pub fn execute(subcommand: Option<String>, version: Option<String>) -> Result<()
 fn show_version_info() -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
     
-    println!("{}", "Digstore Version Information".bright_blue().bold());
+    println!("{}", "DigStore Version Information".bright_blue().bold());
     println!();
     println!("  {} {}", "Current Version:".bright_white(), current_version.bright_cyan());
     
@@ -232,7 +232,7 @@ fn install_from_msi(msi_path: &str) -> Result<()> {
 fn install_specific_version(version: &str) -> Result<()> {
     println!(
         "{}",
-        format!("Installing digstore version {} from GitHub...", version).bright_blue()
+        format!("Installing DigStore version {} from GitHub...", version).bright_blue()
     );
     
     // Construct GitHub release URL for the version

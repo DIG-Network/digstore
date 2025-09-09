@@ -1,10 +1,10 @@
 [package]
 name = "digstore_min"
-version = "0.4.9"
+version = "0.4.10"
 edition = "2021"
 rust-version = "1.70"
 authors = ["DIG Network"]
-description = "A simplified content-addressable storage system with Git-like semantics"
+description = "A content-addressable storage system with Git-like semantics and zero-knowledge properties"
 repository = "https://github.com/DIG-Network/digstore"
 license = "MIT OR Apache-2.0"
 build = "build.rs"

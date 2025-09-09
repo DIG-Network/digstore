@@ -7,13 +7,13 @@ pub mod commands;
 pub mod context;
 pub mod interactive;
 
-/// Digstore Min - Content-addressable storage system
+/// DigStore - Content-addressable storage system
 #[derive(Parser)]
 #[command(
     name = "digstore",
     version,
-    about = "A simplified content-addressable storage system with Git-like semantics",
-    long_about = "Digstore Min provides Git-like repository functionality with enhanced merkle proof capabilities and URN-based retrieval."
+    about = "A content-addressable storage system with Git-like semantics",
+    long_about = "DigStore provides Git-like repository functionality with enhanced merkle proof capabilities and URN-based retrieval."
 )]
 pub struct Cli {
     /// Enable verbose output

@@ -1,8 +1,8 @@
-//! Digstore Min - A simplified content-addressable storage system
+//! DigStore - A content-addressable storage system
 //!
-//! Digstore Min provides Git-like repository functionality with enhanced merkle proof
-//! capabilities and URN-based retrieval. It focuses on core content-addressable storage
-//! without encryption, privacy features, or blockchain integration.
+//! DigStore provides Git-like repository functionality with enhanced merkle proof
+//! capabilities and URN-based retrieval, featuring zero-knowledge storage with
+//! cryptographic integrity and URN-based access control.
 //!
 //! # Core Features
 //!
@@ -71,7 +71,7 @@ pub use proofs::{
     proof::{Proof, ProofTarget},
 };
 
-/// Current version of Digstore Min
+/// Current version of DigStore
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Format version for compatibility

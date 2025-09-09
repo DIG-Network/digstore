@@ -615,8 +615,9 @@ impl VersionManager {
         let binary_source = format!("{}/Contents/MacOS/digstore", source_app);
         let target_binary = version_dir.join("digstore");
 
+        let target_binary_str = target_binary.to_string_lossy().to_string();
         let copy_result = std::process::Command::new("cp")
-            .args(&[&binary_source, &target_binary.to_string_lossy()])
+            .args(&[&binary_source, &target_binary_str])
             .output();
 
         // Unmount DMG
@@ -628,7 +629,7 @@ impl VersionManager {
             if output.status.success() {
                 // Make executable
                 let _ = std::process::Command::new("chmod")
-                    .args(&["+x", &target_binary.to_string_lossy()])
+                    .args(&["+x", &target_binary.to_string_lossy().to_string()])
                     .output();
 
                 println!("  {} Version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
@@ -687,7 +688,7 @@ impl VersionManager {
                 
                 // Make executable
                 let _ = std::process::Command::new("chmod")
-                    .args(&["+x", &target_binary.to_string_lossy()])
+                    .args(&["+x", &target_binary.to_string_lossy().to_string()])
                     .output();
 
                 found = true;
@@ -761,7 +762,7 @@ impl VersionManager {
                 
                 // Make executable
                 let _ = std::process::Command::new("chmod")
-                    .args(&["+x", &target_binary.to_string_lossy()])
+                    .args(&["+x", &target_binary.to_string_lossy().to_string()])
                     .output();
 
                 found = true;
@@ -800,7 +801,7 @@ impl VersionManager {
         
         // Make executable
         let _ = std::process::Command::new("chmod")
-            .args(&["+x", &target_binary.to_string_lossy()])
+            .args(&["+x", &target_binary.to_string_lossy().to_string()])
             .output();
 
         println!("  {} Version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
@@ -1032,7 +1033,7 @@ impl VersionManager {
     }
 
     /// Update PATH to point to a specific version directory
-    fn update_path_to_version(&self, version: &str) -> Result<()> {
+    pub fn update_path_to_version(&self, version: &str) -> Result<()> {
         let version_dir = self.get_version_dir(version);
         
         println!("  {} Updating PATH to: {}", "•".cyan(), version_dir.display());

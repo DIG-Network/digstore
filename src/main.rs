@@ -1,6 +1,6 @@
-//! Digstore Min CLI
+//! DigStore CLI
 //!
-//! Command-line interface for the Digstore Min content-addressable storage system.
+//! Command-line interface for the DigStore content-addressable storage system.
 
 #![allow(dead_code)]
 #![allow(unused_variables)]

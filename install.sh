@@ -1,14 +1,14 @@
 #!/bin/bash
-# Digstore Bootstrap Installer for Linux/macOS
-# This script downloads and installs the latest version of Digstore with version management
+# DigStore Bootstrap Installer for Linux/macOS
+# This script downloads and installs the latest version of DigStore with version management
 
 set -e
 
 VERSION="${1:-latest}"
 FORCE="${2:-false}"
 
-echo "🚀 Digstore Bootstrap Installer"
-echo "================================="
+echo "🚀 DigStore Bootstrap Installer"
+echo "=================================="
 echo ""
 
 # Determine platform and installation directory
@@ -55,9 +55,9 @@ TEMP_INSTALLER="/tmp/digstore-installer.$PLATFORM"
 
 echo "Downloading from: $DOWNLOAD_URL"
 if command -v curl >/dev/null 2>&1; then
-    curl -L -o "$TEMP_INSTALLER" "$DOWNLOAD_URL" --user-agent "Digstore-Bootstrap"
+    curl -L -o "$TEMP_INSTALLER" "$DOWNLOAD_URL" --user-agent "DigStore-Bootstrap"
 elif command -v wget >/dev/null 2>&1; then
-    wget -O "$TEMP_INSTALLER" "$DOWNLOAD_URL" --user-agent="Digstore-Bootstrap"
+    wget -O "$TEMP_INSTALLER" "$DOWNLOAD_URL" --user-agent="DigStore-Bootstrap"
 else
     echo "❌ Neither curl nor wget found. Please install one of them."
     exit 1
