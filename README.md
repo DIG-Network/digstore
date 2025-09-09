@@ -442,7 +442,7 @@ digstore layer inspect LAYER_HASH --verify  # Deep inspection
 
 URN Format: `urn:dig:chia:{storeID}[:{rootHash}][/{resourcePath}][#{byteRange}]`
 
-### URN Examples
+### URN Examples 
 
 ```bash
 # Entire store (latest version)
