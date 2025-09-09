@@ -1,6 +1,5 @@
 //! Initialize command implementation
 
-use crate::core::types::Hash;
 use crate::storage::store::Store;
 use anyhow::Result;
 use colored::Colorize;
@@ -8,10 +7,7 @@ use std::env;
 
 /// Execute the init command
 pub fn execute(
-    store_id: Option<String>,
     name: Option<String>,
-    no_compression: bool,
-    chunk_size: u32,
     encryption_key: Option<String>,
 ) -> Result<()> {
     let current_dir = env::current_dir()?;
@@ -32,19 +28,7 @@ pub fn execute(
         );
     }
 
-    // Check if custom store ID was provided
-    let _actual_store_id = if let Some(id_str) = store_id {
-        println!(
-            "  {} Using provided store ID: {}",
-            "•".cyan(),
-            id_str.dimmed()
-        );
-        Hash::from_hex(&id_str)
-            .map_err(|_| anyhow::anyhow!("Invalid store ID format: {}", id_str))?
-    } else {
-        println!("  {} Generating new store ID...", "•".cyan());
-        crate::storage::store::generate_store_id()
-    };
+    println!("  {} Generating new store ID...", "•".cyan());
 
     // Initialize the store
     let store = Store::init(&current_dir)?;
@@ -86,13 +70,7 @@ pub fn execute(
         );
     }
 
-    if !no_compression {
-        println!("  {} Compression: enabled (zstd)", "•".cyan());
-    } else {
-        println!("  {} Compression: disabled", "•".cyan());
-    }
-
-    println!("  {} Chunk size: {}KB", "•".cyan(), chunk_size);
+    println!("  {} Compression: enabled (zstd)", "•".cyan());
 
     println!();
     println!("{}", "Repository initialized".green());

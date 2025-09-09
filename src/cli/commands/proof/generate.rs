@@ -29,9 +29,6 @@ pub struct ProveArgs {
     #[arg(long)]
     pub bytes: Option<String>,
 
-    /// Generate compact proof
-    #[arg(long)]
-    pub compact: bool,
 }
 
 pub fn execute(
@@ -40,7 +37,6 @@ pub fn execute(
     format: String,
     at: Option<String>,
     bytes: Option<String>,
-    compact: bool,
 ) -> Result<()> {
     let args = ProveArgs {
         target,
@@ -48,7 +44,6 @@ pub fn execute(
         format,
         at,
         bytes,
-        compact,
     };
 
     let current_dir = std::env::current_dir()?;
@@ -192,11 +187,7 @@ fn handle_urn_prove(args: &ProveArgs) -> Result<()> {
 fn output_proof(proof: &Proof, args: &ProveArgs) -> Result<()> {
     let proof_data = match args.format.as_str() {
         "json" => {
-            if args.compact {
-                serde_json::to_string(proof)?
-            } else {
-                proof.to_json()?
-            }
+            proof.to_json()?
         },
         "text" => format_proof_as_text(proof),
         "binary" => {

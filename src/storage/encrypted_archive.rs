@@ -46,7 +46,7 @@ impl EncryptedArchive {
             },
         };
 
-        let encrypted_storage = config.crypto.encrypted_storage.unwrap_or(true);
+        let encrypted_storage = true; // Always encrypted
 
         // Check for custom encryption/decryption key from multiple sources:
         // 1. CLI context (for current command)

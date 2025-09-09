@@ -49,8 +49,6 @@ pub struct CoreConfig {
 pub struct CryptoConfig {
     /// Public key for URN transformation (hex encoded)
     pub public_key: Option<String>,
-    /// Enable encrypted storage (always true for zero-knowledge properties)
-    pub encrypted_storage: Option<bool>,
 }
 
 /// Wallet configuration
@@ -78,7 +76,6 @@ pub enum ConfigKey {
     CoreChunkSize,
     CoreCompression,
     CryptoPublicKey,
-    CryptoEncryptedStorage,
     WalletActiveProfile,
     Custom(String),
 }
@@ -92,7 +89,6 @@ impl ConfigKey {
             "core.chunk_size" => Some(ConfigKey::CoreChunkSize),
             "core.compression" => Some(ConfigKey::CoreCompression),
             "crypto.public_key" => Some(ConfigKey::CryptoPublicKey),
-            "crypto.encrypted_storage" => Some(ConfigKey::CryptoEncryptedStorage),
             "wallet.active_profile" => Some(ConfigKey::WalletActiveProfile),
             _ => Some(ConfigKey::Custom(key.to_string())),
         }
@@ -106,7 +102,6 @@ impl ConfigKey {
             ConfigKey::CoreChunkSize => "core.chunk_size",
             ConfigKey::CoreCompression => "core.compression",
             ConfigKey::CryptoPublicKey => "crypto.public_key",
-            ConfigKey::CryptoEncryptedStorage => "crypto.encrypted_storage",
             ConfigKey::WalletActiveProfile => "wallet.active_profile",
             ConfigKey::Custom(key) => key,
         }
@@ -191,9 +186,6 @@ impl GlobalConfig {
                 .public_key
                 .as_ref()
                 .map(|s| ConfigValue::String(s.clone())),
-            ConfigKey::CryptoEncryptedStorage => {
-                self.crypto.encrypted_storage.map(ConfigValue::Boolean)
-            },
             ConfigKey::WalletActiveProfile => self
                 .wallet
                 .active_profile
@@ -268,15 +260,6 @@ impl GlobalConfig {
                     });
                 }
             },
-            ConfigKey::CryptoEncryptedStorage => {
-                if let ConfigValue::Boolean(enabled) = value {
-                    self.crypto.encrypted_storage = Some(enabled);
-                } else {
-                    return Err(DigstoreError::ConfigurationError {
-                        reason: "crypto.encrypted_storage must be a boolean".to_string(),
-                    });
-                }
-            },
             ConfigKey::WalletActiveProfile => {
                 if let ConfigValue::String(profile) = value {
                     self.wallet.active_profile = Some(profile);
@@ -302,7 +285,6 @@ impl GlobalConfig {
             ConfigKey::CoreChunkSize => self.core.chunk_size = None,
             ConfigKey::CoreCompression => self.core.compression = None,
             ConfigKey::CryptoPublicKey => self.crypto.public_key = None,
-            ConfigKey::CryptoEncryptedStorage => self.crypto.encrypted_storage = None,
             ConfigKey::WalletActiveProfile => self.wallet.active_profile = None,
             ConfigKey::Custom(key_name) => {
                 self.custom.remove(key_name);
@@ -331,12 +313,6 @@ impl GlobalConfig {
         }
         if let Some(public_key) = &self.crypto.public_key {
             entries.push(("crypto.public_key".to_string(), public_key.clone()));
-        }
-        if let Some(encrypted_storage) = self.crypto.encrypted_storage {
-            entries.push((
-                "crypto.encrypted_storage".to_string(),
-                encrypted_storage.to_string(),
-            ));
         }
         if let Some(active_profile) = &self.wallet.active_profile {
             entries.push(("wallet.active_profile".to_string(), active_profile.clone()));
@@ -471,7 +447,6 @@ impl Default for GlobalConfig {
             },
             crypto: CryptoConfig {
                 public_key: None,
-                encrypted_storage: Some(true),
             },
             wallet: WalletConfig {
                 active_profile: Some("default".to_string()),

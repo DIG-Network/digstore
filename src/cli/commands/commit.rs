@@ -8,7 +8,6 @@ use colored::Colorize;
 /// Execute the commit command
 pub fn execute(
     message: String,
-    full_layer: bool,
     author: Option<String>,
     date: Option<String>,
     edit: bool,
@@ -59,9 +58,6 @@ pub fn execute(
         message
     };
 
-    if full_layer {
-        println!("  {} Creating full layer (not delta)", "•".cyan());
-    }
 
     // Create the commit
     let commit_id = store.commit(&final_message)?;
@@ -77,8 +73,7 @@ pub fn execute(
             "archive_file": store.archive.path().display().to_string(),
             "layer_id": commit_id.to_hex(),
             "author": author,
-            "date": date,
-            "full_layer": full_layer
+            "date": date
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {

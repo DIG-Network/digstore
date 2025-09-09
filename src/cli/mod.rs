@@ -64,21 +64,9 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize a new repository
     Init {
-        /// Use specific store ID (default: generate random)
-        #[arg(long)]
-        store_id: Option<String>,
-
         /// Repository name
         #[arg(long)]
         name: Option<String>,
-
-        /// Disable compression
-        #[arg(long)]
-        no_compression: bool,
-
-        /// Average chunk size in KB (default: 1024)
-        #[arg(long, default_value = "1024")]
-        chunk_size: u32,
 
         /// Custom encryption key (hex) for truly secret storage - applies to entire store
         #[arg(long)]
@@ -120,10 +108,6 @@ pub enum Commands {
         /// Commit message
         #[arg(short, long)]
         message: String,
-
-        /// Create full layer (not delta)
-        #[arg(long)]
-        full_layer: bool,
 
         /// Set author name
         #[arg(long)]
@@ -186,10 +170,6 @@ pub enum Commands {
         #[arg(long)]
         progress: bool,
 
-        /// Custom decryption key (hex) to override wallet public key
-        #[arg(long)]
-        decryption_key: Option<String>,
-
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -239,31 +219,6 @@ pub enum Commands {
         json: bool,
     },
 
-    /// Display file contents from repository
-    Cat {
-        /// File path or URN
-        path: String,
-
-        /// Show at specific root hash
-        #[arg(long)]
-        at: Option<String>,
-
-        /// Number all output lines
-        #[arg(short, long)]
-        number: bool,
-
-        /// Don't use pager for long output
-        #[arg(long)]
-        no_pager: bool,
-
-        /// Display specific byte range
-        #[arg(long)]
-        bytes: Option<String>,
-
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
 
     /// Generate shell completion scripts
     Completion {
@@ -688,10 +643,6 @@ pub enum ProofCommands {
         /// Prove specific byte range
         #[arg(long)]
         bytes: Option<String>,
-
-        /// Generate compact proof
-        #[arg(long)]
-        compact: bool,
     },
 
     /// Verify a merkle proof

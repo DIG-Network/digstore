@@ -49,7 +49,6 @@ fn main() -> Result<()> {
 
     // Extract custom keys from the command arguments
     let (custom_encryption_key, custom_decryption_key) = match &cli.command {
-        Commands::Get { decryption_key, .. } => (None, decryption_key.clone()),
         Commands::Decrypt { decryption_key, .. } => (None, decryption_key.clone()),
         _ => (None, None),
     };
@@ -94,13 +93,10 @@ fn main() -> Result<()> {
     // Execute the command
     match cli.command {
         Commands::Init {
-            store_id,
             name,
-            no_compression,
-            chunk_size,
             encryption_key,
         } => {
-            cli::commands::init::execute(store_id, name, no_compression, chunk_size, encryption_key)
+            cli::commands::init::execute(name, encryption_key)
         },
         Commands::Add {
             paths,
@@ -115,12 +111,11 @@ fn main() -> Result<()> {
         ),
         Commands::Commit {
             message,
-            full_layer,
             author,
             date,
             edit,
             json,
-        } => cli::commands::commit::execute(message, full_layer, author, date, edit, json),
+        } => cli::commands::commit::execute(message, author, date, edit, json),
         Commands::Status {
             short,
             porcelain,
@@ -134,15 +129,8 @@ fn main() -> Result<()> {
             metadata,
             at,
             progress,
-            decryption_key,
             json,
         } => {
-            // Update CLI context with decryption key before opening stores
-            if let Some(key) = &decryption_key {
-                let mut current_context = CliContext::get().unwrap_or_default();
-                current_context.custom_decryption_key = Some(key.clone());
-                CliContext::set(current_context);
-            }
             cli::commands::get::execute(
                 path,
                 output,
@@ -150,7 +138,6 @@ fn main() -> Result<()> {
                 metadata,
                 at,
                 progress,
-                decryption_key,
                 json,
             )
         },
@@ -168,14 +155,6 @@ fn main() -> Result<()> {
             encryption_key,
             json,
         } => cli::commands::keygen::execute(urn, output, storage_address, encryption_key, json),
-        Commands::Cat {
-            path,
-            at,
-            number,
-            no_pager,
-            bytes,
-            json,
-        } => cli::commands::cat::execute(path, at, number, no_pager, bytes, json),
         Commands::Completion { shell } => cli::commands::completion::execute(shell),
 
         Commands::Staged { command } => match command {
@@ -294,8 +273,7 @@ fn main() -> Result<()> {
                 format,
                 at,
                 bytes,
-                compact,
-            } => cli::commands::proof::execute_generate(target, output, format, at, bytes, compact),
+            } => cli::commands::proof::execute_generate(target, output, format, at, bytes),
             ProofCommands::Verify {
                 proof,
                 target,

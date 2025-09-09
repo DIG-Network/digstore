@@ -2,7 +2,6 @@
 
 // Core commands (top-level)
 pub mod add;
-pub mod cat;
 pub mod commit;
 pub mod completion;
 pub mod config;

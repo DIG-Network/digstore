@@ -428,19 +428,86 @@ impl VersionManager {
         self.install_from_msi_user_level(version, msi_path)
     }
 
-    /// Install from MSI by extracting contents to user versioned directory
+    /// Install from MSI directly to user versioned directory
     fn install_from_msi_user_level(&mut self, version: &str, msi_path: &Path) -> Result<()> {
-        println!("  {} Extracting MSI to versioned directory", "•".cyan());
+        println!("  {} Installing MSI directly to versioned directory", "•".cyan());
         
         let user_install_dir = self.get_version_dir(version);
         fs::create_dir_all(&user_install_dir)?;
         
-        // Create a temporary directory for extraction
+        // Install MSI directly to the versioned directory (not system location)
+        println!("  {} Installing to: {}", "•".cyan(), user_install_dir.display());
+        
+        let install_output = Command::new("msiexec")
+            .args(&[
+                "/i", msi_path.to_str().unwrap(),  // Install the MSI
+                "/quiet", "/norestart",            // Silent installation
+                &format!("INSTALLDIR={}", user_install_dir.display()),  // Target directory
+                &format!("TARGETDIR={}", user_install_dir.display()),   // Alternative target property
+                "ALLUSERS=0",                      // User-level installation
+                "MSIINSTALLPERUSER=1",             // Per-user installation
+            ])
+            .output()
+            .map_err(|e| DigstoreError::ConfigurationError {
+                reason: format!("Failed to run MSI installation: {}", e),
+            })?;
+
+        let binary_path = user_install_dir.join(self.get_binary_name());
+        let mut found = false;
+
+        if install_output.status.success() {
+            // Check if binary was installed to the target directory
+            if binary_path.exists() {
+                found = true;
+            } else {
+                // Check common subdirectories within the install dir
+                let subdirs = ["bin", ".", "digstore"];
+                for subdir in &subdirs {
+                    let alt_path = user_install_dir.join(subdir).join(self.get_binary_name());
+                    if alt_path.exists() {
+                        fs::copy(&alt_path, &binary_path)?;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !found {
+            let stderr = String::from_utf8_lossy(&install_output.stderr);
+            let stdout = String::from_utf8_lossy(&install_output.stdout);
+            
+            // Fallback: Try extraction method if direct installation failed
+            println!("  {} Direct installation failed, trying extraction...", "!".yellow());
+            return self.fallback_msi_extraction(version, msi_path);
+        }
+
+        println!(
+            "  {} Version {} installed to: {}",
+            "✓".green(),
+            version.bright_cyan(),
+            user_install_dir.display().to_string().dimmed()
+        );
+
+        // Clean up any system installations and PATH entries
+        self.cleanup_system_installations()?;
+
+        // Set as active version
+        self.set_active_version(version)?;
+
+        Ok(())
+    }
+
+    /// Fallback MSI extraction method when direct installation fails
+    fn fallback_msi_extraction(&mut self, version: &str, msi_path: &Path) -> Result<()> {
+        println!("  {} Using MSI extraction method...", "•".cyan());
+        
+        let user_install_dir = self.get_version_dir(version);
         let temp_extract_dir = std::env::temp_dir().join(format!("digstore_extract_{}", version));
         fs::create_dir_all(&temp_extract_dir)?;
         
-        // Extract MSI contents using msiexec
-        let output = Command::new("msiexec")
+        // Extract MSI contents using administrative install
+        let extract_output = Command::new("msiexec")
             .args(&[
                 "/a", msi_path.to_str().unwrap(),  // Administrative install (extract only)
                 "/quiet",
@@ -451,31 +518,19 @@ impl VersionManager {
                 reason: format!("Failed to extract MSI: {}", e),
             })?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            
-            // Cleanup temp directory
-            let _ = fs::remove_dir_all(&temp_extract_dir);
-            
-            return Err(DigstoreError::ConfigurationError {
-                reason: format!("MSI extraction failed. Stderr: {}, Stdout: {}", stderr, stdout),
-            });
-        }
-
-        // Find the digstore.exe in the extracted files
         let binary_path = user_install_dir.join(self.get_binary_name());
         let mut found = false;
-        
-        // Search for digstore.exe in the extracted directory recursively
-        found = self.find_and_copy_binary(&temp_extract_dir, &binary_path)?;
-        
+
+        if extract_output.status.success() {
+            found = self.find_and_copy_binary(&temp_extract_dir, &binary_path)?;
+        }
+
         // Cleanup temp directory
         let _ = fs::remove_dir_all(&temp_extract_dir);
-        
+
         if !found {
             return Err(DigstoreError::ConfigurationError {
-                reason: format!("Could not find digstore.exe in MSI contents"),
+                reason: format!("Could not extract digstore.exe from MSI"),
             });
         }
 
@@ -486,8 +541,42 @@ impl VersionManager {
             user_install_dir.display().to_string().dimmed()
         );
 
-        // Set as active version
-        self.set_active_version(version)?;
+        Ok(())
+    }
+
+    /// Clean up system installations and PATH entries
+    fn cleanup_system_installations(&self) -> Result<()> {
+        println!("  {} Cleaning up system installations...", "•".cyan());
+        
+        // Remove system binaries
+        let system_locations = [
+            PathBuf::from("C:\\Program Files (x86)\\dig-network\\digstore.exe"),
+            PathBuf::from("C:\\Program Files\\dig-network\\digstore.exe"),
+            PathBuf::from("C:\\Program Files (x86)\\DIG Network\\Digstore\\digstore.exe"),
+            PathBuf::from("C:\\Program Files\\DIG Network\\Digstore\\digstore.exe"),
+        ];
+
+        let mut removed_any = false;
+        for system_path in &system_locations {
+            if system_path.exists() {
+                println!("  {} Removing system installation: {}", "•".cyan(), system_path.display());
+                if fs::remove_file(system_path).is_ok() {
+                    removed_any = true;
+                    
+                    // Try to remove parent directory if empty
+                    if let Some(parent) = system_path.parent() {
+                        let _ = fs::remove_dir(parent);
+                    }
+                }
+            }
+        }
+
+        if removed_any {
+            println!("  {} Removed conflicting system installations", "✓".green());
+        }
+
+        // Clean up PATH entries
+        self.cleanup_system_path_entries()?;
 
         Ok(())
     }
@@ -626,6 +715,63 @@ impl VersionManager {
             println!("     export PATH=\"{}:$PATH\"", install_dir.display());
         }
 
+        Ok(())
+    }
+
+    /// Clean up system PATH entries that point to old installation locations
+    fn cleanup_system_path_entries(&self) -> Result<()> {
+        println!("  {} Cleaning up old PATH entries...", "•".cyan());
+        
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let path_entries: Vec<&str> = current_path.split(';').collect();
+        
+        // System locations to remove from PATH
+        let system_locations_to_remove = [
+            "C:\\Program Files (x86)\\dig-network",
+            "C:\\Program Files\\dig-network",
+            "C:\\Program Files (x86)\\DIG Network\\Digstore",
+            "C:\\Program Files\\DIG Network\\Digstore",
+        ];
+        
+        let original_count = path_entries.len();
+        
+        // Filter out old system locations
+        let cleaned_entries: Vec<&str> = path_entries
+            .into_iter()
+            .filter(|entry| {
+                let entry_trimmed = entry.trim();
+                !system_locations_to_remove.iter().any(|&sys_loc| entry_trimmed == sys_loc)
+            })
+            .collect();
+        
+        // Check if any entries were removed
+        if cleaned_entries.len() < original_count {
+            let new_path = cleaned_entries.join(";");
+            
+            // Update PATH to remove old system entries
+            let output = Command::new("setx")
+                .args(&["PATH", &new_path])
+                .output()
+                .map_err(|e| DigstoreError::ConfigurationError {
+                    reason: format!("Failed to update PATH: {}", e),
+                })?;
+            
+            if output.status.success() {
+                println!("  {} Removed old system PATH entries", "✓".green());
+                
+                // Also update current environment
+                std::env::set_var("PATH", &new_path);
+            } else {
+                println!("  {} Could not update PATH automatically", "!".yellow());
+                println!("  {} You may need to manually remove old PATH entries:", "→".cyan());
+                for location in &system_locations_to_remove {
+                    println!("    Remove: {}", location);
+                }
+            }
+        } else {
+            println!("  {} No old PATH entries found to clean up", "✓".green());
+        }
+        
         Ok(())
     }
 

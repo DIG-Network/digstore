@@ -190,25 +190,29 @@ fn install_from_msi(msi_path: &str) -> Result<()> {
         });
     }
     
-    // Extract version from MSI filename or ask user
+    // Extract version from MSI filename
     let version = if let Some(filename) = msi_file.file_name().and_then(|n| n.to_str()) {
-        // Try to extract version from filename like "digstore-windows-x64-v0.4.4.msi"
-        if let Some(start) = filename.find("v") {
+        // Try different patterns: "digstore-windows-x64.msi" (no version) or with version
+        if filename.contains("digstore-windows-x64.msi") {
+            // This is likely the latest version from GitHub releases
+            "latest".to_string()
+        } else if let Some(start) = filename.find("v") {
             if let Some(end) = filename[start..].find(".msi") {
                 let version_part = &filename[start + 1..start + end];
                 if version_part.chars().all(|c| c.is_ascii_alphanumeric() || c == '.') {
                     version_part.to_string()
                 } else {
-                    "unknown".to_string()
+                    "latest".to_string()
                 }
             } else {
-                "unknown".to_string()
+                "latest".to_string()
             }
         } else {
-            "unknown".to_string()
+            // Default to latest for standard GitHub release MSI files
+            "latest".to_string()
         }
     } else {
-        "unknown".to_string()
+        "latest".to_string()
     };
     
     let mut vm = VersionManager::new()?;
