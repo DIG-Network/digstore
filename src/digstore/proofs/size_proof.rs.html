@@ -577,8 +577,8 @@
 <a href=#577 id=577 data-nosnippet>577</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">1</span>; <span class="number">32</span>]),
 <a href=#578 id=578 data-nosnippet>578</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
 <a href=#579 id=579 data-nosnippet>579</a>            <span class="number">600000</span>,
-<a href=#580 id=580 data-nosnippet>580</a>            <span class="string">"test_publisher_key"</span>,
-<a href=#581 id=581 data-nosnippet>581</a>        )
+<a href=#580 id=580 data-nosnippet>580</a>            <span class="kw-2">&amp;</span>hex::encode(<span class="macro">vec!</span>[<span class="number">4</span>; <span class="number">32</span>]), <span class="comment">// Use the same hex-encoded key as in the proof
+<a href=#581 id=581 data-nosnippet>581</a>        </span>)
 <a href=#582 id=582 data-nosnippet>582</a>        .unwrap();
 <a href=#583 id=583 data-nosnippet>583</a>        <span class="macro">assert!</span>(result);
 <a href=#584 id=584 data-nosnippet>584</a>
@@ -588,8 +588,8 @@
 <a href=#588 id=588 data-nosnippet>588</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">1</span>; <span class="number">32</span>]),
 <a href=#589 id=589 data-nosnippet>589</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
 <a href=#590 id=590 data-nosnippet>590</a>            <span class="number">500000</span>,
-<a href=#591 id=591 data-nosnippet>591</a>            <span class="string">"test_publisher_key"</span>,
-<a href=#592 id=592 data-nosnippet>592</a>        )
+<a href=#591 id=591 data-nosnippet>591</a>            <span class="kw-2">&amp;</span>hex::encode(<span class="macro">vec!</span>[<span class="number">4</span>; <span class="number">32</span>]), <span class="comment">// Use the same hex-encoded key as in the proof
+<a href=#592 id=592 data-nosnippet>592</a>        </span>)
 <a href=#593 id=593 data-nosnippet>593</a>        .unwrap();
 <a href=#594 id=594 data-nosnippet>594</a>        <span class="macro">assert!</span>(!result);
 <a href=#595 id=595 data-nosnippet>595</a>
@@ -599,8 +599,8 @@
 <a href=#599 id=599 data-nosnippet>599</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">99</span>; <span class="number">32</span>]),
 <a href=#600 id=600 data-nosnippet>600</a>            <span class="kw-2">&amp;</span>Hash::from_bytes([<span class="number">2</span>; <span class="number">32</span>]),
 <a href=#601 id=601 data-nosnippet>601</a>            <span class="number">600000</span>,
-<a href=#602 id=602 data-nosnippet>602</a>            <span class="string">"test_publisher_key"</span>,
-<a href=#603 id=603 data-nosnippet>603</a>        )
+<a href=#602 id=602 data-nosnippet>602</a>            <span class="kw-2">&amp;</span>hex::encode(<span class="macro">vec!</span>[<span class="number">4</span>; <span class="number">32</span>]), <span class="comment">// Use the same hex-encoded key as in the proof
+<a href=#603 id=603 data-nosnippet>603</a>        </span>)
 <a href=#604 id=604 data-nosnippet>604</a>        .unwrap();
 <a href=#605 id=605 data-nosnippet>605</a>        <span class="macro">assert!</span>(!result);
 <a href=#606 id=606 data-nosnippet>606</a>

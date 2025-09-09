@@ -162,14 +162,17 @@
 <a href=#162 id=162 data-nosnippet>162</a><span class="doccomment">/// Download and install update using nvm-style versioned installation
 <a href=#163 id=163 data-nosnippet>163</a></span><span class="kw">fn </span>download_and_install_update_versioned(download_url: <span class="kw-2">&amp;</span>str, version: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#164 id=164 data-nosnippet>164</a>    <span class="macro">println!</span>(<span class="string">"{}"</span>, <span class="string">"Downloading update..."</span>.bright_blue());
-<a href=#165 id=165 data-nosnippet>165</a>    <span class="macro">println!</span>(<span class="string">"{}"</span>, <span class="string">"Installing with nvm-style version management..."</span>.bright_green());
-<a href=#166 id=166 data-nosnippet>166</a>
-<a href=#167 id=167 data-nosnippet>167</a>    <span class="comment">// Use version manager's nvm-style installation
-<a href=#168 id=168 data-nosnippet>168</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>vm = VersionManager::new()
-<a href=#169 id=169 data-nosnippet>169</a>        .map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"Failed to create version manager: {}"</span>, e))<span class="question-mark">?</span>;
-<a href=#170 id=170 data-nosnippet>170</a>    
-<a href=#171 id=171 data-nosnippet>171</a>    vm.install_version_from_url(version, download_url)
-<a href=#172 id=172 data-nosnippet>172</a>        .map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"Installation failed: {}"</span>, e))<span class="question-mark">?</span>;
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="macro">println!</span>(
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="string">"{}"</span>,
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="string">"Installing with nvm-style version management..."</span>.bright_green()
+<a href=#168 id=168 data-nosnippet>168</a>    );
+<a href=#169 id=169 data-nosnippet>169</a>
+<a href=#170 id=170 data-nosnippet>170</a>    <span class="comment">// Use version manager's nvm-style installation
+<a href=#171 id=171 data-nosnippet>171</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>vm = VersionManager::new()
+<a href=#172 id=172 data-nosnippet>172</a>        .map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"Failed to create version manager: {}"</span>, e))<span class="question-mark">?</span>;
 <a href=#173 id=173 data-nosnippet>173</a>
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="prelude-val">Ok</span>(())
-<a href=#175 id=175 data-nosnippet>175</a>}</code></pre></div></section></main></body></html>
+<a href=#174 id=174 data-nosnippet>174</a>    vm.install_version_from_url(version, download_url)
+<a href=#175 id=175 data-nosnippet>175</a>        .map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"Installation failed: {}"</span>, e))<span class="question-mark">?</span>;
+<a href=#176 id=176 data-nosnippet>176</a>
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="prelude-val">Ok</span>(())
+<a href=#178 id=178 data-nosnippet>178</a>}</code></pre></div></section></main></body></html>
