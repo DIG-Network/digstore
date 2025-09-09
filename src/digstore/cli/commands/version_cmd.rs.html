@@ -427,34 +427,54 @@
 <a href=#427 id=427 data-nosnippet>427</a>    
 <a href=#428 id=428 data-nosnippet>428</a>    <span class="kw">if </span>output.status.success() {
 <a href=#429 id=429 data-nosnippet>429</a>        <span class="macro">println!</span>(<span class="string">"  {} PATH updated successfully"</span>, <span class="string">"✓"</span>.green());
-<a href=#430 id=430 data-nosnippet>430</a>        <span class="macro">println!</span>();
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">println!</span>(<span class="string">"{}"</span>, <span class="string">"✓ PATH ordering fixed!"</span>.green().bold());
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="macro">println!</span>(<span class="string">"  {} Restart your terminal and run: {}"</span>, <span class="string">"→"</span>.cyan(), <span class="string">"digstore --version"</span>.bright_green());
-<a href=#433 id=433 data-nosnippet>433</a>        <span class="macro">println!</span>(<span class="string">"  {} The version-managed binary should now take precedence"</span>, <span class="string">"→"</span>.cyan());
-<a href=#434 id=434 data-nosnippet>434</a>    } <span class="kw">else </span>{
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">let </span>stderr = String::from_utf8_lossy(<span class="kw-2">&amp;</span>output.stderr);
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(DigstoreError::ConfigurationError {
-<a href=#437 id=437 data-nosnippet>437</a>            reason: <span class="macro">format!</span>(<span class="string">"Failed to update PATH: {}"</span>, stderr),
-<a href=#438 id=438 data-nosnippet>438</a>        });
-<a href=#439 id=439 data-nosnippet>439</a>    }
-<a href=#440 id=440 data-nosnippet>440</a>    
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="prelude-val">Ok</span>(())
-<a href=#442 id=442 data-nosnippet>442</a>}
-<a href=#443 id=443 data-nosnippet>443</a>
-<a href=#444 id=444 data-nosnippet>444</a><span class="doccomment">/// Show current active version from version manager
-<a href=#445 id=445 data-nosnippet>445</a></span><span class="kw">fn </span>show_current_version() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#446 id=446 data-nosnippet>446</a>    <span class="kw">let </span>vm = VersionManager::new()<span class="question-mark">?</span>;
-<a href=#447 id=447 data-nosnippet>447</a>    <span class="kw">let </span>versions = vm.list_versions()<span class="question-mark">?</span>;
-<a href=#448 id=448 data-nosnippet>448</a>    
-<a href=#449 id=449 data-nosnippet>449</a>    <span class="kw">if </span>versions.is_empty() {
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="macro">println!</span>(<span class="string">"{}"</span>, <span class="string">"No versions managed by version manager"</span>.yellow());
-<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#452 id=452 data-nosnippet>452</a>    }
-<a href=#453 id=453 data-nosnippet>453</a>    
-<a href=#454 id=454 data-nosnippet>454</a>    <span class="comment">// The version manager should track the active version
-<a href=#455 id=455 data-nosnippet>455</a>    // For now, just show the running version
-<a href=#456 id=456 data-nosnippet>456</a>    </span><span class="kw">let </span>current_version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>);
-<a href=#457 id=457 data-nosnippet>457</a>    <span class="macro">println!</span>(<span class="string">"Current version: {}"</span>, current_version.bright_cyan());
-<a href=#458 id=458 data-nosnippet>458</a>    
-<a href=#459 id=459 data-nosnippet>459</a>    <span class="prelude-val">Ok</span>(())
-<a href=#460 id=460 data-nosnippet>460</a>}</code></pre></div></section></main></body></html>
+<a href=#430 id=430 data-nosnippet>430</a>        
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="comment">// Also update the current environment PATH
+<a href=#432 id=432 data-nosnippet>432</a>        </span>std::env::set_var(<span class="string">"PATH"</span>, <span class="kw-2">&amp;</span>new_path);
+<a href=#433 id=433 data-nosnippet>433</a>        <span class="macro">println!</span>(<span class="string">"  {} Current environment PATH refreshed"</span>, <span class="string">"✓"</span>.green());
+<a href=#434 id=434 data-nosnippet>434</a>        
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="macro">println!</span>();
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">println!</span>(<span class="string">"{}"</span>, <span class="string">"✓ PATH ordering fixed!"</span>.green().bold());
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="macro">println!</span>(<span class="string">"  {} Testing new PATH..."</span>, <span class="string">"→"</span>.cyan());
+<a href=#438 id=438 data-nosnippet>438</a>        
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="comment">// Test the new PATH immediately
+<a href=#440 id=440 data-nosnippet>440</a>        </span><span class="kw">match </span>std::process::Command::new(<span class="string">"digstore"</span>).arg(<span class="string">"--version"</span>).output() {
+<a href=#441 id=441 data-nosnippet>441</a>            <span class="prelude-val">Ok</span>(test_output) <span class="kw">if </span>test_output.status.success() =&gt; {
+<a href=#442 id=442 data-nosnippet>442</a>                <span class="kw">let </span>version_output = String::from_utf8_lossy(<span class="kw-2">&amp;</span>test_output.stdout);
+<a href=#443 id=443 data-nosnippet>443</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(version) = version_output.lines().next().and_then(|line| line.split_whitespace().nth(<span class="number">1</span>)) {
+<a href=#444 id=444 data-nosnippet>444</a>                    <span class="macro">println!</span>(<span class="string">"  {} Now using version: {}"</span>, <span class="string">"✓"</span>.green(), version.bright_cyan());
+<a href=#445 id=445 data-nosnippet>445</a>                } <span class="kw">else </span>{
+<a href=#446 id=446 data-nosnippet>446</a>                    <span class="macro">println!</span>(<span class="string">"  {} digstore is now available in PATH"</span>, <span class="string">"✓"</span>.green());
+<a href=#447 id=447 data-nosnippet>447</a>                }
+<a href=#448 id=448 data-nosnippet>448</a>            }
+<a href=#449 id=449 data-nosnippet>449</a>            <span class="kw">_ </span>=&gt; {
+<a href=#450 id=450 data-nosnippet>450</a>                <span class="macro">println!</span>(<span class="string">"  {} PATH updated, but may need terminal restart"</span>, <span class="string">"!"</span>.yellow());
+<a href=#451 id=451 data-nosnippet>451</a>                <span class="macro">println!</span>(<span class="string">"  {} Run: {}"</span>, <span class="string">"→"</span>.cyan(), <span class="string">"digstore --version"</span>.bright_green());
+<a href=#452 id=452 data-nosnippet>452</a>            }
+<a href=#453 id=453 data-nosnippet>453</a>        }
+<a href=#454 id=454 data-nosnippet>454</a>    } <span class="kw">else </span>{
+<a href=#455 id=455 data-nosnippet>455</a>        <span class="kw">let </span>stderr = String::from_utf8_lossy(<span class="kw-2">&amp;</span>output.stderr);
+<a href=#456 id=456 data-nosnippet>456</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(DigstoreError::ConfigurationError {
+<a href=#457 id=457 data-nosnippet>457</a>            reason: <span class="macro">format!</span>(<span class="string">"Failed to update PATH: {}"</span>, stderr),
+<a href=#458 id=458 data-nosnippet>458</a>        });
+<a href=#459 id=459 data-nosnippet>459</a>    }
+<a href=#460 id=460 data-nosnippet>460</a>    
+<a href=#461 id=461 data-nosnippet>461</a>    <span class="prelude-val">Ok</span>(())
+<a href=#462 id=462 data-nosnippet>462</a>}
+<a href=#463 id=463 data-nosnippet>463</a>
+<a href=#464 id=464 data-nosnippet>464</a><span class="doccomment">/// Show current active version from version manager
+<a href=#465 id=465 data-nosnippet>465</a></span><span class="kw">fn </span>show_current_version() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>vm = VersionManager::new()<span class="question-mark">?</span>;
+<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">let </span>versions = vm.list_versions()<span class="question-mark">?</span>;
+<a href=#468 id=468 data-nosnippet>468</a>    
+<a href=#469 id=469 data-nosnippet>469</a>    <span class="kw">if </span>versions.is_empty() {
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="macro">println!</span>(<span class="string">"{}"</span>, <span class="string">"No versions managed by version manager"</span>.yellow());
+<a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#472 id=472 data-nosnippet>472</a>    }
+<a href=#473 id=473 data-nosnippet>473</a>    
+<a href=#474 id=474 data-nosnippet>474</a>    <span class="comment">// The version manager should track the active version
+<a href=#475 id=475 data-nosnippet>475</a>    // For now, just show the running version
+<a href=#476 id=476 data-nosnippet>476</a>    </span><span class="kw">let </span>current_version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>);
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="macro">println!</span>(<span class="string">"Current version: {}"</span>, current_version.bright_cyan());
+<a href=#478 id=478 data-nosnippet>478</a>    
+<a href=#479 id=479 data-nosnippet>479</a>    <span class="prelude-val">Ok</span>(())
+<a href=#480 id=480 data-nosnippet>480</a>}</code></pre></div></section></main></body></html>
