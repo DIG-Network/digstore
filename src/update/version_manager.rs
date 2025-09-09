@@ -91,11 +91,32 @@ impl VersionManager {
         self.save_active_version(version)?;
         self.active_version = Some(version.to_string());
 
+        // Refresh current environment PATH
+        self.refresh_current_environment()?;
+
         println!(
             "  {} Active version set to: {}",
             "✓".green(),
             version.bright_cyan()
         );
+
+        // Test if the version change is immediately effective
+        println!("  {} Testing immediate availability...", "→".cyan());
+        match std::process::Command::new("digstore").arg("--version").output() {
+            Ok(test_output) if test_output.status.success() => {
+                let version_output = String::from_utf8_lossy(&test_output.stdout);
+                if let Some(detected_version) = version_output.lines().next().and_then(|line| line.split_whitespace().nth(1)) {
+                    if detected_version == version {
+                        println!("  {} Version {} is now immediately available!", "✓".green(), detected_version.bright_cyan());
+                    } else {
+                        println!("  {} Currently using version {} (restart terminal for {})", "!".yellow(), detected_version, version);
+                    }
+                }
+            }
+            _ => {
+                println!("  {} Version available after terminal restart", "→".cyan());
+            }
+        }
 
         Ok(())
     }
@@ -490,6 +511,33 @@ impl VersionManager {
             }
         }
         Ok(false)
+    }
+
+    /// Refresh the current environment PATH to include version-managed directory
+    pub fn refresh_current_environment(&self) -> Result<()> {
+        let link_path = self.get_active_link_path()?;
+        let bin_dir = link_path.parent().unwrap();
+        let bin_dir_str = bin_dir.to_string_lossy();
+        
+        // Get current PATH
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        
+        // Check if our directory is already first
+        if current_path.starts_with(&format!("{};", bin_dir_str)) {
+            return Ok(()); // Already first
+        }
+        
+        // Remove existing occurrence and add to front
+        let path_entries: Vec<&str> = current_path.split(';').collect();
+        let filtered_entries: Vec<&str> = path_entries
+            .into_iter()
+            .filter(|entry| entry.trim() != bin_dir_str)
+            .collect();
+        
+        let new_path = format!("{};{}", bin_dir_str, filtered_entries.join(";"));
+        std::env::set_var("PATH", &new_path);
+        
+        Ok(())
     }
 
     /// Check if we have administrator privileges

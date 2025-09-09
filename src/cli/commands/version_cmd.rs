@@ -427,10 +427,30 @@ fn fix_path_ordering_automatically() -> Result<()> {
     
     if output.status.success() {
         println!("  {} PATH updated successfully", "✓".green());
+        
+        // Also update the current environment PATH
+        std::env::set_var("PATH", &new_path);
+        println!("  {} Current environment PATH refreshed", "✓".green());
+        
         println!();
         println!("{}", "✓ PATH ordering fixed!".green().bold());
-        println!("  {} Restart your terminal and run: {}", "→".cyan(), "digstore --version".bright_green());
-        println!("  {} The version-managed binary should now take precedence", "→".cyan());
+        println!("  {} Testing new PATH...", "→".cyan());
+        
+        // Test the new PATH immediately
+        match std::process::Command::new("digstore").arg("--version").output() {
+            Ok(test_output) if test_output.status.success() => {
+                let version_output = String::from_utf8_lossy(&test_output.stdout);
+                if let Some(version) = version_output.lines().next().and_then(|line| line.split_whitespace().nth(1)) {
+                    println!("  {} Now using version: {}", "✓".green(), version.bright_cyan());
+                } else {
+                    println!("  {} digstore is now available in PATH", "✓".green());
+                }
+            }
+            _ => {
+                println!("  {} PATH updated, but may need terminal restart", "!".yellow());
+                println!("  {} Run: {}", "→".cyan(), "digstore --version".bright_green());
+            }
+        }
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(DigstoreError::ConfigurationError {
