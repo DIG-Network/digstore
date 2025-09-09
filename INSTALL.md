@@ -4,14 +4,14 @@
 
 ### Windows
 ```powershell
-# Run in PowerShell as Administrator
-iex (iwr -Uri "https://raw.githubusercontent.com/DIG-Network/digstore/main/install.ps1").Content
+# Run in PowerShell
+irm https://github.com/DIG-Network/digstore/releases/latest/download/install.ps1 | iex
 ```
 
 ### Linux/macOS
 ```bash
 # Run in terminal
-curl -fsSL https://raw.githubusercontent.com/DIG-Network/digstore/main/install.sh | bash
+curl -fsSL https://github.com/DIG-Network/digstore/releases/latest/download/install.sh | bash
 ```
 
 ## What the Bootstrap Installer Does

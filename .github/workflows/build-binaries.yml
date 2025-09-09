@@ -1,0 +1,416 @@
+name: Build Binaries
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  PROJECT_NAME: digstore
+  PROJECT_DESC: "DigStore - Content-addressable storage system with Git-like semantics and zero-knowledge properties"
+  PROJECT_AUTH: "DIG Network"
+  PROJECT_HOMEPAGE: "https://github.com/${{ github.repository }}"
+
+jobs:
+  build-windows:
+    name: Build Windows Binary
+    runs-on: windows-latest
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '.')
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate version consistency
+      id: version
+      run: |
+        # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
+        $COMMIT_MSG = "${{ github.event.head_commit.message }}"
+        $COMMIT_VERSION = [regex]::Match($COMMIT_MSG, '[0-9]+\.[0-9]+\.[0-9]+').Value
+        Write-Host "Version in commit message: $COMMIT_VERSION"
+        
+        if ([string]::IsNullOrEmpty($COMMIT_VERSION)) {
+          Write-Host "No version found in commit message, skipping"
+          exit 1
+        }
+        
+        # Check that Cargo.toml version matches commit message
+        $CARGO_VERSION = (Select-String -Path "Cargo.toml" -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+        Write-Host "Version in Cargo.toml: $CARGO_VERSION"
+        
+        if ($CARGO_VERSION -ne $COMMIT_VERSION) {
+          Write-Host "ERROR: Version mismatch!"
+          Write-Host "  Commit message version: $COMMIT_VERSION"
+          Write-Host "  Cargo.toml version: $CARGO_VERSION"
+          Write-Host "Please update Cargo.toml version to match commit message before releasing."
+          exit 1
+        }
+        
+        Write-Host "✓ Version consistency validated: $COMMIT_VERSION"
+        echo "version=$COMMIT_VERSION" >> $env:GITHUB_OUTPUT
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Release Binary
+      run: |
+        # The build.rs script will create digstore.rc and embed the icon
+        cargo build --release
+        
+        # Verify the binary was created
+        if (Test-Path "target\release\digstore.exe") {
+          $exe = Get-Item "target\release\digstore.exe"
+          Write-Host "Binary created successfully: $($exe.Length) bytes"
+          
+          # Test the binary
+          & "target\release\digstore.exe" --version
+        } else {
+          Write-Host "ERROR: Binary not created"
+          exit 1
+        }
+
+    - name: Create Windows Release Package
+      run: |
+        mkdir -p release-assets
+        
+        # Copy binary with version-specific name
+        $VERSION = "${{ steps.version.outputs.version }}"
+        cp "target\release\digstore.exe" "release-assets\digstore-windows-x64-v$VERSION.exe"
+        
+        # Create checksum
+        $HASH = (Get-FileHash "release-assets\digstore-windows-x64-v$VERSION.exe" -Algorithm SHA256).Hash.ToLower()
+        "$HASH  digstore-windows-x64-v$VERSION.exe" | Out-File -FilePath "release-assets\digstore-windows-x64-v$VERSION.exe.sha256" -Encoding ASCII
+        
+        Write-Host "Windows release package created:"
+        Get-ChildItem "release-assets" | Format-Table Name, Length
+
+    - name: Upload Windows Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: digstore-windows-x64
+        path: |
+          release-assets/digstore-windows-x64-v${{ steps.version.outputs.version }}.exe
+          release-assets/digstore-windows-x64-v${{ steps.version.outputs.version }}.exe.sha256
+        retention-days: 30
+
+  build-macos:
+    name: Build macOS Binary
+    runs-on: macos-latest
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '.')
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate version consistency
+      id: version
+      run: |
+        # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        COMMIT_VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo "Version in commit message: $COMMIT_VERSION"
+        
+        if [ -z "$COMMIT_VERSION" ]; then
+          echo "No version found in commit message, skipping"
+          exit 1
+        fi
+        
+        # Check that Cargo.toml version matches commit message
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+        echo "Version in Cargo.toml: $CARGO_VERSION"
+        
+        if [ "$CARGO_VERSION" != "$COMMIT_VERSION" ]; then
+          echo "ERROR: Version mismatch!"
+          echo "  Commit message version: $COMMIT_VERSION"
+          echo "  Cargo.toml version: $CARGO_VERSION"
+          echo "Please update Cargo.toml version to match commit message before releasing."
+          exit 1
+        fi
+        
+        echo "✓ Version consistency validated: $COMMIT_VERSION"
+        echo "version=$COMMIT_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Universal Binary
+      run: |
+        # Add both targets for cross-compilation
+        rustup target add x86_64-apple-darwin
+        rustup target add aarch64-apple-darwin
+        
+        # Build for both architectures
+        cargo build --release --target x86_64-apple-darwin
+        cargo build --release --target aarch64-apple-darwin
+        
+        # Create universal binary
+        mkdir -p target/release
+        lipo -create -output target/release/digstore \
+          target/x86_64-apple-darwin/release/digstore \
+          target/aarch64-apple-darwin/release/digstore
+          
+        # Test the binary
+        ./target/release/digstore --version
+
+    - name: Create macOS Release Package
+      run: |
+        mkdir -p release-assets
+        
+        # Copy binary with version-specific name
+        VERSION="${{ steps.version.outputs.version }}"
+        cp target/release/digstore "release-assets/digstore-macos-universal-v$VERSION"
+        chmod +x "release-assets/digstore-macos-universal-v$VERSION"
+        
+        # Create checksum
+        HASH=$(shasum -a 256 "release-assets/digstore-macos-universal-v$VERSION" | cut -d' ' -f1)
+        echo "$HASH  digstore-macos-universal-v$VERSION" > "release-assets/digstore-macos-universal-v$VERSION.sha256"
+        
+        echo "macOS release package created:"
+        ls -la release-assets/
+
+    - name: Upload macOS Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: digstore-macos-universal
+        path: |
+          release-assets/digstore-macos-universal-v${{ steps.version.outputs.version }}
+          release-assets/digstore-macos-universal-v${{ steps.version.outputs.version }}.sha256
+        retention-days: 30
+
+  build-linux:
+    name: Build Linux Binary
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '.')
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate version consistency
+      id: version
+      run: |
+        # Extract version from commit message (e.g., "Release 1.2.3" -> "1.2.3")
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        COMMIT_VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo "Version in commit message: $COMMIT_VERSION"
+        
+        if [ -z "$COMMIT_VERSION" ]; then
+          echo "No version found in commit message, skipping"
+          exit 1
+        fi
+        
+        # Check that Cargo.toml version matches commit message
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+        echo "Version in Cargo.toml: $CARGO_VERSION"
+        
+        if [ "$CARGO_VERSION" != "$COMMIT_VERSION" ]; then
+          echo "ERROR: Version mismatch!"
+          echo "  Commit message version: $COMMIT_VERSION"
+          echo "  Cargo.toml version: $CARGO_VERSION"
+          echo "Please update Cargo.toml version to match commit message before releasing."
+          exit 1
+        fi
+        
+        echo "✓ Version consistency validated: $COMMIT_VERSION"
+        echo "version=$COMMIT_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Release Binary
+      run: |
+        cargo build --release
+        
+        # Test the binary
+        ./target/release/digstore --version
+
+    - name: Create Linux Release Package
+      run: |
+        mkdir -p release-assets
+        
+        # Copy binary with version-specific name
+        VERSION="${{ steps.version.outputs.version }}"
+        cp target/release/digstore "release-assets/digstore-linux-x64-v$VERSION"
+        chmod +x "release-assets/digstore-linux-x64-v$VERSION"
+        
+        # Create checksum
+        HASH=$(sha256sum "release-assets/digstore-linux-x64-v$VERSION" | cut -d' ' -f1)
+        echo "$HASH  digstore-linux-x64-v$VERSION" > "release-assets/digstore-linux-x64-v$VERSION.sha256"
+        
+        echo "Linux release package created:"
+        ls -la release-assets/
+
+    - name: Upload Linux Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: digstore-linux-x64
+        path: |
+          release-assets/digstore-linux-x64-v${{ steps.version.outputs.version }}
+          release-assets/digstore-linux-x64-v${{ steps.version.outputs.version }}.sha256
+        retention-days: 30
+
+  create-release:
+    name: Create Release and Upload Assets
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-macos, build-linux]
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '.')
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate version consistency
+      id: version
+      run: |
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        COMMIT_VERSION=$(echo "$COMMIT_MSG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        
+        if [ -z "$COMMIT_VERSION" ]; then
+          echo "No version found in commit message"
+          exit 1
+        fi
+        
+        # Check that Cargo.toml version matches commit message
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+        
+        if [ "$CARGO_VERSION" != "$COMMIT_VERSION" ]; then
+          echo "ERROR: Version mismatch! Commit: $COMMIT_VERSION, Cargo.toml: $CARGO_VERSION"
+          exit 1
+        fi
+        
+        echo "version=$COMMIT_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts/
+
+    - name: Prepare Release Assets
+      run: |
+        mkdir -p ./release-assets/
+        
+        # Copy all binary files and checksums
+        find ./artifacts/ -type f \( -name "digstore-*" -o -name "*.sha256" \) -exec cp {} ./release-assets/ \;
+        
+        cd ./release-assets/
+        
+        # Generate master checksums file
+        echo "# DigStore v${{ steps.version.outputs.version }} - SHA256 Checksums" > checksums.txt
+        echo "# Generated on $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> checksums.txt
+        echo "" >> checksums.txt
+        
+        for file in digstore-*; do
+          if [ -f "$file" ] && [[ ! "$file" =~ \.sha256$ ]]; then
+            CHECKSUM=$(sha256sum "$file" | cut -d' ' -f1)
+            echo "$CHECKSUM  $file" >> checksums.txt
+          fi
+        done
+        
+        echo "Release assets prepared:"
+        ls -la
+
+    - name: Upload Bootstrap Installers
+      run: |
+        # Copy bootstrap installers to release assets
+        cp install.ps1 ./release-assets/
+        cp install.sh ./release-assets/
+        
+        # Make install.sh executable
+        chmod +x ./release-assets/install.sh
+
+    - name: Create GitHub Release
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        # Create versioned release
+        gh release create "v$VERSION" \
+          --title "DigStore v$VERSION" \
+          --notes "## DigStore v$VERSION
+
+        ### Quick Install
+
+        **Windows (PowerShell):**
+        \`\`\`powershell
+        irm https://github.com/DIG-Network/digstore/releases/download/v$VERSION/install.ps1 | iex
+        \`\`\`
+
+        **Linux/macOS (Bash):**
+        \`\`\`bash
+        curl -fsSL https://github.com/DIG-Network/digstore/releases/download/v$VERSION/install.sh | bash
+        \`\`\`
+
+        ### Manual Downloads
+        - **Windows**: [digstore-windows-x64-v$VERSION.exe](https://github.com/DIG-Network/digstore/releases/download/v$VERSION/digstore-windows-x64-v$VERSION.exe)
+        - **macOS**: [digstore-macos-universal-v$VERSION](https://github.com/DIG-Network/digstore/releases/download/v$VERSION/digstore-macos-universal-v$VERSION)  
+        - **Linux**: [digstore-linux-x64-v$VERSION](https://github.com/DIG-Network/digstore/releases/download/v$VERSION/digstore-linux-x64-v$VERSION)
+        - **Checksums**: [checksums.txt](https://github.com/DIG-Network/digstore/releases/download/v$VERSION/checksums.txt)
+
+        ### Version Management
+        DigStore now uses an NVM-style version management system:
+        - Multiple versions can be installed side-by-side
+        - Easy switching between versions with \`digstore version set <version>\`
+        - Clean uninstallation with \`digstore version remove <version>\`
+
+        **🔒 Security**: Always verify checksums before installation" \
+          ./release-assets/*
+
+        # Update latest release  
+        gh release delete latest --yes || true
+        git push --delete origin latest || true
+        
+        gh release create latest \
+          --title "DigStore Latest (v$VERSION)" \
+          --notes "**Version**: $VERSION | **Build**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+        
+        ### Quick Install
+        **Windows**: \`irm https://github.com/DIG-Network/digstore/releases/latest/download/install.ps1 | iex\`
+        **Linux/macOS**: \`curl -fsSL https://github.com/DIG-Network/digstore/releases/latest/download/install.sh | bash\`
+        
+        🔒 **Security**: Verify checksums | ✅ **Stable Release**" \
+          ./release-assets/*
+
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+
+  summary:
+    name: Build Summary
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        
+    - name: List artifacts
+      run: |
+        echo "Downloaded artifacts:"
+        find artifacts -type f -ls
+        
+    - name: Summary
+      run: |
+        echo "# DigStore Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 📦 Binaries Built Successfully" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Platform | Architecture | Binary Name |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|-------------|-------------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Windows | x64 | digstore-windows-x64-vX.X.X.exe |" >> $GITHUB_STEP_SUMMARY
+        echo "| macOS | Universal (Intel + Apple Silicon) | digstore-macos-universal-vX.X.X |" >> $GITHUB_STEP_SUMMARY
+        echo "| Linux | x64 | digstore-linux-x64-vX.X.X |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 🚀 Installation Methods" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Bootstrap Installers (Recommended)" >> $GITHUB_STEP_SUMMARY
+        echo "**Windows PowerShell:**" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`powershell" >> $GITHUB_STEP_SUMMARY
+        echo "irm https://github.com/DIG-Network/digstore/releases/latest/download/install.ps1 | iex" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Linux/macOS Bash:**" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+        echo "curl -fsSL https://github.com/DIG-Network/digstore/releases/latest/download/install.sh | bash" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Features" >> $GITHUB_STEP_SUMMARY
+        echo "- **NVM-style Version Management**: Install multiple versions side-by-side" >> $GITHUB_STEP_SUMMARY
+        echo "- **Automatic PATH Management**: No manual PATH editing required" >> $GITHUB_STEP_SUMMARY
+        echo "- **Easy Version Switching**: \`digstore version set <version>\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Clean Uninstallation**: \`digstore version remove <version>\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Bootstrap Installation**: One-command setup for any platform" >> $GITHUB_STEP_SUMMARY

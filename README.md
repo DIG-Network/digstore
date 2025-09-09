@@ -6,11 +6,11 @@ Complete command reference for DigStore - a content-addressable storage system w
 
 ### Quick Install
 ```bash
-# Windows (PowerShell as Administrator)
-iex (iwr -Uri "https://raw.githubusercontent.com/DIG-Network/digstore/main/install.ps1").Content
+# Windows (PowerShell)
+irm https://github.com/DIG-Network/digstore/releases/latest/download/install.ps1 | iex
 
 # Linux/macOS
-curl -fsSL https://raw.githubusercontent.com/DIG-Network/digstore/main/install.sh | bash
+curl -fsSL https://github.com/DIG-Network/digstore/releases/latest/download/install.sh | bash
 ```
 
 See [INSTALL.md](INSTALL.md) for detailed installation instructions.

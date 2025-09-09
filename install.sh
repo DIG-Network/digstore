@@ -14,142 +14,147 @@ echo ""
 # Determine platform and installation directory
 if [[ "$OSTYPE" == "darwin"* ]]; then
     PLATFORM="macos"
-    FILENAME="digstore-macos.dmg"
-    INSTALL_BASE="/usr/local/lib/digstore"
+    BINARY_NAME="digstore-macos-universal"
+    SYSTEM_INSTALL_DIR="/usr/local/lib/digstore"
 else
     PLATFORM="linux"
-    FILENAME="digstore-linux-x86_64.AppImage"
-    INSTALL_BASE="/usr/local/lib/digstore"
+    BINARY_NAME="digstore-linux-x64"
+    SYSTEM_INSTALL_DIR="/usr/local/lib/digstore"
 fi
 
-VERSION_DIR="$INSTALL_BASE/v$VERSION"
+USER_INSTALL_DIR="$HOME/.digstore-versions"
 
-echo "Platform: $PLATFORM"
-echo "Installing to: $VERSION_DIR"
+# Try system installation first, fallback to user directory
+INSTALL_DIR="$SYSTEM_INSTALL_DIR"
+IS_SYSTEM_INSTALL=true
 
-# Check if already installed
-if [[ -d "$VERSION_DIR" && "$FORCE" != "true" ]]; then
-    echo "Version $VERSION is already installed at: $VERSION_DIR"
-    echo "Use 'force' as second argument to reinstall"
-    exit 0
-fi
-
-# Check for sudo access
-if [[ ! -w "/usr/local" ]]; then
-    echo "This script requires sudo privileges to install to /usr/local"
-    echo "You may be prompted for your password..."
-fi
-
-# Create directories
-echo "Creating installation directory..."
-sudo mkdir -p "$VERSION_DIR"
-
-# Download the installer
-if [[ "$VERSION" == "latest" ]]; then
-    DOWNLOAD_URL="https://github.com/DIG-Network/digstore/releases/latest/download/$FILENAME"
+# Test write access to system directory
+if ! mkdir -p "$SYSTEM_INSTALL_DIR" 2>/dev/null || ! touch "$SYSTEM_INSTALL_DIR/.test" 2>/dev/null; then
+    echo "⚠️  Cannot write to system directory, using user directory: $USER_INSTALL_DIR"
+    INSTALL_DIR="$USER_INSTALL_DIR"
+    IS_SYSTEM_INSTALL=false
+    mkdir -p "$INSTALL_DIR"
 else
-    DOWNLOAD_URL="https://github.com/DIG-Network/digstore/releases/download/v$VERSION/$FILENAME"
+    echo "✅ System installation directory accessible: $SYSTEM_INSTALL_DIR"
+    rm -f "$SYSTEM_INSTALL_DIR/.test"
 fi
 
-TEMP_INSTALLER="/tmp/digstore-installer.$PLATFORM"
+# Fetch latest release information
+API_URL="https://api.github.com/repos/DIG-Network/digstore/releases/latest"
+echo "Fetching release information..."
 
-echo "Downloading from: $DOWNLOAD_URL"
+if ! RELEASE_INFO=$(curl -s "$API_URL"); then
+    echo "❌ Failed to fetch release information"
+    exit 1
+fi
+
+if [ "$VERSION" = "latest" ]; then
+    VERSION=$(echo "$RELEASE_INFO" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+    echo "Latest version: $VERSION"
+fi
+
+# Construct download URL
+DOWNLOAD_URL="https://github.com/DIG-Network/digstore/releases/download/v$VERSION/$BINARY_NAME-v$VERSION"
+
+echo "Download URL: $DOWNLOAD_URL"
+
+# Download binary
+TEMP_BINARY="/tmp/digstore-$VERSION"
+
+echo "Downloading binary..."
 if command -v curl >/dev/null 2>&1; then
-    curl -L -o "$TEMP_INSTALLER" "$DOWNLOAD_URL" --user-agent "DigStore-Bootstrap"
+    curl -L -o "$TEMP_BINARY" "$DOWNLOAD_URL" --user-agent "DigStore-Bootstrap"
 elif command -v wget >/dev/null 2>&1; then
-    wget -O "$TEMP_INSTALLER" "$DOWNLOAD_URL" --user-agent="DigStore-Bootstrap"
+    wget -O "$TEMP_BINARY" "$DOWNLOAD_URL" --user-agent="DigStore-Bootstrap"
 else
     echo "❌ Neither curl nor wget found. Please install one of them."
     exit 1
 fi
 
+if [ ! -f "$TEMP_BINARY" ]; then
+    echo "❌ Download failed"
+    exit 1
+fi
+
 echo "✅ Download completed"
 
-# Extract and install based on platform
-if [[ "$PLATFORM" == "macos" ]]; then
-    echo "Extracting DMG..."
-    
-    # Mount DMG
-    MOUNT_OUTPUT=$(hdiutil attach "$TEMP_INSTALLER" -nobrowse)
-    MOUNT_POINT=$(echo "$MOUNT_OUTPUT" | grep -E '/Volumes/' | awk '{print $NF}')
-    
-    if [[ -z "$MOUNT_POINT" ]]; then
-        echo "❌ Failed to mount DMG"
-        rm -f "$TEMP_INSTALLER"
-        exit 1
-    fi
-    
-    # Copy binary from app bundle
-    APP_PATH="$MOUNT_POINT/DIG Network Digstore.app"
-    BINARY_SOURCE="$APP_PATH/Contents/MacOS/digstore"
-    BINARY_TARGET="$VERSION_DIR/digstore"
-    
-    if [[ -f "$BINARY_SOURCE" ]]; then
-        sudo cp "$BINARY_SOURCE" "$BINARY_TARGET"
-        sudo chmod +x "$BINARY_TARGET"
-        echo "✅ Binary extracted to versioned directory"
-    else
-        echo "❌ Could not find digstore binary in DMG"
-        hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1
-        rm -f "$TEMP_INSTALLER"
-        exit 1
-    fi
-    
-    # Unmount DMG
-    hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1
-    
-elif [[ "$PLATFORM" == "linux" ]]; then
-    echo "Installing AppImage..."
-    
-    # Copy AppImage directly to versioned directory
-    BINARY_TARGET="$VERSION_DIR/digstore"
-    sudo cp "$TEMP_INSTALLER" "$BINARY_TARGET"
-    sudo chmod +x "$BINARY_TARGET"
-    
-    echo "✅ AppImage installed to versioned directory"
-fi
+# Create version directory and install binary
+VERSION_DIR="$INSTALL_DIR/v$VERSION"
+echo "Installing to: $VERSION_DIR"
+
+mkdir -p "$VERSION_DIR"
+cp "$TEMP_BINARY" "$VERSION_DIR/digstore"
+chmod +x "$VERSION_DIR/digstore"
+
+echo "✅ Binary installed successfully"
 
 # Update PATH
 echo "Updating PATH..."
-SHELL_RC=""
-if [[ -n "$ZSH_VERSION" ]]; then
-    SHELL_RC="$HOME/.zshrc"
-elif [[ -n "$BASH_VERSION" ]]; then
-    SHELL_RC="$HOME/.bashrc"
-fi
 
-if [[ -n "$SHELL_RC" ]]; then
-    # Remove existing dig-network PATH entries
-    grep -v "dig-network" "$SHELL_RC" > "${SHELL_RC}.tmp" 2>/dev/null || touch "${SHELL_RC}.tmp"
-    
-    # Add new PATH entry
-    echo "export PATH=\"$VERSION_DIR:\$PATH\"" >> "${SHELL_RC}.tmp"
-    mv "${SHELL_RC}.tmp" "$SHELL_RC"
-    
-    echo "✅ Updated $SHELL_RC"
+if [ "$IS_SYSTEM_INSTALL" = true ]; then
+    # Create symlink in /usr/local/bin for system-wide access
+    SYMLINK_PATH="/usr/local/bin/digstore"
+    if ln -sf "$VERSION_DIR/digstore" "$SYMLINK_PATH" 2>/dev/null; then
+        echo "✅ System symlink created: $SYMLINK_PATH"
+    else
+        echo "⚠️  Could not create system symlink, you may need to add $VERSION_DIR to your PATH"
+    fi
 else
-    echo "⚠️ Could not detect shell. Please manually add to your PATH:"
-    echo "export PATH=\"$VERSION_DIR:\$PATH\""
+    # Update user's shell profile
+    SHELL_PROFILE=""
+    if [ -n "$BASH_VERSION" ]; then
+        SHELL_PROFILE="$HOME/.bashrc"
+    elif [ -n "$ZSH_VERSION" ]; then
+        SHELL_PROFILE="$HOME/.zshrc"
+    elif [ -f "$HOME/.profile" ]; then
+        SHELL_PROFILE="$HOME/.profile"
+    fi
+    
+    if [ -n "$SHELL_PROFILE" ]; then
+        if ! grep -q "digstore-versions" "$SHELL_PROFILE" 2>/dev/null; then
+            echo "" >> "$SHELL_PROFILE"
+            echo "# DigStore version manager" >> "$SHELL_PROFILE"
+            echo "export PATH=\"$VERSION_DIR:\$PATH\"" >> "$SHELL_PROFILE"
+            echo "✅ Added to $SHELL_PROFILE"
+        else
+            echo "ℹ️  PATH already configured in $SHELL_PROFILE"
+        fi
+    fi
+    
+    # Update current session
+    export PATH="$VERSION_DIR:$PATH"
+    echo "✅ Current session PATH updated"
 fi
 
-# Save active version
-sudo sh -c "echo '$VERSION' > '$INSTALL_BASE/active'"
+# Test installation
+echo "Testing installation..."
+if "$VERSION_DIR/digstore" --version >/dev/null 2>&1; then
+    TEST_RESULT=$("$VERSION_DIR/digstore" --version)
+    echo "✅ Installation test successful: $TEST_RESULT"
+else
+    echo "⚠️  Installation test failed"
+fi
 
 # Clean up
-rm -f "$TEMP_INSTALLER"
+rm -f "$TEMP_BINARY"
 
 echo ""
-echo "🎉 Digstore $VERSION installed successfully!"
+echo "🎉 DigStore $VERSION installed successfully!"
 echo "Location: $VERSION_DIR"
 echo ""
 echo "Usage:"
 echo "  digstore --version                    # Check installed version"
 echo "  digstore init                         # Initialize a repository"
-echo "  digstore version list                 # List installed versions"
-echo "  digstore version install-version 0.4.8  # Install specific version"
-echo "  digstore version set 0.4.8           # Switch to version"
-echo "  digstore update                       # Update to latest"
+echo "  digstore version list                 # List installed versions" 
+echo "  digstore version set <version>        # Switch to a different version"
 echo ""
-echo "For help: digstore --help"
+
+if [ "$IS_SYSTEM_INSTALL" = false ]; then
+    echo "⚠️  Note: Installed to user directory. You may need to restart your terminal"
+    echo "   or run 'source ~/.bashrc' (or ~/.zshrc) for PATH changes to take effect."
+else
+    echo "ℹ️  Note: System installation complete. The 'digstore' command should be available immediately."
+fi
+
 echo ""
-echo "⚠️ Restart your terminal or run: source $SHELL_RC"
+echo "📚 Documentation: https://github.com/DIG-Network/digstore"

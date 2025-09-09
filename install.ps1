@@ -17,116 +17,118 @@ $ProgramFiles = $env:ProgramFiles
 if ($env:PROCESSOR_ARCHITECTURE -eq "AMD64" -and $env:ProgramW6432) {
     $ProgramFiles = ${env:ProgramFiles(x86)}
 }
-$InstallBase = Join-Path $ProgramFiles "dig-network"
-$VersionDir = Join-Path $InstallBase "v$Version"
 
-Write-Host "Installing to: $VersionDir" -ForegroundColor Green
+# Try system installation first, fallback to user directory
+$SystemInstallDir = Join-Path $ProgramFiles "dig-network"
+$UserInstallDir = Join-Path $env:USERPROFILE ".digstore-versions"
 
-# Check if already installed
-if (Test-Path $VersionDir -and -not $Force) {
-    Write-Host "Version $Version is already installed at: $VersionDir" -ForegroundColor Yellow
-    Write-Host "Use -Force to reinstall" -ForegroundColor Yellow
-    exit 0
+$InstallDir = $SystemInstallDir
+$IsSystemInstall = $true
+
+# Test write access to system directory
+try {
+    $TestFile = Join-Path $SystemInstallDir "test_write.tmp"
+    New-Item -ItemType Directory -Path $SystemInstallDir -Force -ErrorAction SilentlyContinue | Out-Null
+    [System.IO.File]::WriteAllText($TestFile, "test")
+    Remove-Item $TestFile -ErrorAction SilentlyContinue
+    Write-Host "✅ System installation directory accessible: $SystemInstallDir" -ForegroundColor Green
+} catch {
+    Write-Host "⚠️  Cannot write to system directory, using user directory: $UserInstallDir" -ForegroundColor Yellow
+    $InstallDir = $UserInstallDir
+    $IsSystemInstall = $false
 }
 
-# Create directories
-Write-Host "Creating installation directory..." -ForegroundColor Blue
+# Determine download URL based on latest release
+$ApiUrl = "https://api.github.com/repos/DIG-Network/digstore/releases/latest"
+Write-Host "Fetching release information..." -ForegroundColor Blue
+
 try {
-    New-Item -ItemType Directory -Path $VersionDir -Force | Out-Null
+    $Response = Invoke-RestMethod -Uri $ApiUrl -ErrorAction Stop
+    
+    if ($Version -eq "latest") {
+        $Version = $Response.tag_name.TrimStart('v')
+        Write-Host "Latest version: $Version" -ForegroundColor Green
+    }
+    
+    # Find Windows binary asset in the release
+    $BinaryAsset = $Response.assets | Where-Object { $_.name -match "digstore-windows-x64-v.*\.exe$" }
+    if (-not $BinaryAsset) {
+        Write-Host "❌ Windows binary not found in latest release" -ForegroundColor Red
+        exit 1
+    }
+    
+    $DownloadUrl = $BinaryAsset.browser_download_url
+    Write-Host "Download URL: $DownloadUrl" -ForegroundColor Cyan
 } catch {
-    Write-Host "❌ Failed to create directory: $VersionDir" -ForegroundColor Red
-    Write-Host "This script requires administrator privileges to install to Program Files." -ForegroundColor Red
-    Write-Host "Please run as administrator or install to user directory manually." -ForegroundColor Red
+    Write-Host "❌ Failed to fetch release information: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
 
-# Download the latest MSI
-$DownloadUrl = "https://github.com/DIG-Network/digstore/releases/latest/download/digstore-windows-x64.msi"
-if ($Version -ne "latest") {
-    $DownloadUrl = "https://github.com/DIG-Network/digstore/releases/download/v$Version/digstore-windows-x64.msi"
-}
+# Download binary
+$TempBinary = Join-Path $env:TEMP "digstore-$Version.exe"
+Write-Host "Downloading binary..." -ForegroundColor Yellow
 
-$TempMsi = Join-Path $env:TEMP "digstore-installer.msi"
-
-Write-Host "Downloading from: $DownloadUrl" -ForegroundColor Blue
 try {
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $TempMsi -UserAgent "Digstore-Bootstrap"
+    Invoke-WebRequest -Uri $DownloadUrl -OutFile $TempBinary -UserAgent "DigStore-Bootstrap"
     Write-Host "✅ Download completed" -ForegroundColor Green
 } catch {
     Write-Host "❌ Download failed: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
 
-# Install MSI to system location
-Write-Host "Installing MSI..." -ForegroundColor Blue
+# Create version directory
+$VersionDir = Join-Path $InstallDir "v$Version"
+Write-Host "Installing to: $VersionDir" -ForegroundColor Blue
+
 try {
-    $InstallArgs = @("/i", $TempMsi, "/quiet", "/norestart")
-    $Process = Start-Process "msiexec" -ArgumentList $InstallArgs -Wait -PassThru
-    
-    if ($Process.ExitCode -ne 0) {
-        throw "MSI installation failed with exit code: $($Process.ExitCode)"
-    }
-    
-    Write-Host "✅ MSI installation completed" -ForegroundColor Green
+    New-Item -ItemType Directory -Path $VersionDir -Force | Out-Null
+    Copy-Item $TempBinary -Destination (Join-Path $VersionDir "digstore.exe") -Force
+    Write-Host "✅ Binary installed successfully" -ForegroundColor Green
 } catch {
     Write-Host "❌ Installation failed: $($_.Exception.Message)" -ForegroundColor Red
-    Remove-Item $TempMsi -ErrorAction SilentlyContinue
-    exit 1
-}
-
-# Wait for installation to complete
-Start-Sleep -Seconds 2
-
-# Move installed files to versioned directory
-Write-Host "Organizing into versioned directory..." -ForegroundColor Blue
-$SourceBinary = Join-Path $InstallBase "digstore.exe"
-$TargetBinary = Join-Path $VersionDir "digstore.exe"
-
-if (Test-Path $SourceBinary) {
-    # Move binary to versioned directory
-    Move-Item $SourceBinary $TargetBinary -Force
-    
-    # Move any other files
-    Get-ChildItem $InstallBase -File | ForEach-Object {
-        $TargetPath = Join-Path $VersionDir $_.Name
-        Move-Item $_.FullName $TargetPath -Force -ErrorAction SilentlyContinue
-    }
-    
-    Write-Host "✅ Files organized into versioned directory" -ForegroundColor Green
-} else {
-    Write-Host "❌ Binary not found at expected location: $SourceBinary" -ForegroundColor Red
-    Remove-Item $TempMsi -ErrorAction SilentlyContinue
     exit 1
 }
 
 # Update PATH
 Write-Host "Updating PATH..." -ForegroundColor Blue
 try {
-    # Get current PATH
-    $CurrentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($IsSystemInstall) {
+        # System-wide PATH update
+        $CurrentPath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+        $NewPath = "$VersionDir;$CurrentPath"
+        [Environment]::SetEnvironmentVariable("PATH", $NewPath, "Machine")
+        Write-Host "✅ System PATH updated" -ForegroundColor Green
+    } else {
+        # User PATH update
+        $CurrentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+        if ($CurrentPath) {
+            $NewPath = "$VersionDir;$CurrentPath"
+        } else {
+            $NewPath = $VersionDir
+        }
+        [Environment]::SetEnvironmentVariable("PATH", $NewPath, "User")
+        Write-Host "✅ User PATH updated" -ForegroundColor Green
+    }
     
-    # Remove any existing dig-network entries
-    $PathEntries = $CurrentPath -split ";" | Where-Object { $_ -and -not $_.StartsWith($InstallBase) }
-    
-    # Add new version directory to front
-    $NewPath = "$VersionDir;" + ($PathEntries -join ";")
-    
-    # Update PATH
-    [Environment]::SetEnvironmentVariable("PATH", $NewPath, "User")
-    $env:PATH = $NewPath
-    
-    Write-Host "✅ PATH updated to use version $Version" -ForegroundColor Green
+    # Update current session PATH
+    $env:PATH = "$VersionDir;$env:PATH"
+    Write-Host "✅ Current session PATH updated" -ForegroundColor Green
 } catch {
-    Write-Host "⚠️ Could not update PATH automatically: $($_.Exception.Message)" -ForegroundColor Yellow
-    Write-Host "Please manually add to your PATH: $VersionDir" -ForegroundColor Yellow
+    Write-Host "⚠️  PATH update failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "   You may need to add $VersionDir to your PATH manually" -ForegroundColor Yellow
 }
 
-# Save active version
-$ActiveFile = Join-Path $InstallBase "active"
-Set-Content -Path $ActiveFile -Value $Version -Force
+# Test installation
+Write-Host "Testing installation..." -ForegroundColor Blue
+try {
+    $TestResult = & (Join-Path $VersionDir "digstore.exe") --version 2>&1
+    Write-Host "✅ Installation test successful: $TestResult" -ForegroundColor Green
+} catch {
+    Write-Host "⚠️  Installation test failed: $($_.Exception.Message)" -ForegroundColor Yellow
+}
 
 # Clean up
-Remove-Item $TempMsi -ErrorAction SilentlyContinue
+Remove-Item $TempBinary -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "🎉 DigStore $Version installed successfully!" -ForegroundColor Green
@@ -136,10 +138,15 @@ Write-Host "Usage:" -ForegroundColor Yellow
 Write-Host "  digstore --version                    # Check installed version"
 Write-Host "  digstore init                         # Initialize a repository" 
 Write-Host "  digstore version list                 # List installed versions"
-Write-Host "  digstore version install-version 0.4.8  # Install specific version"
-Write-Host "  digstore version set 0.4.8           # Switch to version"
-Write-Host "  digstore update                       # Update to latest"
+Write-Host "  digstore version set <version>        # Switch to a different version"
 Write-Host ""
-Write-Host "For help: digstore --help" -ForegroundColor Cyan
+
+if (-not $IsSystemInstall) {
+    Write-Host "⚠️  Note: Installed to user directory. You may need to restart your terminal" -ForegroundColor Yellow
+    Write-Host "   for PATH changes to take effect." -ForegroundColor Yellow
+} else {
+    Write-Host "ℹ️  Note: You may need to restart your terminal for PATH changes to take effect." -ForegroundColor Cyan
+}
+
 Write-Host ""
-Write-Host "⚠️ Restart your terminal to use the new PATH" -ForegroundColor Yellow
+Write-Host "📚 Documentation: https://github.com/DIG-Network/digstore" -ForegroundColor Cyan
