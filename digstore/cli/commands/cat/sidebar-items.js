@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["execute","handle_path_cat","handle_urn_cat","output_content","output_direct","output_with_pager","should_use_pager","write_content_to_writer"],"struct":["CatArgs"]};
