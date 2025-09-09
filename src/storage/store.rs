@@ -72,11 +72,13 @@ impl Store {
 
             // Before removing files, ensure any existing stores are properly closed
             // This prevents Windows "user-mapped section" errors
-            if let Ok(existing_digstore) = crate::core::digstore_file::DigstoreFile::load(&digstore_path) {
+            if let Ok(existing_digstore) =
+                crate::core::digstore_file::DigstoreFile::load(&digstore_path)
+            {
                 if let Ok(existing_store_id) = existing_digstore.get_store_id() {
                     let archive_path = get_archive_path(&existing_store_id)?;
                     let staging_path = archive_path.with_extension("staging.bin");
-                    
+
                     // On Windows, don't try to access the files - just remove them directly
                     // after ensuring any handles are released
                     #[cfg(windows)]
@@ -86,7 +88,7 @@ impl Store {
                             std::hint::black_box(());
                             std::thread::sleep(std::time::Duration::from_millis(100));
                         }
-                        
+
                         // Remove old archive files directly without opening them
                         for path in [&archive_path, &staging_path] {
                             if path.exists() {
@@ -94,7 +96,7 @@ impl Store {
                             }
                         }
                     }
-                    
+
                     #[cfg(not(windows))]
                     {
                         // On non-Windows, try to sync files before removal
@@ -121,7 +123,7 @@ impl Store {
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
-            
+
             #[cfg(not(windows))]
             std::thread::sleep(std::time::Duration::from_millis(100));
 
@@ -909,14 +911,19 @@ impl Store {
 
         // Get Layer 0 metadata
         let metadata_bytes = archive.get_layer_data(&layer_zero_hash)?;
-        
+
         // Debug: Check if metadata is empty
         if metadata_bytes.is_empty() {
             return Err(DigstoreError::internal("Layer 0 metadata is empty"));
         }
-        
-        let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)
-            .map_err(|e| DigstoreError::internal(format!("Failed to parse Layer 0 metadata: {}. Data length: {}", e, metadata_bytes.len())))?;
+
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes).map_err(|e| {
+            DigstoreError::internal(format!(
+                "Failed to parse Layer 0 metadata: {}. Data length: {}",
+                e,
+                metadata_bytes.len()
+            ))
+        })?;
 
         if let Some(root_history) = metadata.get("root_history").and_then(|v| v.as_array()) {
             if let Some(latest_root) = root_history.last() {

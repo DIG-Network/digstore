@@ -28,7 +28,6 @@ pub struct ProveArgs {
     /// Prove specific byte range
     #[arg(long)]
     pub bytes: Option<String>,
-
 }
 
 pub fn execute(
@@ -186,9 +185,7 @@ fn handle_urn_prove(args: &ProveArgs) -> Result<()> {
 
 fn output_proof(proof: &Proof, args: &ProveArgs) -> Result<()> {
     let proof_data = match args.format.as_str() {
-        "json" => {
-            proof.to_json()?
-        },
+        "json" => proof.to_json()?,
         "text" => format_proof_as_text(proof),
         "binary" => {
             // Serialize proof to binary format using bincode

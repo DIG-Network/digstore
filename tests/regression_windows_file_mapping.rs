@@ -83,10 +83,10 @@ fn test_complete_workflow_no_corruption() -> anyhow::Result<()> {
     for (i, filename) in files.iter().enumerate() {
         let file_path = project_path.join(filename);
         fs::write(&file_path, format!("Content for file {}", i + 1))?;
-        
+
         store.add_file(Path::new(filename))?;
         let commit_result = store.commit(&format!("Add {}", filename));
-        
+
         assert!(
             commit_result.is_ok(),
             "Complete workflow commit should succeed: {:?}",
@@ -105,7 +105,7 @@ fn test_complete_workflow_no_corruption() -> anyhow::Result<()> {
     let layer_zero_hash = digstore_min::core::types::Hash::zero();
     let metadata_bytes = store.archive.get_layer_data(&layer_zero_hash)?;
     let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)?;
-    
+
     assert!(
         metadata.get("store_id").is_some(),
         "Layer 0 metadata should be intact"

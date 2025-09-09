@@ -44,9 +44,9 @@ impl VersionManager {
             let program_files = std::env::var("ProgramFiles(x86)")
                 .or_else(|_| std::env::var("ProgramFiles"))
                 .unwrap_or_else(|_| "C:\\Program Files".to_string());
-            
+
             let system_versions_dir = PathBuf::from(program_files).join("dig-network");
-            
+
             // Test if we can write to system directory
             if Self::can_write_to_directory(&system_versions_dir) {
                 Ok(system_versions_dir)
@@ -56,12 +56,12 @@ impl VersionManager {
                 Ok(user_dirs.home_dir().join(".digstore-versions"))
             }
         }
-        
+
         #[cfg(target_os = "macos")]
         {
             // macOS: Try system directory first, fall back to user directory
             let system_versions_dir = PathBuf::from("/usr/local/lib/digstore");
-            
+
             if Self::can_write_to_directory(&system_versions_dir) {
                 Ok(system_versions_dir)
             } else {
@@ -70,12 +70,12 @@ impl VersionManager {
                 Ok(user_dirs.home_dir().join(".digstore-versions"))
             }
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             // Linux: Try system directory first, fall back to user directory
             let system_versions_dir = PathBuf::from("/usr/local/lib/digstore");
-            
+
             if Self::can_write_to_directory(&system_versions_dir) {
                 Ok(system_versions_dir)
             } else {
@@ -84,7 +84,7 @@ impl VersionManager {
                 Ok(user_dirs.home_dir().join(".digstore-versions"))
             }
         }
-        
+
         #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
             // Other Unix-like systems
@@ -115,14 +115,14 @@ impl VersionManager {
         );
 
         let version_dir = self.get_version_dir(version);
-        
+
         // Create version directory
         fs::create_dir_all(&version_dir)?;
-        
+
         // Copy binary to version directory
         let target_binary = version_dir.join(self.get_binary_name());
         fs::copy(binary_path, &target_binary)?;
-        
+
         // Make executable on Unix systems
         #[cfg(unix)]
         {
@@ -155,7 +155,7 @@ impl VersionManager {
 
         // Update PATH to point to this version
         self.update_path_to_version(version)?;
-        
+
         // Save active version info
         self.save_active_version(version)?;
         self.active_version = Some(version.to_string());
@@ -168,20 +168,36 @@ impl VersionManager {
 
         // Test if the version change is immediately effective
         println!("  {} Testing immediate availability...", "→".cyan());
-        match std::process::Command::new("digstore").arg("--version").output() {
+        match std::process::Command::new("digstore")
+            .arg("--version")
+            .output()
+        {
             Ok(test_output) if test_output.status.success() => {
                 let version_output = String::from_utf8_lossy(&test_output.stdout);
-                if let Some(detected_version) = version_output.lines().next().and_then(|line| line.split_whitespace().nth(1)) {
+                if let Some(detected_version) = version_output
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                {
                     if detected_version == version {
-                        println!("  {} Version {} is now immediately available!", "✓".green(), detected_version.bright_cyan());
+                        println!(
+                            "  {} Version {} is now immediately available!",
+                            "✓".green(),
+                            detected_version.bright_cyan()
+                        );
                     } else {
-                        println!("  {} Currently using version {} (restart terminal for {})", "!".yellow(), detected_version, version);
+                        println!(
+                            "  {} Currently using version {} (restart terminal for {})",
+                            "!".yellow(),
+                            detected_version,
+                            version
+                        );
                     }
                 }
-            }
+            },
             _ => {
                 println!("  {} Version available after terminal restart", "→".cyan());
-            }
+            },
         }
 
         Ok(())
@@ -201,8 +217,11 @@ impl VersionManager {
             .join(self.get_binary_name());
 
         if !binary_path.exists() {
-            println!("  {} No pre-built binary found, building from source...", "•".cyan());
-            
+            println!(
+                "  {} No pre-built binary found, building from source...",
+                "•".cyan()
+            );
+
             // Build the project
             let output = Command::new("cargo")
                 .args(&["build", "--release"])
@@ -225,21 +244,24 @@ impl VersionManager {
                 });
             }
         } else {
-            println!("  {} Using pre-built binary from target/release", "•".cyan());
+            println!(
+                "  {} Using pre-built binary from target/release",
+                "•".cyan()
+            );
         }
 
         // Install this version
         self.install_version(version, &binary_path)?;
-        
+
         // Set as active version
         self.set_active_version(version)?;
 
         println!();
-        println!("{}", "✓ Installation completed successfully!".green().bold());
         println!(
-            "  Version {} is now active",
-            version.bright_cyan()
+            "{}",
+            "✓ Installation completed successfully!".green().bold()
         );
+        println!("  Version {} is now active", version.bright_cyan());
 
         // Show usage instructions
         self.show_usage_instructions()?;
@@ -255,8 +277,8 @@ impl VersionManager {
         );
 
         // Get the path to the currently running binary
-        let current_exe = std::env::current_exe()
-            .map_err(|e| DigstoreError::ConfigurationError {
+        let current_exe =
+            std::env::current_exe().map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to get current executable path: {}", e),
             })?;
 
@@ -268,16 +290,16 @@ impl VersionManager {
 
         // Install this version
         self.install_version(version, &current_exe)?;
-        
+
         // Set as active version
         self.set_active_version(version)?;
 
         println!();
-        println!("{}", "✓ Installation completed successfully!".green().bold());
         println!(
-            "  Version {} is now active",
-            version.bright_cyan()
+            "{}",
+            "✓ Installation completed successfully!".green().bold()
         );
+        println!("  Version {} is now active", version.bright_cyan());
 
         // Show usage instructions
         self.show_usage_instructions()?;
@@ -362,9 +384,9 @@ impl VersionManager {
             let program_files = std::env::var("ProgramFiles(x86)")
                 .or_else(|_| std::env::var("ProgramFiles"))
                 .unwrap_or_else(|_| "C:\\Program Files".to_string());
-            
+
             let system_bin_dir = PathBuf::from(program_files).join("dig-network");
-            
+
             // Test if we can write to system directory
             if fs::create_dir_all(&system_bin_dir).is_ok() {
                 let test_file = system_bin_dir.join("access_test.tmp");
@@ -373,22 +395,22 @@ impl VersionManager {
                     return Ok(system_bin_dir.join("digstore.bat"));
                 }
             }
-            
+
             // Fall back to user directory
             let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
             let user_bin_dir = user_dirs.home_dir().join(".local").join("bin");
             fs::create_dir_all(&user_bin_dir)?;
             Ok(user_bin_dir.join("digstore.bat"))
         }
-        
+
         #[cfg(not(windows))]
         {
             let user_dirs = UserDirs::new().ok_or(DigstoreError::HomeDirectoryNotFound)?;
             let bin_dir = user_dirs.home_dir().join(".local").join("bin");
-            
+
             // Create bin directory if it doesn't exist
             fs::create_dir_all(&bin_dir)?;
-            
+
             Ok(bin_dir.join("digstore"))
         }
     }
@@ -426,7 +448,7 @@ impl VersionManager {
         println!("  1. Add the following directory to your PATH:");
         println!("     {}", bin_dir.display().to_string().bright_cyan());
         println!();
-        
+
         #[cfg(windows)]
         {
             println!("  2. For PowerShell, add this to your profile:");
@@ -435,7 +457,7 @@ impl VersionManager {
             println!("  3. For Command Prompt, run:");
             println!("     setx PATH \"%PATH%;{}\"", bin_dir.display());
         }
-        
+
         #[cfg(unix)]
         {
             println!("  2. Add this to your ~/.bashrc or ~/.zshrc:");
@@ -458,8 +480,8 @@ impl VersionManager {
 
         // Download the installer
         use crate::update::installer::download_installer;
-        let temp_file = download_installer(download_url)
-            .map_err(|e| DigstoreError::ConfigurationError {
+        let temp_file =
+            download_installer(download_url).map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Download failed: {}", e),
             })?;
 
@@ -493,24 +515,37 @@ impl VersionManager {
 
     /// Install from MSI using nvm-style approach
     fn install_from_msi_nvm_style(&mut self, version: &str, msi_path: &Path) -> Result<()> {
-        println!("  {} Installing MSI and organizing into versioned directory", "•".cyan());
-        
+        println!(
+            "  {} Installing MSI and organizing into versioned directory",
+            "•".cyan()
+        );
+
         // The MSI will install to its hardcoded location, so we need to work with that
-        let expected_install_location = if self.versions_dir.to_string_lossy().contains("Program Files") {
+        let expected_install_location = if self
+            .versions_dir
+            .to_string_lossy()
+            .contains("Program Files")
+        {
             // System installation - MSI will install to base dig-network directory
             self.versions_dir.join(self.get_binary_name())
         } else {
             // User installation - MSI might not work, so we'll extract
             return self.fallback_msi_extraction(version, msi_path);
         };
-        
+
         // Install MSI to its default location
-        println!("  {} Installing MSI (will go to: {})...", "•".cyan(), expected_install_location.parent().unwrap().display());
-        
+        println!(
+            "  {} Installing MSI (will go to: {})...",
+            "•".cyan(),
+            expected_install_location.parent().unwrap().display()
+        );
+
         let install_output = Command::new("msiexec")
             .args(&[
-                "/i", msi_path.to_str().unwrap(),  // Install the MSI
-                "/quiet", "/norestart",            // Silent installation
+                "/i",
+                msi_path.to_str().unwrap(), // Install the MSI
+                "/quiet",
+                "/norestart", // Silent installation
             ])
             .output()
             .map_err(|e| DigstoreError::ConfigurationError {
@@ -520,28 +555,34 @@ impl VersionManager {
         if !install_output.status.success() {
             let stderr = String::from_utf8_lossy(&install_output.stderr);
             let stdout = String::from_utf8_lossy(&install_output.stdout);
-            
+
             return Err(DigstoreError::ConfigurationError {
-                reason: format!("MSI installation failed. Stderr: {}, Stdout: {}", stderr, stdout),
+                reason: format!(
+                    "MSI installation failed. Stderr: {}, Stdout: {}",
+                    stderr, stdout
+                ),
             });
         }
 
         // Now organize the installation into versioned directory
-        println!("  {} Organizing installation into versioned directory...", "•".cyan());
-        
+        println!(
+            "  {} Organizing installation into versioned directory...",
+            "•".cyan()
+        );
+
         let version_dir = self.get_version_dir(version);
         fs::create_dir_all(&version_dir)?;
-        
+
         let target_binary = version_dir.join(self.get_binary_name());
-        
+
         // Wait a moment for MSI installation to complete
         std::thread::sleep(std::time::Duration::from_millis(1000));
-        
+
         // Check if binary was installed to expected location
         if expected_install_location.exists() {
             // Move the binary to the versioned directory
             fs::copy(&expected_install_location, &target_binary)?;
-            
+
             // Move any other files (like DIG.ico) to versioned directory
             if let Some(base_dir) = expected_install_location.parent() {
                 if let Ok(entries) = fs::read_dir(base_dir) {
@@ -556,7 +597,7 @@ impl VersionManager {
                     }
                 }
             }
-            
+
             println!(
                 "  {} Version {} organized into: {}",
                 "✓".green(),
@@ -565,7 +606,10 @@ impl VersionManager {
             );
         } else {
             return Err(DigstoreError::ConfigurationError {
-                reason: format!("MSI installation succeeded but binary not found at: {}", expected_install_location.display()),
+                reason: format!(
+                    "MSI installation succeeded but binary not found at: {}",
+                    expected_install_location.display()
+                ),
             });
         }
 
@@ -581,7 +625,7 @@ impl VersionManager {
     /// Install from DMG using nvm-style approach
     fn install_from_dmg_nvm_style(&mut self, version: &str, dmg_path: &Path) -> Result<()> {
         println!("  {} Extracting DMG to versioned directory", "•".cyan());
-        
+
         // Mount the DMG
         let mount_output = std::process::Command::new("hdiutil")
             .args(&["attach", dmg_path.to_str().unwrap(), "-nobrowse"])
@@ -632,8 +676,13 @@ impl VersionManager {
                     .args(&["+x", &target_binary.to_string_lossy().to_string()])
                     .output();
 
-                println!("  {} Version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
-                
+                println!(
+                    "  {} Version {} installed to: {}",
+                    "✓".green(),
+                    version.bright_cyan(),
+                    version_dir.display()
+                );
+
                 // Update PATH and set as active
                 self.update_path_to_version(version)?;
                 return Ok(());
@@ -648,17 +697,22 @@ impl VersionManager {
     /// Install from DEB using nvm-style approach
     fn install_from_deb_nvm_style(&mut self, version: &str, deb_path: &Path) -> Result<()> {
         println!("  {} Extracting DEB to versioned directory", "•".cyan());
-        
+
         let version_dir = self.get_version_dir(version);
         fs::create_dir_all(&version_dir)?;
-        
+
         // Extract DEB package without installing system-wide
-        let temp_extract_dir = std::env::temp_dir().join(format!("digstore_deb_extract_{}", version));
+        let temp_extract_dir =
+            std::env::temp_dir().join(format!("digstore_deb_extract_{}", version));
         fs::create_dir_all(&temp_extract_dir)?;
-        
+
         // Extract DEB contents
         let extract_output = std::process::Command::new("dpkg-deb")
-            .args(&["-x", deb_path.to_str().unwrap(), &temp_extract_dir.to_string_lossy()])
+            .args(&[
+                "-x",
+                deb_path.to_str().unwrap(),
+                &temp_extract_dir.to_string_lossy(),
+            ])
             .output()
             .map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to extract DEB: {}", e),
@@ -685,7 +739,7 @@ impl VersionManager {
         for location in &search_locations {
             if location.exists() {
                 fs::copy(location, &target_binary)?;
-                
+
                 // Make executable
                 let _ = std::process::Command::new("chmod")
                     .args(&["+x", &target_binary.to_string_lossy().to_string()])
@@ -705,32 +759,38 @@ impl VersionManager {
             });
         }
 
-        println!("  {} Version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
-        
+        println!(
+            "  {} Version {} installed to: {}",
+            "✓".green(),
+            version.bright_cyan(),
+            version_dir.display()
+        );
+
         // Update PATH and set as active
         self.update_path_to_version(version)?;
-        
+
         Ok(())
     }
 
     /// Install from RPM using nvm-style approach
     fn install_from_rpm_nvm_style(&mut self, version: &str, rpm_path: &Path) -> Result<()> {
         println!("  {} Extracting RPM to versioned directory", "•".cyan());
-        
+
         let version_dir = self.get_version_dir(version);
         fs::create_dir_all(&version_dir)?;
-        
+
         // Extract RPM package without installing system-wide
-        let temp_extract_dir = std::env::temp_dir().join(format!("digstore_rpm_extract_{}", version));
+        let temp_extract_dir =
+            std::env::temp_dir().join(format!("digstore_rpm_extract_{}", version));
         fs::create_dir_all(&temp_extract_dir)?;
-        
+
         // Extract RPM contents using rpm2cpio and cpio
         let extract_cmd = format!(
             "cd {} && rpm2cpio {} | cpio -idmv",
             temp_extract_dir.display(),
             rpm_path.display()
         );
-        
+
         let extract_output = std::process::Command::new("sh")
             .args(&["-c", &extract_cmd])
             .output()
@@ -759,7 +819,7 @@ impl VersionManager {
         for location in &search_locations {
             if location.exists() {
                 fs::copy(location, &target_binary)?;
-                
+
                 // Make executable
                 let _ = std::process::Command::new("chmod")
                     .args(&["+x", &target_binary.to_string_lossy().to_string()])
@@ -779,51 +839,69 @@ impl VersionManager {
             });
         }
 
-        println!("  {} Version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
-        
+        println!(
+            "  {} Version {} installed to: {}",
+            "✓".green(),
+            version.bright_cyan(),
+            version_dir.display()
+        );
+
         // Update PATH and set as active
         self.update_path_to_version(version)?;
-        
+
         Ok(())
     }
 
     /// Install from AppImage using nvm-style approach  
-    fn install_from_appimage_nvm_style(&mut self, version: &str, appimage_path: &Path) -> Result<()> {
-        println!("  {} Installing AppImage to versioned directory", "•".cyan());
-        
+    fn install_from_appimage_nvm_style(
+        &mut self,
+        version: &str,
+        appimage_path: &Path,
+    ) -> Result<()> {
+        println!(
+            "  {} Installing AppImage to versioned directory",
+            "•".cyan()
+        );
+
         let version_dir = self.get_version_dir(version);
         fs::create_dir_all(&version_dir)?;
-        
+
         let target_binary = version_dir.join("digstore");
-        
+
         // Copy AppImage directly to versioned directory
         fs::copy(appimage_path, &target_binary)?;
-        
+
         // Make executable
         let _ = std::process::Command::new("chmod")
             .args(&["+x", &target_binary.to_string_lossy().to_string()])
             .output();
 
-        println!("  {} Version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
-        
+        println!(
+            "  {} Version {} installed to: {}",
+            "✓".green(),
+            version.bright_cyan(),
+            version_dir.display()
+        );
+
         // Update PATH and set as active
         self.update_path_to_version(version)?;
-        
+
         Ok(())
     }
 
     /// Fallback MSI extraction method when direct installation fails
     fn fallback_msi_extraction(&mut self, version: &str, msi_path: &Path) -> Result<()> {
         println!("  {} Using MSI extraction method...", "•".cyan());
-        
+
         let user_install_dir = self.get_version_dir(version);
         let temp_extract_dir = std::env::temp_dir().join(format!("digstore_extract_{}", version));
         fs::create_dir_all(&temp_extract_dir)?;
-        
+
         // Extract MSI contents using administrative install
         let extract_output = Command::new("msiexec")
             .args(&[
-                "/a", msi_path.to_str().unwrap(),  // Administrative install (extract only)
+                "/a",
+                msi_path.to_str().unwrap(), // Administrative install (extract only)
                 "/quiet",
                 &format!("TARGETDIR={}", temp_extract_dir.display()),
             ])
@@ -861,7 +939,7 @@ impl VersionManager {
     /// Clean up system installations and PATH entries
     fn cleanup_system_installations(&self) -> Result<()> {
         println!("  {} Cleaning up system installations...", "•".cyan());
-        
+
         // Remove system binaries
         let system_locations = [
             PathBuf::from("C:\\Program Files (x86)\\dig-network\\digstore.exe"),
@@ -873,10 +951,14 @@ impl VersionManager {
         let mut removed_any = false;
         for system_path in &system_locations {
             if system_path.exists() {
-                println!("  {} Removing system installation: {}", "•".cyan(), system_path.display());
+                println!(
+                    "  {} Removing system installation: {}",
+                    "•".cyan(),
+                    system_path.display()
+                );
                 if fs::remove_file(system_path).is_ok() {
                     removed_any = true;
-                    
+
                     // Try to remove parent directory if empty
                     if let Some(parent) = system_path.parent() {
                         let _ = fs::remove_dir(parent);
@@ -900,12 +982,12 @@ impl VersionManager {
         if let Ok(entries) = fs::read_dir(search_dir) {
             for entry in entries.flatten() {
                 let entry_path = entry.path();
-                
+
                 if entry_path.is_file() && entry.file_name() == self.get_binary_name() {
                     fs::copy(&entry_path, target_path)?;
                     return Ok(true);
                 }
-                
+
                 if entry_path.is_dir() {
                     if self.find_and_copy_binary(&entry_path, target_path)? {
                         return Ok(true);
@@ -921,25 +1003,25 @@ impl VersionManager {
         let link_path = self.get_active_link_path()?;
         let bin_dir = link_path.parent().unwrap();
         let bin_dir_str = bin_dir.to_string_lossy();
-        
+
         // Get current PATH
         let current_path = std::env::var("PATH").unwrap_or_default();
-        
+
         // Check if our directory is already first
         if current_path.starts_with(&format!("{};", bin_dir_str)) {
             return Ok(()); // Already first
         }
-        
+
         // Remove existing occurrence and add to front
         let path_entries: Vec<&str> = current_path.split(';').collect();
         let filtered_entries: Vec<&str> = path_entries
             .into_iter()
             .filter(|entry| entry.trim() != bin_dir_str)
             .collect();
-        
+
         let new_path = format!("{};{}", bin_dir_str, filtered_entries.join(";"));
         std::env::set_var("PATH", &new_path);
-        
+
         Ok(())
     }
 
@@ -951,9 +1033,11 @@ impl VersionManager {
             let program_files = std::env::var("ProgramFiles(x86)")
                 .or_else(|_| std::env::var("ProgramFiles"))
                 .unwrap_or_else(|_| "C:\\Program Files".to_string());
-            
-            let test_path = PathBuf::from(program_files).join("dig-network").join("admin_test.tmp");
-            
+
+            let test_path = PathBuf::from(program_files)
+                .join("dig-network")
+                .join("admin_test.tmp");
+
             if let Some(parent) = test_path.parent() {
                 if fs::create_dir_all(parent).is_ok() {
                     if fs::write(&test_path, "test").is_ok() {
@@ -964,7 +1048,7 @@ impl VersionManager {
             }
             false
         }
-        
+
         #[cfg(not(windows))]
         {
             // On Unix, check if we can write to /usr/local
@@ -980,7 +1064,11 @@ impl VersionManager {
         // Verify binary exists
         if !binary_path.exists() {
             return Err(DigstoreError::ConfigurationError {
-                reason: format!("Version {} binary not found at: {}", version, binary_path.display()),
+                reason: format!(
+                    "Version {} binary not found at: {}",
+                    version,
+                    binary_path.display()
+                ),
             });
         }
 
@@ -990,8 +1078,8 @@ impl VersionManager {
             let output = Command::new("setx")
                 .args(&[
                     "/M", // Machine-wide
-                    "PATH", 
-                    &format!("{};%PATH%", install_dir.display())
+                    "PATH",
+                    &format!("{};%PATH%", install_dir.display()),
                 ])
                 .output()
                 .map_err(|e| DigstoreError::ConfigurationError {
@@ -1001,10 +1089,7 @@ impl VersionManager {
             if !output.status.success() {
                 // Try user-level PATH update as fallback
                 let user_output = Command::new("setx")
-                    .args(&[
-                        "PATH", 
-                        &format!("{};%PATH%", install_dir.display())
-                    ])
+                    .args(&["PATH", &format!("{};%PATH%", install_dir.display())])
                     .output()
                     .map_err(|e| DigstoreError::ConfigurationError {
                         reason: format!("Failed to update user PATH: {}", e),
@@ -1015,8 +1100,11 @@ impl VersionManager {
                         reason: "Failed to update both system and user PATH".to_string(),
                     });
                 }
-                
-                println!("  {} Updated user PATH (system PATH update requires admin)", "✓".yellow());
+
+                println!(
+                    "  {} Updated user PATH (system PATH update requires admin)",
+                    "✓".yellow()
+                );
             } else {
                 println!("  {} Updated system PATH", "✓".green());
             }
@@ -1035,17 +1123,21 @@ impl VersionManager {
     /// Update PATH to point to a specific version directory
     pub fn update_path_to_version(&self, version: &str) -> Result<()> {
         let version_dir = self.get_version_dir(version);
-        
-        println!("  {} Updating PATH to: {}", "•".cyan(), version_dir.display());
-        
+
+        println!(
+            "  {} Updating PATH to: {}",
+            "•".cyan(),
+            version_dir.display()
+        );
+
         // Get current PATH
         let current_path = std::env::var("PATH").unwrap_or_default();
         let path_entries: Vec<&str> = current_path.split(';').collect();
-        
+
         // Remove any existing dig-network entries
         let base_dir_str = self.versions_dir.to_string_lossy();
         let version_dir_str = version_dir.to_string_lossy();
-        
+
         let filtered_entries: Vec<&str> = path_entries
             .into_iter()
             .filter(|entry| {
@@ -1054,10 +1146,10 @@ impl VersionManager {
                 !entry_trimmed.starts_with(&base_dir_str.to_string())
             })
             .collect();
-        
+
         // Add the new version directory to the front of PATH
         let new_path = format!("{};{}", version_dir_str, filtered_entries.join(";"));
-        
+
         // Update PATH
         let output = Command::new("setx")
             .args(&["PATH", &new_path])
@@ -1065,28 +1157,40 @@ impl VersionManager {
             .map_err(|e| DigstoreError::ConfigurationError {
                 reason: format!("Failed to update PATH: {}", e),
             })?;
-        
+
         if output.status.success() {
-            println!("  {} Updated PATH to use version {}", "✓".green(), version.bright_cyan());
-            
+            println!(
+                "  {} Updated PATH to use version {}",
+                "✓".green(),
+                version.bright_cyan()
+            );
+
             // Also update current environment
             std::env::set_var("PATH", &new_path);
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            println!("  {} Could not update PATH automatically: {}", "!".yellow(), stderr);
-            println!("  {} Manually add to PATH: {}", "→".cyan(), version_dir.display());
+            println!(
+                "  {} Could not update PATH automatically: {}",
+                "!".yellow(),
+                stderr
+            );
+            println!(
+                "  {} Manually add to PATH: {}",
+                "→".cyan(),
+                version_dir.display()
+            );
         }
-        
+
         Ok(())
     }
 
     /// Clean up system PATH entries that point to old installation locations
     fn cleanup_system_path_entries(&self) -> Result<()> {
         println!("  {} Cleaning up old PATH entries...", "•".cyan());
-        
+
         let current_path = std::env::var("PATH").unwrap_or_default();
         let path_entries: Vec<&str> = current_path.split(';').collect();
-        
+
         // System locations to remove from PATH
         let system_locations_to_remove = [
             "C:\\Program Files (x86)\\dig-network",
@@ -1094,22 +1198,24 @@ impl VersionManager {
             "C:\\Program Files (x86)\\DIG Network\\Digstore",
             "C:\\Program Files\\DIG Network\\Digstore",
         ];
-        
+
         let original_count = path_entries.len();
-        
+
         // Filter out old system locations
         let cleaned_entries: Vec<&str> = path_entries
             .into_iter()
             .filter(|entry| {
                 let entry_trimmed = entry.trim();
-                !system_locations_to_remove.iter().any(|&sys_loc| entry_trimmed == sys_loc)
+                !system_locations_to_remove
+                    .iter()
+                    .any(|&sys_loc| entry_trimmed == sys_loc)
             })
             .collect();
-        
+
         // Check if any entries were removed
         if cleaned_entries.len() < original_count {
             let new_path = cleaned_entries.join(";");
-            
+
             // Update PATH to remove old system entries
             let output = Command::new("setx")
                 .args(&["PATH", &new_path])
@@ -1117,15 +1223,18 @@ impl VersionManager {
                 .map_err(|e| DigstoreError::ConfigurationError {
                     reason: format!("Failed to update PATH: {}", e),
                 })?;
-            
+
             if output.status.success() {
                 println!("  {} Removed old system PATH entries", "✓".green());
-                
+
                 // Also update current environment
                 std::env::set_var("PATH", &new_path);
             } else {
                 println!("  {} Could not update PATH automatically", "!".yellow());
-                println!("  {} You may need to manually remove old PATH entries:", "→".cyan());
+                println!(
+                    "  {} You may need to manually remove old PATH entries:",
+                    "→".cyan()
+                );
                 for location in &system_locations_to_remove {
                     println!("    Remove: {}", location);
                 }
@@ -1133,7 +1242,7 @@ impl VersionManager {
         } else {
             println!("  {} No old PATH entries found to clean up", "✓".green());
         }
-        
+
         Ok(())
     }
 
@@ -1162,7 +1271,7 @@ impl VersionManager {
                 if let Some(dir_name) = entry.file_name().to_str() {
                     if dir_name.starts_with('v') && dir_name.len() > 1 {
                         let version = &dir_name[1..]; // Remove 'v' prefix
-                        
+
                         // Verify binary exists
                         let binary_path = entry.path().join(self.get_binary_name());
                         if binary_path.exists() {
@@ -1180,9 +1289,7 @@ impl VersionManager {
     /// Check which version is currently active in PATH
     pub fn get_active_version_from_path(&self) -> Result<Option<String>> {
         // Try to run digstore --version to see what's in PATH
-        let output = Command::new("digstore")
-            .arg("--version")
-            .output();
+        let output = Command::new("digstore").arg("--version").output();
 
         match output {
             Ok(output) if output.status.success() => {
@@ -1197,7 +1304,7 @@ impl VersionManager {
                 } else {
                     Ok(None)
                 }
-            }
+            },
             _ => Ok(None), // digstore not in PATH or error
         }
     }

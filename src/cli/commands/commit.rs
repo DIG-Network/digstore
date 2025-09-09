@@ -58,7 +58,6 @@ pub fn execute(
         message
     };
 
-
     // Create the commit
     let commit_id = store.commit(&final_message)?;
 

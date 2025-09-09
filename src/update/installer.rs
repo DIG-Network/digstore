@@ -131,7 +131,7 @@ fn install_windows_msi(msi_path: &Path) -> Result<()> {
 /// Install macOS DMG with version management
 fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
     use crate::update::VersionManager;
-    
+
     // Mount the DMG
     let mount_output = Command::new("hdiutil")
         .args(&["attach", dmg_path.to_str().unwrap(), "-nobrowse"])
@@ -177,7 +177,7 @@ fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
     // Use version manager for organized installation
     let mut vm = VersionManager::new()?;
     let version_dir = vm.get_version_dir(&version);
-    
+
     // Create versioned directory in system location
     fs::create_dir_all(&version_dir)?;
 
@@ -212,7 +212,12 @@ fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
         .args(&["+x", &binary_target.to_string_lossy()])
         .output();
 
-    println!("  {} macOS version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
+    println!(
+        "  {} macOS version {} installed to: {}",
+        "✓".green(),
+        version.bright_cyan(),
+        version_dir.display()
+    );
 
     // Update PATH and set as active
     vm.update_path_to_version(&version)?;
@@ -224,7 +229,7 @@ fn install_macos_dmg(dmg_path: &Path) -> Result<()> {
 /// Install Linux DEB package with version management
 fn install_linux_deb(deb_path: &Path) -> Result<()> {
     use crate::update::VersionManager;
-    
+
     // Extract version from DEB filename
     let version = if let Some(filename) = deb_path.file_name().and_then(|n| n.to_str()) {
         if filename.contains("digstore_") {
@@ -277,10 +282,14 @@ fn install_linux_deb(deb_path: &Path) -> Result<()> {
     for deb_location in &deb_locations {
         if deb_location.exists() {
             let target_binary = version_dir.join("digstore");
-            
+
             // Copy to versioned directory
             let copy_output = Command::new("sudo")
-                .args(&["cp", &deb_location.to_string_lossy(), &target_binary.to_string_lossy().to_string()])
+                .args(&[
+                    "cp",
+                    &deb_location.to_string_lossy(),
+                    &target_binary.to_string_lossy().to_string(),
+                ])
                 .output()
                 .map_err(|e| DigstoreError::ConfigurationError {
                     reason: format!("Failed to copy binary: {}", e),
@@ -292,7 +301,12 @@ fn install_linux_deb(deb_path: &Path) -> Result<()> {
                     .args(&["chmod", "+x", &target_binary.to_string_lossy().to_string()])
                     .output();
 
-                println!("  {} Linux version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
+                println!(
+                    "  {} Linux version {} installed to: {}",
+                    "✓".green(),
+                    version.bright_cyan(),
+                    version_dir.display()
+                );
                 found = true;
                 break;
             }
@@ -315,7 +329,7 @@ fn install_linux_deb(deb_path: &Path) -> Result<()> {
 /// Install Linux RPM package with version management
 fn install_linux_rpm(rpm_path: &Path) -> Result<()> {
     use crate::update::VersionManager;
-    
+
     // Extract version from RPM filename
     let version = if let Some(filename) = rpm_path.file_name().and_then(|n| n.to_str()) {
         if filename.contains("digstore-") {
@@ -368,10 +382,14 @@ fn install_linux_rpm(rpm_path: &Path) -> Result<()> {
     for rpm_location in &rpm_locations {
         if rpm_location.exists() {
             let target_binary = version_dir.join("digstore");
-            
+
             // Copy to versioned directory
             let copy_output = Command::new("sudo")
-                .args(&["cp", &rpm_location.to_string_lossy(), &target_binary.to_string_lossy().to_string()])
+                .args(&[
+                    "cp",
+                    &rpm_location.to_string_lossy(),
+                    &target_binary.to_string_lossy().to_string(),
+                ])
                 .output()
                 .map_err(|e| DigstoreError::ConfigurationError {
                     reason: format!("Failed to copy binary: {}", e),
@@ -383,7 +401,12 @@ fn install_linux_rpm(rpm_path: &Path) -> Result<()> {
                     .args(&["chmod", "+x", &target_binary.to_string_lossy().to_string()])
                     .output();
 
-                println!("  {} Linux version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
+                println!(
+                    "  {} Linux version {} installed to: {}",
+                    "✓".green(),
+                    version.bright_cyan(),
+                    version_dir.display()
+                );
                 found = true;
                 break;
             }
@@ -406,7 +429,7 @@ fn install_linux_rpm(rpm_path: &Path) -> Result<()> {
 /// Install Linux AppImage with version management
 fn install_linux_appimage(appimage_path: &Path) -> Result<()> {
     use crate::update::VersionManager;
-    
+
     // Extract version from AppImage filename
     let version = if let Some(filename) = appimage_path.file_name().and_then(|n| n.to_str()) {
         if filename.contains("digstore-linux-x86_64.AppImage") {
@@ -470,7 +493,12 @@ fn install_linux_appimage(appimage_path: &Path) -> Result<()> {
         .args(&["chmod", "+x", &target_binary.to_string_lossy().to_string()])
         .output();
 
-    println!("  {} Linux AppImage version {} installed to: {}", "✓".green(), version.bright_cyan(), version_dir.display());
+    println!(
+        "  {} Linux AppImage version {} installed to: {}",
+        "✓".green(),
+        version.bright_cyan(),
+        version_dir.display()
+    );
 
     // Update PATH and set as active
     vm.update_path_to_version(&version)?;

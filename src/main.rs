@@ -95,9 +95,7 @@ fn main() -> Result<()> {
         Commands::Init {
             name,
             encryption_key,
-        } => {
-            cli::commands::init::execute(name, encryption_key)
-        },
+        } => cli::commands::init::execute(name, encryption_key),
         Commands::Add {
             paths,
             recursive,
@@ -130,17 +128,7 @@ fn main() -> Result<()> {
             at,
             progress,
             json,
-        } => {
-            cli::commands::get::execute(
-                path,
-                output,
-                verify,
-                metadata,
-                at,
-                progress,
-                json,
-            )
-        },
+        } => cli::commands::get::execute(path, output, verify, metadata, at, progress, json),
         Commands::Decrypt {
             path,
             output,
@@ -183,10 +171,11 @@ fn main() -> Result<()> {
             json,
         } => cli::commands::update::execute(check_only, force, json),
 
-        Commands::Version { subcommand, version } => {
-            cli::commands::version_cmd::execute(subcommand, version)
-                .map_err(|e| anyhow::anyhow!("Version command failed: {}", e))
-        },
+        Commands::Version {
+            subcommand,
+            version,
+        } => cli::commands::version_cmd::execute(subcommand, version)
+            .map_err(|e| anyhow::anyhow!("Version command failed: {}", e)),
 
         Commands::Layer { command } => match command {
             LayerCommands::List {

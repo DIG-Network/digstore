@@ -577,7 +577,7 @@ mod tests {
             &Hash::from_bytes([1; 32]),
             &Hash::from_bytes([2; 32]),
             600000,
-            "test_publisher_key",
+            &hex::encode(vec![4; 32]), // Use the same hex-encoded key as in the proof
         )
         .unwrap();
         assert!(result);
@@ -588,7 +588,7 @@ mod tests {
             &Hash::from_bytes([1; 32]),
             &Hash::from_bytes([2; 32]),
             500000,
-            "test_publisher_key",
+            &hex::encode(vec![4; 32]), // Use the same hex-encoded key as in the proof
         )
         .unwrap();
         assert!(!result);
@@ -599,7 +599,7 @@ mod tests {
             &Hash::from_bytes([99; 32]),
             &Hash::from_bytes([2; 32]),
             600000,
-            "test_publisher_key",
+            &hex::encode(vec![4; 32]), // Use the same hex-encoded key as in the proof
         )
         .unwrap();
         assert!(!result);

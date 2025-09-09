@@ -98,10 +98,10 @@ fn test_archive_add_layer_no_truncation_corruption() -> anyhow::Result<()> {
     for i in 0..3 {
         let test_file = project_path.join(format!("test_{}.txt", i));
         fs::write(&test_file, format!("test content {}", i))?;
-        
+
         store.add_file(Path::new(&format!("test_{}.txt", i)))?;
         let commit_result = store.commit(&format!("Test commit {}", i));
-        
+
         assert!(
             commit_result.is_ok(),
             "Commit {} should succeed without truncation corruption: {:?}",

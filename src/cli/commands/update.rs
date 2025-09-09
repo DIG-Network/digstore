@@ -162,12 +162,15 @@ fn execute_json_mode(check_only: bool, force: bool) -> Result<()> {
 /// Download and install update using nvm-style versioned installation
 fn download_and_install_update_versioned(download_url: &str, version: &str) -> Result<()> {
     println!("{}", "Downloading update...".bright_blue());
-    println!("{}", "Installing with nvm-style version management...".bright_green());
+    println!(
+        "{}",
+        "Installing with nvm-style version management...".bright_green()
+    );
 
     // Use version manager's nvm-style installation
     let mut vm = VersionManager::new()
         .map_err(|e| anyhow::anyhow!("Failed to create version manager: {}", e))?;
-    
+
     vm.install_version_from_url(version, download_url)
         .map_err(|e| anyhow::anyhow!("Installation failed: {}", e))?;
 

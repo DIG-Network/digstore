@@ -14,7 +14,7 @@ fn test_complete_basic_workflow() -> anyhow::Result<()> {
 
     // Step 1: Initialize repository
     let mut store = Store::init(project_path)?;
-    
+
     // Verify .digstore file was created
     let digstore_path = project_path.join(".digstore");
     assert!(digstore_path.exists(), ".digstore file should be created");
@@ -49,7 +49,10 @@ fn test_complete_basic_workflow() -> anyhow::Result<()> {
         let retrieved_content = store.get_file(Path::new(filename))?;
         // If encryption is enabled, content will be encrypted, so just verify it's not empty
         if store.archive.is_encrypted() {
-            assert!(!retrieved_content.is_empty(), "Retrieved content should not be empty");
+            assert!(
+                !retrieved_content.is_empty(),
+                "Retrieved content should not be empty"
+            );
         } else {
             assert_eq!(retrieved_content, expected_content.as_bytes());
         }
@@ -92,11 +95,14 @@ fn test_multiple_commit_workflow() -> anyhow::Result<()> {
     let first_content = store.get_file(Path::new("first.txt"))?;
     let second_content = store.get_file(Path::new("second.txt"))?;
     let third_content = store.get_file(Path::new("third.txt"))?;
-    
+
     assert!(!first_content.is_empty(), "First file should have content");
-    assert!(!second_content.is_empty(), "Second file should have content");
+    assert!(
+        !second_content.is_empty(),
+        "Second file should have content"
+    );
     assert!(!third_content.is_empty(), "Third file should have content");
-    
+
     // All files should have different content
     assert_ne!(first_content, second_content);
     assert_ne!(second_content, third_content);
@@ -111,11 +117,11 @@ fn test_repository_reopen_workflow() -> anyhow::Result<()> {
     let project_path = temp_dir.path();
 
     let commit_id;
-    
+
     // Create repository and commit data
     {
         let mut store = Store::init(project_path)?;
-        
+
         fs::write(project_path.join("persistent.txt"), "Persistent data")?;
         store.add_file(Path::new("persistent.txt"))?;
         commit_id = store.commit("Persistent commit")?;
@@ -123,12 +129,15 @@ fn test_repository_reopen_workflow() -> anyhow::Result<()> {
 
     // Reopen repository
     let store = Store::open(project_path)?;
-    
+
     // Verify data is still accessible
     assert_eq!(store.current_root(), Some(commit_id));
-    
+
     let retrieved_content = store.get_file(Path::new("persistent.txt"))?;
-    assert!(!retrieved_content.is_empty(), "Retrieved content should not be empty");
+    assert!(
+        !retrieved_content.is_empty(),
+        "Retrieved content should not be empty"
+    );
     // Note: Content is encrypted, so we can't compare against plain text
 
     Ok(())

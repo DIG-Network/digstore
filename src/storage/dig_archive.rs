@@ -236,7 +236,7 @@ impl DigArchive {
         {
             let mut attempts = 0;
             const MAX_ATTEMPTS: usize = 5;
-            
+
             loop {
                 match archive.load_mmap() {
                     Ok(()) => break,
@@ -246,7 +246,7 @@ impl DigArchive {
                         let delay = 50 * (1 << attempts);
                         std::thread::sleep(std::time::Duration::from_millis(delay));
                         continue;
-                    }
+                    },
                     Err(e) => return Err(e),
                 }
             }
@@ -565,14 +565,14 @@ impl DigArchive {
         {
             // On Windows, ensure any remaining file handles are released
             std::thread::sleep(std::time::Duration::from_millis(100));
-            
+
             // Try to remove the original file first, then rename
             if self.archive_path.exists() {
                 std::fs::remove_file(&self.archive_path)?;
             }
             std::fs::rename(&temp_path, &self.archive_path)?;
         }
-        
+
         #[cfg(not(windows))]
         std::fs::rename(&temp_path, &self.archive_path)?;
 
@@ -581,7 +581,7 @@ impl DigArchive {
         {
             let mut attempts = 0;
             const MAX_ATTEMPTS: usize = 3;
-            
+
             loop {
                 match self.load() {
                     Ok(()) => break,
@@ -589,12 +589,12 @@ impl DigArchive {
                         attempts += 1;
                         std::thread::sleep(std::time::Duration::from_millis(100 * attempts as u64));
                         continue;
-                    }
+                    },
                     Err(e) => return Err(e),
                 }
             }
         }
-        
+
         #[cfg(not(windows))]
         self.load()?;
 
@@ -717,7 +717,7 @@ impl Drop for DigArchive {
     fn drop(&mut self) {
         // Explicitly close memory map to prevent Windows file locking issues
         self.mmap = None;
-        
+
         if self.dirty {
             let _ = self.flush();
         }

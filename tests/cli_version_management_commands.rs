@@ -9,7 +9,7 @@ use tempfile::TempDir;
 #[test]
 fn test_version_subcommands_help() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test main version command
     Command::cargo_bin("digstore")
         .unwrap()
@@ -25,7 +25,7 @@ fn test_version_subcommands_help() {
 #[test]
 fn test_version_list_command_output() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     Command::cargo_bin("digstore")
         .unwrap()
         .current_dir(temp_dir.path())
@@ -34,14 +34,14 @@ fn test_version_list_command_output() {
         .success()
         .stdout(
             predicate::str::contains("Installed Versions")
-                .or(predicate::str::contains("No versions installed"))
+                .or(predicate::str::contains("No versions installed")),
         );
 }
 
 #[test]
 fn test_version_list_system_command() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     Command::cargo_bin("digstore")
         .unwrap()
         .current_dir(temp_dir.path())
@@ -50,14 +50,14 @@ fn test_version_list_system_command() {
         .success()
         .stdout(
             predicate::str::contains("System-Installed Versions")
-                .or(predicate::str::contains("No system versions installed"))
+                .or(predicate::str::contains("No system versions installed")),
         );
 }
 
 #[test]
 fn test_version_current_command_output() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     Command::cargo_bin("digstore")
         .unwrap()
         .current_dir(temp_dir.path())
@@ -66,16 +66,16 @@ fn test_version_current_command_output() {
         .success()
         .stdout(
             predicate::str::contains("Current version")
-                .or(predicate::str::contains("No versions managed"))
+                .or(predicate::str::contains("No versions managed")),
         );
 }
 
 #[test]
 fn test_version_error_messages() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test error messages are helpful and specific
-    
+
     // Missing version parameter
     Command::cargo_bin("digstore")
         .unwrap()
@@ -84,7 +84,7 @@ fn test_version_error_messages() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Version required"));
-    
+
     Command::cargo_bin("digstore")
         .unwrap()
         .current_dir(temp_dir.path())
@@ -92,7 +92,7 @@ fn test_version_error_messages() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Version required"));
-    
+
     Command::cargo_bin("digstore")
         .unwrap()
         .current_dir(temp_dir.path())
@@ -100,7 +100,7 @@ fn test_version_error_messages() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Version required"));
-    
+
     // Missing MSI path
     Command::cargo_bin("digstore")
         .unwrap()
@@ -109,7 +109,7 @@ fn test_version_error_messages() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("MSI path required"));
-    
+
     // Non-existent version
     Command::cargo_bin("digstore")
         .unwrap()
@@ -118,7 +118,7 @@ fn test_version_error_messages() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("not installed"));
-    
+
     // Non-existent MSI file
     Command::cargo_bin("digstore")
         .unwrap()
@@ -132,7 +132,7 @@ fn test_version_error_messages() {
 #[test]
 fn test_version_command_consistency() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test that version commands have consistent output format
     let commands = [
         vec!["version"],
@@ -141,7 +141,7 @@ fn test_version_command_consistency() {
         vec!["version", "current"],
         vec!["version", "fix-path"],
     ];
-    
+
     for command in &commands {
         let command_assert = Command::cargo_bin("digstore")
             .unwrap()
@@ -150,12 +150,16 @@ fn test_version_command_consistency() {
             .assert()
             .success();
         let output = command_assert.get_output();
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
-        
+
         // Should not be empty
-        assert!(!stdout.trim().is_empty(), "Command {:?} should produce output", command);
-        
+        assert!(
+            !stdout.trim().is_empty(),
+            "Command {:?} should produce output",
+            command
+        );
+
         // Should not contain error indicators in success output
         assert!(
             !stdout.contains("Error:") && !stdout.contains("Failed:"),
@@ -168,7 +172,7 @@ fn test_version_command_consistency() {
 #[test]
 fn test_version_install_current_error_handling() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test install-current from non-project directory
     let command_assert = Command::cargo_bin("digstore")
         .unwrap()
@@ -176,21 +180,21 @@ fn test_version_install_current_error_handling() {
         .args(&["version", "install-current"])
         .assert();
     let output = command_assert.get_output();
-    
+
     // This might succeed or fail depending on the test environment
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("Installing current digstore binary") ||
-            stdout.contains("Installation completed"),
+            stdout.contains("Installing current digstore binary")
+                || stdout.contains("Installation completed"),
             "Should show installation progress when successful"
         );
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("project directory") ||
-            stderr.contains("Cargo.toml") ||
-            stderr.contains("digstore project"),
+            stderr.contains("project directory")
+                || stderr.contains("Cargo.toml")
+                || stderr.contains("digstore project"),
             "Should provide helpful error about project directory requirement"
         );
     }
@@ -199,7 +203,7 @@ fn test_version_install_current_error_handling() {
 #[test]
 fn test_path_fix_command_output_quality() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test that PATH analysis provides useful information
     Command::cargo_bin("digstore")
         .unwrap()
@@ -210,20 +214,17 @@ fn test_path_fix_command_output_quality() {
         .stdout(predicate::str::contains("Analyzing PATH"))
         .stdout(
             predicate::str::contains("Found digstore installations")
-                .or(predicate::str::contains("No digstore installations"))
+                .or(predicate::str::contains("No digstore installations")),
         )
-        .stdout(
-            predicate::str::contains("Position")
-                .or(predicate::str::contains("No digstore"))
-        );
+        .stdout(predicate::str::contains("Position").or(predicate::str::contains("No digstore")));
 }
 
 #[test]
 fn test_version_management_integration_with_main_commands() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     // Test that version management doesn't interfere with main digstore commands
-    
+
     // These commands should work regardless of version management state
     Command::cargo_bin("digstore")
         .unwrap()
@@ -232,7 +233,7 @@ fn test_version_management_integration_with_main_commands() {
         .assert()
         .success()
         .stdout(predicate::str::contains("digstore"));
-    
+
     Command::cargo_bin("digstore")
         .unwrap()
         .current_dir(temp_dir.path())
@@ -240,7 +241,7 @@ fn test_version_management_integration_with_main_commands() {
         .assert()
         .success()
         .stdout(predicate::str::contains("digstore"));
-    
+
     // Update check should work
     Command::cargo_bin("digstore")
         .unwrap()

@@ -555,7 +555,9 @@ impl WalletManager {
                     true // Auto-confirm in non-interactive or yes mode
                 } else {
                     Confirm::new()
-                        .with_prompt("This will permanently delete your current wallet. Are you sure?")
+                        .with_prompt(
+                            "This will permanently delete your current wallet. Are you sure?",
+                        )
                         .default(false)
                         .interact()
                         .map_err(|e| DigstoreError::ConfigurationError {

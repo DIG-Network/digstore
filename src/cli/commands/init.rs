@@ -6,10 +6,7 @@ use colored::Colorize;
 use std::env;
 
 /// Execute the init command
-pub fn execute(
-    name: Option<String>,
-    encryption_key: Option<String>,
-) -> Result<()> {
+pub fn execute(name: Option<String>, encryption_key: Option<String>) -> Result<()> {
     let current_dir = env::current_dir()?;
 
     println!("{}", "Initializing repository...".bright_blue());

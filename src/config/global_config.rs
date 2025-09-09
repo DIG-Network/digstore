@@ -445,9 +445,7 @@ impl Default for GlobalConfig {
                 compression: Some("zstd".to_string()),
                 editor: None,
             },
-            crypto: CryptoConfig {
-                public_key: None,
-            },
+            crypto: CryptoConfig { public_key: None },
             wallet: WalletConfig {
                 active_profile: Some("default".to_string()),
             },

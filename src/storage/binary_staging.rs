@@ -316,7 +316,7 @@ impl BinaryStagingArea {
         {
             let mut attempts = 0;
             const MAX_ATTEMPTS: usize = 5;
-            
+
             loop {
                 match self.try_load_mmap() {
                     Ok(()) => break,
@@ -326,7 +326,7 @@ impl BinaryStagingArea {
                         let delay = 50 * (1 << attempts);
                         std::thread::sleep(std::time::Duration::from_millis(delay));
                         continue;
-                    }
+                    },
                     Err(e) => return Err(e),
                 }
             }

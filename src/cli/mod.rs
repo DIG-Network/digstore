@@ -219,7 +219,6 @@ pub enum Commands {
         json: bool,
     },
 
-
     /// Generate shell completion scripts
     Completion {
         /// Shell to generate completion for
@@ -264,7 +263,7 @@ pub enum Commands {
     Version {
         /// Version management subcommand
         subcommand: Option<String>,
-        
+
         /// Version number for set/remove commands
         version: Option<String>,
     },

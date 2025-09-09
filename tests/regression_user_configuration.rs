@@ -12,7 +12,7 @@ use tempfile::TempDir;
 #[test]
 fn test_user_config_optional_email() -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
-    
+
     // Test 1: Configuration with name only (no email) should be valid
     let config_content = r#"
 [user]
@@ -60,7 +60,10 @@ email = "test@example.com"
 
     let config = config_result.unwrap();
     assert!(config.user.name.is_some(), "Name should be present");
-    assert!(config.user.email.is_some(), "Email should be present when provided");
+    assert!(
+        config.user.email.is_some(),
+        "Email should be present when provided"
+    );
 
     // Test 3: Configuration with empty email should be valid
     let config_content_empty_email = r#"
@@ -96,21 +99,33 @@ email = ""
 fn test_user_config_validation() -> anyhow::Result<()> {
     // Test is_user_configured logic
     let mut config = GlobalConfig::default();
-    
+
     // Should not be configured initially
-    assert!(!config.is_user_configured(), "Should not be configured without name");
-    
+    assert!(
+        !config.is_user_configured(),
+        "Should not be configured without name"
+    );
+
     // Should be configured with just name (email optional)
     config.user.name = Some("Test User".to_string());
-    assert!(config.is_user_configured(), "Should be configured with name only");
-    
+    assert!(
+        config.is_user_configured(),
+        "Should be configured with name only"
+    );
+
     // Should still be configured with empty email
     config.user.email = Some("".to_string());
-    assert!(config.is_user_configured(), "Should be configured with empty email");
-    
+    assert!(
+        config.is_user_configured(),
+        "Should be configured with empty email"
+    );
+
     // Should be configured with both name and email
     config.user.email = Some("test@example.com".to_string());
-    assert!(config.is_user_configured(), "Should be configured with name and email");
+    assert!(
+        config.is_user_configured(),
+        "Should be configured with name and email"
+    );
 
     Ok(())
 }
