@@ -26,3 +26,4 @@ pub mod types {
 }
 
 pub use urn::Urn;
+pub use merkle::{MerkleProof, MerkleTree, ProofStep};
