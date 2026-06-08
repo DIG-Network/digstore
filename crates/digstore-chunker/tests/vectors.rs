@@ -72,3 +72,51 @@ fn golden_boundaries_are_stable() {
         "99f162103cb5b0cff95dcfee4ba9b343e1ea865e0ab9416845898bb57ad1e105"
     );
 }
+
+/// Count shared trailing chunk content-addresses between two chunkings.
+fn shared_trailing_hashes(a: &[digstore_chunker::Chunk], b: &[digstore_chunker::Chunk]) -> usize {
+    let mut shared = 0usize;
+    while shared < a.len()
+        && shared < b.len()
+        && a[a.len() - 1 - shared].hash == b[b.len() - 1 - shared].hash
+    {
+        shared += 1;
+    }
+    shared
+}
+
+#[test]
+#[ignore = "capture-only: run with --ignored --nocapture to print dedup-locality value"]
+fn capture_dedup_locality_value() {
+    let cfg = default_config();
+    let body = fixed_input(300 * 1024);
+    let mut modified = vec![0xABu8; 1000]; // 1000-byte prepend
+    modified.extend_from_slice(&body);
+
+    let original_chunks = chunk_slice(&body, &cfg);
+    let modified_chunks = chunk_slice(&modified, &cfg);
+    let shared = shared_trailing_hashes(&original_chunks, &modified_chunks);
+
+    eprintln!("DEDUP_ORIGINAL_CHUNKS={}", original_chunks.len());
+    eprintln!("DEDUP_MODIFIED_CHUNKS={}", modified_chunks.len());
+    eprintln!("DEDUP_SHARED_TRAILING={shared}");
+}
+
+#[test]
+fn front_insert_preserves_trailing_chunks() {
+    let cfg = default_config();
+    let body = fixed_input(300 * 1024);
+    let mut modified = vec![0xABu8; 1000];
+    modified.extend_from_slice(&body);
+
+    let original_chunks = chunk_slice(&body, &cfg);
+    let modified_chunks = chunk_slice(&modified, &cfg);
+    let shared = shared_trailing_hashes(&original_chunks, &modified_chunks);
+
+    // FROZEN observed re-synchronization (captured DEDUP_SHARED_TRAILING from Step 9.2).
+    // A fixed-block chunker would share ZERO trailing chunks after a front insert;
+    // CDC re-synchronizes and shares this many (paper §3 dedup heritage).
+    let expected_shared: usize = 1;
+    assert_eq!(shared, expected_shared, "dedup re-sync count changed");
+    assert!(shared >= 1, "CDC must share at least one trailing chunk after front insert");
+}
