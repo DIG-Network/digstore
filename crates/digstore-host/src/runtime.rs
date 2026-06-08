@@ -191,4 +191,13 @@ impl HostRuntime {
     pub fn read_guest(&mut self, ptr: u32, len: u32) -> Result<Vec<u8>, HostError> {
         crate::memory::read_bytes(&self.store, &self.memory, ptr, len)
     }
+
+    pub fn call_i32_export(&mut self, name: &str) -> Result<i32, HostError> {
+        let f: TypedFunc<(), i32> = self
+            .instance
+            .get_typed_func(&mut self.store, name)
+            .map_err(|_| HostError::MissingExport("i32-export-0"))?;
+        self.arm_bounds();
+        f.call(&mut self.store, ()).map_err(Self::map_trap)
+    }
 }
