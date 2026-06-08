@@ -1,1 +1,85 @@
-// CLI error type — implemented in Task 2
+//! CLI error type and process exit-code mapping.
+
+use digstore_core::ErrorCode;
+
+/// Top-level CLI error. Every command returns `Result<_, CliError>`.
+#[derive(Debug, thiserror::Error)]
+pub enum CliError {
+    #[error("no digstore found at {0}; run `digstore init` first")]
+    NoStore(String),
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+    #[error("resource not found: {0}")]
+    NotFound(String),
+    #[error("verification failed: {0}")]
+    VerificationFailed(String),
+    #[error("network error: {0}")]
+    Network(String),
+    #[error("non-fast-forward: remote root has advanced")]
+    NonFastForward,
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl CliError {
+    /// Exit-code contract:
+    /// 0 success | 1 other | 2 invalid-argument | 3 no-store | 4 not-found
+    /// 5 verification-failed | 6 network | 7 non-fast-forward | 8 unauthorized.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            CliError::NoStore(_) => 3,
+            CliError::InvalidArgument(_) => 2,
+            CliError::NotFound(_) => 4,
+            CliError::VerificationFailed(_) => 5,
+            CliError::Network(_) => 6,
+            CliError::NonFastForward => 7,
+            CliError::Unauthorized(_) => 8,
+            CliError::Other(_) => 1,
+        }
+    }
+
+    /// Map a canonical `digstore-core` ErrorCode (from a host/guest call) to a CliError.
+    pub fn from_error_code(code: ErrorCode, ctx: &str) -> Self {
+        match code {
+            ErrorCode::NotFound => CliError::NotFound(ctx.to_string()),
+            ErrorCode::ValidationFailed => CliError::VerificationFailed(ctx.to_string()),
+            ErrorCode::NetworkError | ErrorCode::Timeout => CliError::Network(ctx.to_string()),
+            ErrorCode::NoSession | ErrorCode::SessionExpired => {
+                CliError::Unauthorized(ctx.to_string())
+            }
+            _ => CliError::InvalidArgument(ctx.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_codes_are_distinct_and_nonzero() {
+        let errs = [
+            CliError::NoStore("x".into()),
+            CliError::InvalidArgument("x".into()),
+            CliError::NotFound("x".into()),
+            CliError::VerificationFailed("x".into()),
+            CliError::Network("x".into()),
+            CliError::NonFastForward,
+            CliError::Unauthorized("x".into()),
+        ];
+        let mut codes: Vec<i32> = errs.iter().map(|e| e.exit_code()).collect();
+        let n = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), n, "exit codes must be distinct");
+        assert!(codes.iter().all(|c| *c != 0), "exit codes must be nonzero");
+    }
+
+    #[test]
+    fn maps_not_found_error_code() {
+        let e = CliError::from_error_code(ErrorCode::NotFound, "urn:dig:...");
+        assert!(matches!(e, CliError::NotFound(_)));
+    }
+}
