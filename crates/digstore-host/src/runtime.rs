@@ -168,3 +168,23 @@ impl HostRuntime {
         self.data_export("get_current_roothash")
     }
 }
+
+impl HostRuntime {
+    pub fn call_i64_export(&mut self, name: &str) -> Result<i64, HostError> {
+        let f: TypedFunc<(), i64> = self
+            .instance
+            .get_typed_func(&mut self.store, name)
+            .map_err(|_| HostError::MissingExport("i64-export"))?;
+        self.arm_bounds();
+        f.call(&mut self.store, ()).map_err(Self::map_trap)
+    }
+
+    pub fn call_i32_export_1(&mut self, name: &str, arg: i32) -> Result<i32, HostError> {
+        let f: TypedFunc<i32, i32> = self
+            .instance
+            .get_typed_func(&mut self.store, name)
+            .map_err(|_| HostError::MissingExport("i32-export-1"))?;
+        self.arm_bounds();
+        f.call(&mut self.store, arg).map_err(Self::map_trap)
+    }
+}
