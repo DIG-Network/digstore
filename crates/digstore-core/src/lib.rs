@@ -25,6 +25,24 @@ pub mod types {
     pub use crate::bytes::{Bytes32, Bytes48, Bytes96};
 }
 
+/// CONVENTIONS C9: single source of truth for the serving-output byte ordering.
+/// Both `digstore-guest` (`get_content`) and `digstore-prover`
+/// (`ServingInputs::output_bytes`) call this so re-execution matches what was
+/// served (deviation #3, `program_hash` binding).
+pub mod serving {
+    use alloc::vec::Vec;
+
+    /// Concatenate chunk byte-slices in the given order (simple ordered concat).
+    pub fn concat_output(chunks_in_order: &[&[u8]]) -> Vec<u8> {
+        let total: usize = chunks_in_order.iter().map(|c| c.len()).sum();
+        let mut out = Vec::with_capacity(total);
+        for chunk in chunks_in_order {
+            out.extend_from_slice(chunk);
+        }
+        out
+    }
+}
+
 pub use urn::Urn;
 pub use merkle::{MerkleProof, MerkleTree, ProofStep};
 pub use keytable::{KeyTableEntry, PathWalk};
