@@ -130,10 +130,21 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
         })
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
+    // jwks_fetch(url_ptr, url_len) -> i32. SESSION-GATED (§6.3).
+    // Gating only here; the HTTP success path is added in Task 14.
     linker
-        .func_wrap(m, "jwks_fetch", |_c: Caller<'_, RuntimeState>, _p: i32, _l: i32| -> i32 {
-            ErrorCode::NoSession as i32
-        })
+        .func_wrap(
+            m,
+            "jwks_fetch",
+            |caller: Caller<'_, RuntimeState>, _url_ptr: i32, _url_len: i32| -> i32 {
+                let now = caller.data().host.clock.now_unix_secs();
+                if !caller.data().host.sessions.is_valid(now) {
+                    return ErrorCode::NoSession as i32;
+                }
+                // Session valid but fetch not yet implemented; Task 14 fills this in.
+                ErrorCode::NetworkError as i32
+            },
+        )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
     // host_read_return_buffer(dest_ptr) -> i32 bytes copied (§6.4).

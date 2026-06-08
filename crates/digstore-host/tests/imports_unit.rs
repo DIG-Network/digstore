@@ -78,6 +78,15 @@ fn host_public_key_returns_48_bytes() {
 }
 
 #[test]
+fn jwks_fetch_blocked_without_session() {
+    let mut rt = probe_runtime(FixedClock::new(1_700_000_000));
+    let url = b"http://127.0.0.1:1/jwks.json";
+    rt.write_guest(5000, url).unwrap();
+    let r = rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32).unwrap();
+    assert_eq!(r, -100); // ErrorCode::NoSession
+}
+
+#[test]
 fn read_return_buffer_copies_into_guest() {
     let mut rt = probe_runtime(FixedClock::new(100));
     let n = rt.call_i32_export_1("probe_random", 16).unwrap();
