@@ -2,6 +2,8 @@ use crate::backend::RemoteBackend;
 use crate::error::RemoteError;
 use crate::ratelimit::RateLimiter;
 use axum::{
+    extract::{Request as AxRequest, State},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -63,8 +65,27 @@ impl RemoteServer {
                 "/stores/:id/delta",
                 get(crate::handlers::delta::get_delta).post(crate::handlers::delta::post_delta),
             )
+            .layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                rate_limit_mw,
+            ))
             .with_state(self.state.clone())
     }
+}
+
+/// Per-store rate-limit middleware (§21.8 429). Extracts the `{id}` segment
+/// after `/stores/` and consumes a token; on exhaustion returns 429.
+async fn rate_limit_mw(State(s): State<AppState>, req: AxRequest, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    if let Some(rest) = path.strip_prefix("/stores/") {
+        let id_seg = rest.split('/').next().unwrap_or("");
+        if let Ok(store_id) = Bytes32::from_hex(id_seg) {
+            if !s.rate_limiter.try_acquire(&store_id) {
+                return RemoteError::RateLimited.into_response();
+            }
+        }
+    }
+    next.run(req).await
 }
 
 /// Parse a hex store id from a path parameter, or 400.
