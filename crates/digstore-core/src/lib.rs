@@ -28,3 +28,4 @@ pub mod types {
 pub use urn::Urn;
 pub use merkle::{MerkleProof, MerkleTree, ProofStep};
 pub use keytable::{KeyTableEntry, PathWalk};
+pub use manifest::{Author, MetadataManifest};
