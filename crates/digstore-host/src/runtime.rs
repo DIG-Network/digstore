@@ -17,7 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
+use wasmtime::{
+    Engine, Instance, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc,
+};
 
 /// Background thread that increments the engine epoch on a fixed period so the
 /// wall-clock timeout (§18.2) is enforced via epoch interruption.
@@ -67,9 +69,11 @@ pub struct HostDeps {
     pub attestation: Option<SharedBackend>,
 }
 
-/// Combined per-store host state. The wasmtime resource limiter is added in Task 13.
+/// Combined per-store host state, including the wasmtime resource limiter that
+/// enforces the outer memory ceiling (§18.2).
 pub struct RuntimeState {
     pub host: HostState,
+    pub limits: StoreLimits,
 }
 
 pub struct HostRuntime {
@@ -137,7 +141,18 @@ impl HostRuntime {
             last_signature: None,
         };
 
-        let mut store = Store::new(&engine, RuntimeState { host });
+        let store_limits = StoreLimitsBuilder::new()
+            .memory_size(limits.memory_bytes_max)
+            .build();
+
+        let mut store = Store::new(
+            &engine,
+            RuntimeState {
+                host,
+                limits: store_limits,
+            },
+        );
+        store.limiter(|s| &mut s.limits);
         // Epoch-deadline expiration traps (the default, set explicitly for clarity).
         store.epoch_deadline_trap();
 
