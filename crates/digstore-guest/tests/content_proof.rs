@@ -146,3 +146,64 @@ fn failed_attestation_returns_decoy() {
         ContentOutcome::Decoy(_)
     ));
 }
+
+use digstore_guest::content::verify_request_jwt;
+use digstore_guest::jwt::ClaimPolicy;
+
+fn b64url(b: &[u8]) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    URL_SAFE_NO_PAD.encode(b)
+}
+fn make_jwt(header: &str, payload: &str) -> Vec<u8> {
+    let mut s = b64url(header.as_bytes());
+    s.push('.');
+    s.push_str(&b64url(payload.as_bytes()));
+    s.push('.');
+    s.push_str(&b64url(b"sig"));
+    s.into_bytes()
+}
+
+#[test]
+fn expired_jwt_fails_claim_check() {
+    // Claim check alone (signature skipped here) must reject an expired token,
+    // which serve_content turns into a decoy.
+    let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":1000,"iss":"acme","aud":"dig"}"#);
+    let policy = ClaimPolicy { now: 5000, expected_iss: Some("acme"), expected_aud: Some("dig") };
+    assert!(verify_request_jwt(&jwt, &policy).is_err());
+}
+
+#[test]
+fn valid_jwt_passes_claim_check() {
+    let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":9999,"iss":"acme","aud":"dig"}"#);
+    let policy = ClaimPolicy { now: 5000, expected_iss: Some("acme"), expected_aud: Some("dig") };
+    assert!(verify_request_jwt(&jwt, &policy).is_ok());
+}
+
+#[test]
+fn require_jwt_without_token_returns_decoy() {
+    let key = Bytes32([0x11; 32]);
+    let entry = KeyTableEntry {
+        static_key: key,
+        generation: Bytes32([0xBB; 32]),
+        chunk_indices: vec![0],
+        total_size: 5,
+    };
+    let table = encode_key_table(&[entry]);
+    let pool = fixtures::pack_pool(&[b"alpha"]);
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let ds = DataSection::parse(&blob).unwrap();
+    let host = MockHost::default();
+    let mut gc = gate_config();
+    gc.require_jwt = true;
+    let req = ContentRequest {
+        retrieval_key: key,
+        root_hash: None,
+        range: None,
+        jwt: None, // required but absent
+        window: None,
+    };
+    assert!(matches!(
+        serve_content(&host, &ds, &req, &gc),
+        ContentOutcome::Decoy(_)
+    ));
+}
