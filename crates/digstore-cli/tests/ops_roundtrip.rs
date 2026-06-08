@@ -53,7 +53,10 @@ fn multi_chunk_round_trip() {
     };
     let resp = serve::serve_content(&ctx, &res.output_path, &urn, res.roothash).unwrap();
     let out = client_crypto::decrypt_and_verify(&resp, &urn, None, &res.roothash).unwrap();
-    assert_eq!(out, content, "multi-chunk round trip must reassemble exactly");
+    assert_eq!(
+        out, content,
+        "multi-chunk round trip must reassemble exactly"
+    );
 }
 
 #[test]

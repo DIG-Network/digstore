@@ -9,7 +9,12 @@ fn private_cat_without_salt_fails_with_salt_succeeds() {
     std::fs::write(&f, content).unwrap();
 
     dig(&dir).args(["init", "--private"]).assert().success();
-    dig(&dir).args(["add"]).arg(&f).args(["--key", "s"]).assert().success();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "s"])
+        .assert()
+        .success();
     dig(&dir).args(["commit"]).assert().success();
 
     let (store_id, root) = store_id_and_root(&dir);
@@ -21,7 +26,10 @@ fn private_cat_without_salt_fails_with_salt_succeeds() {
     // WITH salt (read from the deterministic secret_salt.hex file) -> plaintext.
     let salt = std::fs::read_to_string(dir.path().join("secret_salt.hex")).unwrap();
     let salt = salt.trim();
-    let out = dig(&dir).args(["cat", &urn, "--salt", salt]).output().unwrap();
+    let out = dig(&dir)
+        .args(["cat", &urn, "--salt", salt])
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "cat --salt failed: {}",

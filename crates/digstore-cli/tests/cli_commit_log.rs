@@ -8,7 +8,12 @@ fn commit_creates_module_and_log_lists_it() {
     dig(&dir).arg("init").assert().success();
     let f = dir.path().join("a.txt");
     std::fs::write(&f, b"alpha beta gamma").unwrap();
-    dig(&dir).args(["add"]).arg(&f).args(["--key", "a"]).assert().success();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
     dig(&dir)
         .args(["commit", "-m", "first"])
         .assert()

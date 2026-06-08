@@ -42,7 +42,10 @@ pub fn run(ctx: &CliContext, args: CheckoutArgs) -> Result<(), CliError> {
         count += 1;
     }
     if ctx.json {
-        println!("{}", serde_json::json!({ "root": root.to_hex(), "files": count }));
+        println!(
+            "{}",
+            serde_json::json!({ "root": root.to_hex(), "files": count })
+        );
     } else {
         println!(
             "checked out {} files from {} into {}",

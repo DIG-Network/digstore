@@ -23,7 +23,9 @@ pub struct CloneSummary {
 pub(crate) fn map_remote_err(e: ClientError) -> CliError {
     match e {
         ClientError::NonFastForward => CliError::NonFastForward,
-        ClientError::Unauthorized(_) => CliError::Unauthorized("remote rejected credentials".into()),
+        ClientError::Unauthorized(_) => {
+            CliError::Unauthorized("remote rejected credentials".into())
+        }
         ClientError::Status(404) => CliError::NotFound("remote resource".into()),
         ClientError::Status(code) => CliError::Network(format!("remote status {code}")),
         ClientError::Transport(msg) => CliError::Network(msg),
@@ -111,9 +113,11 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     digstore_store::save_config(ctx.config_path(), &cfg)
         .map_err(|e| CliError::Other(anyhow::anyhow!("save config: {e}")))?;
 
-    let module_path = ctx
-        .modules_dir()
-        .join(format!("{}-{}.wasm", store_id.to_hex(), remote_root.to_hex()));
+    let module_path = ctx.modules_dir().join(format!(
+        "{}-{}.wasm",
+        store_id.to_hex(),
+        remote_root.to_hex()
+    ));
     fs::write(&module_path, &module).map_err(|e| CliError::Other(e.into()))?;
 
     store_ops::append_history(
@@ -191,9 +195,9 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
                 .iter()
                 .find(|r| Bytes32::from_hex(&r.root).ok() == Some(root))
                 .ok_or_else(|| CliError::VerificationFailed("root not in remote /roots".into()))?;
-            let module_path = ctx
-                .modules_dir()
-                .join(format!("{}-{}.wasm", cfg.store_id.to_hex(), root.to_hex()));
+            let module_path =
+                ctx.modules_dir()
+                    .join(format!("{}-{}.wasm", cfg.store_id.to_hex(), root.to_hex()));
             fs::write(&module_path, &bytes).map_err(|e| CliError::Other(e.into()))?;
             store_ops::append_history(
                 ctx,

@@ -148,8 +148,9 @@ mod tests {
 
     #[test]
     fn parses_remote_add_subcommand() {
-        let cli = Cli::try_parse_from(["digstore", "remote", "add", "origin", "https://h/stores/x"])
-            .unwrap();
+        let cli =
+            Cli::try_parse_from(["digstore", "remote", "add", "origin", "https://h/stores/x"])
+                .unwrap();
         match cli.command {
             Command::Remote(r) => match r.action {
                 RemoteAction::Add { name, url } => {
