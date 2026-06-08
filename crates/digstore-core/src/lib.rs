@@ -16,3 +16,4 @@ pub mod wire;
 
 pub use error::{CoreError, ErrorCode};
 pub use abi::{is_error, pack_ptr_len, unpack_ptr_len};
+pub use codec::{Decode, DecodeError, Decoder, Encode, Encoder};
