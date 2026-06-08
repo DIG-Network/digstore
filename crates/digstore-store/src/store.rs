@@ -33,7 +33,9 @@ impl<C: Clock> Store<C> {
     pub fn init(config: StoreConfig, clock: C) -> Result<Self> {
         let paths = StorePaths::new(&config.data_dir, config.store_id);
         if paths.config_file().exists() {
-            return Err(StoreError::AlreadyExists(paths.root().display().to_string()));
+            return Err(StoreError::AlreadyExists(
+                paths.root().display().to_string(),
+            ));
         }
         std::fs::create_dir_all(paths.root())?;
         std::fs::create_dir_all(paths.generations_dir())?;
@@ -41,7 +43,11 @@ impl<C: Clock> Store<C> {
         save_config(paths.config_file(), &config)?;
         StagingArea::open(paths.staging_file())?;
         RootHistory::open(paths.history_file())?;
-        Ok(Self { config, paths, clock })
+        Ok(Self {
+            config,
+            paths,
+            clock,
+        })
     }
 
     /// Open an existing store rooted at `data_dir`.
@@ -53,7 +59,11 @@ impl<C: Clock> Store<C> {
         }
         let config = load_config(&config_file)?;
         let paths = StorePaths::new(data_dir, config.store_id);
-        Ok(Self { config, paths, clock })
+        Ok(Self {
+            config,
+            paths,
+            clock,
+        })
     }
 
     pub fn store_id(&self) -> Bytes32 {
@@ -193,7 +203,11 @@ impl<C: Clock> Store<C> {
             if !self.chunk_exists_anywhere(*hash)? {
                 chunkstore.put(*hash, data)?;
             }
-            chunk_refs.push(ChunkRef { index: i as u32, hash: *hash, size: data.len() as u64 });
+            chunk_refs.push(ChunkRef {
+                index: i as u32,
+                hash: *hash,
+                size: data.len() as u64,
+            });
         }
 
         let next_id = RootHistory::open(self.paths.history_file())?.next_id()?;
@@ -210,7 +224,11 @@ impl<C: Clock> Store<C> {
         manifest.write_to(self.paths.generation_manifest(&root_hex))?;
 
         let mut history = RootHistory::open(self.paths.history_file())?;
-        history.append(&GenerationState { id: next_id, root, timestamp })?;
+        history.append(&GenerationState {
+            id: next_id,
+            root,
+            timestamp,
+        })?;
         staging.clear()?;
 
         Ok(root)

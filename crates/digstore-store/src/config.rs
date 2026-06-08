@@ -31,22 +31,27 @@ impl ConfigToml {
     }
 
     fn into_config(self) -> Result<StoreConfig> {
-        let store_id = Bytes32::from_hex(&self.store_id)
-            .map_err(|_| StoreError::InvalidConfig(format!("bad store_id hex: {}", self.store_id)))?;
+        let store_id = Bytes32::from_hex(&self.store_id).map_err(|_| {
+            StoreError::InvalidConfig(format!("bad store_id hex: {}", self.store_id))
+        })?;
         let visibility = match self.visibility.as_str() {
             "public" => Visibility::Public,
             "private" => {
-                let salt_hex = self
-                    .secret_salt
-                    .ok_or_else(|| StoreError::InvalidConfig("private store missing secret_salt".into()))?;
+                let salt_hex = self.secret_salt.ok_or_else(|| {
+                    StoreError::InvalidConfig("private store missing secret_salt".into())
+                })?;
                 let bytes = hex::decode(&salt_hex)
                     .map_err(|_| StoreError::InvalidConfig("bad secret_salt hex".into()))?;
-                let arr: [u8; 32] = bytes
-                    .try_into()
-                    .map_err(|_| StoreError::InvalidConfig("secret_salt must be 32 bytes".into()))?;
+                let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+                    StoreError::InvalidConfig("secret_salt must be 32 bytes".into())
+                })?;
                 Visibility::Private(SecretSalt(arr))
             }
-            other => return Err(StoreError::InvalidConfig(format!("unknown visibility: {other}"))),
+            other => {
+                return Err(StoreError::InvalidConfig(format!(
+                    "unknown visibility: {other}"
+                )))
+            }
         };
         Ok(StoreConfig {
             store_id,
@@ -68,7 +73,8 @@ pub fn save_config(path: impl AsRef<Path>, cfg: &StoreConfig) -> Result<()> {
 /// Load a `StoreConfig` from a `config.toml` at `path`.
 pub fn load_config(path: impl AsRef<Path>) -> Result<StoreConfig> {
     let text = std::fs::read_to_string(path)?;
-    let toml_repr: ConfigToml = toml::from_str(&text).map_err(|e| StoreError::Config(e.to_string()))?;
+    let toml_repr: ConfigToml =
+        toml::from_str(&text).map_err(|e| StoreError::Config(e.to_string()))?;
     toml_repr.into_config()
 }
 

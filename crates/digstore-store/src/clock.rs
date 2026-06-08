@@ -27,7 +27,9 @@ pub struct FixedClock {
 
 impl FixedClock {
     pub fn new(now: u64) -> Self {
-        Self { now: Cell::new(now) }
+        Self {
+            now: Cell::new(now),
+        }
     }
     /// Move the clock forward by `delta` seconds.
     pub fn advance(&self, delta: u64) {

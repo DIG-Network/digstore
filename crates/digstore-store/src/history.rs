@@ -41,7 +41,11 @@ impl RootHistory {
                 .next()
                 .and_then(|s| s.parse::<u64>().ok())
                 .ok_or_else(|| StoreError::CorruptStaging("history: bad timestamp".into()))?;
-            out.push(GenerationState { id, root, timestamp });
+            out.push(GenerationState {
+                id,
+                root,
+                timestamp,
+            });
         }
         Ok(out)
     }
@@ -79,7 +83,11 @@ mod tests {
     use tempfile::tempdir;
 
     fn gs(id: u64, b: u8, ts: u64) -> GenerationState {
-        GenerationState { id, root: Bytes32([b; 32]), timestamp: ts }
+        GenerationState {
+            id,
+            root: Bytes32([b; 32]),
+            timestamp: ts,
+        }
     }
 
     #[test]
@@ -104,7 +112,10 @@ mod tests {
         let path = dir.path().join("roots.log");
         let mut h = RootHistory::open(&path).unwrap();
         let err = h.append(&gs(5, 0xff, 1)).unwrap_err();
-        assert!(matches!(err, crate::StoreError::NonMonotonicHistory { last: _, got: 5 }));
+        assert!(matches!(
+            err,
+            crate::StoreError::NonMonotonicHistory { last: _, got: 5 }
+        ));
     }
 
     #[test]
@@ -114,7 +125,10 @@ mod tests {
         let mut h = RootHistory::open(&path).unwrap();
         h.append(&gs(0, 0x00, 1)).unwrap();
         let err = h.append(&gs(2, 0x02, 2)).unwrap_err();
-        assert!(matches!(err, crate::StoreError::NonMonotonicHistory { last: 0, got: 2 }));
+        assert!(matches!(
+            err,
+            crate::StoreError::NonMonotonicHistory { last: 0, got: 2 }
+        ));
     }
 
     #[test]

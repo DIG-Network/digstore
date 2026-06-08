@@ -97,7 +97,10 @@ impl GenerationManifest {
 
     /// Set of resource keys in this generation (for diff, §20.4).
     pub fn resource_keys(&self) -> BTreeSet<String> {
-        self.key_table.iter().map(|k| k.resource_key.clone()).collect()
+        self.key_table
+            .iter()
+            .map(|k| k.resource_key.clone())
+            .collect()
     }
 }
 
@@ -118,8 +121,16 @@ mod tests {
             root: b(0xab),
             timestamp: 1_717_000_000,
             chunks: vec![
-                ChunkRef { index: 0, hash: b(0x01), size: 16 },
-                ChunkRef { index: 1, hash: b(0x02), size: 32 },
+                ChunkRef {
+                    index: 0,
+                    hash: b(0x01),
+                    size: 16,
+                },
+                ChunkRef {
+                    index: 1,
+                    hash: b(0x02),
+                    size: 32,
+                },
             ],
             key_table: vec![KeyTableRecord {
                 resource_key: "index.html".into(),

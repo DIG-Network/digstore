@@ -16,7 +16,9 @@ fn config(dir: &std::path::Path) -> StoreConfig {
 fn stage_file_appends_to_staging() {
     let dir = tempdir().unwrap();
     let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
-    store.stage_file("index.html", b"<html>hello</html>").unwrap();
+    store
+        .stage_file("index.html", b"<html>hello</html>")
+        .unwrap();
 
     let staged = StagingArea::open(store.paths().staging_file())
         .unwrap()
@@ -66,7 +68,9 @@ fn add_rejects_file_outside_base() {
 fn commit_creates_generation_and_advances_history() {
     let dir = tempdir().unwrap();
     let mut store = Store::init(config(dir.path()), FixedClock::new(1_717_000_000)).unwrap();
-    store.stage_file("index.html", &vec![0xABu8; 200_000]).unwrap();
+    store
+        .stage_file("index.html", &vec![0xABu8; 200_000])
+        .unwrap();
 
     let root = store.commit().unwrap();
 
@@ -103,7 +107,9 @@ fn commit_is_deterministic_for_fixed_input() {
     fn build() -> Bytes32 {
         let dir = tempdir().unwrap();
         let mut store = Store::init(config(dir.path()), FixedClock::new(42)).unwrap();
-        store.stage_file("a.txt", b"deterministic content here").unwrap();
+        store
+            .stage_file("a.txt", b"deterministic content here")
+            .unwrap();
         store.stage_file("b.txt", &vec![7u8; 100_000]).unwrap();
         store.commit().unwrap()
     }
@@ -171,14 +177,18 @@ fn shared_chunk_is_stored_once_across_generations() {
     // Generation 1: identical resource bytes -> identical chunks -> all dedup,
     // plus one brand-new chunk from a second resource.
     store.stage_file("data.bin", &payload).unwrap();
-    store.stage_file("note.txt", b"a unique small note").unwrap();
+    store
+        .stage_file("note.txt", b"a unique small note")
+        .unwrap();
     let root1 = store.commit().unwrap();
 
     assert_ne!(root0, root1, "different generations have different roots");
 
     use digstore_store::GenerationManifest;
-    let m0 = GenerationManifest::read_from(store.paths().generation_manifest(&root0.to_hex())).unwrap();
-    let m1 = GenerationManifest::read_from(store.paths().generation_manifest(&root1.to_hex())).unwrap();
+    let m0 =
+        GenerationManifest::read_from(store.paths().generation_manifest(&root0.to_hex())).unwrap();
+    let m1 =
+        GenerationManifest::read_from(store.paths().generation_manifest(&root1.to_hex())).unwrap();
     let mut union = m0.chunk_hashes();
     union.extend(m1.chunk_hashes());
 
@@ -204,21 +214,25 @@ fn resolve_chunk_reads_deduplicated_chunk_across_generations() {
     // generation 1) PLUS a new resource so the overall root differs from
     // generation 0 (identical content would otherwise yield an identical root).
     store.stage_file("data.bin", &payload).unwrap();
-    store.stage_file("note.txt", b"a unique small note").unwrap();
+    store
+        .stage_file("note.txt", b"a unique small note")
+        .unwrap();
     let root1 = store.commit().unwrap();
     assert_ne!(root0, root1, "generation 1 must have a distinct root");
 
     use digstore_store::GenerationManifest;
-    let m1 = GenerationManifest::read_from(store.paths().generation_manifest(&root1.to_hex())).unwrap();
+    let m1 =
+        GenerationManifest::read_from(store.paths().generation_manifest(&root1.to_hex())).unwrap();
     // The first chunk belongs to data.bin (staged first) and is shared with
     // generation 0, so it is deduplicated away from generation 1's dir.
     let shared = m1.chunks[0].hash;
 
     // The chunk file does NOT exist under generation 1 (deduplicated)...
-    let gen1_local = store
-        .paths()
-        .chunk_file(&root1.to_hex(), &shared.to_hex());
-    assert!(!gen1_local.exists(), "dedup leaves generation 1 chunks/ sparse");
+    let gen1_local = store.paths().chunk_file(&root1.to_hex(), &shared.to_hex());
+    assert!(
+        !gen1_local.exists(),
+        "dedup leaves generation 1 chunks/ sparse"
+    );
 
     // ...but resolve_chunk finds it globally and returns the correct bytes.
     let bytes = store.resolve_chunk(shared).unwrap();
@@ -256,10 +270,16 @@ fn log_lists_generations_in_order() {
 fn diff_between_two_generations_reports_added_key() {
     let dir = tempdir().unwrap();
     let mut store = Store::init(config(dir.path()), FixedClock::new(10)).unwrap();
-    store.stage_file("a.txt", b"alpha content here padded out").unwrap();
+    store
+        .stage_file("a.txt", b"alpha content here padded out")
+        .unwrap();
     let r0 = store.commit().unwrap();
-    store.stage_file("a.txt", b"alpha content here padded out").unwrap();
-    store.stage_file("b.txt", b"a new resource entirely").unwrap();
+    store
+        .stage_file("a.txt", b"alpha content here padded out")
+        .unwrap();
+    store
+        .stage_file("b.txt", b"a new resource entirely")
+        .unwrap();
     let r1 = store.commit().unwrap();
 
     let d = store.diff(r0, r1).unwrap();
@@ -275,7 +295,10 @@ fn diff_unknown_root_errors() {
     let r0 = store.commit().unwrap();
     let bogus = Bytes32([0xEEu8; 32]);
     let err = store.diff(r0, bogus).unwrap_err();
-    assert!(matches!(err, digstore_store::StoreError::GenerationNotFound(_)));
+    assert!(matches!(
+        err,
+        digstore_store::StoreError::GenerationNotFound(_)
+    ));
 }
 
 #[test]

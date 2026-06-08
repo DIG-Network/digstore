@@ -38,7 +38,12 @@ impl GenerationDiff {
         keys_added.sort();
         keys_removed.sort();
 
-        Self { chunks_added, chunks_removed, keys_added, keys_removed }
+        Self {
+            chunks_added,
+            chunks_removed,
+            keys_added,
+            keys_removed,
+        }
     }
 
     /// True when the generations have identical chunk sets and resource keys.
@@ -69,7 +74,11 @@ mod tests {
             chunks: chunk_bytes
                 .iter()
                 .enumerate()
-                .map(|(i, &c)| ChunkRef { index: i as u32, hash: b(c), size: 1 })
+                .map(|(i, &c)| ChunkRef {
+                    index: i as u32,
+                    hash: b(c),
+                    size: 1,
+                })
                 .collect(),
             key_table: keys
                 .iter()
