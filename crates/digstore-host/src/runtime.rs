@@ -187,4 +187,8 @@ impl HostRuntime {
         self.arm_bounds();
         f.call(&mut self.store, arg).map_err(Self::map_trap)
     }
+
+    pub fn read_guest(&mut self, ptr: u32, len: u32) -> Result<Vec<u8>, HostError> {
+        crate::memory::read_bytes(&self.store, &self.memory, ptr, len)
+    }
 }

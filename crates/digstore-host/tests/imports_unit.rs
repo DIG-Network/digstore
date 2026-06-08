@@ -38,3 +38,14 @@ fn host_random_over_cap_errors() {
     let n = rt.call_i32_export_1("probe_random", 2048).unwrap();
     assert!(n < 0);
 }
+
+#[test]
+fn read_return_buffer_copies_into_guest() {
+    let mut rt = probe_runtime(FixedClock::new(100));
+    let n = rt.call_i32_export_1("probe_random", 16).unwrap();
+    assert_eq!(n, 16);
+    let copied = rt.call_i32_export_1("probe_read", 2048).unwrap();
+    assert_eq!(copied, 16);
+    let mem = rt.read_guest(2048, 16).unwrap();
+    assert_eq!(mem.len(), 16);
+}

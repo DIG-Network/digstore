@@ -43,7 +43,7 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
             .func_wrap(m, name, |_c: Caller<'_, RuntimeState>| -> i32 { 0 })
             .map_err(|e| HostError::Wasmtime(e.to_string()))?;
     }
-    for name in ["host_create_attestation", "host_establish_session", "host_read_return_buffer"] {
+    for name in ["host_create_attestation", "host_establish_session"] {
         linker
             .func_wrap(m, name, |_c: Caller<'_, RuntimeState>, _p: i32| -> i32 {
                 ErrorCode::GeneralError as i32
@@ -54,6 +54,32 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
         .func_wrap(m, "jwks_fetch", |_c: Caller<'_, RuntimeState>, _p: i32, _l: i32| -> i32 {
             ErrorCode::NoSession as i32
         })
+        .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+
+    // host_read_return_buffer(dest_ptr) -> i32 bytes copied (§6.4).
+    linker
+        .func_wrap(
+            m,
+            "host_read_return_buffer",
+            |mut caller: Caller<'_, RuntimeState>, dest_ptr: i32| -> i32 {
+                let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(mem) => mem,
+                    None => return ErrorCode::GeneralError as i32,
+                };
+                let buf = caller.data().host.return_buffer.as_slice().to_vec();
+                let data = mem.data_mut(&mut caller);
+                let start = dest_ptr as usize;
+                let end = match start.checked_add(buf.len()) {
+                    Some(e) => e,
+                    None => return ErrorCode::InvalidParameter as i32,
+                };
+                if end > data.len() {
+                    return ErrorCode::BufferTooSmall as i32;
+                }
+                data[start..end].copy_from_slice(&buf);
+                buf.len() as i32
+            },
+        )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
     Ok(())
