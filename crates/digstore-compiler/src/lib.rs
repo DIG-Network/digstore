@@ -48,6 +48,7 @@ pub use data_section::{
     DataSectionInputs, SectionEntry, SEG_KEY_TABLE, SEG_MANIFEST, SEG_POOL, SEG_STORE_HEADER,
     SEG_TRUSTED_KEYS,
 };
+pub use template::{baked_template_bytes, load_template, Template, MAX_MEMORY_PAGES, REQUIRED_EXPORTS};
 
 // Re-export the canonical core result/stats so consumers reference one home (C6).
 pub use digstore_core::{CompilationResult, CompilationStats};
