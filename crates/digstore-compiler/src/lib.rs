@@ -43,6 +43,11 @@ pub use chunk_index::ChunkIndex;
 pub use key_table::{build_chunk_index_and_key_table, GenerationView, KeyTable, ResourceView};
 pub use filler::deterministic_filler;
 pub use pool::{build_pool, next_pool_bucket, ChunkLoc, InterleavedPool};
+pub use data_section::{
+    decode_store_header, decode_trusted_keys, encode_data_section, parse_offset_table,
+    DataSectionInputs, SectionEntry, SEG_KEY_TABLE, SEG_MANIFEST, SEG_POOL, SEG_STORE_HEADER,
+    SEG_TRUSTED_KEYS,
+};
 
 // Re-export the canonical core result/stats so consumers reference one home (C6).
 pub use digstore_core::{CompilationResult, CompilationStats};
