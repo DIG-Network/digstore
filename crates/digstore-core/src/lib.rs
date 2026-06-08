@@ -24,3 +24,5 @@ pub use hash::sha256;
 pub mod types {
     pub use crate::bytes::{Bytes32, Bytes48, Bytes96};
 }
+
+pub use urn::Urn;
