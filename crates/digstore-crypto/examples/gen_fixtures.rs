@@ -8,6 +8,8 @@ fn main() -> std::io::Result<()> {
         .join("tests")
         .join("fixtures");
     digstore_crypto::write_kdf_fixtures(&base.join("kdf_kat.json"))?;
+    digstore_crypto::write_bls_fixtures(&base.join("bls_vectors.json"))?;
     println!("wrote {}", base.join("kdf_kat.json").display());
+    println!("wrote {}", base.join("bls_vectors.json").display());
     Ok(())
 }

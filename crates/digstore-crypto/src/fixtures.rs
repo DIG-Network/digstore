@@ -79,3 +79,76 @@ pub fn write_kdf_fixtures(path: &Path) -> io::Result<()> {
         serde_json::to_string_pretty(&set).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     std::fs::write(path, json)
 }
+
+use crate::bls::{bls_keygen, bls_sign};
+
+/// One cross-implementation parity vector: a message and the host-side (blst)
+/// AugScheme public key + signature. The guest's pure-Rust `bls12_381` verifier
+/// must accept every vector (CONVENTIONS C8).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlsFixture {
+    pub name: String,
+    pub seed_hex: String,
+    pub message_hex: String,
+    pub pubkey_hex: String,
+    pub signature_hex: String,
+}
+
+/// The full set of parity vectors, tagged with the shared scheme constant so
+/// the guest asserts it is verifying the same scheme (Chia AugScheme).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlsFixtureSet {
+    pub scheme: String,
+    pub vectors: Vec<BlsFixture>,
+}
+
+impl BlsFixtureSet {
+    /// Deterministically generate the canonical parity set.
+    pub fn generate() -> Self {
+        // (name, seed, message): empty, short, node-proof shape, push shape.
+        let specs: &[(&str, [u8; 32], Vec<u8>)] = &[
+            ("empty_message", [0x01; 32], vec![]),
+            ("short_message", [0x02; 32], b"digstore".to_vec()),
+            ("node_proof_shape", [0x03; 32], {
+                let mut m = vec![0u8; 64];
+                m.extend_from_slice(&[0xAB; 8]);
+                m
+            }),
+            ("push_shape", [0x04; 32], {
+                let mut m = vec![0x11; 32];
+                m.extend_from_slice(&[0x22; 32]);
+                m
+            }),
+        ];
+
+        let mut vectors = Vec::with_capacity(specs.len());
+        for (name, seed, msg) in specs {
+            let (sk, pk) = bls_keygen(seed);
+            let sig = bls_sign(&sk, msg);
+            vectors.push(BlsFixture {
+                name: name.to_string(),
+                seed_hex: hex::encode(seed),
+                message_hex: hex::encode(msg),
+                pubkey_hex: hex::encode(pk.0),
+                signature_hex: hex::encode(sig.0),
+            });
+        }
+
+        BlsFixtureSet {
+            scheme: crate::CHIA_BLS_SCHEME.to_string(),
+            vectors,
+        }
+    }
+}
+
+/// Generate the canonical parity set and write it as pretty JSON to `path`,
+/// creating parent directories as needed. Called only by the gen_fixtures example.
+pub fn write_bls_fixtures(path: &Path) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let set = BlsFixtureSet::generate();
+    let json =
+        serde_json::to_string_pretty(&set).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    std::fs::write(path, json)
+}
