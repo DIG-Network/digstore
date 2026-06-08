@@ -1,8 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/digstore-core"]
+members = ["crates/digstore-core", "crates/digstore-chunker"]
 
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
 license = "MIT"
+
+[workspace.dependencies]
+sha2 = "0.10"
+proptest = "1"
+hex = "0.4"
