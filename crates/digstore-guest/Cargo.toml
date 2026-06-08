@@ -14,10 +14,15 @@ std = []
 
 [dependencies]
 digstore-core = { path = "../digstore-core", default-features = false }
-bls12_381 = { version = "0.8", default-features = false, features = ["alloc", "pairings", "groups"] }
+bls12_381 = { version = "0.8", default-features = false, features = ["alloc", "pairings", "groups", "experimental"] }
 rsa = { version = "0.9", default-features = false, features = ["sha2"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 sha2 = { version = "0.10", default-features = false }
+# bls12_381 0.8's experimental hash-to-curve `ExpandMsgXmd<H: Digest>` is bound to
+# the digest 0.9 trait family, so it needs a digest-0.9-compatible hasher. sha2
+# 0.10 implements digest 0.10. We add sha2 0.9 (digest 0.9) under an alias used
+# ONLY for the AugScheme hash-to-G2 expand step; all other hashing uses sha2 0.10.
+sha2_v09 = { package = "sha2", version = "0.9", default-features = false }
 chacha20 = { version = "0.9", default-features = false }
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
