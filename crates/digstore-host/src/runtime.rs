@@ -13,8 +13,44 @@ use digstore_core::config::HostImportsConfig;
 use digstore_core::types::{Bytes32, Bytes48};
 use digstore_crypto::bls::BlsSecretKey;
 use digstore_prover::{ChainSource, Prover};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::Duration;
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
+
+/// Background thread that increments the engine epoch on a fixed period so the
+/// wall-clock timeout (§18.2) is enforced via epoch interruption.
+pub struct EpochTicker {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl EpochTicker {
+    fn start(engine: Engine, period: Duration) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_clone = stop.clone();
+        let handle = std::thread::spawn(move || {
+            while !stop_clone.load(Ordering::Relaxed) {
+                std::thread::sleep(period);
+                engine.increment_epoch();
+            }
+        });
+        EpochTicker {
+            stop,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for EpochTicker {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
 
 /// Dependencies injected into a runtime: BLS keys, clock, chain, prover, rng.
 pub struct HostDeps {
@@ -41,6 +77,7 @@ pub struct HostRuntime {
     instance: Instance,
     memory: Memory,
     limits_cfg: ExecutionLimits,
+    _ticker: EpochTicker,
 }
 
 impl HostRuntime {
@@ -54,6 +91,11 @@ impl HostRuntime {
         wcfg.consume_fuel(true);
         wcfg.epoch_interruption(true);
         let engine = Engine::new(&wcfg).map_err(|e| HostError::Wasmtime(e.to_string()))?;
+
+        // Epoch ticker fires every timeout/2, so a deadline of 2 ticks bounds a
+        // single export call to roughly `timeout` of wall-clock time (§18.2).
+        let period = (limits.timeout / 2).max(Duration::from_millis(10));
+        let ticker = EpochTicker::start(engine.clone(), period);
 
         Module::validate(&engine, module_bytes)
             .map_err(|e| HostError::Validation(e.to_string()))?;
@@ -96,6 +138,8 @@ impl HostRuntime {
         };
 
         let mut store = Store::new(&engine, RuntimeState { host });
+        // Epoch-deadline expiration traps (the default, set explicitly for clarity).
+        store.epoch_deadline_trap();
 
         let mut linker: Linker<RuntimeState> = Linker::new(&engine);
         crate::imports::register(&mut linker)?;
@@ -111,10 +155,9 @@ impl HostRuntime {
         if let Ok(init) = instance.get_typed_func::<(), i32>(&mut store, "init") {
             // arm bounds even for init so a malicious init cannot hang setup.
             let _ = store.set_fuel(limits.fuel);
-            // Epoch interruption is enabled on the engine; a deadline MUST be set
-            // or the first epoch check traps. Task 12 wires the ticker + real
-            // deadline; until then use a large deadline so legitimate code runs.
-            store.set_epoch_deadline(u64::MAX);
+            // Epoch interruption is enabled; a deadline MUST be set or the first
+            // epoch check traps. 2 ticks bounds init to ~`timeout` wall-clock.
+            store.set_epoch_deadline(2);
             let _ = init.call(&mut store, ());
         }
 
@@ -123,6 +166,7 @@ impl HostRuntime {
             instance,
             memory,
             limits_cfg: limits,
+            _ticker: ticker,
         })
     }
 
@@ -131,12 +175,18 @@ impl HostRuntime {
     /// their own budget); the serve flow is not a single combined budget (§18.2).
     fn arm_bounds(&mut self) {
         let _ = self.store.set_fuel(self.limits_cfg.fuel);
-        // Epoch interruption is enabled; a deadline MUST be set or the first
-        // epoch check traps. Task 12 replaces this with a ticker-driven deadline.
-        self.store.set_epoch_deadline(u64::MAX);
+        // Deadline = 2 epoch ticks (the ticker fires every timeout/2).
+        // NOTE: bounds are armed per export call, not once per serve sequence (§18.2).
+        self.store.set_epoch_deadline(2);
     }
 
     fn map_trap(e: wasmtime::Error) -> HostError {
+        use wasmtime::Trap;
+        if let Some(trap) = e.downcast_ref::<Trap>() {
+            if let Trap::Interrupt = trap {
+                return HostError::Timeout;
+            }
+        }
         HostError::Wasmtime(e.to_string())
     }
 
