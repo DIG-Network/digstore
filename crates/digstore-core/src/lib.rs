@@ -13,3 +13,5 @@ pub mod manifest;
 pub mod merkle;
 pub mod urn;
 pub mod wire;
+
+pub use error::{CoreError, ErrorCode};
