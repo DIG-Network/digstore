@@ -1,0 +1,23 @@
+[package]
+name = "digstore-compiler"
+version = "0.1.0"
+edition = "2021"
+description = "dig-compiler: deterministic transform from on-disk generations to a self-serving WASM module (paper 5, 8.3, 17.1, 19)."
+
+[dependencies]
+digstore-core = { path = "../digstore-core" }
+digstore-store = { path = "../digstore-store" }
+wasm-encoder = "0.221"
+wasmparser = "0.221"
+chacha20 = "0.9"
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "1"
+
+[build-dependencies]
+wat = "1"
+
+[dev-dependencies]
+wasmtime = "45"
+wasmparser = "0.221"
+wat = "1"
