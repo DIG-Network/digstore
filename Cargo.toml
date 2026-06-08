@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/digstore-core", "crates/digstore-chunker"]
+members = ["crates/digstore-core", "crates/digstore-chunker", "crates/digstore-crypto"]
 
 [workspace.package]
 edition = "2021"
