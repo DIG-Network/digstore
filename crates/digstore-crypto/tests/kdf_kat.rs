@@ -1,3 +1,27 @@
+use digstore_crypto::fixtures::KdfFixtureSet;
+
+#[test]
+fn committed_kdf_fixture_matches_generated() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("kdf_kat.json");
+    let on_disk = std::fs::read_to_string(&path).expect(
+        "committed kdf_kat.json must exist; run: cargo run -p digstore-crypto --example gen_fixtures",
+    );
+    let parsed: KdfFixtureSet = serde_json::from_str(&on_disk).unwrap();
+    let fresh = KdfFixtureSet::generate();
+
+    assert_eq!(parsed.crypto_version, fresh.crypto_version);
+    assert_eq!(parsed.vectors.len(), fresh.vectors.len());
+    for (a, b) in parsed.vectors.iter().zip(fresh.vectors.iter()) {
+        assert_eq!(a.name, b.name);
+        assert_eq!(a.canonical_urn, b.canonical_urn);
+        assert_eq!(a.secret_salt_hex, b.secret_salt_hex);
+        assert_eq!(a.key_hex, b.key_hex, "KDF output drift in '{}'", a.name);
+    }
+}
+
 #[test]
 fn derive_decryption_key_public_is_32_bytes_and_deterministic() {
     let canonical = "urn:dig:mainnet:1111111111111111111111111111111111111111111111111111111111111111/file.txt";
