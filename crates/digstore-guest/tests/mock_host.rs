@@ -1,3 +1,7 @@
+// Shared test double, included by several test binaries via `mod mock_host;`.
+// Not every binary uses every field/helper, so silence dead-code warnings.
+#![allow(dead_code)]
+
 use digstore_core::ErrorCode;
 use digstore_guest::host::{DigHost, HostResult};
 use std::cell::Cell;
