@@ -1,0 +1,31 @@
+[package]
+name = "digstore-guest"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Enables std + the MockHost path so guest logic runs as a native lib under `cargo test`.
+native-test = ["std", "digstore-core/std"]
+std = []
+
+[dependencies]
+digstore-core = { path = "../digstore-core", default-features = false }
+bls12_381 = { version = "0.8", default-features = false, features = ["alloc", "pairings", "groups"] }
+rsa = { version = "0.9", default-features = false, features = ["sha2"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+sha2 = { version = "0.10", default-features = false }
+chacha20 = { version = "0.9", default-features = false }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+digstore-crypto = { path = "../digstore-crypto" }
+serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
+hex = "0.4"
+wasmparser = "0.221"
+rand_chacha = "0.3"
+rand_core = "0.6"
