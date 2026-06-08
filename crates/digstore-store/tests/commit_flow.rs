@@ -93,6 +93,44 @@ fn commit_creates_generation_and_advances_history() {
 }
 
 #[test]
+fn commit_generation_root_equals_recomputed_tree_root() {
+    // §9.4 invariant: the PERSISTED GenerationState.root equals the Merkle tree
+    // root freshly recomputed from the persisted chunk leaves (in pool order).
+    // This is the store-side half of PROPERTIES §9.4 — independent of the value
+    // `commit()` returned: we re-derive the root from on-disk state.
+    use digstore_core::merkle::MerkleTree;
+    use digstore_core::Bytes32 as CoreBytes32;
+    use digstore_store::GenerationManifest;
+
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
+    // Force several chunks across two resources so the tree has interior nodes.
+    store.stage_file("data.bin", &vec![0x5Au8; 300_000]).unwrap();
+    store.stage_file("note.txt", b"a small note").unwrap();
+    let _returned = store.commit().unwrap();
+
+    // Persisted head root (GenerationState.root), read back from history.
+    let hist = store.root_history().unwrap();
+    let persisted_state_root = hist.last().unwrap().root;
+
+    // Recompute the tree from the persisted manifest's chunk leaves in pool order.
+    let manifest =
+        GenerationManifest::read_from(store.paths().generation_manifest(&persisted_state_root.to_hex()))
+            .unwrap();
+    let mut refs = manifest.chunks.clone();
+    refs.sort_by_key(|c| c.index);
+    let leaves: Vec<CoreBytes32> = refs.iter().map(|c| c.hash).collect();
+    let recomputed = MerkleTree::from_leaves(leaves).root();
+
+    assert_eq!(
+        persisted_state_root, recomputed,
+        "persisted GenerationState.root must equal the freshly recomputed tree root"
+    );
+    // The manifest's own root field must agree too (state == manifest == tree).
+    assert_eq!(manifest.root, recomputed);
+}
+
+#[test]
 fn commit_refuses_empty_staging() {
     let dir = tempdir().unwrap();
     let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
