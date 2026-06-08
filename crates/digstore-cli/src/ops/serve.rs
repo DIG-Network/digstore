@@ -116,8 +116,12 @@ fn instantiate_host(module_path: &Path, store_id: Bytes32, pubkey: Bytes48) -> R
     Ok(())
 }
 
-/// Serve content for `urn`, verified against the on-disk generation under
-/// `ctx`. `module_path` is the compiled module (instantiated for real here).
+/// Serve content for `urn`. `module_path` is the compiled module: it is
+/// instantiated for real (real wasmtime load) AND is the source of the served
+/// bytes — the resource's framed chunk ciphertext is parsed from the module's
+/// injected `DIGS` data section (pool + key table), so a CLONED module is fully
+/// self-serving. The per-resource merkle leaf set is rebuilt to produce a REAL
+/// inclusion proof to the generation root.
 pub fn serve_content(
     ctx: &CliContext,
     module_path: &Path,
@@ -128,45 +132,50 @@ pub fn serve_content(
     let pubkey = store_ops::load_host_pubkey(ctx).unwrap_or(Bytes48([0u8; 48]));
     instantiate_host(module_path, store_id, pubkey)?;
 
-    let manifest = store_ops::load_generation_manifest(ctx, &root)?;
     let resource_key = urn
         .resource_key
         .clone()
         .ok_or_else(|| CliError::InvalidArgument("urn missing resource key".into()))?;
 
-    // Rebuild the per-resource leaves to produce a real merkle proof.
-    let chunk_dir = ctx.generations_dir().join(root.to_hex()).join("chunks");
-    let by_index: std::collections::BTreeMap<u32, Bytes32> =
-        manifest.chunks.iter().map(|c| (c.index, c.hash)).collect();
+    let module_bytes = std::fs::read(module_path)
+        .map_err(|_| CliError::NotFound(module_path.display().to_string()))?;
+    let (pool, descriptors, key_table) = parse_module_data_section(&module_bytes)?;
 
-    let mut leaves: Vec<Bytes32> = Vec::with_capacity(manifest.key_table.len());
-    let mut framed_by_resource: Vec<(String, Vec<u8>)> = Vec::new();
-    for kt in &manifest.key_table {
+    // Rebuild every resource's framed ciphertext (chunk-len-prefixed) in
+    // key-table order to recompute the leaf set, so the proof matches commit.
+    // The lookup key is the ROOT-INDEPENDENT retrieval key (matching the key the
+    // compiler stored at commit time via `canonical_resource_urn`).
+    let retrieval_key = store_ops::canonical_resource_urn(store_id, &resource_key).retrieval_key();
+    let mut leaves: Vec<Bytes32> = Vec::with_capacity(key_table.len());
+    let mut framed_by_key: Vec<(Bytes32, Vec<u8>)> = Vec::new();
+    for entry in &key_table {
         let mut framed = Vec::new();
-        for idx in &kt.chunk_indices {
-            let hash = by_index
-                .get(idx)
-                .ok_or_else(|| CliError::VerificationFailed("manifest chunk index missing".into()))?;
-            let body = std::fs::read(chunk_dir.join(hash.to_hex()))
-                .map_err(|_| CliError::NotFound(format!("chunk {}", hash.to_hex())))?;
+        for &idx in &entry.chunk_indices {
+            let loc = descriptors
+                .get(idx as usize)
+                .ok_or_else(|| CliError::VerificationFailed("chunk index out of range".into()))?;
+            let start = loc.offset as usize;
+            let end = start + loc.len as usize;
+            if end > pool.len() {
+                return Err(CliError::VerificationFailed("chunk loc out of bounds".into()));
+            }
+            let body = &pool[start..end];
             framed.extend_from_slice(&(body.len() as u32).to_be_bytes());
-            framed.extend_from_slice(&body);
+            framed.extend_from_slice(body);
         }
         leaves.push(digstore_crypto::sha256(&framed));
-        framed_by_resource.push((kt.resource_key.clone(), framed));
+        framed_by_key.push((entry.static_key, framed));
     }
 
     let tree = MerkleTree::from_leaves(leaves);
-    let position = framed_by_resource
-        .iter()
-        .position(|(k, _)| k == &resource_key);
+    let position = framed_by_key.iter().position(|(k, _)| *k == retrieval_key);
 
     match position {
         Some(pos) => {
             let proof = tree
                 .prove(pos)
                 .ok_or_else(|| CliError::VerificationFailed("could not build merkle proof".into()))?;
-            let ciphertext = framed_by_resource[pos].1.clone();
+            let ciphertext = framed_by_key[pos].1.clone();
             Ok(ContentResponse {
                 ciphertext,
                 merkle_proof: proof,
@@ -191,6 +200,53 @@ pub fn serve_content(
             })
         }
     }
+}
+
+/// Extract `(pool_bytes, chunk_descriptors, key_table)` from a compiled module's
+/// injected `DIGS` data section. The data section is the verbatim
+/// `digstore_compiler::encode_data_section` blob embedded in the wasm data
+/// segment; we locate it by its magic and decode the pool + key-table segments
+/// using the compiler's canonical big-endian framing.
+#[allow(clippy::type_complexity)]
+fn parse_module_data_section(
+    module_bytes: &[u8],
+) -> Result<(Vec<u8>, Vec<digstore_compiler::ChunkLoc>, Vec<digstore_core::KeyTableEntry>), CliError>
+{
+    use digstore_compiler::{parse_offset_table, SEG_KEY_TABLE, SEG_POOL};
+    use digstore_core::codec::{Decode, Decoder};
+
+    let magic = b"DIGS";
+    let start = module_bytes
+        .windows(magic.len())
+        .position(|w| w == magic)
+        .ok_or_else(|| CliError::VerificationFailed("module has no DIGS data section".into()))?;
+    let blob = &module_bytes[start..];
+    let table = parse_offset_table(blob)
+        .map_err(|e| CliError::VerificationFailed(format!("bad data section: {e:?}")))?;
+
+    let seg = |kind: u8| -> Option<&[u8]> {
+        table
+            .iter()
+            .find(|e| e.kind == kind)
+            .map(|e| &blob[e.offset as usize..(e.offset + e.len) as usize])
+    };
+
+    // SEG_POOL = byte_blob(pool) + Vec<ChunkLoc>.
+    let pool_seg = seg(SEG_POOL).ok_or_else(|| CliError::VerificationFailed("no pool segment".into()))?;
+    let mut dec = Decoder::new(pool_seg);
+    let pool = Vec::<u8>::decode(&mut dec)
+        .map_err(|e| CliError::VerificationFailed(format!("decode pool: {e:?}")))?;
+    let descriptors = Vec::<digstore_compiler::ChunkLoc>::decode(&mut dec)
+        .map_err(|e| CliError::VerificationFailed(format!("decode pool descriptors: {e:?}")))?;
+
+    // SEG_KEY_TABLE = Vec<KeyTableEntry>.
+    let kt_seg = seg(SEG_KEY_TABLE)
+        .ok_or_else(|| CliError::VerificationFailed("no key-table segment".into()))?;
+    let mut dec = Decoder::new(kt_seg);
+    let key_table = Vec::<digstore_core::KeyTableEntry>::decode(&mut dec)
+        .map_err(|e| CliError::VerificationFailed(format!("decode key table: {e:?}")))?;
+
+    Ok((pool, descriptors, key_table))
 }
 
 /// Deterministic decoy ciphertext keyed by the retrieval key (§14.2).
