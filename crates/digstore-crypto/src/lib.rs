@@ -24,12 +24,17 @@
 //! types (`Bytes32`/`Bytes48`/`Bytes96`/`SecretSalt`).
 
 pub mod aead;
+pub mod bls;
 pub mod error;
 pub mod fixtures;
 pub mod hash;
 pub mod kdf;
 
 pub use aead::{decrypt_chunk, encrypt_chunk};
+pub use bls::{
+    attestation_signing_message, bls_keygen, bls_sign, bls_verify, node_signing_message,
+    push_signing_message, sign_attestation, sign_node, sign_push, validate_public_key, verify_push,
+};
 pub use error::{BlsError, CryptoError, TamperError};
 pub use hash::sha256;
 pub use fixtures::{write_kdf_fixtures, KdfFixture, KdfFixtureSet};
