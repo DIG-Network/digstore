@@ -106,7 +106,7 @@ fn ceil_log2(n: usize) -> usize {
     let mut levels = 0;
     let mut count = n;
     while count > 1 {
-        count = (count + 1) / 2;
+        count = count.div_ceil(2);
         levels += 1;
     }
     levels

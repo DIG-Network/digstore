@@ -113,7 +113,7 @@ impl MerkleTree {
 
         while levels.last().map(|l| l.len()).unwrap_or(0) > 1 {
             let prev = levels.last().unwrap();
-            let mut next = Vec::with_capacity((prev.len() + 1) / 2);
+            let mut next = Vec::with_capacity(prev.len().div_ceil(2));
             let mut i = 0;
             while i < prev.len() {
                 if i + 1 < prev.len() {
@@ -149,7 +149,7 @@ impl MerkleTree {
         let mut path = Vec::new();
         let mut idx = index;
         for level in &self.levels[..self.levels.len() - 1] {
-            if idx % 2 == 0 {
+            if idx.is_multiple_of(2) {
                 // Right sibling exists unless this is a carried-up odd node.
                 if idx + 1 < level.len() {
                     path.push(ProofStep {
