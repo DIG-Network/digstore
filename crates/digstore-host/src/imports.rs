@@ -48,19 +48,88 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
         })
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
-    // --- temporary stubs, replaced in 11d–11e ---
-    for name in ["host_verify_session"] {
-        linker
-            .func_wrap(m, name, |_c: Caller<'_, RuntimeState>| -> i32 { 0 })
-            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
-    }
-    for name in ["host_create_attestation", "host_establish_session"] {
-        linker
-            .func_wrap(m, name, |_c: Caller<'_, RuntimeState>, _p: i32| -> i32 {
-                ErrorCode::GeneralError as i32
-            })
-            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
-    }
+    const CHALLENGE_LEN: usize = 32 + 32 + 8;
+    const SESSION_TTL_SECS: u64 = 300;
+
+    // host_create_attestation(challenge_ptr) -> i32 length of AttestationResponse (§12, §13.6).
+    linker
+        .func_wrap(
+            m,
+            "host_create_attestation",
+            |mut caller: Caller<'_, RuntimeState>, challenge_ptr: i32| -> i32 {
+                let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(mem) => mem,
+                    None => return ErrorCode::GeneralError as i32,
+                };
+                let data = mem.data(&caller);
+                let start = challenge_ptr as usize;
+                let end = match start.checked_add(CHALLENGE_LEN) {
+                    Some(e) if e <= data.len() => e,
+                    _ => return ErrorCode::InvalidParameter as i32,
+                };
+                let challenge = data[start..end].to_vec();
+                let state = &mut caller.data_mut().host;
+                let sig = match state.attestation.attest(&challenge) {
+                    Ok(s) => s,
+                    Err(_) => return ErrorCode::AttestationFailed as i32,
+                };
+                let pk = state.attestation.public_key();
+                let mut resp = Vec::with_capacity(48 + 32 + 96);
+                resp.extend_from_slice(&pk.0);
+                resp.extend_from_slice(&state.instance_id.0);
+                resp.extend_from_slice(&sig.0);
+                state.last_signature = Some(sig);
+                match state.return_buffer.set(&resp) {
+                    Ok(n) => n as i32,
+                    Err(_) => ErrorCode::GeneralError as i32,
+                }
+            },
+        )
+        .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+
+    // host_establish_session(challenge_ptr) -> i32 (>=0 ok) (§12).
+    linker
+        .func_wrap(
+            m,
+            "host_establish_session",
+            |mut caller: Caller<'_, RuntimeState>, challenge_ptr: i32| -> i32 {
+                let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(mem) => mem,
+                    None => return ErrorCode::GeneralError as i32,
+                };
+                let data = mem.data(&caller);
+                let start = challenge_ptr as usize;
+                let end = match start.checked_add(CHALLENGE_LEN) {
+                    Some(e) if e <= data.len() => e,
+                    _ => return ErrorCode::InvalidParameter as i32,
+                };
+                let mut nonce = [0u8; 32];
+                let mut store_id = [0u8; 32];
+                nonce.copy_from_slice(&data[start..start + 32]);
+                store_id.copy_from_slice(&data[start + 32..start + 64]);
+                let now = caller.data().host.clock.now_unix_secs();
+                caller
+                    .data_mut()
+                    .host
+                    .sessions
+                    .establish(nonce, store_id, now, SESSION_TTL_SECS);
+                0
+            },
+        )
+        .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+
+    // host_verify_session() -> i32 (1 valid / 0 invalid) (§12).
+    linker
+        .func_wrap(m, "host_verify_session", |caller: Caller<'_, RuntimeState>| -> i32 {
+            let now = caller.data().host.clock.now_unix_secs();
+            if caller.data().host.sessions.is_valid(now) {
+                1
+            } else {
+                0
+            }
+        })
+        .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+
     linker
         .func_wrap(m, "jwks_fetch", |_c: Caller<'_, RuntimeState>, _p: i32, _l: i32| -> i32 {
             ErrorCode::NoSession as i32

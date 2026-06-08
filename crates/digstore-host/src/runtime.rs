@@ -200,4 +200,12 @@ impl HostRuntime {
         self.arm_bounds();
         f.call(&mut self.store, ()).map_err(Self::map_trap)
     }
+
+    pub fn write_guest(&mut self, ptr: u32, bytes: &[u8]) -> Result<(), HostError> {
+        crate::memory::write_bytes(&mut self.store, &self.memory, ptr, bytes)
+    }
+
+    pub fn read_return_buffer_copy(&mut self) -> Result<Vec<u8>, HostError> {
+        Ok(self.store.data().host.return_buffer.as_slice().to_vec())
+    }
 }
