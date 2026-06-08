@@ -215,4 +215,23 @@ impl<C: Clock> Store<C> {
 
         Ok(root)
     }
+
+    /// Resolve a chunk's bytes by content hash across ALL generation chunk dirs.
+    /// Chunk bytes are content-addressed and stored once globally (§8.2), so a
+    /// chunk introduced by an earlier generation lives only under that
+    /// generation's `chunks/` dir; later generations referencing it have a
+    /// sparse `chunks/`. Returns `ChunkNotFound` if no generation holds it.
+    pub fn resolve_chunk(&self, hash: Bytes32) -> Result<Vec<u8>> {
+        let gens = self.paths.generations_dir();
+        if gens.exists() {
+            let name = hash.to_hex();
+            for entry in std::fs::read_dir(&gens)? {
+                let candidate = entry?.path().join("chunks").join(&name);
+                if candidate.exists() {
+                    return Ok(std::fs::read(&candidate)?);
+                }
+            }
+        }
+        Err(StoreError::ChunkNotFound(hash.to_hex()))
+    }
 }

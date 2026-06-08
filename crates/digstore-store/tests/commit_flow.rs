@@ -189,3 +189,50 @@ fn shared_chunk_is_stored_once_across_generations() {
         "each unique chunk stored exactly once across all generations"
     );
 }
+
+#[test]
+fn resolve_chunk_reads_deduplicated_chunk_across_generations() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
+
+    let payload = vec![0x5Au8; 300_000];
+    store.stage_file("data.bin", &payload).unwrap();
+    let root0 = store.commit().unwrap();
+
+    // Generation 1 re-stages identical bytes for data.bin (its chunks are
+    // deduplicated to generation 0's chunk files -> sparse chunks/ dir under
+    // generation 1) PLUS a new resource so the overall root differs from
+    // generation 0 (identical content would otherwise yield an identical root).
+    store.stage_file("data.bin", &payload).unwrap();
+    store.stage_file("note.txt", b"a unique small note").unwrap();
+    let root1 = store.commit().unwrap();
+    assert_ne!(root0, root1, "generation 1 must have a distinct root");
+
+    use digstore_store::GenerationManifest;
+    let m1 = GenerationManifest::read_from(store.paths().generation_manifest(&root1.to_hex())).unwrap();
+    // The first chunk belongs to data.bin (staged first) and is shared with
+    // generation 0, so it is deduplicated away from generation 1's dir.
+    let shared = m1.chunks[0].hash;
+
+    // The chunk file does NOT exist under generation 1 (deduplicated)...
+    let gen1_local = store
+        .paths()
+        .chunk_file(&root1.to_hex(), &shared.to_hex());
+    assert!(!gen1_local.exists(), "dedup leaves generation 1 chunks/ sparse");
+
+    // ...but resolve_chunk finds it globally and returns the correct bytes.
+    let bytes = store.resolve_chunk(shared).unwrap();
+    assert_eq!(bytes.len(), m1.chunks[0].size as usize);
+    assert_eq!(digstore_crypto::sha256(&bytes), shared);
+}
+
+#[test]
+fn resolve_unknown_chunk_errors() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
+    store.stage_file("a.txt", b"x").unwrap();
+    let _r = store.commit().unwrap();
+    let bogus = Bytes32([0xCDu8; 32]);
+    let err = store.resolve_chunk(bogus).unwrap_err();
+    assert!(matches!(err, digstore_store::StoreError::ChunkNotFound(_)));
+}
