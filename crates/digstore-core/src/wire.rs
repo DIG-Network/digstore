@@ -2,6 +2,8 @@
 
 use crate::bytes::{Bytes32, Bytes48, Bytes96};
 use crate::codec::{Decode, DecodeError, Decoder, Encode, Encoder};
+use crate::merkle::MerkleProof;
+use alloc::string::String;
 use alloc::vec::Vec;
 
 /// Reference to a Chia block used to anchor a proof in time.
@@ -87,6 +89,154 @@ impl Decode for ProofResponse {
         Ok(ProofResponse {
             proof: ExecutionProof::decode(dec)?,
             roothash: Bytes32::decode(dec)?,
+        })
+    }
+}
+
+/// CONVENTIONS C3: the guest cannot build an `ExecutionProof` (no prover, no
+/// ChainSource, no node signing key inside wasm32). Its `get_proof` therefore
+/// returns this `ProofPrelude`; the serving host turns it into a full
+/// `ExecutionProof` via `digstore_prover`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofPrelude {
+    pub roothash: Bytes32,
+    /// SHA-256 of the served output bytes (same bytes `get_content` returns).
+    pub output_commitment: Bytes32,
+    /// Commitment over (retrieval_key, ordered chunk indices).
+    pub serving_digest: Bytes32,
+}
+
+impl Encode for ProofPrelude {
+    fn encode(&self, enc: &mut Encoder) {
+        self.roothash.encode(enc);
+        self.output_commitment.encode(enc);
+        self.serving_digest.encode(enc);
+    }
+}
+
+impl Decode for ProofPrelude {
+    fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(ProofPrelude {
+            roothash: Bytes32::decode(dec)?,
+            output_commitment: Bytes32::decode(dec)?,
+            serving_digest: Bytes32::decode(dec)?,
+        })
+    }
+}
+
+/// Content (or decoy) response. Decoy uses this exact shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentResponse {
+    pub ciphertext: Vec<u8>,
+    pub merkle_proof: MerkleProof,
+    pub roothash: Bytes32,
+}
+
+impl Encode for ContentResponse {
+    fn encode(&self, enc: &mut Encoder) {
+        self.ciphertext.encode(enc);
+        self.merkle_proof.encode(enc);
+        self.roothash.encode(enc);
+    }
+}
+
+impl Decode for ContentResponse {
+    fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(ContentResponse {
+            ciphertext: Vec::<u8>::decode(dec)?,
+            merkle_proof: MerkleProof::decode(dec)?,
+            roothash: Bytes32::decode(dec)?,
+        })
+    }
+}
+
+/// Challenge issued to a host during attestation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttestationChallenge {
+    pub nonce: [u8; 32],
+    pub store_id: [u8; 32],
+    pub timestamp: u64,
+}
+
+impl Encode for AttestationChallenge {
+    fn encode(&self, enc: &mut Encoder) {
+        enc.write_bytes(&self.nonce);
+        enc.write_bytes(&self.store_id);
+        self.timestamp.encode(enc);
+    }
+}
+
+impl Decode for AttestationChallenge {
+    fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        let nonce = <[u8; 32]>::decode(dec)?;
+        let store_id = <[u8; 32]>::decode(dec)?;
+        let timestamp = u64::decode(dec)?;
+        Ok(AttestationChallenge {
+            nonce,
+            store_id,
+            timestamp,
+        })
+    }
+}
+
+/// A host's signed attestation response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttestationResponse {
+    pub host_public_key: [u8; 48],
+    pub host_instance_id: [u8; 32],
+    pub signature: [u8; 96],
+}
+
+impl Encode for AttestationResponse {
+    fn encode(&self, enc: &mut Encoder) {
+        enc.write_bytes(&self.host_public_key);
+        enc.write_bytes(&self.host_instance_id);
+        enc.write_bytes(&self.signature);
+    }
+}
+
+impl Decode for AttestationResponse {
+    fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        let host_public_key = <[u8; 48]>::decode(dec)?;
+        let host_instance_id = <[u8; 32]>::decode(dec)?;
+        let signature = <[u8; 96]>::decode(dec)?;
+        Ok(AttestationResponse {
+            host_public_key,
+            host_instance_id,
+            signature,
+        })
+    }
+}
+
+/// Authentication requirements advertised by a store (get_authentication_info).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticationInfo {
+    pub requires_session: bool,
+    pub requires_jwt: bool,
+    pub jwks_url: Option<String>,
+    pub accepted_algorithms: Vec<String>,
+}
+
+impl Encode for AuthenticationInfo {
+    fn encode(&self, enc: &mut Encoder) {
+        (self.requires_session as u8).encode(enc);
+        (self.requires_jwt as u8).encode(enc);
+        self.jwks_url.encode(enc);
+        self.accepted_algorithms.encode(enc);
+    }
+}
+
+impl Decode for AuthenticationInfo {
+    fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        let requires_session = u8::decode(dec)? != 0;
+        let requires_jwt = u8::decode(dec)? != 0;
+        let jwks_url = Option::<String>::decode(dec)?;
+        let accepted_algorithms = Vec::<String>::decode(dec)?;
+        Ok(AuthenticationInfo {
+            requires_session,
+            requires_jwt,
+            jwks_url,
+            accepted_algorithms,
         })
     }
 }
