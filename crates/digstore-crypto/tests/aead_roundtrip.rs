@@ -22,3 +22,44 @@ fn empty_plaintext_roundtrips() {
     let recovered = decrypt_chunk(&key, &ct).expect("authentic empty ciphertext decrypts");
     assert!(recovered.is_empty());
 }
+
+use digstore_crypto::TamperError;
+
+#[test]
+fn flipping_a_ciphertext_byte_fails_authentication() {
+    let key = [0x11u8; 32];
+    let plaintext = b"sensitive payload".to_vec();
+    let mut ct = encrypt_chunk(&key, &plaintext);
+    ct[0] ^= 0x01; // index 0 is within the body for non-empty plaintext
+    let err = decrypt_chunk(&key, &ct).unwrap_err();
+    assert_eq!(err, TamperError);
+}
+
+#[test]
+fn flipping_a_tag_byte_fails_authentication() {
+    let key = [0x22u8; 32];
+    let plaintext = b"sensitive payload".to_vec();
+    let mut ct = encrypt_chunk(&key, &plaintext);
+    let last = ct.len() - 1; // within the 16-byte tag
+    ct[last] ^= 0x80;
+    let err = decrypt_chunk(&key, &ct).unwrap_err();
+    assert_eq!(err, TamperError);
+}
+
+#[test]
+fn wrong_key_fails_authentication() {
+    let key = [0x33u8; 32];
+    let wrong = [0x44u8; 32];
+    let ct = encrypt_chunk(&key, b"hello");
+    let err = decrypt_chunk(&wrong, &ct).unwrap_err();
+    assert_eq!(err, TamperError);
+}
+
+#[test]
+fn truncated_ciphertext_fails() {
+    let key = [0x55u8; 32];
+    let ct = encrypt_chunk(&key, b"hello world");
+    let truncated = &ct[..ct.len() - 4];
+    let err = decrypt_chunk(&key, truncated).unwrap_err();
+    assert_eq!(err, TamperError);
+}
