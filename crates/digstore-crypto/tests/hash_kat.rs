@@ -23,3 +23,19 @@ fn sha256_known_answer_empty() {
 fn crate_advertises_its_version() {
     assert_eq!(digstore_crypto::CRYPTO_VERSION, 1);
 }
+
+#[test]
+fn sha256_of_canonical_urn_equals_retrieval_key() {
+    use digstore_core::{Bytes32, Urn};
+
+    let urn = Urn {
+        chain: "mainnet".to_string(),
+        store_id: Bytes32([0x11; 32]),
+        root_hash: None,
+        resource_key: Some("file.txt".to_string()),
+    };
+    let canonical = urn.canonical();
+    let direct: Bytes32 = digstore_crypto::sha256(canonical.as_bytes());
+    let via_core: Bytes32 = urn.retrieval_key();
+    assert_eq!(direct, via_core);
+}
