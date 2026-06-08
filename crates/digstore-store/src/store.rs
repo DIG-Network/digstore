@@ -69,4 +69,28 @@ impl<C: Clock> Store<C> {
     pub fn root_history(&self) -> Result<Vec<GenerationState>> {
         RootHistory::open(self.paths.history_file())?.entries()
     }
+
+    /// Stage raw bytes under an explicit resource key (§20.2).
+    pub fn stage_file(&mut self, resource_key: &str, bytes: &[u8]) -> Result<()> {
+        let mut staging = StagingArea::open(self.paths.staging_file())?;
+        staging.append(resource_key, bytes)?;
+        Ok(())
+    }
+
+    /// Stage a file from disk. The path relative to `base` becomes the resource
+    /// key (forward-slash normalized); the file bytes are staged verbatim.
+    pub fn add(&mut self, file: impl AsRef<Path>, base: impl AsRef<Path>) -> Result<()> {
+        let file = file.as_ref();
+        let base = base.as_ref();
+        let rel = file
+            .strip_prefix(base)
+            .map_err(|_| StoreError::PathEscape(file.to_path_buf()))?;
+        let resource_key = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        let bytes = std::fs::read(file)?;
+        self.stage_file(&resource_key, &bytes)
+    }
 }
