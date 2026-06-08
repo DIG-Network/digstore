@@ -61,3 +61,81 @@ fn add_rejects_file_outside_base() {
     let err = store.add(&file, base.path()).unwrap_err();
     assert!(matches!(err, digstore_store::StoreError::PathEscape(_)));
 }
+
+#[test]
+fn commit_creates_generation_and_advances_history() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(1_717_000_000)).unwrap();
+    store.stage_file("index.html", &vec![0xABu8; 200_000]).unwrap();
+
+    let root = store.commit().unwrap();
+
+    let hist = store.root_history().unwrap();
+    assert_eq!(hist.len(), 1);
+    assert_eq!(hist[0].id, 0);
+    assert_eq!(hist[0].root, root);
+    assert_eq!(hist[0].timestamp, 1_717_000_000);
+
+    let root_hex = root.to_hex();
+    assert!(store.paths().generation_manifest(&root_hex).exists());
+    assert!(store.paths().generation_chunks_dir(&root_hex).is_dir());
+
+    assert!(
+        digstore_store::StagingArea::open(store.paths().staging_file())
+            .unwrap()
+            .is_empty()
+            .unwrap()
+    );
+}
+
+#[test]
+fn commit_refuses_empty_staging() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
+    let err = store.commit().unwrap_err();
+    assert!(matches!(err, digstore_store::StoreError::EmptyStaging));
+}
+
+#[test]
+fn commit_is_deterministic_for_fixed_input() {
+    // Two independent stores with identical store_id, content, and clock must
+    // produce the identical root hash (store-side determinism feeding §19.3).
+    fn build() -> Bytes32 {
+        let dir = tempdir().unwrap();
+        let mut store = Store::init(config(dir.path()), FixedClock::new(42)).unwrap();
+        store.stage_file("a.txt", b"deterministic content here").unwrap();
+        store.stage_file("b.txt", &vec![7u8; 100_000]).unwrap();
+        store.commit().unwrap()
+    }
+    assert_eq!(build(), build());
+}
+
+#[test]
+fn commit_static_key_matches_client_url_retrieval_key() {
+    // The manifest's static_key for a resource equals the retrieval key a client
+    // computes from the canonical root-less URN (documented root-independence).
+    use digstore_core::Urn;
+    use digstore_store::GenerationManifest;
+
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
+    store.stage_file("index.html", b"hello").unwrap();
+    let root = store.commit().unwrap();
+
+    let manifest =
+        GenerationManifest::read_from(store.paths().generation_manifest(&root.to_hex())).unwrap();
+    let rec = manifest
+        .key_table
+        .iter()
+        .find(|r| r.resource_key == "index.html")
+        .unwrap();
+
+    let client_urn = Urn {
+        chain: "chia".to_string(),
+        store_id: Bytes32([0x44u8; 32]),
+        root_hash: None,
+        resource_key: Some("index.html".to_string()),
+    };
+    assert_eq!(rec.static_key, client_urn.retrieval_key());
+    assert_eq!(rec.generation, root);
+}
