@@ -52,6 +52,7 @@ pub use template::{baked_template_bytes, load_template, Template, MAX_MEMORY_PAG
 pub use inject::inject_data_section;
 pub use obfuscate::obfuscate;
 pub use atomic_write::{atomic_write_module, output_filename};
+pub use pipeline::{CompileOutcome, Compiler, DATA_SECTION_MEM_OFFSET};
 
 // Re-export the canonical core result/stats so consumers reference one home (C6).
 pub use digstore_core::{CompilationResult, CompilationStats};

@@ -1,0 +1,128 @@
+mod common;
+
+use common::{sample_generations, sample_manifest, store_id, store_pubkey, trusted_keys};
+use digstore_compiler::{Compiler, CompilerConfig, CompilerError};
+
+fn cfg(dir: &std::path::Path) -> CompilerConfig {
+    CompilerConfig {
+        output_dir: dir.to_path_buf(),
+        obfuscate: false,
+        optimize: false,
+        template_override: None,
+    }
+}
+
+#[test]
+fn empty_trusted_set_is_refused() {
+    let dir = std::env::temp_dir();
+    let gens = sample_generations();
+    let err = Compiler::compile(
+        &cfg(&dir),
+        store_id(),
+        store_pubkey(),
+        &gens,
+        sample_manifest(),
+        &[],
+    )
+    .unwrap_err();
+    assert!(matches!(err, CompilerError::NoTrustedKeys));
+}
+
+#[test]
+fn produces_result_with_exact_filename_and_stats() {
+    use digstore_compiler::GenerationView;
+    let dir = std::env::temp_dir().join(format!("digc-pipe-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let gens = sample_generations();
+    let last_root = GenerationView::root(gens.last().unwrap());
+
+    let outcome = Compiler::compile(
+        &cfg(&dir),
+        store_id(),
+        store_pubkey(),
+        &gens,
+        sample_manifest(),
+        &trusted_keys(),
+    )
+    .expect("compiles");
+
+    let result = &outcome.result;
+    assert_eq!(result.store_id, store_id());
+    assert_eq!(result.roothash, last_root);
+    let expected_name = format!(
+        "{}-{}.wasm",
+        hex::encode(store_id().0),
+        hex::encode(last_root.0)
+    );
+    assert_eq!(
+        result.output_path.file_name().unwrap().to_str().unwrap(),
+        expected_name
+    );
+    assert!(result.output_path.exists());
+    assert_eq!(
+        result.output_size,
+        std::fs::metadata(&result.output_path).unwrap().len()
+    );
+
+    // Canonical core stats.
+    assert_eq!(result.stats.generation_count, 2);
+    assert_eq!(result.stats.chunk_count, 3);
+
+    // Rich compiler detail.
+    assert_eq!(outcome.detail.generation_count, 2);
+    assert_eq!(outcome.detail.unique_chunk_count, 3);
+    assert_eq!(outcome.detail.resource_count, 2);
+    assert!(!outcome.detail.obfuscation_applied);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn obfuscation_flag_sets_stat_and_still_writes_valid_module() {
+    use wasmparser::{Validator, WasmFeatures};
+    let dir = std::env::temp_dir().join(format!("digc-obf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut c = cfg(&dir);
+    c.obfuscate = true;
+    let gens = sample_generations();
+    let outcome = Compiler::compile(
+        &c,
+        store_id(),
+        store_pubkey(),
+        &gens,
+        sample_manifest(),
+        &trusted_keys(),
+    )
+    .expect("compiles");
+    assert!(outcome.detail.obfuscation_applied);
+    assert!(outcome.result.output_path.exists());
+    let bytes = std::fs::read(&outcome.result.output_path).unwrap();
+    let mut v = Validator::new_with_features(WasmFeatures::default());
+    v.validate_all(&bytes).expect("obfuscated module validates");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn pool_length_is_bucketed_and_independent_of_exact_content_size() {
+    use digstore_compiler::next_pool_bucket;
+    // Two content sizes in the same bucket round to the same pool length.
+    assert_eq!(next_pool_bucket(30), next_pool_bucket(50)); // both 64
+    assert_eq!(next_pool_bucket(70), next_pool_bucket(120)); // both 128
+
+    // The pipeline records the bucketed pool length in detail stats.
+    let dir = std::env::temp_dir().join(format!("digc-buck-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let gens = sample_generations();
+    let outcome = Compiler::compile(
+        &cfg(&dir),
+        store_id(),
+        store_pubkey(),
+        &gens,
+        sample_manifest(),
+        &trusted_keys(),
+    )
+    .unwrap();
+    // shared(22) + alpha(15) + beta(15) = 52 content bytes -> bucket 64.
+    assert_eq!(outcome.detail.pool_byte_len, 64);
+    std::fs::remove_dir_all(&dir).ok();
+}
