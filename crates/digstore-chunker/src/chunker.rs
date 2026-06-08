@@ -42,13 +42,49 @@ pub fn chunk_slice(data: &[u8], cfg: &ChunkerConfig) -> Vec<Chunk> {
     chunks
 }
 
-/// Stream chunking over a `std::io::Read`. INTERIM implementation (buffers the
-/// whole reader, then delegates to `chunk_slice`). Replaced by a true
-/// incremental version in Task 7; the equivalence tests there are the guard.
+/// Stream chunking over any `std::io::Read`, emitting chunks incrementally
+/// WITHOUT buffering the entire reader.
+///
+/// Invariant maintained each iteration before calling `find_boundary`: either
+/// at least `max_size` bytes are buffered, or the reader has hit EOF. Under that
+/// invariant `find_boundary(&buf, 0, cfg)` returns the true boundary for the
+/// chunk starting at `buf[0]` — a forced max cut (it saw the full max window) or,
+/// only at EOF, a trailing short chunk. Output is byte-identical to `chunk_slice`
+/// over the concatenated reader contents.
 pub fn chunk_stream<R: std::io::Read>(mut reader: R, cfg: &ChunkerConfig) -> std::io::Result<Vec<Chunk>> {
-    let mut buf = Vec::new();
-    reader.read_to_end(&mut buf)?;
-    Ok(chunk_slice(&buf, cfg))
+    const READ_BLOCK: usize = 64 * 1024;
+    let mut chunks = Vec::new();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut consumed = 0usize; // absolute offset of buf[0] in the original stream
+    let mut eof = false;
+
+    loop {
+        // Refill until we have the full max window buffered, or hit EOF.
+        while !eof && buf.len() < cfg.max_size {
+            let old = buf.len();
+            buf.resize(old + READ_BLOCK, 0);
+            let n = reader.read(&mut buf[old..])?;
+            buf.truncate(old + n);
+            if n == 0 {
+                eof = true;
+            }
+        }
+
+        if buf.is_empty() {
+            break;
+        }
+
+        // Boundary relative to the current buffer (chunk start = 0).
+        let end = find_boundary(&buf, 0, cfg);
+        debug_assert!(end > 0 && end <= buf.len());
+
+        let chunk_data = buf[..end].to_vec();
+        chunks.push(Chunk::new(consumed, chunk_data));
+        consumed += end;
+        buf.drain(..end);
+    }
+
+    Ok(chunks)
 }
 
 #[cfg(test)]
@@ -128,5 +164,56 @@ mod tests {
         assert_eq!(chunker.config().target_size, 256);
         let data: Vec<u8> = (0..4000u32).map(|i| i as u8).collect();
         assert_eq!(chunker.chunk_slice(&data), chunk_slice(&data, &small_cfg()));
+    }
+
+    // --- streaming tests (appended to the same `mod tests`) ---
+    use std::io::Read;
+
+    /// A reader that yields `step` bytes per call from `data`, and counts how
+    /// many bytes have been handed out.
+    struct CountingReader<'a> {
+        data: &'a [u8],
+        pos: usize,
+        step: usize,
+    }
+    impl<'a> Read for CountingReader<'a> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos >= self.data.len() {
+                return Ok(0);
+            }
+            let want = self.step.min(out.len()).min(self.data.len() - self.pos);
+            out[..want].copy_from_slice(&self.data[self.pos..self.pos + want]);
+            self.pos += want;
+            Ok(want)
+        }
+    }
+
+    #[test]
+    fn stream_equals_slice_for_various_read_sizes() {
+        let cfg = small_cfg();
+        let data: Vec<u8> = (0..30_000u32).map(|i| (i.wrapping_mul(2654435761) >> 9) as u8).collect();
+        let want = chunk_slice(&data, &cfg);
+        for step in [1usize, 7, 64, 250, 1024, 4096, 100_000] {
+            let reader = CountingReader { data: &data, pos: 0, step };
+            let got = chunk_stream(reader, &cfg).unwrap();
+            assert_eq!(got, want, "stream != slice for read step {step}");
+        }
+    }
+
+    #[test]
+    fn stream_empty_reader_yields_no_chunks() {
+        let reader = CountingReader { data: &[], pos: 0, step: 16 };
+        let got = chunk_stream(reader, &small_cfg()).unwrap();
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn stream_tiny_reader_yields_single_chunk() {
+        let data = vec![9u8, 8, 7];
+        let reader = CountingReader { data: &data, pos: 0, step: 1 };
+        let got = chunk_stream(reader, &small_cfg()).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].data, data);
+        assert_eq!(got[0].offset, 0);
     }
 }
