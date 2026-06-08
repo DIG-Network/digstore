@@ -14,9 +14,11 @@ mod generation;
 mod history;
 mod paths;
 mod staging;
+mod store;
 
 pub use chunkstore::ChunkStore;
 pub use diff::GenerationDiff;
+pub use store::Store;
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use config::{load_config, save_config};
 pub use error::{Result, StoreError};
