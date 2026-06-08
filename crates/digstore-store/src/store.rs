@@ -234,4 +234,25 @@ impl<C: Clock> Store<C> {
         }
         Err(StoreError::ChunkNotFound(hash.to_hex()))
     }
+
+    /// Generations in chronological order (§20.4 `log`). Alias of root history.
+    pub fn log(&self) -> Result<Vec<GenerationState>> {
+        self.root_history()
+    }
+
+    /// Load a generation manifest by its root hash.
+    pub fn generation_manifest(&self, root: Bytes32) -> Result<GenerationManifest> {
+        let path = self.paths.generation_manifest(&root.to_hex());
+        if !path.exists() {
+            return Err(StoreError::GenerationNotFound(root.to_hex()));
+        }
+        GenerationManifest::read_from(path)
+    }
+
+    /// Diff two generations by root hash (§20.4 `diff`).
+    pub fn diff(&self, a: Bytes32, b: Bytes32) -> Result<crate::diff::GenerationDiff> {
+        let ma = self.generation_manifest(a)?;
+        let mb = self.generation_manifest(b)?;
+        Ok(crate::diff::GenerationDiff::between(&ma, &mb))
+    }
 }

@@ -236,3 +236,44 @@ fn resolve_unknown_chunk_errors() {
     let err = store.resolve_chunk(bogus).unwrap_err();
     assert!(matches!(err, digstore_store::StoreError::ChunkNotFound(_)));
 }
+
+#[test]
+fn log_lists_generations_in_order() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(10)).unwrap();
+    store.stage_file("a.txt", b"first").unwrap();
+    let _r0 = store.commit().unwrap();
+    store.stage_file("b.txt", b"second").unwrap();
+    let _r1 = store.commit().unwrap();
+
+    let log = store.log().unwrap();
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[0].id, 0);
+    assert_eq!(log[1].id, 1);
+}
+
+#[test]
+fn diff_between_two_generations_reports_added_key() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(10)).unwrap();
+    store.stage_file("a.txt", b"alpha content here padded out").unwrap();
+    let r0 = store.commit().unwrap();
+    store.stage_file("a.txt", b"alpha content here padded out").unwrap();
+    store.stage_file("b.txt", b"a new resource entirely").unwrap();
+    let r1 = store.commit().unwrap();
+
+    let d = store.diff(r0, r1).unwrap();
+    assert_eq!(d.keys_added, vec!["b.txt".to_string()]);
+    assert!(d.keys_removed.is_empty());
+}
+
+#[test]
+fn diff_unknown_root_errors() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(10)).unwrap();
+    store.stage_file("a.txt", b"x").unwrap();
+    let r0 = store.commit().unwrap();
+    let bogus = Bytes32([0xEEu8; 32]);
+    let err = store.diff(r0, bogus).unwrap_err();
+    assert!(matches!(err, digstore_store::StoreError::GenerationNotFound(_)));
+}
