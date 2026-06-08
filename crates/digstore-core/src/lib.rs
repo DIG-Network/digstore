@@ -15,3 +15,4 @@ pub mod urn;
 pub mod wire;
 
 pub use error::{CoreError, ErrorCode};
+pub use abi::{is_error, pack_ptr_len, unpack_ptr_len};
