@@ -223,3 +223,32 @@ fn node_signing_message_layout_is_exact() {
     assert_eq!(&msg[96..100], &[0x01, 0x02, 0x03, 0x04]); // big-endian height
     assert_eq!(&msg[100..102], &[0xEE, 0xFF]);
 }
+
+#[test]
+fn sign_attestation_binds_nonce_store_and_timestamp() {
+    use digstore_core::AttestationChallenge;
+    use digstore_crypto::{attestation_signing_message, bls_verify, sign_attestation};
+
+    let sk = bls::SecretKey::from_seed(&[0x70u8; 32]);
+    let pk = sk.public_key().to_bytes();
+    let challenge = AttestationChallenge {
+        nonce: [0x5A; 32],
+        store_id: [0x6B; 32],
+        timestamp: 0x0102_0304_0506_0708,
+    };
+
+    let sig = sign_attestation(&sk, &challenge);
+
+    let msg = attestation_signing_message(&challenge.nonce, &challenge.store_id, challenge.timestamp);
+    assert!(bls_verify(&pk, &msg, &sig));
+
+    // Layout: 32 + 32 + 8 = 72 bytes, timestamp big-endian.
+    assert_eq!(msg.len(), 72);
+    assert_eq!(&msg[0..32], &[0x5Au8; 32]);
+    assert_eq!(&msg[32..64], &[0x6Bu8; 32]);
+    assert_eq!(&msg[64..72], &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+
+    // A different nonce must not verify.
+    let wrong = attestation_signing_message(&[0x00; 32], &challenge.store_id, challenge.timestamp);
+    assert!(!bls_verify(&pk, &wrong, &sig));
+}
