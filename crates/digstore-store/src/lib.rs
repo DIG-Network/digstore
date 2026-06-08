@@ -7,6 +7,8 @@
 
 mod clock;
 mod error;
+mod paths;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use error::{Result, StoreError};
+pub use paths::StorePaths;
