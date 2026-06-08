@@ -1,0 +1,11 @@
+(module
+  (memory (export "memory") 1 256)
+  (func (export "alloc") (param i32) (result i32) (i32.const 1024))
+  (func (export "dealloc") (param i32) (param i32))
+  (func (export "init") (result i32) (i32.const 0))
+  ;; pack_ptr_len(ptr=-300, len=0): ((-300) << 32) | 0  (NotFound sentinel)
+  (func (export "get_content") (param i32) (param i32) (result i64)
+    (i64.shl (i64.const -300) (i64.const 32)))
+  (func (export "get_proof") (param i32) (param i32) (result i64)
+    (i64.shl (i64.const -300) (i64.const 32)))
+)
