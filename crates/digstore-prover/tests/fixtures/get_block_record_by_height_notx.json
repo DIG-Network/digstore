@@ -1,0 +1,10 @@
+{
+  "block_record": {
+    "header_hash": "0xc6e3b8d2e4f5061728394a5b6c7d8e9f00112233445566778899aabbccddeeff",
+    "height": 5421335,
+    "timestamp": null,
+    "prev_transaction_block_height": 5421330,
+    "prev_transaction_block_hash": "0xaa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899"
+  },
+  "success": true
+}
