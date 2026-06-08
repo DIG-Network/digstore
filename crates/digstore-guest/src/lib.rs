@@ -31,8 +31,6 @@ pub mod host;
 #[cfg(target_arch = "wasm32")]
 pub mod abi;
 #[cfg(target_arch = "wasm32")]
-pub mod data_stub;
-#[cfg(target_arch = "wasm32")]
 pub mod imports;
 
 pub mod attestation;
