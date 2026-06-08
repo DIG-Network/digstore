@@ -294,3 +294,55 @@ impl HostRuntime {
         f.call(&mut self.store, arg).map_err(Self::map_trap)
     }
 }
+
+impl HostRuntime {
+    /// §18.4 serve flow for content. Treats request/response as opaque bytes;
+    /// the host NEVER decrypts or inspects the payload.
+    pub fn serve_content(&mut self, request: &[u8]) -> Result<Vec<u8>, HostError> {
+        self.serve_via("get_content", request)
+    }
+
+    /// §18.4 serve flow for proofs.
+    pub fn serve_proof(&mut self, request: &[u8]) -> Result<Vec<u8>, HostError> {
+        self.serve_via("get_proof", request)
+    }
+
+    fn serve_via(&mut self, export: &'static str, request: &[u8]) -> Result<Vec<u8>, HostError> {
+        // 1. alloc(req_len) — bounds armed per sub-call (§18.2).
+        let alloc: TypedFunc<i32, i32> = self
+            .instance
+            .get_typed_func(&mut self.store, "alloc")
+            .map_err(|_| HostError::MissingExport("alloc"))?;
+        self.arm_bounds();
+        let req_ptr = alloc
+            .call(&mut self.store, request.len() as i32)
+            .map_err(Self::map_trap)?;
+
+        // 2. write request bytes
+        crate::memory::write_bytes(&mut self.store, &self.memory, req_ptr as u32, request)?;
+
+        // 3. call get_content/get_proof(ptr, len)
+        let serve: TypedFunc<(i32, i32), i64> = self
+            .instance
+            .get_typed_func(&mut self.store, export)
+            .map_err(|_| HostError::MissingExport(export))?;
+        self.arm_bounds();
+        let packed = serve
+            .call(&mut self.store, (req_ptr, request.len() as i32))
+            .map_err(Self::map_trap)?;
+
+        // 4-5. is_error? else unpack + read
+        let out = self.unpack_and_read(packed);
+
+        // 6. dealloc(req_ptr, req_len) — best effort.
+        if let Ok(dealloc) = self
+            .instance
+            .get_typed_func::<(i32, i32), ()>(&mut self.store, "dealloc")
+        {
+            self.arm_bounds();
+            let _ = dealloc.call(&mut self.store, (req_ptr, request.len() as i32));
+        }
+
+        out
+    }
+}
