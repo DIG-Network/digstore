@@ -40,6 +40,7 @@ mod template;
 pub use config::{CompilerConfig, CompilerStats};
 pub use error::{CompilerError, Result};
 pub use chunk_index::ChunkIndex;
+pub use key_table::{build_chunk_index_and_key_table, GenerationView, KeyTable, ResourceView};
 
 // Re-export the canonical core result/stats so consumers reference one home (C6).
 pub use digstore_core::{CompilationResult, CompilationStats};
