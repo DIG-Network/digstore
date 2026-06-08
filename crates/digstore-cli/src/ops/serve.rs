@@ -94,9 +94,13 @@ fn host_deps(store_id: Bytes32, pubkey: Bytes48, secret: BlsSecretKey) -> HostDe
 /// module fails to load/validate/instantiate (this is how a corrupted CODE
 /// section surfaces). A corrupted DATA section still loads, and is caught later
 /// by client merkle/GCM verification.
-fn instantiate_host(module_path: &Path, store_id: Bytes32, pubkey: Bytes48) -> Result<(), CliError> {
-    let module_bytes =
-        std::fs::read(module_path).map_err(|_| CliError::NotFound(module_path.display().to_string()))?;
+fn instantiate_host(
+    module_path: &Path,
+    store_id: Bytes32,
+    pubkey: Bytes48,
+) -> Result<(), CliError> {
+    let module_bytes = std::fs::read(module_path)
+        .map_err(|_| CliError::NotFound(module_path.display().to_string()))?;
     let secret = BlsSecretKey::from_seed(&[42u8; 32]);
     let mut rt = HostRuntime::new(
         &module_bytes,
@@ -157,7 +161,9 @@ pub fn serve_content(
             let start = loc.offset as usize;
             let end = start + loc.len as usize;
             if end > pool.len() {
-                return Err(CliError::VerificationFailed("chunk loc out of bounds".into()));
+                return Err(CliError::VerificationFailed(
+                    "chunk loc out of bounds".into(),
+                ));
             }
             let body = &pool[start..end];
             framed.extend_from_slice(&(body.len() as u32).to_be_bytes());
@@ -172,9 +178,9 @@ pub fn serve_content(
 
     match position {
         Some(pos) => {
-            let proof = tree
-                .prove(pos)
-                .ok_or_else(|| CliError::VerificationFailed("could not build merkle proof".into()))?;
+            let proof = tree.prove(pos).ok_or_else(|| {
+                CliError::VerificationFailed("could not build merkle proof".into())
+            })?;
             let ciphertext = framed_by_key[pos].1.clone();
             Ok(ContentResponse {
                 ciphertext,
@@ -210,8 +216,14 @@ pub fn serve_content(
 #[allow(clippy::type_complexity)]
 fn parse_module_data_section(
     module_bytes: &[u8],
-) -> Result<(Vec<u8>, Vec<digstore_compiler::ChunkLoc>, Vec<digstore_core::KeyTableEntry>), CliError>
-{
+) -> Result<
+    (
+        Vec<u8>,
+        Vec<digstore_compiler::ChunkLoc>,
+        Vec<digstore_core::KeyTableEntry>,
+    ),
+    CliError,
+> {
     use digstore_compiler::{parse_offset_table, SEG_KEY_TABLE, SEG_POOL};
     use digstore_core::codec::{Decode, Decoder};
 
@@ -232,7 +244,8 @@ fn parse_module_data_section(
     };
 
     // SEG_POOL = byte_blob(pool) + Vec<ChunkLoc>.
-    let pool_seg = seg(SEG_POOL).ok_or_else(|| CliError::VerificationFailed("no pool segment".into()))?;
+    let pool_seg =
+        seg(SEG_POOL).ok_or_else(|| CliError::VerificationFailed("no pool segment".into()))?;
     let mut dec = Decoder::new(pool_seg);
     let pool = Vec::<u8>::decode(&mut dec)
         .map_err(|e| CliError::VerificationFailed(format!("decode pool: {e:?}")))?;

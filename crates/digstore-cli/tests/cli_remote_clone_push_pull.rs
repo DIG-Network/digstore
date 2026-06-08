@@ -33,7 +33,12 @@ fn clone_then_cat_round_trips_from_remote() {
     let f = src.path().join("doc.txt");
     std::fs::write(&f, content).unwrap();
     dig(&src).arg("init").assert().success();
-    dig(&src).args(["add"]).arg(&f).args(["--key", "doc"]).assert().success();
+    dig(&src)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "doc"])
+        .assert()
+        .success();
     dig(&src).args(["commit"]).assert().success();
 
     let (store_id, root) = store_id_and_root(&src);
@@ -70,7 +75,12 @@ fn push_fast_forward_then_pull_advances() {
     let f = src.path().join("a.txt");
     std::fs::write(&f, b"v1").unwrap();
     dig(&src).arg("init").assert().success();
-    dig(&src).args(["add"]).arg(&f).args(["--key", "a"]).assert().success();
+    dig(&src)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
     dig(&src).args(["commit"]).assert().success();
 
     let (store_id, root1) = store_id_and_root(&src);
@@ -81,7 +91,10 @@ fn push_fast_forward_then_pull_advances() {
     let base = server.base_url();
     let store_url = format!("{base}/stores/{store_id}");
 
-    dig(&src).args(["remote", "add", "origin", &store_url]).assert().success();
+    dig(&src)
+        .args(["remote", "add", "origin", &store_url])
+        .assert()
+        .success();
     dig(&src).args(["push", "origin"]).assert().success();
 
     // Clone into a fresh dir.
@@ -91,7 +104,12 @@ fn push_fast_forward_then_pull_advances() {
 
     // Second commit on the source, then push.
     std::fs::write(&f, b"v2-longer-content-here").unwrap();
-    dig(&src).args(["add"]).arg(&f).args(["--key", "a"]).assert().success();
+    dig(&src)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
     dig(&src).args(["commit"]).assert().success();
     dig(&src).args(["push", "origin"]).assert().success();
 
@@ -99,9 +117,13 @@ fn push_fast_forward_then_pull_advances() {
     assert_ne!(root1, root2);
 
     // Pull on the clone advances local root to root2.
-    dig(&dst).args(["remote", "add", "origin", &store_url]).assert().success();
+    dig(&dst)
+        .args(["remote", "add", "origin", &store_url])
+        .assert()
+        .success();
     dig(&dst).args(["pull", "origin"]).assert().success();
     let outd: serde_json::Value =
-        serde_json::from_slice(&dig(&dst).args(["log", "--json"]).output().unwrap().stdout).unwrap();
+        serde_json::from_slice(&dig(&dst).args(["log", "--json"]).output().unwrap().stdout)
+            .unwrap();
     assert_eq!(outd[0]["root"].as_str().unwrap(), root2);
 }

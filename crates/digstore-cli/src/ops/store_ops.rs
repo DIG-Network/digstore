@@ -138,7 +138,8 @@ pub fn init_store(
 
     // Surface SecretSalt deterministically for scripting `cat --salt`.
     if let Visibility::Private(salt) = &cfg.visibility {
-        fs::write(ctx.salt_path(), Bytes32(salt.0).to_hex()).map_err(|e| CliError::Other(e.into()))?;
+        fs::write(ctx.salt_path(), Bytes32(salt.0).to_hex())
+            .map_err(|e| CliError::Other(e.into()))?;
     }
 
     // Persist the single canonical trusted host key (the compiler reads this).
@@ -148,7 +149,8 @@ pub fn init_store(
     }];
     fs::write(
         ctx.dig_dir.join("trusted_keys.json"),
-        serde_json::to_string_pretty(&serialize_keys(&trusted)).map_err(|e| CliError::Other(e.into()))?,
+        serde_json::to_string_pretty(&serialize_keys(&trusted))
+            .map_err(|e| CliError::Other(e.into()))?,
     )
     .map_err(|e| CliError::Other(e.into()))?;
 
@@ -333,9 +335,7 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
 
     // Compile a real module (so a real .wasm exists for host/push/clone).
     let output_path = compile_module(ctx, &cfg, &pool_bodies, &manifest, root)?;
-    let output_size = fs::metadata(&output_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let output_size = fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
 
     // Clear staging.
     let mut staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
@@ -447,7 +447,10 @@ pub fn log(ctx: &CliContext, limit: Option<usize>) -> Result<Vec<LogEntry>, CliE
 }
 
 pub fn current_root(ctx: &CliContext) -> Result<Option<Bytes32>, CliError> {
-    Ok(read_history(ctx)?.iter().max_by_key(|s| s.id).map(|s| s.root))
+    Ok(read_history(ctx)?
+        .iter()
+        .max_by_key(|s| s.id)
+        .map(|s| s.root))
 }
 
 fn read_history(ctx: &CliContext) -> Result<Vec<GenerationState>, CliError> {
@@ -491,14 +494,24 @@ pub fn module_path_for(
         .modules_dir()
         .join(format!("{}-{}.wasm", store_id.to_hex(), root.to_hex()));
     if !path.exists() {
-        return Err(CliError::NotFound(format!("module for root {}", root.to_hex())));
+        return Err(CliError::NotFound(format!(
+            "module for root {}",
+            root.to_hex()
+        )));
     }
     Ok(path)
 }
 
-pub fn list_generation_resources(ctx: &CliContext, root: &Bytes32) -> Result<Vec<String>, CliError> {
+pub fn list_generation_resources(
+    ctx: &CliContext,
+    root: &Bytes32,
+) -> Result<Vec<String>, CliError> {
     let manifest = load_generation_manifest(ctx, root)?;
-    Ok(manifest.key_table.iter().map(|k| k.resource_key.clone()).collect())
+    Ok(manifest
+        .key_table
+        .iter()
+        .map(|k| k.resource_key.clone())
+        .collect())
 }
 
 pub(crate) fn load_generation_manifest(
@@ -659,8 +672,11 @@ pub(crate) fn load_host_pubkey(ctx: &CliContext) -> Result<Bytes48, CliError> {
 }
 
 /// Load the host BLS signing key (seed) persisted at init.
-pub(crate) fn load_signing_key(ctx: &CliContext) -> Result<digstore_crypto::bls::SecretKey, CliError> {
-    let bytes = fs::read(ctx.dig_dir.join("signing_key.bin")).map_err(|e| CliError::Other(e.into()))?;
+pub(crate) fn load_signing_key(
+    ctx: &CliContext,
+) -> Result<digstore_crypto::bls::SecretKey, CliError> {
+    let bytes =
+        fs::read(ctx.dig_dir.join("signing_key.bin")).map_err(|e| CliError::Other(e.into()))?;
     Ok(digstore_crypto::bls::SecretKey::from_seed(&bytes))
 }
 
@@ -762,7 +778,11 @@ mod tests {
         let res = commit(&ctx, None).unwrap();
         let store_id = ctx.find_store_id().unwrap();
         let p = module_path_for(&ctx, &store_id, None).unwrap();
-        assert!(p.ends_with(format!("{}-{}.wasm", store_id.to_hex(), res.roothash.to_hex())));
+        assert!(p.ends_with(format!(
+            "{}-{}.wasm",
+            store_id.to_hex(),
+            res.roothash.to_hex()
+        )));
     }
 
     #[test]
@@ -792,7 +812,11 @@ mod tests {
         let r2 = commit(&ctx, None).unwrap().roothash;
 
         let d = diff(&ctx, &r1, &r2).unwrap();
-        assert!(d.iter().any(|e| e.resource_key == "b" && e.change == "added"));
-        assert!(d.iter().any(|e| e.resource_key == "a" && e.change == "modified"));
+        assert!(d
+            .iter()
+            .any(|e| e.resource_key == "b" && e.change == "added"));
+        assert!(d
+            .iter()
+            .any(|e| e.resource_key == "a" && e.change == "modified"));
     }
 }

@@ -74,7 +74,10 @@ mod tests {
         let (_td, ctx) = ctx();
         add_remote(&ctx, "origin", "https://h/stores/x").unwrap();
         assert_eq!(
-            list_remotes(&ctx).unwrap().get("origin").map(String::as_str),
+            list_remotes(&ctx)
+                .unwrap()
+                .get("origin")
+                .map(String::as_str),
             Some("https://h/stores/x")
         );
     }

@@ -70,13 +70,16 @@ pub fn decrypt_and_verify(
         let len = u32::from_be_bytes([buf[p], buf[p + 1], buf[p + 2], buf[p + 3]]) as usize;
         p += 4;
         if p + len > buf.len() {
-            return Err(CliError::VerificationFailed("chunk frame out of bounds".into()));
+            return Err(CliError::VerificationFailed(
+                "chunk frame out of bounds".into(),
+            ));
         }
         let ct = &buf[p..p + len];
         p += len;
         let pt = digstore_crypto::decrypt_chunk(&key, ct).map_err(|_| {
             CliError::VerificationFailed(
-                "AES-256-GCM tag verification failed (wrong key/salt or tampered ciphertext)".into(),
+                "AES-256-GCM tag verification failed (wrong key/salt or tampered ciphertext)"
+                    .into(),
             )
         })?;
         plaintext.extend_from_slice(&pt);
@@ -110,7 +113,10 @@ mod tests {
 
     #[test]
     fn key_is_deterministic_and_32_bytes() {
-        assert_eq!(derive_decryption_key(&urn(), None), derive_decryption_key(&urn(), None));
+        assert_eq!(
+            derive_decryption_key(&urn(), None),
+            derive_decryption_key(&urn(), None)
+        );
         assert_eq!(derive_decryption_key(&urn(), None).len(), 32);
     }
 
@@ -216,6 +222,9 @@ mod tests {
             merkle_proof: proof,
             roothash: root,
         };
-        assert_eq!(decrypt_and_verify(&resp, &urn, None, &root).unwrap(), b"resource-zero");
+        assert_eq!(
+            decrypt_and_verify(&resp, &urn, None, &root).unwrap(),
+            b"resource-zero"
+        );
     }
 }

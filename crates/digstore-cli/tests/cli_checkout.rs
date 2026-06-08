@@ -14,7 +14,12 @@ fn checkout_materializes_generation() {
     let f = dir.path().join("file.txt");
     std::fs::write(&f, content).unwrap();
     dig(&dir).arg("init").assert().success();
-    dig(&dir).args(["add"]).arg(&f).args(["--key", "file.txt"]).assert().success();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "file.txt"])
+        .assert()
+        .success();
     dig(&dir).args(["commit"]).assert().success();
 
     let root = root_hex(&dir);

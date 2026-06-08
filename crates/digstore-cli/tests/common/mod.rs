@@ -62,11 +62,21 @@ impl TestServer {
     }
 
     /// Start a server seeded with one store at `genesis_root` carrying `module`.
-    pub fn start_with_module(store_id_hex: &str, root_hex: &str, public_key: [u8; 48], module: &[u8]) -> Self {
+    pub fn start_with_module(
+        store_id_hex: &str,
+        root_hex: &str,
+        public_key: [u8; 48],
+        module: &[u8],
+    ) -> Self {
         let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
         let root = digstore_core::Bytes32::from_hex(root_hex).unwrap();
         let backend = Arc::new(digstore_remote::InMemoryBackend::new());
-        backend.add_store(store_id, digstore_core::Bytes48(public_key), root, module.to_vec());
+        backend.add_store(
+            store_id,
+            digstore_core::Bytes48(public_key),
+            root,
+            module.to_vec(),
+        );
         Self::launch(backend)
     }
 

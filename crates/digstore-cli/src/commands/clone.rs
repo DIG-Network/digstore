@@ -15,7 +15,11 @@ pub fn run(ctx: &CliContext, args: CloneArgs) -> Result<(), CliError> {
         })?;
         // base is already a `…/stores/{id}` URL; rebuild from the URN's store id.
         let host = base.split("/stores/").next().unwrap_or(&base);
-        format!("{}/stores/{}", host.trim_end_matches('/'), urn.store_id.to_hex())
+        format!(
+            "{}/stores/{}",
+            host.trim_end_matches('/'),
+            urn.store_id.to_hex()
+        )
     } else {
         args.source.clone()
     };
