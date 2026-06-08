@@ -55,7 +55,7 @@ impl<'a> DataSection<'a> {
             let id = u16::from_be_bytes([raw[p], raw[p + 1]]);
             let off = u32::from_be_bytes([raw[p + 2], raw[p + 3], raw[p + 4], raw[p + 5]]) as usize;
             let len = u32::from_be_bytes([raw[p + 6], raw[p + 7], raw[p + 8], raw[p + 9]]) as usize;
-            if off.checked_add(len).map_or(true, |e| e > raw.len()) {
+            if off.checked_add(len).is_none_or(|e| e > raw.len()) {
                 return Err(SectionError);
             }
             entries.push(Entry { id, off, len });

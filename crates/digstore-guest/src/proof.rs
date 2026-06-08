@@ -1,11 +1,11 @@
 //! Proof path (§13). CONVENTIONS C3: the guest CANNOT build an `ExecutionProof`
 //! (no prover, no ChainSource, no node signing key inside wasm32). `get_proof`
-//! therefore returns a serialized `digstore_core::wire::ProofPrelude`:
-//!   - `roothash`           — the generation root being served against
-//!   - `output_commitment`  — SHA-256 of the served output bytes (the same bytes
-//!                            `get_content` returns, ordered via `concat_output`)
-//!   - `serving_digest`     — commitment over (retrieval_key, ordered chunk
-//!                            indices, client_nonce)
+//! therefore returns a serialized `digstore_core::wire::ProofPrelude` whose
+//! fields are: `roothash` (the generation root being served against),
+//! `output_commitment` (SHA-256 of the served output bytes — the same bytes
+//! `get_content` returns, ordered via `concat_output`), and `serving_digest`
+//! (a commitment over the retrieval_key, ordered chunk indices, and client_nonce).
+//!
 //! The serving host later wraps this prelude into a full `ExecutionProof` via
 //! `digstore_prover` (and signs `node_signature`). On a miss the guest returns a
 //! deterministic decoy prelude (indistinguishable success).
