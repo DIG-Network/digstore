@@ -29,4 +29,7 @@ pub use urn::Urn;
 pub use merkle::{MerkleProof, MerkleTree, ProofStep};
 pub use keytable::{KeyTableEntry, PathWalk};
 pub use manifest::{Author, MetadataManifest};
-pub use wire::{ChiaBlockRef, ExecutionProof, ProofResponse};
+pub use wire::{
+    AttestationChallenge, AttestationResponse, AuthenticationInfo, ChiaBlockRef, ContentResponse,
+    ExecutionProof, ProofPrelude, ProofResponse,
+};
