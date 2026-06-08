@@ -16,11 +16,14 @@ pub mod backend;
 pub mod backend_inmem;
 pub mod error;
 pub mod etag;
+pub mod handlers;
 pub mod ratelimit;
+pub mod server;
 pub mod wire;
 
 pub use auth::{push_signing_message, verify_push_signature, PushAuth};
 pub use ratelimit::RateLimiter;
+pub use server::{AppState, RemoteServer};
 
 pub use backend::{
     DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord,
