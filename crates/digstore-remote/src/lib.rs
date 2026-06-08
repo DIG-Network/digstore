@@ -14,6 +14,7 @@
 pub mod auth;
 pub mod backend;
 pub mod backend_inmem;
+pub mod backend_store;
 pub mod client;
 pub mod error;
 pub mod etag;
@@ -31,5 +32,6 @@ pub use backend::{
     DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord,
 };
 pub use backend_inmem::InMemoryBackend;
+pub use backend_store::StoreBackend;
 pub use error::{ClientError, RemoteError};
 pub use etag::{etag_for_root, matches_current, parse_if_none_match};
