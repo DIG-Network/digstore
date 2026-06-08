@@ -28,3 +28,17 @@ pub mod hash;
 
 pub use error::{BlsError, CryptoError, TamperError};
 pub use hash::sha256;
+
+/// Versioning tag for the crypto domain constants (HKDF salt/info, scheme tag).
+/// Bumping this signals a deliberate, breaking change to derived material.
+pub const CRYPTO_VERSION: u32 = 1;
+
+/// Chia AugScheme tag shared with `digstore-guest` for cross-impl BLS parity
+/// (CONVENTIONS C8). Canonical value per the conventions / plan Task 0.
+///
+/// NOTE (deviation): the conventions name `digstore_core::CHIA_BLS_SCHEME` as the
+/// single source of truth, but `digstore-core` does not currently export that
+/// constant and this crate must not modify other crates. The constant is defined
+/// here with the canonical value; `digstore-guest` compares its fixtures against
+/// this same literal.
+pub const CHIA_BLS_SCHEME: &str = "chia-aug-scheme-bls12381-g2-xmd-sha256-sswu-ro";
