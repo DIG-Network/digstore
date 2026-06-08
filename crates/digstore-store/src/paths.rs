@@ -92,7 +92,10 @@ mod tests {
         assert_eq!(p.root(), PathBuf::from("/data"));
         assert_eq!(p.config_file(), PathBuf::from("/data/config.toml"));
         let hex = "11".repeat(32);
-        assert_eq!(p.staging_file(), PathBuf::from(format!("/data/{hex}.staging.bin")));
+        assert_eq!(
+            p.staging_file(),
+            PathBuf::from(format!("/data/{hex}.staging.bin"))
+        );
     }
 
     #[test]

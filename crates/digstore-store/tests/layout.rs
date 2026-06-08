@@ -19,7 +19,10 @@ fn init_creates_exact_layout() {
 
     let sid_hex = "33".repeat(32);
     assert!(dir.path().join("config.toml").exists(), "config.toml");
-    assert!(dir.path().join(format!("{sid_hex}.staging.bin")).exists(), "staging");
+    assert!(
+        dir.path().join(format!("{sid_hex}.staging.bin")).exists(),
+        "staging"
+    );
     assert!(dir.path().join("roots.log").exists(), "roots.log");
     assert!(dir.path().join("generations").is_dir(), "generations dir");
     assert!(dir.path().join("modules").is_dir(), "modules dir");

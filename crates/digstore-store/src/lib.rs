@@ -17,12 +17,12 @@ mod staging;
 mod store;
 
 pub use chunkstore::ChunkStore;
-pub use diff::GenerationDiff;
-pub use store::Store;
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use config::{load_config, save_config};
+pub use diff::GenerationDiff;
 pub use error::{Result, StoreError};
 pub use generation::{ChunkRef, GenerationManifest, KeyTableRecord};
 pub use history::RootHistory;
 pub use paths::StorePaths;
 pub use staging::{StagedRecord, StagingArea};
+pub use store::Store;
