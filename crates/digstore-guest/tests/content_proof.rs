@@ -147,6 +147,66 @@ fn failed_attestation_returns_decoy() {
     ));
 }
 
+// --- Task 20: get_proof returns a ProofPrelude (CONVENTIONS C3) --------------
+use digstore_core::ProofPrelude;
+use digstore_guest::proof::{serve_proof, ProofOutcome};
+use digstore_guest::request::ProofRequest;
+
+#[test]
+fn proof_hit_returns_prelude_binding_output_and_nonce() {
+    let key = Bytes32([0x11; 32]);
+    let entry = KeyTableEntry {
+        static_key: key,
+        generation: Bytes32([0xBB; 32]),
+        chunk_indices: vec![0],
+        total_size: 5,
+    };
+    let table = encode_key_table(&[entry]);
+    let pool = fixtures::pack_pool(&[b"alpha"]);
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let ds = DataSection::parse(&blob).unwrap();
+    let host = MockHost::default();
+    let req = ProofRequest { retrieval_key: key, root_hash: None, client_nonce: [3u8; 32] };
+    let gc = gate_config();
+    match serve_proof(&host, &ds, &req, &gc) {
+        ProofOutcome::Real(p) => {
+            let p: ProofPrelude = p;
+            assert_eq!(p.roothash, ds.current_root());
+            // output_commitment = SHA-256 of the served output bytes ("alpha").
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(b"alpha");
+            let mut want = [0u8; 32];
+            want.copy_from_slice(&h.finalize());
+            assert_eq!(p.output_commitment, Bytes32(want), "commits to served bytes");
+            // serving_digest binds (retrieval_key, ordered indices, client_nonce):
+            // a different nonce must change it.
+            let req2 = ProofRequest { retrieval_key: key, root_hash: None, client_nonce: [9u8; 32] };
+            if let ProofOutcome::Real(p2) = serve_proof(&host, &ds, &req2, &gc) {
+                assert_ne!(
+                    p.serving_digest, p2.serving_digest,
+                    "serving_digest must bind the client nonce"
+                );
+            } else {
+                panic!("hit must return Real");
+            }
+        }
+        ProofOutcome::Decoy(_) => panic!("hit must return Real"),
+    }
+}
+
+#[test]
+fn proof_miss_returns_decoy() {
+    let table = encode_key_table(&[]);
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &[]);
+    let ds = DataSection::parse(&blob).unwrap();
+    let host = MockHost::default();
+    let req =
+        ProofRequest { retrieval_key: Bytes32([0x99; 32]), root_hash: None, client_nonce: [0u8; 32] };
+    let gc = gate_config();
+    assert!(matches!(serve_proof(&host, &ds, &req, &gc), ProofOutcome::Decoy(_)));
+}
+
 use digstore_guest::content::verify_request_jwt;
 use digstore_guest::jwt::ClaimPolicy;
 
