@@ -9,7 +9,17 @@
 //! 3. The guest VERIFIES BLS with pure-Rust bls12_381 (AugScheme); it never signs
 //!    and never decrypts. Node proof signatures are produced by the host.
 //! 4. CONVENTIONS C3: `get_proof` returns a serialized `ProofPrelude`, NOT a
-//!    finished `ExecutionProof` (the guest cannot make ZK proofs in wasm).
+//!    finished `ExecutionProof` (the guest cannot make ZK proofs in wasm). The
+//!    prelude binds `output_commitment` = SHA-256 of the served bytes (ordered by
+//!    `digstore_core::serving::concat_output`, CONVENTIONS C9) and a
+//!    nonce-bound `serving_digest`.
+//! 5. `bls12_381` 0.8's hash-to-curve lives behind its `experimental` feature and
+//!    is bound to the `digest` 0.9 trait family, so the AugScheme hash-to-G2 step
+//!    uses a `sha2` 0.9 hasher (aliased `sha2_v09`); every other hash uses
+//!    `sha2` 0.10. (Plan listed neither the feature nor the alias.)
+//! 6. The C8 cross-impl BLS parity vectors are loaded directly from
+//!    `digstore-crypto/tests/fixtures/bls_vectors.json` (the plan referenced a
+//!    non-existent `digstore_crypto::test_vectors` module).
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
