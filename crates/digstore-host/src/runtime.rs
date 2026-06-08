@@ -208,4 +208,13 @@ impl HostRuntime {
     pub fn read_return_buffer_copy(&mut self) -> Result<Vec<u8>, HostError> {
         Ok(self.store.data().host.return_buffer.as_slice().to_vec())
     }
+
+    pub fn call_i32_export_2(&mut self, name: &str, a: i32, b: i32) -> Result<i32, HostError> {
+        let f: TypedFunc<(i32, i32), i32> = self
+            .instance
+            .get_typed_func(&mut self.store, name)
+            .map_err(|_| HostError::MissingExport("i32-export-2"))?;
+        self.arm_bounds();
+        f.call(&mut self.store, (a, b)).map_err(Self::map_trap)
+    }
 }
