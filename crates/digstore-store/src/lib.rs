@@ -10,6 +10,7 @@ mod clock;
 mod config;
 mod error;
 mod generation;
+mod history;
 mod paths;
 mod staging;
 
@@ -18,5 +19,6 @@ pub use clock::{Clock, FixedClock, SystemClock};
 pub use config::{load_config, save_config};
 pub use error::{Result, StoreError};
 pub use generation::{ChunkRef, GenerationManifest, KeyTableRecord};
+pub use history::RootHistory;
 pub use paths::StorePaths;
 pub use staging::{StagedRecord, StagingArea};
