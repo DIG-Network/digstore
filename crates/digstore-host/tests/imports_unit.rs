@@ -39,6 +39,37 @@ fn host_random_over_cap_errors() {
     assert!(n < 0);
 }
 
+const CHALLENGE_LEN: usize = 32 + 32 + 8;
+const ATTESTATION_LEN: usize = 48 + 32 + 96;
+
+fn write_challenge(rt: &mut HostRuntime, ptr: u32) {
+    let mut challenge = vec![0u8; CHALLENGE_LEN];
+    challenge[0..32].fill(0x01);
+    challenge[32..64].fill(0x02);
+    challenge[64..72].copy_from_slice(&1_700_000_000u64.to_be_bytes());
+    rt.write_guest(ptr, &challenge).unwrap();
+}
+
+#[test]
+fn create_attestation_writes_response() {
+    let mut rt = probe_runtime(FixedClock::new(1_700_000_000));
+    write_challenge(&mut rt, 4096);
+    let n = rt.call_i32_export_1("probe_attest", 4096).unwrap();
+    assert_eq!(n as usize, ATTESTATION_LEN);
+    let resp = rt.read_return_buffer_copy().unwrap();
+    assert_eq!(resp.len(), ATTESTATION_LEN);
+}
+
+#[test]
+fn establish_then_verify_session() {
+    let mut rt = probe_runtime(FixedClock::new(1_700_000_000));
+    write_challenge(&mut rt, 4096);
+    assert_eq!(rt.call_i32_export("probe_verify").unwrap(), 0);
+    let r = rt.call_i32_export_1("probe_establish", 4096).unwrap();
+    assert!(r >= 0);
+    assert_eq!(rt.call_i32_export("probe_verify").unwrap(), 1);
+}
+
 #[test]
 fn host_public_key_returns_48_bytes() {
     let mut rt = probe_runtime(FixedClock::new(100));
