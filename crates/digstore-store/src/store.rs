@@ -255,4 +255,23 @@ impl<C: Clock> Store<C> {
         let mb = self.generation_manifest(b)?;
         Ok(crate::diff::GenerationDiff::between(&ma, &mb))
     }
+
+    /// The current head root hash, or `None` if no generation has been committed.
+    pub fn current_root(&self) -> Result<Option<Bytes32>> {
+        Ok(RootHistory::open(self.paths.history_file())?
+            .head()?
+            .map(|g| g.root))
+    }
+
+    /// All root hashes in chronological order — the source for the guest's
+    /// `get_roothash_history` export (§4.3). Consumed by `digstore-guest`.
+    pub fn roothash_history(&self) -> Result<Vec<Bytes32>> {
+        Ok(self.root_history()?.into_iter().map(|g| g.root).collect())
+    }
+
+    /// Deterministic path of the compiled module for a given root (§4.4):
+    /// `{store_id}-{root}.wasm` under `modules/`. Consumed by `digstore-compiler`.
+    pub fn module_path(&self, root: Bytes32) -> std::path::PathBuf {
+        self.paths.module_file(&root.to_hex())
+    }
 }

@@ -277,3 +277,25 @@ fn diff_unknown_root_errors() {
     let err = store.diff(r0, bogus).unwrap_err();
     assert!(matches!(err, digstore_store::StoreError::GenerationNotFound(_)));
 }
+
+#[test]
+fn current_root_and_history_accessors() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(10)).unwrap();
+    assert!(store.current_root().unwrap().is_none());
+
+    store.stage_file("a.txt", b"one").unwrap();
+    let r0 = store.commit().unwrap();
+    store.stage_file("b.txt", b"two").unwrap();
+    let r1 = store.commit().unwrap();
+
+    assert_eq!(store.current_root().unwrap(), Some(r1));
+    assert_eq!(store.roothash_history().unwrap(), vec![r0, r1]);
+
+    let sid_hex = "44".repeat(32);
+    let expected = dir
+        .path()
+        .join("modules")
+        .join(format!("{sid_hex}-{}.wasm", r1.to_hex()));
+    assert_eq!(store.module_path(r1), expected);
+}
