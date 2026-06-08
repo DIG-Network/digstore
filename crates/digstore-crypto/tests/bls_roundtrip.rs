@@ -170,3 +170,56 @@ fn sign_push_then_verify_push_round_trip_and_binding() {
     // Signing over the RAW concat (not its hash) would not verify.
     assert!(!digstore_crypto::bls_verify(&pk.to_bytes(), &concat, &sig));
 }
+
+#[test]
+fn sign_node_binds_program_output_anchor_and_input() {
+    use digstore_core::Bytes32;
+    use digstore_crypto::{bls_verify, node_signing_message, sign_node};
+
+    let sk = bls::SecretKey::from_seed(&[0x60u8; 32]);
+    let pk = sk.public_key().to_bytes();
+    let program_hash = Bytes32([0x01u8; 32]);
+    let public_output = Bytes32([0x02u8; 32]);
+    let header_hash = Bytes32([0x03u8; 32]);
+    let height: u32 = 0x00ABCDEF;
+    let public_input = vec![9u8, 8, 7];
+
+    let sig = sign_node(&sk, &program_hash, &public_output, &header_hash, height, &public_input);
+
+    // Verifies against the canonical message.
+    let msg = node_signing_message(&program_hash, &public_output, &header_hash, height, &public_input);
+    assert!(bls_verify(&pk, &msg, &sig));
+
+    // height is big-endian: a different height must not verify.
+    let wrong_height = node_signing_message(&program_hash, &public_output, &header_hash, height + 1, &public_input);
+    assert!(!bls_verify(&pk, &wrong_height, &sig));
+
+    // Changing the bound output must not verify.
+    let other_output = Bytes32([0x99u8; 32]);
+    let wrong_out = node_signing_message(&program_hash, &other_output, &header_hash, height, &public_input);
+    assert!(!bls_verify(&pk, &wrong_out, &sig));
+
+    // Changing the anchor (header_hash) must not verify.
+    let other_anchor = Bytes32([0x77u8; 32]);
+    let wrong_anchor = node_signing_message(&program_hash, &public_output, &other_anchor, height, &public_input);
+    assert!(!bls_verify(&pk, &wrong_anchor, &sig));
+}
+
+#[test]
+fn node_signing_message_layout_is_exact() {
+    use digstore_core::Bytes32;
+    use digstore_crypto::node_signing_message;
+    let pg = Bytes32([0x01u8; 32]);
+    let out = Bytes32([0x02u8; 32]);
+    let hdr = Bytes32([0x03u8; 32]);
+    let height: u32 = 0x01020304;
+    let pi = vec![0xEE, 0xFF];
+    let msg = node_signing_message(&pg, &out, &hdr, height, &pi);
+    // 32 + 32 + 32 + 4 + 2 = 102 bytes.
+    assert_eq!(msg.len(), 102);
+    assert_eq!(&msg[0..32], &[0x01u8; 32]);
+    assert_eq!(&msg[32..64], &[0x02u8; 32]);
+    assert_eq!(&msg[64..96], &[0x03u8; 32]);
+    assert_eq!(&msg[96..100], &[0x01, 0x02, 0x03, 0x04]); // big-endian height
+    assert_eq!(&msg[100..102], &[0xEE, 0xFF]);
+}
