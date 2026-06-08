@@ -1,0 +1,39 @@
+[package]
+name = "digstore-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "digstore"
+path = "src/main.rs"
+
+[lib]
+name = "digstore_cli"
+path = "src/lib.rs"
+
+[dependencies]
+digstore-core = { path = "../digstore-core" }
+digstore-store = { path = "../digstore-store" }
+digstore-chunker = { path = "../digstore-chunker" }
+digstore-compiler = { path = "../digstore-compiler" }
+digstore-host = { path = "../digstore-host" }
+digstore-prover = { path = "../digstore-prover" }
+digstore-remote = { path = "../digstore-remote" }
+digstore-crypto = { path = "../digstore-crypto" }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5"
+hex = "0.4"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+axum = "0.7"
