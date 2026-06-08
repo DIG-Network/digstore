@@ -73,6 +73,23 @@ impl<C: Clock> Store<C> {
         RootHistory::open(self.paths.history_file())?.entries()
     }
 
+    /// True if a chunk with this hash is already stored under some generation
+    /// directory (global dedup index, §8.2).
+    fn chunk_exists_anywhere(&self, hash: Bytes32) -> Result<bool> {
+        let gens = self.paths.generations_dir();
+        if !gens.exists() {
+            return Ok(false);
+        }
+        let name = hash.to_hex();
+        for entry in std::fs::read_dir(&gens)? {
+            let chunks = entry?.path().join("chunks");
+            if chunks.join(&name).exists() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Stage raw bytes under an explicit resource key (§20.2).
     pub fn stage_file(&mut self, resource_key: &str, bytes: &[u8]) -> Result<()> {
         let mut staging = StagingArea::open(self.paths.staging_file())?;
@@ -169,7 +186,13 @@ impl<C: Clock> Store<C> {
         let chunkstore = ChunkStore::new(&chunks_dir);
         let mut chunk_refs = Vec::with_capacity(pool.len());
         for (i, (hash, data)) in pool.iter().enumerate() {
-            chunkstore.put(*hash, data)?;
+            // §8.2: only store the chunk if it is not already present in this or
+            // any prior generation. `chunk_refs` still records every chunk's
+            // index so reassembly is complete regardless of where the bytes live
+            // (resolved globally by `Store::resolve_chunk`, Task 14).
+            if !self.chunk_exists_anywhere(*hash)? {
+                chunkstore.put(*hash, data)?;
+            }
             chunk_refs.push(ChunkRef { index: i as u32, hash: *hash, size: data.len() as u64 });
         }
 
