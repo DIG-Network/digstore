@@ -49,6 +49,7 @@ pub use data_section::{
     SEG_TRUSTED_KEYS,
 };
 pub use template::{baked_template_bytes, load_template, Template, MAX_MEMORY_PAGES, REQUIRED_EXPORTS};
+pub use inject::inject_data_section;
 
 // Re-export the canonical core result/stats so consumers reference one home (C6).
 pub use digstore_core::{CompilationResult, CompilationStats};
