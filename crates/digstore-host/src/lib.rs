@@ -20,3 +20,4 @@ mod teehook;
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use config::{ExecutionLimits, MAX_MEMORY_BYTES, WASM_PAGE_SIZE};
 pub use error::HostError;
+pub use random::HostRng;
