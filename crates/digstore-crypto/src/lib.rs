@@ -42,6 +42,23 @@ pub use fixtures::{
 };
 pub use kdf::derive_decryption_key;
 
+use digstore_core::Bytes48;
+
+/// Decrypt a chunk AND validate the accompanying store/host public key in one
+/// call, returning the unified [`CryptoError`]. The public key is validated
+/// (canonical G1) before the plaintext is returned, so a caller that holds both
+/// a ciphertext and an unverified key gets a single error type spanning AEAD
+/// (`TamperError`) and BLS (`BlsError`) failures.
+pub fn decrypt_and_unwrap(
+    key: &[u8; 32],
+    ciphertext: &[u8],
+    public_key: &Bytes48,
+) -> Result<Vec<u8>, CryptoError> {
+    validate_public_key(public_key)?;
+    let plaintext = decrypt_chunk(key, ciphertext)?;
+    Ok(plaintext)
+}
+
 /// Versioning tag for the crypto domain constants (HKDF salt/info, scheme tag).
 /// Bumping this signals a deliberate, breaking change to derived material.
 pub const CRYPTO_VERSION: u32 = 1;
