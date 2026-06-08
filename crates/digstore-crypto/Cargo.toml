@@ -1,0 +1,19 @@
+[package]
+name = "digstore-crypto"
+version = "0.1.0"
+edition = "2021"
+description = "Host-side cryptography for Digstore: URN key derivation, AES-256-GCM chunk encryption, and Chia AugScheme BLS."
+
+[dependencies]
+digstore-core = { path = "../digstore-core" }
+sha2 = "0.10"
+hkdf = "0.12"
+aes-gcm = "0.10"
+chia-bls = "=0.45.0"
+hex = "0.4"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
