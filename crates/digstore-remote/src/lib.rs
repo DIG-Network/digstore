@@ -13,6 +13,7 @@
 //! of truth shared with `digstore-cli`.
 pub mod error;
 pub mod etag;
+pub mod wire;
 
 pub use error::{ClientError, RemoteError};
 pub use etag::{etag_for_root, matches_current, parse_if_none_match};
