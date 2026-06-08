@@ -1,0 +1,609 @@
+{
+  "coverage_matrix": [
+    {
+      "section": "4.1",
+      "title": "Store model / init",
+      "covered_by": [
+        "digstore-store"
+      ]
+    },
+    {
+      "section": "4.2",
+      "title": "Generations",
+      "covered_by": [
+        "digstore-store"
+      ]
+    },
+    {
+      "section": "4.3",
+      "title": "Commit/staging mechanics",
+      "covered_by": [
+        "digstore-store"
+      ]
+    },
+    {
+      "section": "4.4",
+      "title": "Root history / monotonic chain",
+      "covered_by": [
+        "digstore-store"
+      ]
+    },
+    {
+      "section": "5.1",
+      "title": "Compilation model (template + data injection)",
+      "covered_by": [
+        "digstore-guest",
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "5.2",
+      "title": "Data section structs / config types",
+      "covered_by": [
+        "digstore-core",
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "5.3",
+      "title": "Compiler pipeline",
+      "covered_by": [
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "6.1",
+      "title": "ABI overview / pack_ptr_len",
+      "covered_by": [
+        "digstore-core",
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "6.2",
+      "title": "Guest exports",
+      "covered_by": [
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "6.3",
+      "title": "Session / JWT gating",
+      "covered_by": [
+        "digstore-guest",
+        "digstore-host"
+      ]
+    },
+    {
+      "section": "6.4",
+      "title": "Host imports runtime",
+      "covered_by": [
+        "digstore-host"
+      ]
+    },
+    {
+      "section": "6.5",
+      "title": "ABI error codes / ErrorCode enum",
+      "covered_by": [
+        "digstore-core"
+      ]
+    },
+    {
+      "section": "7.1",
+      "title": "URN format / parse",
+      "covered_by": [
+        "digstore-core"
+      ]
+    },
+    {
+      "section": "7.2",
+      "title": "Canonical URN / retrieval_key",
+      "covered_by": [
+        "digstore-core"
+      ]
+    },
+    {
+      "section": "7.3",
+      "title": "Resource keys / path walk",
+      "covered_by": [
+        "digstore-core"
+      ]
+    },
+    {
+      "section": "8.1",
+      "title": "Content-defined chunking (CDC/gear)",
+      "covered_by": [
+        "digstore-chunker"
+      ]
+    },
+    {
+      "section": "8.2",
+      "title": "Chunk storage / dedup",
+      "covered_by": [
+        "digstore-chunker",
+        "digstore-store"
+      ]
+    },
+    {
+      "section": "8.3",
+      "title": "Chunk pool / interleaved pool layout",
+      "covered_by": [
+        "digstore-guest",
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "8.4",
+      "title": "Merkle tree / proof types",
+      "covered_by": [
+        "digstore-core"
+      ]
+    },
+    {
+      "section": "8.5",
+      "title": "Social conventions / naming",
+      "covered_by": []
+    },
+    {
+      "section": "9.1",
+      "title": "Merkle leaf=SHA256(chunk)",
+      "covered_by": [
+        "digstore-core"
+      ]
+    },
+    {
+      "section": "9.2",
+      "title": "Merkle node=SHA256(l||r), odd carry",
+      "covered_by": [
+        "digstore-core"
+      ]
+    },
+    {
+      "section": "9.3",
+      "title": "Proof verification",
+      "covered_by": [
+        "digstore-core",
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "9.4",
+      "title": "Generation root = tree root",
+      "covered_by": []
+    },
+    {
+      "section": "9.5",
+      "title": "Proof type / MerkleProof.verify",
+      "covered_by": [
+        "digstore-core"
+      ]
+    },
+    {
+      "section": "10",
+      "title": "Threat model",
+      "covered_by": []
+    },
+    {
+      "section": "11.1",
+      "title": "Key derivation (HKDF)",
+      "covered_by": [
+        "digstore-crypto"
+      ]
+    },
+    {
+      "section": "11.2",
+      "title": "AES-256-GCM encryption",
+      "covered_by": [
+        "digstore-crypto"
+      ]
+    },
+    {
+      "section": "11.3",
+      "title": "Client-side decryption",
+      "covered_by": [
+        "digstore-crypto",
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "11.4",
+      "title": "Decrypt-and-unwrap / verify",
+      "covered_by": [
+        "digstore-crypto",
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "12.1",
+      "title": "Attestation challenge build",
+      "covered_by": [
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "12.2",
+      "title": "Attestation verify in guest",
+      "covered_by": [
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "12.3",
+      "title": "Session establishment",
+      "covered_by": [
+        "digstore-host"
+      ]
+    },
+    {
+      "section": "12.4",
+      "title": "Trusted-set gating",
+      "covered_by": [
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "13.1",
+      "title": "Prover trait / proof model",
+      "covered_by": [
+        "digstore-prover"
+      ]
+    },
+    {
+      "section": "13.2",
+      "title": "Public input encoding",
+      "covered_by": [
+        "digstore-prover"
+      ]
+    },
+    {
+      "section": "13.3",
+      "title": "Serving inputs / public output",
+      "covered_by": [
+        "digstore-prover"
+      ]
+    },
+    {
+      "section": "13.4",
+      "title": "Verifier trait / verification",
+      "covered_by": [
+        "digstore-prover"
+      ]
+    },
+    {
+      "section": "13.5",
+      "title": "Chain anchoring (ChainSource)",
+      "covered_by": [
+        "digstore-prover"
+      ]
+    },
+    {
+      "section": "13.6",
+      "title": "TEE / hardware attest alt",
+      "covered_by": [
+        "digstore-prover",
+        "digstore-host"
+      ]
+    },
+    {
+      "section": "13.7",
+      "title": "Node signature",
+      "covered_by": [
+        "digstore-prover",
+        "digstore-crypto"
+      ]
+    },
+    {
+      "section": "13.8",
+      "title": "Mock prover / risc0 backend",
+      "covered_by": [
+        "digstore-prover"
+      ]
+    },
+    {
+      "section": "14.1",
+      "title": "Oblivious serving model",
+      "covered_by": [
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "14.2",
+      "title": "Decoys (miss -> deterministic decoy)",
+      "covered_by": [
+        "digstore-guest",
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "14.3",
+      "title": "Padded count / oblivious access",
+      "covered_by": [
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "14.4",
+      "title": "Shuffled scan / cover reads",
+      "covered_by": [
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "15",
+      "title": "Provider blindness (property)",
+      "covered_by": []
+    },
+    {
+      "section": "16",
+      "title": "Temporal validity window",
+      "covered_by": [
+        "digstore-guest"
+      ]
+    },
+    {
+      "section": "17.1",
+      "title": "Obfuscation pass (compiler)",
+      "covered_by": [
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "17.2",
+      "title": "Secretless property",
+      "covered_by": []
+    },
+    {
+      "section": "18.1",
+      "title": "Host runtime / wasmtime config",
+      "covered_by": [
+        "digstore-host"
+      ]
+    },
+    {
+      "section": "18.2",
+      "title": "Memory/fuel/timeout limits",
+      "covered_by": [
+        "digstore-host"
+      ]
+    },
+    {
+      "section": "18.3",
+      "title": "Return buffer / read_return_buffer",
+      "covered_by": [
+        "digstore-host"
+      ]
+    },
+    {
+      "section": "18.4",
+      "title": "Host RNG / sessions",
+      "covered_by": [
+        "digstore-host"
+      ]
+    },
+    {
+      "section": "19.1",
+      "title": "Chunk index / key table build",
+      "covered_by": [
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "19.2",
+      "title": "Data section encode/offset table",
+      "covered_by": [
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "19.3",
+      "title": "Deterministic filler / pool build",
+      "covered_by": [
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "19.4",
+      "title": "Template load / inject / atomic write",
+      "covered_by": [
+        "digstore-compiler"
+      ]
+    },
+    {
+      "section": "20.1",
+      "title": "CLI init",
+      "covered_by": [
+        "digstore-store",
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "20.2",
+      "title": "CLI add/stage",
+      "covered_by": [
+        "digstore-store",
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "20.3",
+      "title": "CLI commit",
+      "covered_by": [
+        "digstore-store",
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "20.4",
+      "title": "CLI status/log/diff",
+      "covered_by": [
+        "digstore-store",
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "20.5",
+      "title": "CLI checkout",
+      "covered_by": [
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "20.6",
+      "title": "CLI cat / serve",
+      "covered_by": [
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "20.7",
+      "title": "CLI remote/clone/push/pull",
+      "covered_by": [
+        "digstore-cli"
+      ]
+    },
+    {
+      "section": "21.1",
+      "title": "Remote model",
+      "covered_by": [
+        "digstore-remote"
+      ]
+    },
+    {
+      "section": "21.2",
+      "title": "REST endpoints",
+      "covered_by": [
+        "digstore-remote"
+      ]
+    },
+    {
+      "section": "21.3",
+      "title": "ETag / If-None-Match / 304",
+      "covered_by": [
+        "digstore-remote"
+      ]
+    },
+    {
+      "section": "21.4",
+      "title": "Status codes / errors",
+      "covered_by": [
+        "digstore-remote"
+      ]
+    },
+    {
+      "section": "21.5",
+      "title": "Delta negotiation",
+      "covered_by": [
+        "digstore-remote"
+      ]
+    },
+    {
+      "section": "21.6",
+      "title": "Push auth / signature",
+      "covered_by": [
+        "digstore-remote",
+        "digstore-crypto"
+      ]
+    },
+    {
+      "section": "21.7",
+      "title": "Fast-forward-only / pending head",
+      "covered_by": [
+        "digstore-remote"
+      ]
+    },
+    {
+      "section": "21.8",
+      "title": "Client (DigClient) operations",
+      "covered_by": [
+        "digstore-remote"
+      ]
+    }
+  ],
+  "uncovered_sections": [
+    "8.5",
+    "9.4",
+    "10",
+    "15",
+    "17.2"
+  ],
+  "cross_crate_issues": [
+    {
+      "severity": "blocker",
+      "issue": "digstore-crypto does NOT export the BLS key types that digstore-host and digstore-prover depend on. crypto's PUBLIC_ITEMS only declare `HostSigningKey` (opaque) plus `Bytes48` for public keys, and there is no `digstore_crypto::bls` module. But digstore-host declares `HostDeps.bls_secret: digstore_crypto::bls::BlsSecretKey`, `HostKeys.bls_secret: digstore_crypto::bls::BlsSecretKey`, and digstore-prover declares `MockProver::new(secret: digstore_crypto::bls::SecretKey, pubkey: digstore_crypto::bls::PublicKey, ...)`, `Risc0Prover::new(node_secret: digstore_crypto::bls::SecretKey, node_pubkey: digstore_crypto::bls::PublicKey, ...)`, `HardwareAttestProver::new(..., enclave_secret: digstore_crypto::bls::SecretKey, ...)`. Three distinct undefined names (`bls::BlsSecretKey`, `bls::SecretKey`, `bls::PublicKey`) are referenced; crypto must add a public `bls` module exporting a SecretKey type (alias BlsSecretKey) and a PublicKey type, and reconcile with the opaque `HostSigningKey`. Until reconciled, digstore-host and digstore-prover cannot compile.",
+      "crates": [
+        "digstore-crypto",
+        "digstore-host",
+        "digstore-prover"
+      ]
+    },
+    {
+      "severity": "major",
+      "issue": "Submodule path divergence on digstore-core. digstore-core publishes its types FLAT (`digstore_core::Bytes32`, `digstore_core::ErrorCode`, `digstore_core::HostImportsConfig`, `digstore_core::MerkleTree`), but consumers reference submodule paths that core never declares: digstore-host uses `digstore_core::types::Bytes32`, `digstore_core::types::Bytes48`, `digstore_core::types::Bytes96`, `digstore_core::config::HostImportsConfig`, `digstore_core::abi::ErrorCode`; digstore-guest uses `digstore_core::merkle::MerkleTree`. Resolve by having core re-export these modules (pub mod types/config/abi/merkle with pub use), or by rewriting consumers to flat paths. Pick one convention and state it in the digstore-core plan.",
+      "crates": [
+        "digstore-core",
+        "digstore-host",
+        "digstore-guest"
+      ]
+    },
+    {
+      "severity": "major",
+      "issue": "digstore-guest serve_proof returns `ProofOutcome::Real(digstore_core::ProofResponse)` which embeds `ExecutionProof { proof, node_signature, chia_block, ... }`, i.e. a fully formed ZK+BLS proof. But digstore-guest DEPENDS_ON only digstore-core and digstore-crypto, NOT digstore-prover, and it runs inside wasm32 with no Prover. The guest cannot actually generate an ExecutionProof (no risc0/mock prover, no ChainSource, no node signing key in-guest). Either the guest's get_proof must produce only a request/partial structure that the host completes (host depends on prover), or the ProofOutcome contract must be redefined. As written the proof-generation ownership between digstore-guest::serve_proof and digstore-host::serve_proof + digstore-prover is ambiguous and likely non-implementable inside the guest.",
+      "crates": [
+        "digstore-guest",
+        "digstore-host",
+        "digstore-prover"
+      ]
+    },
+    {
+      "severity": "minor",
+      "issue": "Section 16 (temporal validity) is claimed in digstore-crypto SECTIONS_COVERED, but digstore-crypto exposes no temporal/time-window logic — the only time-bearing item is `attestation_signing_message(..., timestamp)`. The real temporal-window implementation (`ValidityWindow`, `within_window`, decoy-on-expiry) lives in digstore-guest, which also claims 16. Remove 16 from digstore-crypto's claimed sections (the header annotation for crypto correctly lists only 11.x,12,13.7,21.6 and does NOT include 16).",
+      "crates": [
+        "digstore-crypto",
+        "digstore-guest"
+      ]
+    },
+    {
+      "severity": "minor",
+      "issue": "Section 20.4 is claimed by both digstore-store (SECTIONS_COVERED adds 20.4 beyond its 20.1-20.3 header) and digstore-cli. Store provides the diff/log mechanics (GenerationDiff, RootHistory, log()) while CLI provides the user-facing status/log/diff verbs; this overlap is acceptable but should be explicitly partitioned (store=mechanics, cli=presentation) so neither plan assumes the other owns it.",
+      "crates": [
+        "digstore-store",
+        "digstore-cli"
+      ]
+    },
+    {
+      "severity": "minor",
+      "issue": "Canonical-catalog naming divergence: the catalog defines `CompilationStats { chunk_count, total_bytes, generation_count }` and a single `CompilationResult`/`CompilerError::NoTrustedKeys`. digstore-core declares that exact CompilationStats and a std-gated CompilationResult, but digstore-compiler ALSO declares its OWN `CompilationStats { generation_count, unique_chunk_count, resource_count, pool_byte_len, data_section_byte_len, obfuscation_applied }`, its own `CompilationResult`, and its own `CompilerError`. Two same-named-but-different structs now exist (digstore_core::CompilationStats vs digstore_compiler::CompilationStats, and two CompilationResult / two CompilerError). This is allowed in Rust (different modules) but is a naming/source-of-truth divergence from the canonical catalog; pick one home for each type or rename the compiler-local variants (e.g. CompilerStats) to avoid confusion across crates.",
+      "crates": [
+        "digstore-core",
+        "digstore-compiler"
+      ]
+    },
+    {
+      "severity": "minor",
+      "issue": "Push-signing message is defined in two crates with potentially different byte layouts. digstore-crypto exports `push_signing_message(root, store_id) -> Vec<u8>` and `sign_push/verify_push`. digstore-remote independently exports `push_signing_message(store_id, root) -> [u8;32]` and `verify_push_signature(...)`. Note the ARGUMENT ORDER is swapped (crypto: root then store_id; remote: store_id then root) and the RETURN TYPE differs (Vec<u8> vs [u8;32]). Since 21.6 requires the publisher's signature to verify against the store key on the remote, the remote MUST use the exact same signing message bytes as the crypto/CLI signer or push verification will always fail. digstore-remote should delegate to digstore_crypto::push_signing_message (or both must be proven byte-identical via a shared test vector). Currently digstore-remote does not depend on digstore-prover but does depend on digstore-crypto, so delegation is feasible — make it explicit.",
+      "crates": [
+        "digstore-crypto",
+        "digstore-remote",
+        "digstore-cli"
+      ]
+    },
+    {
+      "severity": "minor",
+      "issue": "digstore-prover ServingInputs/output and digstore-guest must agree on the serving-output bytes that become public_output. prover defines `ServingInputs.output_bytes()` and `bound_public_output(roothash, output_bytes)`, and the guest's get_content/get_proof produce ContentResponse.ciphertext (gather+concat chunk ciphertext). There is no shared helper guaranteeing the guest's concatenation order equals `ServingInputs::output_bytes()` ordering. Add a cross-crate parity test (guest-produced bytes == prover ServingInputs.output_bytes) so program re-execution (program_hash binding, deviation #3) actually matches what the guest served.",
+      "crates": [
+        "digstore-guest",
+        "digstore-prover",
+        "digstore-host"
+      ]
+    },
+    {
+      "severity": "minor",
+      "issue": "digstore-cli SECTIONS_COVERED lists 14.2 and 11.4 but its header annotation lists only 20.x,11.3,9.3. These extra claims (client-side decoy handling 14.2, decrypt-unwrap 11.4) are reasonable for the client but should be reflected consistently; conversely digstore-cli's `client_crypto::derive_decryption_key(urn, secret_salt)` reimplements key derivation that digstore-crypto already owns (11.1). CLI should call digstore_crypto::derive_decryption_key (it depends on digstore-crypto) rather than defining a parallel function, to avoid two divergent KDF implementations.",
+      "crates": [
+        "digstore-cli",
+        "digstore-crypto"
+      ]
+    }
+  ],
+  "verdict": "NEARLY READY, with one BLOCKER to fix before coding. Section coverage is comprehensive: every implementable section 4.1-21.8 has a clear owner EXCEPT five property/doc-only sections (8.5 social conventions, 9.4 generation-root-equals-tree-root, 10 threat model, 15 provider blindness, 17.2 secretless) which are correctly identified as properties to document rather than code — 9.4 should be folded into digstore-core's merkle docs/tests (root() == generation root) and 10/15/17.2/8.5 belong in a top-level design doc. The BLOCKER is the missing digstore-crypto BLS key types (`bls::SecretKey`/`BlsSecretKey`/`PublicKey`) that digstore-host and digstore-prover both consume but crypto does not export — this must be resolved in the digstore-core/digstore-crypto layer FIRST since it sits at the bottom of the dependency graph. The two MAJOR issues (core submodule-path convention; guest-vs-host/prover ownership of ExecutionProof generation) should be settled before the affected crates start but do not block digstore-core, digstore-chunker, digstore-store, or digstore-remote from beginning. Dependency ordering itself is sound and acyclic (core -> {chunker,crypto} -> store -> {guest,prover,host} -> compiler/remote -> cli). Recommendation: lock the crypto BLS module signatures and the core module-path convention, then implementation can begin bottom-up."
+}
