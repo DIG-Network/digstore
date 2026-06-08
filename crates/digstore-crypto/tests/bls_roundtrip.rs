@@ -104,3 +104,38 @@ fn verify_rejects_malformed_public_key_bytes() {
     let sig96 = Bytes96(sig.0);
     assert!(!bls_verify(&bogus_pk, b"x", &sig96), "non-canonical pk bytes must not verify");
 }
+
+#[test]
+fn chia_aug_scheme_known_vector() {
+    use digstore_core::{Bytes48, Bytes96};
+
+    // Seed = [0, 1, 2, ..., 31].
+    let mut seed = [0u8; 32];
+    for (i, b) in seed.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    let sk = bls::SecretKey::from_seed(&seed);
+    let pk = sk.public_key();
+
+    // Real chia-bls 0.45 AugScheme reference values for this seed.
+    let expected_pk = hex::decode(
+        "8f336467f057b373bb3c43815a10ec131119d1bf50c14fa3f9ad86c0ec074f920f936a5315a8365a37fee0afa34c32c6",
+    )
+    .unwrap();
+    assert_eq!(&pk.to_bytes().0[..], &expected_pk[..], "G1 pubkey must match Chia reference");
+
+    let msg = [7u8, 8, 9];
+    let sig = sk.sign(&msg);
+    let expected_sig = hex::decode(
+        "a5ce62a76c749a06c85b2d3762523b2e1d6756455767d2023967480433f7225c5cf42b3e14d0df41c0e6f9ecc18a39c30fdbfdbfd422945b478cc1675adf046aefbf4810e3ab9b0eb09855d3e5540cb0924e0f3d0e324bb59c59659b1c6b4283",
+    )
+    .unwrap();
+    assert_eq!(&sig.to_bytes().0[..], &expected_sig[..], "AugScheme G2 sig must match Chia reference");
+
+    // The frozen vector must self-verify through our verifier.
+    let pk48 = Bytes48(expected_pk.try_into().unwrap());
+    let sig96 = Bytes96(expected_sig.try_into().unwrap());
+    assert!(digstore_crypto::bls_verify(&pk48, &msg, &sig96));
+    // And must NOT verify a different message (binding sanity).
+    assert!(!digstore_crypto::bls_verify(&pk48, &[9u8, 9, 9], &sig96));
+}
