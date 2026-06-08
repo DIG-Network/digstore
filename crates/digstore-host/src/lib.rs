@@ -24,3 +24,4 @@ pub use random::HostRng;
 pub use session::{Session, SessionTable};
 pub use teehook::{AttestationBackend, BlsAttestationBackend, SharedBackend};
 pub use state::{HostKeys, HostState, ReturnBuffer};
+pub use runtime::{HostDeps, HostRuntime, RuntimeState};
