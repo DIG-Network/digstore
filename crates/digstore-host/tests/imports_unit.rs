@@ -40,6 +40,13 @@ fn host_random_over_cap_errors() {
 }
 
 #[test]
+fn host_public_key_returns_48_bytes() {
+    let mut rt = probe_runtime(FixedClock::new(100));
+    let n = rt.call_i32_export("probe_pubkey").unwrap();
+    assert_eq!(n, 48);
+}
+
+#[test]
 fn read_return_buffer_copies_into_guest() {
     let mut rt = probe_runtime(FixedClock::new(100));
     let n = rt.call_i32_export_1("probe_random", 16).unwrap();

@@ -37,8 +37,19 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
         )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
-    // --- temporary stubs, replaced in 11b–11e ---
-    for name in ["host_get_public_key", "host_verify_session"] {
+    // host_get_public_key() -> i32 length (48 bytes BLS G1) written (§12).
+    linker
+        .func_wrap(m, "host_get_public_key", |mut caller: Caller<'_, RuntimeState>| -> i32 {
+            let pk = caller.data().host.keys.bls_public.0; // [u8; 48]
+            match caller.data_mut().host.return_buffer.set(&pk) {
+                Ok(n) => n as i32,
+                Err(_) => ErrorCode::GeneralError as i32,
+            }
+        })
+        .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+
+    // --- temporary stubs, replaced in 11d–11e ---
+    for name in ["host_verify_session"] {
         linker
             .func_wrap(m, name, |_c: Caller<'_, RuntimeState>| -> i32 { 0 })
             .map_err(|e| HostError::Wasmtime(e.to_string()))?;
