@@ -234,6 +234,22 @@ impl HostRuntime {
     pub fn get_current_roothash(&mut self) -> Result<Vec<u8>, HostError> {
         self.data_export("get_current_roothash")
     }
+
+    pub fn get_public_key(&mut self) -> Result<Vec<u8>, HostError> {
+        self.data_export("get_public_key")
+    }
+
+    pub fn get_roothash_history(&mut self) -> Result<Vec<u8>, HostError> {
+        self.data_export("get_roothash_history")
+    }
+
+    pub fn get_metadata(&mut self) -> Result<Vec<u8>, HostError> {
+        self.data_export("get_metadata")
+    }
+
+    pub fn get_authentication_info(&mut self) -> Result<Vec<u8>, HostError> {
+        self.data_export("get_authentication_info")
+    }
 }
 
 impl HostRuntime {
