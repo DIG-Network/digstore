@@ -96,7 +96,7 @@ mod tests {
         let data: Vec<u8> = (0..1000u32).map(|i| (i.wrapping_mul(31) ^ 7) as u8).collect();
         let c = cfg(100, 200, 400, 0x1);
         let b = find_boundary(&data, 0, &c);
-        assert!(b >= 100 && b <= 400, "boundary {b} must be within [min,max]");
+        assert!((100..=400).contains(&b), "boundary {b} must be within [min,max]");
         // Determinism: same call yields the same answer.
         assert_eq!(b, find_boundary(&data, 0, &c));
     }

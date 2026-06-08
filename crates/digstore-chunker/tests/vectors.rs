@@ -120,3 +120,24 @@ fn front_insert_preserves_trailing_chunks() {
     assert_eq!(shared, expected_shared, "dedup re-sync count changed");
     assert!(shared >= 1, "CDC must share at least one trailing chunk after front insert");
 }
+
+use digstore_chunker::Chunker;
+
+#[test]
+fn chunker_struct_roundtrip_via_public_api() {
+    let cfg = default_config();
+    let chunker = Chunker::new(cfg);
+    assert_eq!(chunker.config().target_size, 64 * 1024);
+
+    let data = fixed_input(300 * 1024);
+    let chunks = chunker.chunk_slice(&data);
+
+    // Reconstruct and confirm every content address is a 64-hex-char SHA-256.
+    let mut rebuilt = Vec::new();
+    for c in &chunks {
+        rebuilt.extend_from_slice(&c.data);
+        assert_eq!(c.hash.to_hex().len(), 64);
+    }
+    assert_eq!(rebuilt, data);
+    assert!(chunks.len() > 1, "300 KiB under 64 KiB target should yield multiple chunks");
+}

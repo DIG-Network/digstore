@@ -51,7 +51,7 @@ proptest! {
             }
         }
         if let Some(last) = chunks.last() {
-            prop_assert!(last.len() >= 1);
+            prop_assert!(!last.is_empty());
             prop_assert!(last.len() <= cfg.max_size);
         }
     }
