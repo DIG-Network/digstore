@@ -139,3 +139,34 @@ fn chia_aug_scheme_known_vector() {
     // And must NOT verify a different message (binding sanity).
     assert!(!digstore_crypto::bls_verify(&pk48, &[9u8, 9, 9], &sig96));
 }
+
+#[test]
+fn sign_push_then_verify_push_round_trip_and_binding() {
+    use digstore_core::Bytes32;
+    use digstore_crypto::{push_signing_message, sha256, sign_push, verify_push};
+
+    let sk = bls::SecretKey::from_seed(&[0x50u8; 32]);
+    let pk = sk.public_key();
+    let root = Bytes32([0xAAu8; 32]);
+    let store_id = Bytes32([0xBBu8; 32]);
+
+    let sig = sign_push(&sk, &root, &store_id);
+    assert!(verify_push(&pk, &root, &store_id, &sig), "push sig must verify with verify_push");
+
+    // CONVENTIONS C7: the signed message is SHA-256(root || store_id) (32 bytes).
+    let mut concat = Vec::new();
+    concat.extend_from_slice(&root.0);
+    concat.extend_from_slice(&store_id.0);
+    let expected = sha256(&concat).0;
+    assert_eq!(push_signing_message(&root, &store_id), expected);
+    assert_eq!(push_signing_message(&root, &store_id).len(), 32);
+
+    // Wrong store_id must not verify (binding to store).
+    let other_store = Bytes32([0xCCu8; 32]);
+    assert!(!verify_push(&pk, &root, &other_store, &sig));
+    // Wrong root must not verify.
+    let other_root = Bytes32([0xDDu8; 32]);
+    assert!(!verify_push(&pk, &other_root, &store_id, &sig));
+    // Signing over the RAW concat (not its hash) would not verify.
+    assert!(!digstore_crypto::bls_verify(&pk.to_bytes(), &concat, &sig));
+}
