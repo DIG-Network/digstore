@@ -24,11 +24,13 @@
 //! types (`Bytes32`/`Bytes48`/`Bytes96`/`SecretSalt`).
 
 pub mod error;
+pub mod fixtures;
 pub mod hash;
 pub mod kdf;
 
 pub use error::{BlsError, CryptoError, TamperError};
 pub use hash::sha256;
+pub use fixtures::{write_kdf_fixtures, KdfFixture, KdfFixtureSet};
 pub use kdf::derive_decryption_key;
 
 /// Versioning tag for the crypto domain constants (HKDF salt/info, scheme tag).

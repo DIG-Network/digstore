@@ -1,0 +1,29 @@
+{
+  "crypto_version": 1,
+  "vectors": [
+    {
+      "name": "public_root_a",
+      "canonical_urn": "urn:dig:mainnet:0000000000000000000000000000000000000000000000000000000000000000/a",
+      "secret_salt_hex": null,
+      "key_hex": "7ba7c19333f9c91c2e0a01fab7eb398212179c53b7363f713bacee5a5bb35eab"
+    },
+    {
+      "name": "public_root_file",
+      "canonical_urn": "urn:dig:mainnet:1111111111111111111111111111111111111111111111111111111111111111/file.txt",
+      "secret_salt_hex": null,
+      "key_hex": "66945ee14775313170d86a5bdbee97b247dbf548e8ed5e7ed93f337dbe01cc4d"
+    },
+    {
+      "name": "private_salt_07",
+      "canonical_urn": "urn:dig:mainnet:0000000000000000000000000000000000000000000000000000000000000000/a",
+      "secret_salt_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+      "key_hex": "5d4ca65f1d736fbbc5bbcb936ce9c4d3dd1f8d757d659276e8c673297815f4bf"
+    },
+    {
+      "name": "private_salt_09",
+      "canonical_urn": "urn:dig:mainnet:2222222222222222222222222222222222222222222222222222222222222222/a",
+      "secret_salt_hex": "0909090909090909090909090909090909090909090909090909090909090909",
+      "key_hex": "12b1ee91342090d580842f046cfc43bbe52c925e56071b69f85ce937e4eaa1c3"
+    }
+  ]
+}
