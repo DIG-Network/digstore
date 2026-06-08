@@ -1,8 +1,19 @@
 use digstore_core::config::HostImportsConfig;
-use digstore_host::{ExecutionLimits, FixedClock, HostRuntime};
+use digstore_host::{ExecutionLimits, FixedClock, HostError, HostRuntime};
 
 mod common;
 use common::test_deps;
+
+#[test]
+fn missing_data_exports_report_missing_export() {
+    let mut rt = probe_runtime(FixedClock::new(100));
+    // import_probe.wat exports none of these; the wrappers must compile and
+    // surface MissingExport rather than panicking.
+    assert!(matches!(rt.get_public_key().unwrap_err(), HostError::MissingExport(_)));
+    assert!(matches!(rt.get_roothash_history().unwrap_err(), HostError::MissingExport(_)));
+    assert!(matches!(rt.get_metadata().unwrap_err(), HostError::MissingExport(_)));
+    assert!(matches!(rt.get_authentication_info().unwrap_err(), HostError::MissingExport(_)));
+}
 
 fn cfg() -> HostImportsConfig {
     HostImportsConfig {
