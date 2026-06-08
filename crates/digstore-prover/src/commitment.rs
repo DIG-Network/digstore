@@ -6,13 +6,14 @@ use digstore_core::ChiaBlockRef;
 pub const NONCE_LEN: usize = 32;
 
 /// Fixed encoded length of a `ChiaBlockRef` (header_hash 32 + height 4 + ts 8).
-const CHIA_BLOCK_REF_LEN: usize = 44;
+pub const CHIA_BLOCK_REF_LEN: usize = 44;
 
 /// `public_input = client_nonce(32) || ChiaBlockRef(codec)`.
 pub fn build_public_input(nonce: &[u8; 32], block: &ChiaBlockRef) -> Vec<u8> {
     let mut enc = Encoder::new();
     enc.write_bytes(nonce);
     block.encode(&mut enc);
+    debug_assert_eq!(enc.len(), NONCE_LEN + CHIA_BLOCK_REF_LEN);
     enc.finish()
 }
 
