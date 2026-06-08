@@ -14,6 +14,7 @@
 pub mod auth;
 pub mod backend;
 pub mod backend_inmem;
+pub mod client;
 pub mod error;
 pub mod etag;
 pub mod handlers;
@@ -22,6 +23,7 @@ pub mod server;
 pub mod wire;
 
 pub use auth::{push_signing_message, verify_push_signature, PushAuth};
+pub use client::{DigClient, FetchInfo, PullResult, PushResult};
 pub use ratelimit::RateLimiter;
 pub use server::{AppState, RemoteServer};
 
