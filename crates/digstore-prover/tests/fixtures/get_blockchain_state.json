@@ -1,0 +1,20 @@
+{
+  "blockchain_state": {
+    "difficulty": 14680064,
+    "peak": {
+      "header_hash": "0xb5f2a7c1d3e4f5061728394a5b6c7d8e9f00112233445566778899aabbccddee",
+      "height": 5421337,
+      "weight": "123456789",
+      "total_iters": "9876543210",
+      "signage_point_index": 12,
+      "farmer_puzzle_hash": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "timestamp": 1717804800,
+      "prev_transaction_block_height": 5421330,
+      "prev_transaction_block_hash": "0xaa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899"
+    },
+    "space": "39000000000000000000000",
+    "sub_slot_iters": 578813952,
+    "sync": { "sync_mode": false, "synced": true, "sync_tip_height": 0, "sync_progress_height": 0 }
+  },
+  "success": true
+}
