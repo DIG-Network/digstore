@@ -11,9 +11,13 @@
 //! `digstore_crypto::{push_signing_message, verify_push}` with argument order
 //! `(root, store_id)` (message = `SHA-256(root || store_id)`), the single source
 //! of truth shared with `digstore-cli`.
+pub mod backend;
 pub mod error;
 pub mod etag;
 pub mod wire;
 
+pub use backend::{
+    DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord,
+};
 pub use error::{ClientError, RemoteError};
 pub use etag::{etag_for_root, matches_current, parse_if_none_match};
