@@ -26,3 +26,14 @@ fn timeout_terminates_runaway_export() {
     assert!(matches!(err, HostError::Timeout), "expected Timeout, got {err:?}");
     assert!(start.elapsed() < Duration::from_secs(3));
 }
+
+#[test]
+fn fuel_exhaustion_terminates_export() {
+    let module_bytes = wat::parse_str(include_str!("fixtures/wat/spin.wat")).unwrap();
+    let mut limits = ExecutionLimits::default();
+    limits.timeout = Duration::from_secs(30); // isolate: prove FUEL triggers, not timeout
+    limits.fuel = 1_000_000;
+    let mut rt = HostRuntime::new(&module_bytes, cfg(), limits, test_deps(FixedClock::new(100))).unwrap();
+    let err = rt.get_store_id().unwrap_err();
+    assert!(matches!(err, HostError::OutOfFuel), "expected OutOfFuel, got {err:?}");
+}

@@ -183,8 +183,10 @@ impl HostRuntime {
     fn map_trap(e: wasmtime::Error) -> HostError {
         use wasmtime::Trap;
         if let Some(trap) = e.downcast_ref::<Trap>() {
-            if let Trap::Interrupt = trap {
-                return HostError::Timeout;
+            match trap {
+                Trap::Interrupt => return HostError::Timeout,
+                Trap::OutOfFuel => return HostError::OutOfFuel,
+                _ => {}
             }
         }
         HostError::Wasmtime(e.to_string())
