@@ -139,3 +139,53 @@ fn commit_static_key_matches_client_url_retrieval_key() {
     assert_eq!(rec.static_key, client_urn.retrieval_key());
     assert_eq!(rec.generation, root);
 }
+
+fn count_all_chunk_files(generations_dir: &std::path::Path) -> usize {
+    let mut n = 0;
+    for gen in std::fs::read_dir(generations_dir).unwrap() {
+        let chunks = gen.unwrap().path().join("chunks");
+        if chunks.is_dir() {
+            for e in std::fs::read_dir(&chunks).unwrap() {
+                let e = e.unwrap();
+                if e.file_type().unwrap().is_file()
+                    && !e.file_name().to_string_lossy().ends_with(".tmp")
+                {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
+}
+
+#[test]
+fn shared_chunk_is_stored_once_across_generations() {
+    let dir = tempdir().unwrap();
+    let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
+
+    // Generation 0: one big resource (forces several chunks).
+    let payload = vec![0x5Au8; 300_000];
+    store.stage_file("data.bin", &payload).unwrap();
+    let root0 = store.commit().unwrap();
+
+    // Generation 1: identical resource bytes -> identical chunks -> all dedup,
+    // plus one brand-new chunk from a second resource.
+    store.stage_file("data.bin", &payload).unwrap();
+    store.stage_file("note.txt", b"a unique small note").unwrap();
+    let root1 = store.commit().unwrap();
+
+    assert_ne!(root0, root1, "different generations have different roots");
+
+    use digstore_store::GenerationManifest;
+    let m0 = GenerationManifest::read_from(store.paths().generation_manifest(&root0.to_hex())).unwrap();
+    let m1 = GenerationManifest::read_from(store.paths().generation_manifest(&root1.to_hex())).unwrap();
+    let mut union = m0.chunk_hashes();
+    union.extend(m1.chunk_hashes());
+
+    let on_disk = count_all_chunk_files(&store.paths().generations_dir());
+    assert_eq!(
+        on_disk,
+        union.len(),
+        "each unique chunk stored exactly once across all generations"
+    );
+}
