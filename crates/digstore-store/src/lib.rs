@@ -6,9 +6,11 @@
 //! ordering and §19.3 byte-identical compilation) and `digstore-guest`.
 
 mod clock;
+mod config;
 mod error;
 mod paths;
 
 pub use clock::{Clock, FixedClock, SystemClock};
+pub use config::{load_config, save_config};
 pub use error::{Result, StoreError};
 pub use paths::StorePaths;
