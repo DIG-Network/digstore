@@ -17,4 +17,4 @@ mod session;
 mod state;
 mod teehook;
 
-// re-exports added as modules land
+pub use clock::{Clock, FixedClock, SystemClock};
