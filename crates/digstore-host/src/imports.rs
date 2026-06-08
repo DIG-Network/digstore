@@ -131,18 +131,49 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
     // jwks_fetch(url_ptr, url_len) -> i32. SESSION-GATED (§6.3).
-    // Gating only here; the HTTP success path is added in Task 14.
+    // NOTE (§18.2): epoch interruption does not cover blocking host I/O; this
+    // call is bounded by its own reqwest timeout, derived from ExecutionLimits.
     linker
         .func_wrap(
             m,
             "jwks_fetch",
-            |caller: Caller<'_, RuntimeState>, _url_ptr: i32, _url_len: i32| -> i32 {
+            |mut caller: Caller<'_, RuntimeState>, url_ptr: i32, url_len: i32| -> i32 {
                 let now = caller.data().host.clock.now_unix_secs();
                 if !caller.data().host.sessions.is_valid(now) {
                     return ErrorCode::NoSession as i32;
                 }
-                // Session valid but fetch not yet implemented; Task 14 fills this in.
-                ErrorCode::NetworkError as i32
+                let timeout_secs = caller.data().host.http_timeout_secs;
+                let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(mem) => mem,
+                    None => return ErrorCode::GeneralError as i32,
+                };
+                let data = mem.data(&caller);
+                let start = url_ptr as usize;
+                let end = match start.checked_add(url_len as usize) {
+                    Some(e) if e <= data.len() => e,
+                    _ => return ErrorCode::InvalidParameter as i32,
+                };
+                let url = match std::str::from_utf8(&data[start..end]) {
+                    Ok(u) => u.to_string(),
+                    Err(_) => return ErrorCode::InvalidParameter as i32,
+                };
+                let resp = match reqwest::blocking::Client::new()
+                    .get(&url)
+                    .timeout(std::time::Duration::from_secs(timeout_secs))
+                    .send()
+                {
+                    Ok(r) => r,
+                    Err(e) if e.is_timeout() => return ErrorCode::Timeout as i32,
+                    Err(_) => return ErrorCode::NetworkError as i32,
+                };
+                let body = match resp.bytes() {
+                    Ok(b) => b,
+                    Err(_) => return ErrorCode::NetworkError as i32,
+                };
+                match caller.data_mut().host.return_buffer.set(&body) {
+                    Ok(n) => n as i32,
+                    Err(_) => ErrorCode::GeneralError as i32,
+                }
             },
         )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
