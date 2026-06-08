@@ -6,6 +6,7 @@ pub mod abi;
 pub mod bytes;
 pub mod codec;
 pub mod config;
+pub mod datasection;
 pub mod error;
 pub mod hash;
 pub mod keytable;
