@@ -52,9 +52,9 @@ pub struct DeltaSet {
 }
 
 /// Abstracts store storage + host serving for the remote (§18, §21).
-/// Implementations: InMemoryBackend (tests/reference) and a digstore-store
-/// + digstore-host adapter (production). All methods are synchronous; the
-/// server runs them inside spawn_blocking because the host (wasmtime) is sync.
+/// Implementations: InMemoryBackend (tests/reference) and a production adapter
+/// over digstore-store. All methods are synchronous; the server runs them
+/// inside spawn_blocking because the host (wasmtime) is sync.
 pub trait RemoteBackend: Send + Sync + 'static {
     /// Head state for a store, or UnknownStore.
     fn head_state(&self, store_id: &Bytes32) -> Result<HeadState, RemoteError>;
