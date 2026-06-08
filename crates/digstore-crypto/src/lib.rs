@@ -37,7 +37,9 @@ pub use bls::{
 };
 pub use error::{BlsError, CryptoError, TamperError};
 pub use hash::sha256;
-pub use fixtures::{write_kdf_fixtures, KdfFixture, KdfFixtureSet};
+pub use fixtures::{
+    write_bls_fixtures, write_kdf_fixtures, BlsFixture, BlsFixtureSet, KdfFixture, KdfFixtureSet,
+};
 pub use kdf::derive_decryption_key;
 
 /// Versioning tag for the crypto domain constants (HKDF salt/info, scheme tag).
