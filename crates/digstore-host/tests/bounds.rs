@@ -17,9 +17,11 @@ fn cfg() -> HostImportsConfig {
 #[test]
 fn timeout_terminates_runaway_export() {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/spin.wat")).unwrap();
-    let mut limits = ExecutionLimits::default();
-    limits.timeout = Duration::from_millis(300);
-    limits.fuel = u64::MAX; // isolate: prove TIMEOUT triggers, not fuel
+    let limits = ExecutionLimits {
+        timeout: Duration::from_millis(300),
+        fuel: u64::MAX, // isolate: prove TIMEOUT triggers, not fuel
+        ..Default::default()
+    };
     let mut rt = HostRuntime::new(&module_bytes, cfg(), limits, test_deps(FixedClock::new(100))).unwrap();
     let start = std::time::Instant::now();
     let err = rt.get_store_id().unwrap_err();
@@ -30,9 +32,11 @@ fn timeout_terminates_runaway_export() {
 #[test]
 fn fuel_exhaustion_terminates_export() {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/spin.wat")).unwrap();
-    let mut limits = ExecutionLimits::default();
-    limits.timeout = Duration::from_secs(30); // isolate: prove FUEL triggers, not timeout
-    limits.fuel = 1_000_000;
+    let limits = ExecutionLimits {
+        timeout: Duration::from_secs(30), // isolate: prove FUEL triggers, not timeout
+        fuel: 1_000_000,
+        ..Default::default()
+    };
     let mut rt = HostRuntime::new(&module_bytes, cfg(), limits, test_deps(FixedClock::new(100))).unwrap();
     let err = rt.get_store_id().unwrap_err();
     assert!(matches!(err, HostError::OutOfFuel), "expected OutOfFuel, got {err:?}");
@@ -41,8 +45,10 @@ fn fuel_exhaustion_terminates_export() {
 #[test]
 fn memory_ceiling_blocks_oversized_grow() {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/grow.wat")).unwrap();
-    let mut limits = ExecutionLimits::default();
-    limits.memory_bytes_max = 64 * 64 * 1024; // 64 pages = 4 MiB
+    let limits = ExecutionLimits {
+        memory_bytes_max: 64 * 64 * 1024, // 64 pages = 4 MiB
+        ..Default::default()
+    };
     let mut rt = HostRuntime::new(&module_bytes, cfg(), limits, test_deps(FixedClock::new(100))).unwrap();
     let err = rt.get_store_id().unwrap_err();
     assert!(

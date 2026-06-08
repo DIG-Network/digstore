@@ -103,10 +103,11 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
                     Some(e) if e <= data.len() => e,
                     _ => return ErrorCode::InvalidParameter as i32,
                 };
+                let challenge = &data[start..end];
                 let mut nonce = [0u8; 32];
                 let mut store_id = [0u8; 32];
-                nonce.copy_from_slice(&data[start..start + 32]);
-                store_id.copy_from_slice(&data[start + 32..start + 64]);
+                nonce.copy_from_slice(&challenge[..32]);
+                store_id.copy_from_slice(&challenge[32..64]);
                 let now = caller.data().host.clock.now_unix_secs();
                 caller
                     .data_mut()
