@@ -25,9 +25,11 @@
 
 pub mod error;
 pub mod hash;
+pub mod kdf;
 
 pub use error::{BlsError, CryptoError, TamperError};
 pub use hash::sha256;
+pub use kdf::derive_decryption_key;
 
 /// Versioning tag for the crypto domain constants (HKDF salt/info, scheme tag).
 /// Bumping this signals a deliberate, breaking change to derived material.
