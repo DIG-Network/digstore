@@ -8,6 +8,7 @@
 mod chunkstore;
 mod clock;
 mod config;
+mod diff;
 mod error;
 mod generation;
 mod history;
@@ -15,6 +16,7 @@ mod paths;
 mod staging;
 
 pub use chunkstore::ChunkStore;
+pub use diff::GenerationDiff;
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use config::{load_config, save_config};
 pub use error::{Result, StoreError};
