@@ -23,11 +23,13 @@
 //! `BlsPublicKey`). All public byte material uses canonical `digstore-core`
 //! types (`Bytes32`/`Bytes48`/`Bytes96`/`SecretSalt`).
 
+pub mod aead;
 pub mod error;
 pub mod fixtures;
 pub mod hash;
 pub mod kdf;
 
+pub use aead::{decrypt_chunk, encrypt_chunk};
 pub use error::{BlsError, CryptoError, TamperError};
 pub use hash::sha256;
 pub use fixtures::{write_kdf_fixtures, KdfFixture, KdfFixtureSet};
