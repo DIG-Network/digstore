@@ -47,3 +47,13 @@ pub enum CoreError {
     /// A value failed validation.
     Validation(String),
 }
+
+impl core::fmt::Display for CoreError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            CoreError::Parse(m) => write!(f, "parse error: {m}"),
+            CoreError::Decode(m) => write!(f, "decode error: {m}"),
+            CoreError::Validation(m) => write!(f, "validation error: {m}"),
+        }
+    }
+}
