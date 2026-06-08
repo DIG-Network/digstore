@@ -33,3 +33,9 @@ pub use wire::{
     AttestationChallenge, AttestationResponse, AuthenticationInfo, ChiaBlockRef, ContentResponse,
     ExecutionProof, ProofPrelude, ProofResponse,
 };
+pub use config::{
+    ChunkerConfig, CompilationStats, CompilerError, Generation, GenerationId, GenerationState,
+    HostImportsConfig, SecretSalt, StoreConfig, TrustedHostKey, Visibility,
+};
+#[cfg(feature = "std")]
+pub use config::CompilationResult;
