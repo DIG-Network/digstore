@@ -78,6 +78,22 @@ fn host_public_key_returns_48_bytes() {
 }
 
 #[test]
+fn clock_advance_is_observed_by_guest() {
+    let clock = FixedClock::new(1_000);
+    let module_bytes = wat::parse_str(include_str!("fixtures/wat/import_probe.wat")).unwrap();
+    let mut rt = HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(clock.clone()),
+    )
+    .unwrap();
+    assert_eq!(rt.call_i64_export("probe_time").unwrap(), 1_000);
+    clock.advance(500);
+    assert_eq!(rt.call_i64_export("probe_time").unwrap(), 1_500);
+}
+
+#[test]
 fn jwks_fetch_blocked_without_session() {
     let mut rt = probe_runtime(FixedClock::new(1_700_000_000));
     let url = b"http://127.0.0.1:1/jwks.json";
