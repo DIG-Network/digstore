@@ -3,7 +3,7 @@ use crate::config;
 use crate::context::CliContext;
 use crate::error::CliError;
 
-pub fn run(ctx: &CliContext, args: RemoteArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: RemoteArgs) -> Result<(), CliError> {
     match args.action {
         RemoteAction::Add { name, url } => {
             config::add_remote(ctx, &name, &url)?;

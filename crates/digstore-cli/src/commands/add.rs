@@ -3,7 +3,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::store_ops;
 
-pub fn run(ctx: &CliContext, args: AddArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: AddArgs) -> Result<(), CliError> {
     // §8.5 social conventions: `--discovery` stages the
     // `/.well-known/dig/manifest.json` discovery manifest instead of a file.
     if args.discovery {

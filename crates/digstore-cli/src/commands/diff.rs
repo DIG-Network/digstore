@@ -6,7 +6,7 @@ use crate::error::CliError;
 use crate::ops::store_ops;
 use crate::output;
 
-pub fn run(ctx: &CliContext, args: DiffArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: DiffArgs) -> Result<(), CliError> {
     let from = Bytes32::from_hex(&args.from)
         .map_err(|_| CliError::InvalidArgument("from must be 32-byte hex".into()))?;
     let to = Bytes32::from_hex(&args.to)

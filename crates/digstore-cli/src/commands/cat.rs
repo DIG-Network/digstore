@@ -7,7 +7,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::{client_crypto, serve, store_ops};
 
-pub fn run(ctx: &CliContext, args: CatArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: CatArgs) -> Result<(), CliError> {
     let urn =
         Urn::parse(&args.urn).map_err(|e| CliError::InvalidArgument(format!("bad urn: {e}")))?;
 

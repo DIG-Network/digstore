@@ -43,7 +43,7 @@ fn safe_resource_path(base: &Path, key: &str) -> Result<PathBuf, CliError> {
     Ok(out)
 }
 
-pub fn run(ctx: &CliContext, args: CheckoutArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: CheckoutArgs) -> Result<(), CliError> {
     let root = Bytes32::from_hex(&args.root)
         .map_err(|_| CliError::InvalidArgument("root must be 32-byte hex".into()))?;
     let store_id = ctx.find_store_id()?;
