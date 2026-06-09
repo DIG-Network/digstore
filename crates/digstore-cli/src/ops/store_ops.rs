@@ -522,6 +522,34 @@ pub fn module_path_for(
     Ok(path)
 }
 
+/// The conventional default-view resource key (§8.5 social conventions): a URN
+/// with no resource key resolves to the store's landing resource, `index.html`.
+pub const DEFAULT_RESOURCE_KEY: &str = "index.html";
+
+/// Resolve the effective resource key for a URN (§8.5 social conventions).
+///
+/// When the URN carries an explicit resource key, it is used verbatim. When it
+/// has none, the conventional default view `index.html` is used IF the
+/// generation at `root` actually exposes that key; otherwise the empty string is
+/// returned (store-level fallback — the prior behavior, which yields a
+/// non-verifying decoy on a miss).
+pub fn resolve_resource_key(ctx: &CliContext, root: &Bytes32, urn: &Urn) -> String {
+    if let Some(rk) = &urn.resource_key {
+        return rk.clone();
+    }
+    match load_generation_manifest(ctx, root) {
+        Ok(manifest)
+            if manifest
+                .key_table
+                .iter()
+                .any(|k| k.resource_key == DEFAULT_RESOURCE_KEY) =>
+        {
+            DEFAULT_RESOURCE_KEY.to_string()
+        }
+        _ => String::new(),
+    }
+}
+
 pub fn list_generation_resources(
     ctx: &CliContext,
     root: &Bytes32,
