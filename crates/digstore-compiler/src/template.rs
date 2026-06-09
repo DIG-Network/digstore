@@ -29,6 +29,8 @@ pub struct Template {
     /// Declared memory limits (min_pages, max_pages_opt) of memory 0.
     pub memory_min_pages: u64,
     pub memory_max_pages: Option<u64>,
+    /// Whether memory 0 is a 64-bit memory (§5.1 requires this to be false).
+    pub memory64: bool,
 }
 
 impl Template {
@@ -48,6 +50,7 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
     let mut exports = Vec::new();
     let mut memory_min_pages: Option<u64> = None;
     let mut memory_max_pages: Option<u64> = None;
+    let mut memory64 = false;
 
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
@@ -65,6 +68,7 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
                     if memory_min_pages.is_none() {
                         memory_min_pages = Some(mem.initial);
                         memory_max_pages = mem.maximum;
+                        memory64 = mem.memory64;
                     }
                 }
             }
@@ -82,6 +86,13 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
 
     let min = memory_min_pages
         .ok_or_else(|| CompilerError::InvalidTemplate("template declares no memory".into()))?;
+    // §5.1: the single linear memory MUST be 32-bit (`memory64: false`). A
+    // template declaring a 64-bit memory is rejected outright.
+    if memory64 {
+        return Err(CompilerError::InvalidTemplate(
+            "memory declares memory64 but §5.1 requires a 32-bit memory (memory64: false)".into(),
+        ));
+    }
     // §5.1: a DECLARED maximum must not exceed the 16 MiB ceiling. A raw guest
     // template (rustc/LLVM output) may legitimately declare NO maximum; the
     // compiler normalizes the EMITTED module to `Some(256)` during injection
@@ -100,6 +111,7 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
         exports,
         memory_min_pages: min,
         memory_max_pages,
+        memory64,
     })
 }
 
@@ -213,6 +225,18 @@ mod tests {
         // The baked template is committed with the exact ceiling too.
         let t = load_template(baked_template_bytes()).expect("baked template valid");
         assert_eq!(t.memory_max_pages, Some(MAX_MEMORY_PAGES));
+    }
+
+    #[test]
+    fn template_declaring_memory64_is_rejected() {
+        // §5.1: the single linear memory MUST be `memory64: false`. A template
+        // that declares a 64-bit memory must be rejected by `load_template`.
+        let bytes = full_abi_module(r#"(memory (export "memory") i64 1 256)"#);
+        let err = load_template(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("memory64"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
