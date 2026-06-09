@@ -73,15 +73,50 @@ fn inclusion_proof_rejects_tampered_path() {
 }
 
 #[test]
-fn proof_size_is_ceil_log2_n() {
-    // The proof for leaf index 0 always traverses the full left spine,
-    // so its path length equals ceil(log2 n) for every n (carry rule included).
+fn full_spine_proof_size_is_exactly_ceil_log2_n() {
+    // Leaf index 0 is never the carried-up node at any level, so it traverses
+    // the full left spine: its path length is the worst case and equals
+    // ceil(log2 n) for every n. This is §9.5's stated sibling count, realized
+    // by the leaf that attains the bound.
     for n in [1usize, 2, 3, 4, 5, 8, 16, 17, 1000] {
         let data = chunks(n);
         let tree = MerkleTree::build(&data);
         let proof = tree.prove(0).unwrap();
         assert_eq!(proof.path.len(), ceil_log2(n), "n={n}");
     }
+}
+
+#[test]
+fn every_proof_path_is_at_most_ceil_log2_n_and_verifies() {
+    // §9.1 carries an odd node up unchanged, so a leaf that is carried up skips
+    // a level and its path is SHORTER than the full-spine worst case. §9.5's
+    // ceil(log2 n) is therefore the upper bound on sibling count; every leaf's
+    // path is <= ceil(log2 n) and still verifies against the root. (Approved
+    // deviation: carry-up paths, documented in 00-DATASECTION-CONTRACT.md D8.)
+    for n in [1usize, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 31, 1000] {
+        let data = chunks(n);
+        let tree = MerkleTree::build(&data);
+        let bound = ceil_log2(n);
+        for i in 0..n {
+            let proof = tree.prove(i).unwrap();
+            assert!(
+                proof.path.len() <= bound,
+                "n={n} i={i}: path.len()={} exceeds ceil(log2 n)={bound}",
+                proof.path.len()
+            );
+            assert!(proof.verify(), "n={n} i={i}: proof must verify");
+        }
+    }
+}
+
+#[test]
+fn carried_up_leaf_has_shorter_path_than_full_spine() {
+    // Documents the carry-up deviation concretely: for n=3, the carried-up leaf
+    // (index 2) ascends in 1 step while the full spine (index 0) takes 2.
+    let tree = MerkleTree::build(&chunks(3));
+    assert_eq!(tree.prove(0).unwrap().path.len(), 2);
+    assert_eq!(tree.prove(2).unwrap().path.len(), 1);
+    assert!(tree.prove(2).unwrap().verify());
 }
 
 #[test]

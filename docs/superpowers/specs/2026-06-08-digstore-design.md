@@ -47,6 +47,8 @@ These are deliberate, documented departures forced by physics, determinism, or t
 
 4. **GCM fixed nonce.** §11.2 mandates a fixed nonce, justified because the key is unique per URN. Implemented exactly as written; documented as safe **only** under the unique-key-per-URN invariant, which the codebase enforces (one key per canonical URN, never reused across plaintexts).
 
+5. **Merkle proof size is `<= ceil(log2 n)` under the carry-up rule.** §9.1 carries an odd node up unchanged; §9.5 states a proof carries `ceil(log2 n)` siblings. A carried-up leaf skips a level and has a strictly shorter path, and `ProofStep{hash,is_left}` has no identity encoding under §9.3's fold-and-hash. **Resolution:** `MerkleTree::prove` emits `path.len() <= ceil(log2 n)`; the bound is attained by the full-spine leaf (index 0). Forcing `==` would require duplicating odd nodes (changes the root, breaks §9.1 and the D5 cross-crate root agreement) or a non-spec sentinel step (breaks §9.3). The tighter bound is strictly sound — `verify()` still recomputes the trusted root (§9.4). Full rationale + tests: `00-DATASECTION-CONTRACT.md` D8. *Deviation: §9.5's `ceil(log2 n)` is the exact worst-case/upper bound, not a per-leaf equality.*
+
 ---
 
 ## 4. Crate architecture (single Cargo workspace)
