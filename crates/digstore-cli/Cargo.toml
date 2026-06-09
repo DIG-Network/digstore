@@ -32,6 +32,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
 hex = "0.4"
 getrandom = "0.2"
+anstream = "0.6"
+anstyle = "1"
+ignore = "0.4"
+globset = "0.4"
 
 [dev-dependencies]
 assert_cmd = "2"
