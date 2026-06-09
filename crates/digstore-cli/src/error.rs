@@ -40,6 +40,17 @@ impl CliError {
         }
     }
 
+    /// A short, actionable fix suggestion for this error, if any.
+    pub fn hint(&self) -> Option<String> {
+        match self {
+            CliError::NoStore(_) => Some("run `digstore init` to create a store here".into()),
+            CliError::NonFastForward => Some("run `digstore pull` first, then push".into()),
+            CliError::Unauthorized(_) => Some("check your credentials / store signing key".into()),
+            CliError::NotFound(_) => Some("run `digstore log` to list generations and keys".into()),
+            _ => None,
+        }
+    }
+
     /// Map a canonical `digstore-core` ErrorCode (from a host/guest call) to a CliError.
     pub fn from_error_code(code: ErrorCode, ctx: &str) -> Self {
         match code {

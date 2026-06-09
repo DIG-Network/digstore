@@ -152,6 +152,27 @@ impl Ui {
         let _ = writeln!(o, "{}", text);
     }
 
+    /// Write a cargo-style `error:` + optional `help:` line to stderr.
+    pub fn error(&self, e: &crate::error::CliError) {
+        let mut err = anstream::AutoStream::auto(std::io::stderr());
+        let label = theme::paint(
+            self.color,
+            anstyle::Style::new()
+                .fg_color(Some(anstyle::AnsiColor::Red.into()))
+                .bold(),
+            "error:",
+        );
+        let _ = writeln!(err, "{} {}", label, e);
+        if let Some(h) = e.hint() {
+            let help = theme::paint(
+                self.color,
+                anstyle::Style::new().fg_color(Some(anstyle::AnsiColor::Cyan.into())),
+                "help:",
+            );
+            let _ = writeln!(err, "{} {}", help, h);
+        }
+    }
+
     /// Emit pretty JSON to stdout (json mode).
     pub fn emit_json<T: Serialize>(&self, value: &T) {
         let mut o = self.out();
