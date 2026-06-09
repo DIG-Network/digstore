@@ -113,6 +113,58 @@ pub fn encode_data_section(i: &DataSectionInputs) -> Vec<u8> {
     digstore_core::datasection::encode_blob(&sections)
 }
 
+/// Re-key a compiled module to a new set of trusted host keys.
+///
+/// §12.2: a module verifies the serving host's BLS attestation against the
+/// trusted set embedded in its data section. A party that re-deploys a module on
+/// its OWN serving node (e.g. `dig clone`) must therefore re-embed its own host
+/// key so its node can attest. This extracts the module's DIGS blob, replaces
+/// ONLY the `TrustedKeys` section (every other section — chunks, key table,
+/// merkle nodes, current root — is preserved byte-for-byte, so the served
+/// content and its proof are unchanged), and re-injects the blob.
+pub fn rekey_module_trusted(
+    module: &[u8],
+    new_trusted: &[TrustedHostKey],
+) -> Result<Vec<u8>, crate::error::CompilerError> {
+    use crate::inject::{extract_data_section, inject_data_section};
+    use crate::pipeline::DATA_SECTION_MEM_OFFSET;
+    use digstore_core::datasection::{encode_blob, DataView, SectionId};
+
+    let blob = extract_data_section(module, DATA_SECTION_MEM_OFFSET)?;
+    let view = DataView::parse(&blob).map_err(|e| {
+        crate::error::CompilerError::InvalidTemplate(format!("bad DIGS blob: {e:?}"))
+    })?;
+
+    // Rebuild every section in ascending id order, swapping TrustedKeys.
+    const IDS: [SectionId; 11] = [
+        SectionId::StoreId,
+        SectionId::CurrentRoot,
+        SectionId::RootHistory,
+        SectionId::PublicKey,
+        SectionId::TrustedKeys,
+        SectionId::Metadata,
+        SectionId::AuthInfo,
+        SectionId::KeyTable,
+        SectionId::ChunkPool,
+        SectionId::MerkleNodes,
+        SectionId::Filler,
+    ];
+    let mut sections: Vec<(u16, Vec<u8>)> = Vec::new();
+    for id in IDS {
+        let body = if id == SectionId::TrustedKeys {
+            encode_trusted_keys(new_trusted)
+        } else {
+            match view.section(id) {
+                Some(b) => b.to_vec(),
+                None => continue, // absent section: keep it absent
+            }
+        };
+        sections.push((id as u16, body));
+    }
+    let new_blob = encode_blob(&sections);
+    inject_data_section(module, &new_blob, DATA_SECTION_MEM_OFFSET)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -99,13 +99,19 @@ fn host_deps(store_id: Bytes32, pubkey: Bytes48, secret: BlsSecretKey) -> HostDe
 /// Instantiate the real host runtime over `module_path` (real wasmtime load /
 /// validate / instantiate — this is how a corrupted CODE section surfaces).
 fn instantiate_host(
+    ctx: &CliContext,
     module_path: &Path,
     store_id: Bytes32,
     pubkey: Bytes48,
 ) -> Result<HostRuntime, CliError> {
     let module_bytes = std::fs::read(module_path)
         .map_err(|_| CliError::NotFound(module_path.display().to_string()))?;
-    let secret = BlsSecretKey::from_seed(&[42u8; 32]);
+    // §12.2: the host MUST attest with the store's host signing key — the same
+    // key whose public half the compiler embedded as the trusted key. Load the
+    // persisted seed (init wrote `signing_key.bin`) so the guest's attestation
+    // verification accepts this host; otherwise it would (correctly) serve decoys.
+    let secret =
+        store_ops::load_signing_key(ctx).unwrap_or_else(|_| BlsSecretKey::from_seed(&[42u8; 32]));
     HostRuntime::new(
         &module_bytes,
         HostImportsConfig::default(),
@@ -133,15 +139,15 @@ pub fn serve_content(
     let _ = root; // verification against the trusted root happens in client_crypto.
     let store_id = urn.store_id;
     let pubkey = store_ops::load_host_pubkey(ctx).unwrap_or(Bytes48([0u8; 48]));
-    let mut rt = instantiate_host(module_path, store_id, pubkey)?;
+    let mut rt = instantiate_host(ctx, module_path, store_id, pubkey)?;
 
     // Drive the module's own serve flow. The request carries the ROOT-INDEPENDENT
     // retrieval key (matching the compiler's `static_key`) so the guest finds the
     // resource and roots the proof at its injected `CurrentRoot`.
     let request = request_for(urn);
-    let resp_bytes = rt.serve_content(&request).map_err(|e| {
-        CliError::VerificationFailed(format!("module serve_content failed: {e:?}"))
-    })?;
+    let resp_bytes = rt
+        .serve_content(&request)
+        .map_err(|e| CliError::VerificationFailed(format!("module serve_content failed: {e:?}")))?;
     if resp_bytes.is_empty() {
         return Err(CliError::VerificationFailed(
             "module returned an empty response (not self-serving)".into(),

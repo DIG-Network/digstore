@@ -60,8 +60,14 @@ pub fn sample_generations() -> Vec<FakeGeneration> {
     ]
 }
 
+/// The trusted host key embedded in fixture modules. §12.2: the guest verifies
+/// the host's attestation signature against this set, so the embedded key MUST
+/// be the public half of the key the test host signs with
+/// (`BlsSecretKey::from_seed(&[42u8; 32])`, see `self_serving.rs::host_deps`).
+/// A placeholder key here would make every real hit (correctly) serve a decoy.
 pub fn trusted_keys() -> Vec<TrustedHostKey> {
-    let pk = [0x42u8; 48];
+    let sk = digstore_crypto::bls::BlsSecretKey::from_seed(&[42u8; 32]);
+    let pk = sk.public_key().to_bytes().0;
     vec![TrustedHostKey {
         public_key: pk,
         label: format!("dig-host-key-v1:{}", hex::encode(pk)),

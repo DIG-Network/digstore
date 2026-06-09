@@ -113,6 +113,23 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     digstore_store::save_config(ctx.config_path(), &cfg)
         .map_err(|e| CliError::Other(anyhow::anyhow!("save config: {e}")))?;
 
+    // §12.2: the downloaded module trusts the ORIGIN's host key, which this clone
+    // does not possess. To serve the module locally (the clone's `dig cat` drives
+    // `HostRuntime::serve_content`, attesting with the local host key), generate a
+    // local host signing key and RE-KEY the module to trust it. Only the
+    // TrustedKeys section changes; chunks, key table, merkle nodes, and the
+    // current root are preserved, so served content and proofs are byte-identical.
+    let (local_seed, local_pubkey) = store_ops::generate_host_key();
+    let module = digstore_compiler::rekey_module_trusted(
+        &module,
+        &[digstore_core::TrustedHostKey {
+            public_key: local_pubkey.0,
+            label: format!("dig-host-key-v1:{}", local_pubkey.to_hex()),
+        }],
+    )
+    .map_err(|e| CliError::Other(anyhow::anyhow!("re-key cloned module: {e:?}")))?;
+    store_ops::persist_host_identity(ctx, &local_seed, local_pubkey)?;
+
     let module_path = ctx.modules_dir().join(format!(
         "{}-{}.wasm",
         store_id.to_hex(),
