@@ -42,6 +42,7 @@ fn compile_outcome_records_compiler_version() {
         store_pubkey(),
         &gens,
         sample_manifest(),
+        common::no_auth(),
         &trusted_keys(),
     )
     .expect("compiles");

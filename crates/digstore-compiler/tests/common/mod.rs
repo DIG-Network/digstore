@@ -1,8 +1,19 @@
 #![allow(dead_code)]
 
 use digstore_compiler::{GenerationView, ResourceView};
-use digstore_core::{Bytes32, Bytes48, MetadataManifest, TrustedHostKey};
+use digstore_core::{AuthenticationInfo, Bytes32, Bytes48, MetadataManifest, TrustedHostKey};
 use sha2::{Digest, Sha256};
+
+/// The explicit no-auth policy embedded for stores that require neither a
+/// session nor a JWT (the default the CLI passes for an unconfigured store).
+pub fn no_auth() -> AuthenticationInfo {
+    AuthenticationInfo {
+        requires_session: false,
+        requires_jwt: false,
+        jwks_url: None,
+        accepted_algorithms: vec![],
+    }
+}
 
 /// A single resource's contribution to a synthetic generation.
 pub struct ResourceSpec {

@@ -53,8 +53,8 @@ use std::path::{Path, PathBuf};
 
 use digstore_chunker::{chunk_slice, Chunk};
 use digstore_core::{
-    Bytes32, Bytes48, ChunkerConfig, GenerationState, MerkleTree, SecretSalt, StoreConfig,
-    TrustedHostKey, Urn, Visibility,
+    AuthenticationInfo, Bytes32, Bytes48, ChunkerConfig, GenerationState, MerkleTree, SecretSalt,
+    StoreConfig, TrustedHostKey, Urn, Visibility,
 };
 use digstore_store::{
     ChunkRef, GenerationManifest, KeyTableRecord, RootHistory, StagingArea, Store, SystemClock,
@@ -459,6 +459,18 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
 }
 
 /// Compile the generation into a real serving module via `digstore-compiler`.
+/// The explicit no-auth policy compiled into a store that requires neither a
+/// session nor a JWT (§4.1/§5.2). A JWT- or session-required store would supply
+/// its configured `AuthenticationInfo` to `Compiler::compile` instead.
+fn default_auth_info() -> AuthenticationInfo {
+    AuthenticationInfo {
+        requires_session: false,
+        requires_jwt: false,
+        jwks_url: None,
+        accepted_algorithms: Vec::new(),
+    }
+}
+
 fn compile_module(
     ctx: &CliContext,
     cfg: &StoreConfig,
@@ -535,6 +547,10 @@ fn compile_module(
         store_pubkey,
         &[gen],
         crate::ops::serve::empty_manifest(),
+        // §4.1/§5.2: per-store auth policy is compiled into the module. The CLI
+        // supplies the explicit no-auth default here; a JWT/session-required
+        // store would thread its configured policy into this argument instead.
+        default_auth_info(),
         &trusted,
     )
     .map_err(|e| CliError::Other(anyhow::anyhow!("compile failed: {e:?}")))?;

@@ -51,6 +51,7 @@ impl Compiler {
         store_pubkey: Bytes48,
         generations: &[G],
         manifest: MetadataManifest,
+        auth_info: AuthenticationInfo,
         trusted_keys: &[TrustedHostKey],
     ) -> Result<CompileOutcome> {
         // Stage 1: trusted-key precondition (§5.3, §19.2).
@@ -97,7 +98,9 @@ impl Compiler {
             store_pubkey,
             trusted_keys: trusted_keys.to_vec(),
             manifest,
-            auth_info: default_auth_info(),
+            // §4.1/§5.2: per-store auth policy (JWT/session) is supplied by the
+            // caller and compiled into the module verbatim — NOT hardcoded here.
+            auth_info,
             key_table: key_table.entries().to_vec(),
             chunk_pool_bodies,
             merkle_leaves,
@@ -168,17 +171,6 @@ impl Compiler {
         };
 
         Ok(CompileOutcome { result, detail })
-    }
-}
-
-/// Default (empty) authentication info embedded for stores that do not require a
-/// session or JWT. The guest serves these bytes verbatim from `get_authentication_info`.
-fn default_auth_info() -> AuthenticationInfo {
-    AuthenticationInfo {
-        requires_session: false,
-        requires_jwt: false,
-        jwks_url: None,
-        accepted_algorithms: Vec::new(),
     }
 }
 

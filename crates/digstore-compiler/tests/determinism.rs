@@ -17,6 +17,7 @@ fn compile_to_bytes(dir: &std::path::Path, obfuscate: bool) -> Vec<u8> {
         store_pubkey(),
         &gens,
         sample_manifest(),
+        common::no_auth(),
         &trusted_keys(),
     )
     .expect("compiles");
