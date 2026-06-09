@@ -1,5 +1,12 @@
 use std::path::PathBuf;
 
+/// The dig-compiler version (paper §5: "Compiler version 1.0.0; module format
+/// version 1."). Tied to the crate version via `CARGO_PKG_VERSION` so the
+/// artifact carries exactly the spec-stated version string; the crate is pinned
+/// to `1.0.0` in `Cargo.toml`. The module-format-version half of the §5 claim is
+/// the DIGS blob header byte (== 1, owned by `digstore_core::datasection`).
+pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Compiler options (paper §19.1: obfuscation + optimization toggles).
 #[derive(Debug, Clone)]
 pub struct CompilerConfig {
@@ -39,4 +46,7 @@ pub struct CompilerStats {
     pub pool_byte_len: u64,
     pub data_section_byte_len: u64,
     pub obfuscation_applied: bool,
+    /// The dig-compiler version that produced the artifact (§5: "Compiler
+    /// version 1.0.0"). Always [`COMPILER_VERSION`].
+    pub compiler_version: String,
 }
