@@ -34,7 +34,12 @@
 //!   module (real load + instantiate), then produces the authoritative
 //!   `ContentResponse` from the on-disk generation (ciphertext + a real merkle
 //!   proof from the generation tree). A miss yields a decoy whose proof does not
-//!   chain to the trusted root.
+//!   chain to the trusted root. §18.4 NOTE: the host runtime returns the module's
+//!   bytes VERBATIM ("neither decrypts nor inspects the payload"); the
+//!   `ContentResponse` envelope DECODE that `ops::serve::serve_content` performs
+//!   is a CLIENT-SIDE step in this reader (it decodes framing, it does not decrypt
+//!   — the result is still ciphertext). `ops::serve::serve_content_raw` exposes
+//!   the host's verbatim output to make that boundary explicit and testable.
 //! - **cat/checkout** verify each chunk's merkle inclusion to the trusted root
 //!   and AES-256-GCM-open it client-side (`ops::client_crypto`).
 //!
