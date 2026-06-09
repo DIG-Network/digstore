@@ -131,23 +131,29 @@ fn gate<H: DigHost + ?Sized>(
         nonce32.copy_from_slice(&nonce[..32]);
 
         // The signed message is the challenge: nonce(32) || store_id(32) || time(u64 BE).
-        let now = host.current_time();
-        let challenge = crate::attestation::build_challenge(nonce32, ds.store_id().0, now);
+        // `signed_time` is the timestamp BOUND INTO the challenge — the value the
+        // host commits to via its signature (§12.1, "unix seconds, for freshness").
+        let signed_time = host.current_time();
+        let challenge = crate::attestation::build_challenge(nonce32, ds.store_id().0, signed_time);
 
         // A real host returns a signed AttestationResponse; an error => fail closed.
         let resp_bytes = host.create_attestation(&challenge).map_err(|_| ())?;
         let resp = digstore_core::AttestationResponse::from_bytes(&resp_bytes).map_err(|_| ())?;
 
         // §12.2: verify the BLS signature over the challenge under
-        // host_public_key, check freshness, and check trusted-set membership.
-        // The challenge embeds `now`, so the signed time is `now` (freshness ok).
+        // host_public_key, check the challenge timestamp for FRESHNESS against the
+        // module's own clock read at verification time, and check trusted-set
+        // membership. Reading the clock again here (rather than reusing
+        // `signed_time`) makes the freshness check meaningful: a response bound to
+        // a stale timestamp — e.g. a slow or replaying host — fails closed.
+        let now = host.current_time();
         let trusted = embedded_trusted_set(ds);
         crate::attestation::verify_attestation(
             &trusted,
             &challenge,
             &resp.host_public_key,
             &resp.signature,
-            now,
+            signed_time,
             now,
         )
         .map_err(|_| ())?;
