@@ -8,7 +8,7 @@ description = "Host-side cryptography for Digstore: URN key derivation, AES-256-
 digstore-core = { path = "../digstore-core" }
 sha2 = "0.10"
 hkdf = "0.12"
-aes-gcm = "0.10"
+aes-gcm-siv = "0.11"
 chia-bls = "=0.45.0"
 hex = "0.4"
 thiserror = "1"

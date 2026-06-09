@@ -94,6 +94,10 @@ impl HostRuntime {
         let mut wcfg = wasmtime::Config::new();
         wcfg.consume_fuel(true);
         wcfg.epoch_interruption(true);
+        // Serve-only untrusted modules have no use for shared memory / atomics;
+        // disable the threads proposal so a guest cannot allocate shared memory
+        // outside the StoreLimits accounting (§18.2 sandbox surface reduction).
+        wcfg.wasm_threads(false);
         let engine = Engine::new(&wcfg).map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
         // Epoch ticker fires every timeout/2, so a deadline of 2 ticks bounds a
@@ -141,8 +145,15 @@ impl HostRuntime {
             last_signature: None,
         };
 
+        // Bound every growable resource, not just linear memory: an untrusted
+        // guest could otherwise OOM the host via table.grow (§18.2). A serve-only
+        // module needs one memory, one instance, and a small function table.
         let store_limits = StoreLimitsBuilder::new()
             .memory_size(limits.memory_bytes_max)
+            .table_elements(1_000_000)
+            .tables(8)
+            .memories(1)
+            .instances(1)
             .build();
 
         let mut store = Store::new(

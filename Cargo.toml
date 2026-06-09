@@ -12,3 +12,12 @@ license = "MIT"
 sha2 = "0.10"
 proptest = "1"
 hex = "0.4"
+
+# Release hardening: keep integer-overflow checks ON in release builds. This
+# code parses untrusted serialized input and does offset/length arithmetic;
+# silent wrapping in release would turn a length-overflow bug into a memory
+# safety / logic hazard. Cost is negligible for this workload.
+[profile.release]
+overflow-checks = true
+debug-assertions = false
+panic = "unwind"

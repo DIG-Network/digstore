@@ -13,7 +13,7 @@ fn signed_store() -> (Arc<InMemoryBackend>, Bytes32, String, digstore_crypto::bl
     let (sk, pk) = digstore_crypto::bls_keygen(&[42u8; 32]);
     let be = Arc::new(InMemoryBackend::new());
     let id = b32(1);
-    be.add_store(id, pk, b32(0x10), vec![0u8; 64]);
+    be.add_store(id, pk, b32(0x10), vec![0u8; 64], None);
     (be, id, id.to_hex(), sk)
 }
 
@@ -197,7 +197,7 @@ async fn oversized_module_is_413() {
     let (sk, pk) = digstore_crypto::bls_keygen(&[7u8; 32]);
     let be = Arc::new(InMemoryBackend::with_max_module_size(16));
     let id = b32(1);
-    be.add_store(id, pk, b32(0x10), vec![0u8; 8]);
+    be.add_store(id, pk, b32(0x10), vec![0u8; 8], None);
     let new_root = b32(0x20);
     let sig = digstore_crypto::bls_sign(&sk, &push_signing_message(&new_root, &id));
     let app = RemoteServer::new(be.clone()).router();

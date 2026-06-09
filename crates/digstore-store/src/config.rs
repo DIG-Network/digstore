@@ -63,11 +63,36 @@ impl ConfigToml {
 }
 
 /// Serialize a `StoreConfig` to `config.toml` at `path`.
+///
+/// A private store embeds its `SecretSalt` (master key material) here, so the
+/// file is written owner-only (`0600`) on Unix. On Windows it inherits the
+/// user-profile ACL of the enclosing `.dig` directory.
 pub fn save_config(path: impl AsRef<Path>, cfg: &StoreConfig) -> Result<()> {
     let toml_repr = ConfigToml::from_config(cfg);
     let text = toml::to_string_pretty(&toml_repr).map_err(|e| StoreError::Config(e.to_string()))?;
-    std::fs::write(path, text)?;
+    write_owner_only(path.as_ref(), text.as_bytes())?;
     Ok(())
+}
+
+/// Write a file with owner-only permissions on Unix; plain write elsewhere.
+fn write_owner_only(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(bytes)?;
+        f.flush()
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, bytes)
+    }
 }
 
 /// Load a `StoreConfig` from a `config.toml` at `path`.

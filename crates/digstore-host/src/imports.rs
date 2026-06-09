@@ -3,7 +3,80 @@
 use crate::error::HostError;
 use crate::runtime::RuntimeState;
 use digstore_core::abi::ErrorCode;
+use std::net::{IpAddr, ToSocketAddrs};
 use wasmtime::{Caller, Linker};
+
+/// True if `ip` belongs to a range that must never be reachable via a guest-driven
+/// `jwks_fetch` — loopback, RFC1918 private, link-local (incl. the
+/// 169.254.169.254 cloud metadata endpoint), CGNAT, unspecified, broadcast,
+/// IPv6 ULA (fc00::/7) and link-local (fe80::/10), and IPv4-mapped forms thereof.
+fn is_blocked_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => {
+            let o = a.octets();
+            a.is_loopback()
+                || a.is_private()
+                || a.is_link_local()
+                || a.is_unspecified()
+                || a.is_broadcast()
+                || a.is_documentation()
+                // CGNAT 100.64.0.0/10
+                || (o[0] == 100 && (o[1] & 0xC0) == 0x40)
+        }
+        IpAddr::V6(a) => {
+            a.is_loopback()
+                || a.is_unspecified()
+                || (a.segments()[0] & 0xfe00) == 0xfc00 // fc00::/7 unique-local
+                || (a.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+                || a
+                    .to_ipv4_mapped()
+                    .map(|v4| is_blocked_ip(&IpAddr::V4(v4)))
+                    .unwrap_or(false)
+        }
+    }
+}
+
+/// SSRF guard for the guest-callable `jwks_fetch` host import. The guest fully
+/// controls the URL, so without this an untrusted module could probe internal
+/// services or the cloud metadata endpoint. Requires `https`, and rejects the
+/// request unless EVERY resolved address is a public unicast address.
+///
+/// NOTE: this resolves DNS once for the policy check; reqwest resolves again to
+/// connect, leaving a narrow DNS-rebinding window. Operators that need a hard
+/// guarantee should additionally pin `jwks_fetch` to an allowlist or run it
+/// behind an egress proxy.
+///
+/// Setting the env var `DIGSTORE_ALLOW_INSECURE_JWKS` disables the scheme and
+/// private-address restrictions. This exists for tests (loopback mock servers)
+/// and tightly controlled internal deployments ONLY — it is insecure by name and
+/// must never be set in a public-facing host.
+fn jwks_url_is_allowed(url: &str) -> bool {
+    let parsed = match reqwest::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+    let insecure_ok = std::env::var_os("DIGSTORE_ALLOW_INSECURE_JWKS").is_some();
+    match parsed.scheme() {
+        "https" => {}
+        "http" if insecure_ok => return parsed.host_str().is_some(),
+        _ => return false,
+    }
+    let host = match parsed.host_str() {
+        Some(h) => h,
+        None => return false,
+    };
+    if insecure_ok {
+        return true;
+    }
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    match (host, port).to_socket_addrs() {
+        Ok(addrs) => {
+            let addrs: Vec<_> = addrs.collect();
+            !addrs.is_empty() && addrs.iter().all(|sa| !is_blocked_ip(&sa.ip()))
+        }
+        Err(_) => false,
+    }
+}
 
 pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
     let m = "dig_host";
@@ -169,6 +242,11 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
                     Ok(u) => u.to_string(),
                     Err(_) => return ErrorCode::InvalidParameter as i32,
                 };
+                // SSRF guard: untrusted guest controls `url`. Require https to a
+                // public address; refuse loopback/private/link-local/metadata.
+                if !jwks_url_is_allowed(&url) {
+                    return ErrorCode::InvalidParameter as i32;
+                }
                 let resp = match reqwest::blocking::Client::new()
                     .get(&url)
                     .timeout(std::time::Duration::from_secs(timeout_secs))

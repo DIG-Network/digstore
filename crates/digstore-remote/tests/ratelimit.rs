@@ -41,8 +41,8 @@ async fn second_request_for_store_is_429_when_capacity_one() {
 async fn requests_to_distinct_stores_not_limited_together() {
     // two stores, capacity 1 each -> each gets one OK.
     let be = Arc::new(digstore_remote::InMemoryBackend::new());
-    be.add_store(b32(1), b48(2), b32(0x10), vec![0u8; 8]);
-    be.add_store(b32(3), b48(4), b32(0x20), vec![0u8; 8]);
+    be.add_store(b32(1), b48(2), b32(0x10), vec![0u8; 8], None);
+    be.add_store(b32(3), b48(4), b32(0x20), vec![0u8; 8], None);
     let rl = Arc::new(RateLimiter::new(1));
     let app = RemoteServer::with_rate_limiter(be, rl).router();
 

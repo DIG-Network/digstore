@@ -23,6 +23,9 @@ fn probe_runtime(clock: FixedClock) -> HostRuntime {
 
 #[test]
 fn jwks_fetch_nosession_then_success() {
+    // The SSRF guard blocks loopback/plaintext by default; the mock JWKS server
+    // runs on http loopback, so opt into the documented insecure override here.
+    std::env::set_var("DIGSTORE_ALLOW_INSECURE_JWKS", "1");
     let server = MockServer::start();
     let body = br#"{"keys":[]}"#;
     let mock = server.mock(|when, then| {

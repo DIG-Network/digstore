@@ -9,6 +9,13 @@ pub struct StoreDescriptor {
     pub size: u64,
     /// Store BLS G1 public key, 48-byte hex.
     pub public_key: String,
+    /// Publisher push signature over `SHA-256(current_root || store_id)`, 96-byte
+    /// hex (§21.6). Empty string if the served head was never push-signed. A
+    /// client verifies this against the store-id-bound public key before trusting
+    /// the served root (the "authenticated head" guarantee). `#[serde(default)]`
+    /// keeps older servers' descriptors decodable.
+    #[serde(default)]
+    pub push_sig: String,
 }
 
 /// `GET /stores/{id}/roots` — linear root history, oldest→newest (§21.2).
@@ -108,6 +115,7 @@ mod tests {
             current_root: "ab".repeat(32),
             size: 4096,
             public_key: "cd".repeat(48),
+            push_sig: "ef".repeat(96),
         };
         let s = serde_json::to_string(&d).unwrap();
         let back: StoreDescriptor = serde_json::from_str(&s).unwrap();

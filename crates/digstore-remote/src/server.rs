@@ -106,6 +106,17 @@ where
 
 impl IntoResponse for RemoteError {
     fn into_response(self) -> Response {
-        (self.status(), self.to_string()).into_response()
+        // Never echo server-internal detail (filesystem paths, join/IO errors) in
+        // a 5xx body — it leaks deployment information to any client. Log the
+        // detail server-side and return a generic message. 4xx bodies describe the
+        // request and are safe to surface.
+        let body = match &self {
+            RemoteError::Internal(detail) => {
+                eprintln!("[digstore-remote] internal error: {detail}");
+                "internal server error".to_string()
+            }
+            other => other.to_string(),
+        };
+        (self.status(), body).into_response()
     }
 }

@@ -72,12 +72,19 @@ async fn pull_downloads_module_when_behind() {
 #[tokio::test]
 async fn pull_delta_path_returns_new_chunks() {
     let (be, id, _hex) = one_store();
+    // Chunks are content-addressed: the client verifies SHA-256(data) == hash, so
+    // the server's delta chunks must carry their real content ids.
+    let c1 = vec![1u8];
+    let c2 = vec![2u8];
     be.add_generation(
         &id,
         b32(0x10),
         b32(0x13),
         vec![0u8; 16],
-        vec![(b32(0xB1), vec![1]), (b32(0xB2), vec![2])],
+        vec![
+            (digstore_crypto::sha256(&c1), c1.clone()),
+            (digstore_crypto::sha256(&c2), c2.clone()),
+        ],
         vec![vec![5, 5]],
         true,
     );
@@ -98,7 +105,7 @@ async fn push_signs_and_advances_head() {
     let (sk, pk) = digstore_crypto::bls_keygen(&[99u8; 32]);
     let be = Arc::new(InMemoryBackend::new());
     let id = b32(7);
-    be.add_store(id, pk, b32(0x10), vec![0u8; 8]);
+    be.add_store(id, pk, b32(0x10), vec![0u8; 8], None);
     let base = spawn_server(be.clone()).await;
     let client = DigClient::new(base);
     let new_root = b32(0x20);
@@ -116,7 +123,7 @@ async fn push_pending_returns_pending_and_pull_sees_confirmed_not_pending() {
     let (sk, pk) = digstore_crypto::bls_keygen(&[55u8; 32]);
     let be = Arc::new(InMemoryBackend::new());
     let id = b32(8);
-    be.add_store(id, pk, b32(0x10), vec![0u8; 8]);
+    be.add_store(id, pk, b32(0x10), vec![0u8; 8], None);
     let base = spawn_server(be.clone()).await;
     let client = DigClient::new(base);
     let pending_root = b32(0x20);
@@ -147,7 +154,7 @@ async fn push_non_fast_forward_is_client_error() {
     let (sk, pk) = digstore_crypto::bls_keygen(&[33u8; 32]);
     let be = Arc::new(InMemoryBackend::new());
     let id = b32(9);
-    be.add_store(id, pk, b32(0x10), vec![0u8; 8]);
+    be.add_store(id, pk, b32(0x10), vec![0u8; 8], None);
     let base = spawn_server(be).await;
     let client = DigClient::new(base);
     let res = client

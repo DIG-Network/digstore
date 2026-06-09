@@ -5,8 +5,8 @@
 
 use std::fs;
 
-use digstore_core::{Bytes32, Bytes96, GenerationState, StoreConfig, Visibility};
-use digstore_remote::{ClientError, DigClient, PullResult, PushResult};
+use digstore_core::{Bytes32, Bytes48, Bytes96, GenerationState, StoreConfig, Visibility};
+use digstore_remote::{verify_push_signature, ClientError, DigClient, PullResult, PushResult};
 
 use crate::context::CliContext;
 use crate::error::CliError;
@@ -39,9 +39,60 @@ pub(crate) fn push_auth_message(root: &Bytes32, store_id: &Bytes32) -> [u8; 32] 
     digstore_crypto::push_signing_message(root, store_id)
 }
 
-/// Parse a `urn:dig:` or raw `…/stores/{id}` URL into (base_url, store_id_hex).
+/// Verify the remote's served-head authorization: a publisher BLS signature over
+/// `SHA-256(root || store_id)` under `pubkey` (§21.6). `pubkey` is the store key
+/// embedded in the verified module, already proven by `verify_module_root` to
+/// satisfy `SHA-256(pubkey) == store_id`, so a valid signature here proves the
+/// served root was authorized by the store's private key — not merely that the
+/// module is self-consistent. Fails closed on an absent signature: a missing sig
+/// would otherwise let a malicious origin strip authorization (downgrade attack).
+fn verify_head_signature(
+    pubkey: &Bytes48,
+    root: &Bytes32,
+    store_id: &Bytes32,
+    push_sig_hex: &str,
+) -> Result<(), CliError> {
+    if push_sig_hex.is_empty() {
+        return Err(CliError::VerificationFailed(
+            "remote served head carries no publisher signature (unauthenticated head)".into(),
+        ));
+    }
+    let raw = hex::decode(push_sig_hex)
+        .map_err(|_| CliError::VerificationFailed("malformed push signature hex".into()))?;
+    let arr: [u8; 96] = raw
+        .try_into()
+        .map_err(|_| CliError::VerificationFailed("push signature must be 96 bytes".into()))?;
+    if !verify_push_signature(pubkey, root, store_id, &Bytes96(arr)) {
+        return Err(CliError::VerificationFailed(
+            "served-root signature does not verify against the store key".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// True if `base` is an `http://` URL pointing at the loopback interface.
+/// Plaintext transport is permitted ONLY to loopback (local dev/tests); every
+/// other host must use TLS so store contents and push credentials are not sent
+/// in the clear and cannot be substituted by a network MITM.
+fn is_loopback_http(base: &str) -> bool {
+    let rest = match base.strip_prefix("http://") {
+        Some(r) => r,
+        None => return false,
+    };
+    // host[:port] up to the first '/'.
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority);
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+}
+
+/// Parse a raw `<scheme>://host/stores/{id}` URL into (base_url, store_id_hex).
+///
+/// Enforces a transport policy: the scheme must be `https`, or `http` to a
+/// loopback host (dev/test). Other schemes (`file:`, `ftp:`, `gopher:`, …) and
+/// plaintext `http` to a non-loopback host are rejected to prevent SSRF-adjacent
+/// scheme abuse and cleartext exposure of content and credentials.
 fn parse_store_url(url: &str) -> Result<(String, String), CliError> {
-    // Accept `http(s)://host/stores/{hex}`.
     if let Some(idx) = url.find("/stores/") {
         let base = url[..idx].to_string();
         let id = url[idx + "/stores/".len()..]
@@ -50,11 +101,18 @@ fn parse_store_url(url: &str) -> Result<(String, String), CliError> {
             .unwrap_or("")
             .to_string();
         if Bytes32::from_hex(&id).is_ok() {
+            let scheme_ok = base.starts_with("https://") || is_loopback_http(&base);
+            if !scheme_ok {
+                return Err(CliError::InvalidArgument(format!(
+                    "insecure or unsupported remote URL scheme in {base}: use https:// \
+                     (http:// is allowed only for localhost)"
+                )));
+            }
             return Ok((base, id));
         }
     }
     Err(CliError::InvalidArgument(format!(
-        "expected a store URL like http://host/stores/<store_id_hex>, got {url}"
+        "expected a store URL like https://host/stores/<store_id_hex>, got {url}"
     )))
 }
 
@@ -74,14 +132,25 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     let remote_root = Bytes32::from_hex(&info.descriptor.current_root)
         .map_err(|_| CliError::VerificationFailed("bad descriptor root".into()))?;
 
-    // Download + verify (clone_store checks the ETag=root agrees with the body).
+    // Download + verify. The closure cryptographically validates the downloaded
+    // module against the store identity the user asked for: the module's embedded
+    // StoreId must equal `store_id`, SHA-256(embedded PublicKey) must equal the
+    // store id (§20.1 self-certifying identity), and the merkle root recomputed
+    // from the module's own content must equal both the embedded CurrentRoot and
+    // the served root. A server returning an arbitrary/foreign/corrupted module
+    // therefore fails closed instead of being installed and executed.
     let (etag_root, module) = client
-        .clone_store(&store_id, |_bytes, served_root| {
-            if *served_root == remote_root {
-                Ok(())
-            } else {
-                Err("module ETag root != descriptor root".to_string())
+        .clone_store(&store_id, |bytes, served_root| {
+            let id = digstore_compiler::verify_module_root(bytes, &store_id)
+                .map_err(|e| format!("module identity verification failed: {e:?}"))?;
+            if id.root != *served_root {
+                return Err(format!(
+                    "module content root {} != served root {}",
+                    id.root.to_hex(),
+                    served_root.to_hex()
+                ));
             }
+            Ok(())
         })
         .await
         .map_err(map_remote_err)?;
@@ -90,6 +159,20 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
             "descriptor root and module ETag disagree".into(),
         ));
     }
+
+    // Authenticated head (§21.6): the served root must carry the publisher's BLS
+    // signature, verified against the store key embedded in the module (which
+    // verify_module_root proved hashes to the store id). This is what upgrades
+    // clone from "self-consistent module" to "publisher-authorized content", so a
+    // malicious origin holding the public store key cannot serve a fabricated root.
+    let identity = digstore_compiler::verify_module_root(&module, &store_id)
+        .map_err(|e| CliError::VerificationFailed(format!("module verify: {e:?}")))?;
+    verify_head_signature(
+        &identity.public_key,
+        &remote_root,
+        &store_id,
+        &info.descriptor.push_sig,
+    )?;
 
     // Real generation id/timestamp from /roots.
     let gen = info
@@ -204,8 +287,28 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
     match result {
         PullResult::UpToDate => Ok(local_root.unwrap_or(Bytes32([0u8; 32]))),
         PullResult::Module { root, bytes } => {
+            // Verify the downloaded module before persisting/serving it: embedded
+            // StoreId must match, SHA-256(PublicKey)==StoreId, and the recomputed
+            // content root must equal the claimed root (same gate as `clone`).
+            let id = digstore_compiler::verify_module_root(&bytes, &cfg.store_id)
+                .map_err(|e| CliError::VerificationFailed(format!("module verify: {e:?}")))?;
+            if id.root != root {
+                return Err(CliError::VerificationFailed(format!(
+                    "pulled module content root {} != claimed root {}",
+                    id.root.to_hex(),
+                    root.to_hex()
+                )));
+            }
             // Real generation id/timestamp from /roots.
             let info = client.fetch(&cfg.store_id).await.map_err(map_remote_err)?;
+            // Authenticated head (§21.6): require the publisher signature over the
+            // pulled root, verified against the store-id-bound module key.
+            verify_head_signature(
+                &id.public_key,
+                &root,
+                &cfg.store_id,
+                &info.descriptor.push_sig,
+            )?;
             let gen = info
                 .roots
                 .roots

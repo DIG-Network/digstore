@@ -19,7 +19,7 @@ pub fn b96(x: u8) -> Bytes96 {
 pub fn one_store() -> (Arc<InMemoryBackend>, Bytes32, String) {
     let be = Arc::new(InMemoryBackend::new());
     let id = b32(1);
-    be.add_store(id, b48(2), b32(0x10), vec![0u8; 64]);
+    be.add_store(id, b48(2), b32(0x10), vec![0u8; 64], None);
     (be, id, id.to_hex())
 }
 

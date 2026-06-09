@@ -2,7 +2,7 @@ use crate::backend::{
     DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord,
 };
 use crate::error::RemoteError;
-use digstore_core::{Bytes32, Bytes48};
+use digstore_core::{Bytes32, Bytes48, Bytes96};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -19,6 +19,8 @@ struct Generation {
     key_table_changes: Vec<Vec<u8>>,
     /// retrieval_key -> (ciphertext, encoded merkle proof) for real hits.
     content: HashMap<Bytes32, (Vec<u8>, Vec<u8>)>,
+    /// Publisher push signature over SHA-256(root || store_id) for this root (§21.6).
+    signature: Option<Bytes96>,
 }
 
 struct StoreState {
@@ -53,13 +55,17 @@ impl InMemoryBackend {
         }
     }
 
-    /// Register a store with a genesis generation.
+    /// Register a store with a genesis generation. `genesis_sig` is the publisher
+    /// push signature over the genesis root; supply it when the genesis head will
+    /// be cloned/pulled (clients fail closed on an unsigned served head), or
+    /// `None` for a genesis that is never served as the clone target.
     pub fn add_store(
         &self,
         store_id: Bytes32,
         public_key: Bytes48,
         genesis_root: Bytes32,
         module: Vec<u8>,
+        genesis_sig: Option<Bytes96>,
     ) {
         let g = Generation {
             parent: None,
@@ -69,6 +75,7 @@ impl InMemoryBackend {
             chunks: HashMap::new(),
             key_table_changes: Vec::new(),
             content: HashMap::new(),
+            signature: genesis_sig,
         };
         let mut state = StoreState {
             public_key,
@@ -106,6 +113,7 @@ impl InMemoryBackend {
             chunks: chunks.into_iter().collect(),
             key_table_changes,
             content: HashMap::new(),
+            signature: None,
         };
         st.generations.insert(new_root, gen);
         if advance {
@@ -179,6 +187,7 @@ impl RemoteBackend for InMemoryBackend {
             pending_root: st.pending_root,
             served_size: served.module.len() as u64,
             public_key: st.public_key,
+            served_sig: served.signature,
         })
     }
 
@@ -262,6 +271,7 @@ impl RemoteBackend for InMemoryBackend {
         parent: &Bytes32,
         new_root: &Bytes32,
         module_bytes: &[u8],
+        sig: Option<&Bytes96>,
         mode: PushMode,
     ) -> Result<PushOutcome, RemoteError> {
         let mut stores = self.stores.lock().unwrap();
@@ -275,6 +285,7 @@ impl RemoteBackend for InMemoryBackend {
             chunks: HashMap::new(),
             key_table_changes: Vec::new(),
             content: HashMap::new(),
+            signature: sig.copied(),
         };
         st.generations.insert(*new_root, gen);
         match mode {
@@ -378,7 +389,7 @@ mod tests {
     fn backend_with_one_store() -> (InMemoryBackend, Bytes32) {
         let be = InMemoryBackend::new();
         let id = b32(1);
-        be.add_store(id, b48(2), b32(0x10), vec![0u8; 64]);
+        be.add_store(id, b48(2), b32(0x10), vec![0u8; 64], None);
         (be, id)
     }
 
@@ -425,7 +436,7 @@ mod tests {
     fn pending_push_does_not_advance_served_head() {
         let (be, id) = backend_with_one_store();
         let out = be
-            .accept_push(&id, &b32(0x10), &b32(0x20), &[0u8; 32], PushMode::Pending)
+            .accept_push(&id, &b32(0x10), &b32(0x20), &[0u8; 32], None, PushMode::Pending)
             .unwrap();
         assert_eq!(out, PushOutcome::Pending);
         let hs = be.head_state(&id).unwrap();
@@ -441,7 +452,7 @@ mod tests {
     fn advance_push_moves_served_head() {
         let (be, id) = backend_with_one_store();
         let out = be
-            .accept_push(&id, &b32(0x10), &b32(0x30), &[0u8; 48], PushMode::Advance)
+            .accept_push(&id, &b32(0x10), &b32(0x30), &[0u8; 48], None, PushMode::Advance)
             .unwrap();
         assert_eq!(out, PushOutcome::Advanced);
         let hs = be.head_state(&id).unwrap();

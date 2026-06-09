@@ -19,6 +19,7 @@ pub async fn get_descriptor(State(s): State<AppState>, Path(id): Path<String>) -
                 current_root: hs.served_root.to_hex(),
                 size: hs.served_size,
                 public_key: hs.public_key.to_hex(),
+                push_sig: hs.served_sig.map(|s| hex::encode(s.0)).unwrap_or_default(),
             };
             Json(body).into_response()
         }

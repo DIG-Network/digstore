@@ -25,6 +25,19 @@ pub fn store_id_and_root(dir: &TempDir) -> (String, String) {
     (store_id, root)
 }
 
+/// Compute the publisher push signature over a store's genesis root, using the
+/// source store's BLS signing key (the seed written to `signing_key.bin` by
+/// `digstore init`). This is what a real publisher's first push would carry; the
+/// test seeds it so a clone of the genesis head passes the §21.6 authenticated-
+/// head check.
+pub fn genesis_push_sig(dir: &TempDir, store_id_hex: &str, root_hex: &str) -> [u8; 96] {
+    let seed = std::fs::read(dir.path().join("signing_key.bin")).unwrap();
+    let sk = digstore_crypto::bls::SecretKey::from_seed(&seed);
+    let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
+    let root = digstore_core::Bytes32::from_hex(root_hex).unwrap();
+    digstore_crypto::sign_push(&sk, &root, &store_id).0
+}
+
 /// Corrupt the injected data section by flipping a byte well past the header.
 /// Lands inside the chunk-ciphertext pool region so the host still instantiates
 /// the module (no code corruption) and the failure is CLIENT-side merkle/GCM.
@@ -82,11 +95,16 @@ impl TestServer {
     }
 
     /// Start a server seeded with one store at `genesis_root` carrying `module`.
+    /// `genesis_sig` is the publisher push signature over the genesis root; it is
+    /// required because the seeded genesis IS the served head a client clones, and
+    /// clone/pull now fail closed on an unauthenticated head (§21.6). See
+    /// [`genesis_push_sig`].
     pub fn start_with_module(
         store_id_hex: &str,
         root_hex: &str,
         public_key: [u8; 48],
         module: &[u8],
+        genesis_sig: [u8; 96],
     ) -> Self {
         let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
         let root = digstore_core::Bytes32::from_hex(root_hex).unwrap();
@@ -96,11 +114,14 @@ impl TestServer {
             digstore_core::Bytes48(public_key),
             root,
             module.to_vec(),
+            Some(digstore_core::Bytes96(genesis_sig)),
         );
         Self::launch(backend)
     }
 
     /// Start an empty server with one store registered (genesis = empty module).
+    /// The empty genesis is never cloned directly (a push advances the head to a
+    /// real, signed root first), so it carries no signature.
     pub fn start_empty(store_id_hex: &str, public_key: [u8; 48]) -> Self {
         let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
         let backend = Arc::new(digstore_remote::InMemoryBackend::new());
@@ -109,6 +130,7 @@ impl TestServer {
             digstore_core::Bytes48(public_key),
             digstore_core::Bytes32([0u8; 32]),
             vec![0u8; 4],
+            None,
         );
         Self::launch(backend)
     }
