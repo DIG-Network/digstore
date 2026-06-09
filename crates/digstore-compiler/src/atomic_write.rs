@@ -7,7 +7,11 @@ use crate::error::Result;
 
 /// The exact output filename: `{hex(store_id)}-{hex(roothash)}.wasm` (§19.4).
 pub fn output_filename(store_id: &Bytes32, roothash: &Bytes32) -> String {
-    format!("{}-{}.wasm", hex::encode(store_id.0), hex::encode(roothash.0))
+    format!(
+        "{}-{}.wasm",
+        hex::encode(store_id.0),
+        hex::encode(roothash.0)
+    )
 }
 
 /// Write `bytes` atomically: write to `<final>.tmp` in the same directory, flush +
