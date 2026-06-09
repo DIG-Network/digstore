@@ -1,0 +1,84 @@
+name: Release
+
+# On a version tag (v*), build the digstore CLI in release mode, package it into
+# a Windows installer (Inno Setup) that registers digstore on PATH, and attach
+# the installer to the GitHub Release for that tag.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Only the write scope needed to publish the release + upload the asset.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  windows-installer:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add wasm32-unknown-unknown
+          rustup default stable
+          rustc --version
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-release-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-release-cargo-
+
+      # digstore-cli's build.rs embeds the real guest wasm (BINDING contract D6).
+      - name: Build guest wasm
+        run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
+
+      - name: Build digstore CLI (release)
+        run: cargo build -p digstore-cli --release --locked
+
+      - name: Derive version from tag
+        run: |
+          $v = "${{ github.ref_name }}" -replace '^v',''
+          "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Installer version: $v"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & "$iscc" "/DAppVersion=$env:VERSION" "installer\digstore.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+          Get-ChildItem installer\Output
+
+      - name: Upload installer as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digstore-windows-installer
+          path: installer/Output/*.exe
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $asset = (Get-ChildItem installer\Output\*setup.exe | Select-Object -First 1).FullName
+          gh release create "${{ github.ref_name }}" --title "digstore ${{ github.ref_name }}" --generate-notes 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "release already exists; uploading asset" }
+          gh release upload "${{ github.ref_name }}" "$asset" --clobber

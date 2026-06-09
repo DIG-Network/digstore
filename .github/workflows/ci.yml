@@ -1,0 +1,116 @@
+name: CI
+
+# Secure CI suite: format, lint (deny warnings), build, test on Linux + Windows,
+# plus supply-chain checks (cargo-deny advisories/licenses/sources/bans and
+# cargo-audit RUSTSEC). Runs on every PR and on pushes to main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege: CI only needs to read the repo. No token can write.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"        # reproducible, smaller caches in CI
+  RUST_BACKTRACE: "1"
+
+jobs:
+  test:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain (rustup is preinstalled on GitHub runners)
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt clippy
+          rustup target add wasm32-unknown-unknown
+          rustup default stable
+          rustc --version && cargo --version
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # The CLI's build.rs embeds the real guest wasm (BINDING contract D6), so
+      # the wasm32 guest must be built before anything that compiles digstore-cli.
+      - name: Build guest wasm (required by digstore-cli build.rs)
+        run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
+
+      - name: Format check
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all --check
+
+      # Deny warnings (correctness, suspicious, security-relevant lints fail CI).
+      # Two purely cosmetic style lints are allowed so the gate stays focused on
+      # substance rather than churn over test-code idioms.
+      - name: Clippy (deny warnings)
+        run: >
+          cargo clippy --workspace --all-targets --locked --
+          -D warnings
+          -A clippy::default_constructed_unit_structs
+          -A clippy::field_reassign_with_default
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+  supply-chain:
+    name: supply-chain audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+          key: ${{ runner.os }}-cargo-tools-deny-audit
+
+      - name: Install cargo-deny and cargo-audit
+        run: |
+          cargo install cargo-deny --locked || true
+          cargo install cargo-audit --locked || true
+
+      # Advisories, licenses, sources, and dependency bans (see deny.toml).
+      - name: cargo deny check
+        run: cargo deny check
+
+      # RUSTSEC advisory database scan against the committed Cargo.lock.
+      - name: cargo audit
+        run: cargo audit
