@@ -31,6 +31,8 @@ pub struct Template {
     pub memory_max_pages: Option<u64>,
     /// Whether memory 0 is a 64-bit memory (§5.1 requires this to be false).
     pub memory64: bool,
+    /// Whether memory 0 is shared (§5.1 requires this to be false).
+    pub memory_shared: bool,
 }
 
 impl Template {
@@ -51,6 +53,7 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
     let mut memory_min_pages: Option<u64> = None;
     let mut memory_max_pages: Option<u64> = None;
     let mut memory64 = false;
+    let mut memory_shared = false;
 
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
@@ -69,6 +72,7 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
                         memory_min_pages = Some(mem.initial);
                         memory_max_pages = mem.maximum;
                         memory64 = mem.memory64;
+                        memory_shared = mem.shared;
                     }
                 }
             }
@@ -93,6 +97,14 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
             "memory declares memory64 but §5.1 requires a 32-bit memory (memory64: false)".into(),
         ));
     }
+    // §5.1: the single linear memory MUST be unshared (`shared: false`). A
+    // template declaring a shared memory is rejected outright so the compiler
+    // never copies the shared flag verbatim into the served module.
+    if memory_shared {
+        return Err(CompilerError::InvalidTemplate(
+            "memory declares shared but §5.1 requires an unshared memory (shared: false)".into(),
+        ));
+    }
     // §5.1: a DECLARED maximum must not exceed the 16 MiB ceiling. A raw guest
     // template (rustc/LLVM output) may legitimately declare NO maximum; the
     // compiler normalizes the EMITTED module to `Some(256)` during injection
@@ -112,6 +124,7 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
         memory_min_pages: min,
         memory_max_pages,
         memory64,
+        memory_shared,
     })
 }
 
@@ -235,6 +248,20 @@ mod tests {
         let err = load_template(&bytes).unwrap_err();
         assert!(
             err.to_string().contains("memory64"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn template_declaring_shared_memory_is_rejected() {
+        // §5.1: the single linear memory MUST be `shared: false`. A template that
+        // declares a shared memory must be rejected by `load_template` (the
+        // compiler must not copy the shared flag verbatim into the served module).
+        // A shared memory must declare a maximum, so use 1 256 shared.
+        let bytes = full_abi_module(r#"(memory (export "memory") 1 256 shared)"#);
+        let err = load_template(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("shared"),
             "unexpected error: {err}"
         );
     }
