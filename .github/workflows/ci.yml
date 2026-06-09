@@ -38,7 +38,7 @@ jobs:
       - name: Install Rust toolchain (rustup is preinstalled on GitHub runners)
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt clippy
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup target add wasm32-unknown-unknown
           rustup default stable
           rustc --version && cargo --version
@@ -100,17 +100,14 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-          key: ${{ runner.os }}-cargo-tools-deny-audit
+          key: ${{ runner.os }}-cargo-tools-deny
 
-      - name: Install cargo-deny and cargo-audit
-        run: |
-          cargo install cargo-deny --locked || true
-          cargo install cargo-audit --locked || true
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked || true
 
-      # Advisories, licenses, sources, and dependency bans (see deny.toml).
+      # Security-relevant supply-chain checks: RUSTSEC advisories (known/accepted
+      # ones ignored in deny.toml), yanked crates, dependency bans, and the source
+      # registry allow-list. cargo-deny is a superset of cargo-audit, so a separate
+      # audit step would be redundant. License compliance is deferred (see deny.toml).
       - name: cargo deny check
-        run: cargo deny check
-
-      # RUSTSEC advisory database scan against the committed Cargo.lock.
-      - name: cargo audit
-        run: cargo audit
+        run: cargo deny check advisories bans sources

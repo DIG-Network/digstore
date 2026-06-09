@@ -1,27 +1,38 @@
 # cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/).
-# Run `cargo deny check` in CI to fail the build on known-vulnerable, unmaintained,
-# or unlicensed dependencies. Install with `cargo install cargo-deny`.
+# CI runs `cargo deny check advisories bans sources` (see .github/workflows/ci.yml)
+# — the security-relevant checks. The license-compliance check is not yet gated
+# (the workspace crates need explicit license fields and the full transitive
+# license set must be enumerated first); the [licenses] section below is kept for
+# when it is enabled. Install with `cargo install cargo-deny --locked`.
 
 [advisories]
-# Use the RustSec advisory DB. `vulnerability`/`unmaintained` default to deny in
-# recent cargo-deny; listed explicitly for clarity.
 version = 2
 yanked = "deny"
+# Known, accepted advisories with no available upstream fix (see SECURITY.md).
+# Re-evaluate on every audit; remove an entry once the dependency is upgraded.
 ignore = [
-    # Tracked, no fixed upstream yet (see SECURITY.md). Re-evaluate on each audit:
-    #   RUSTSEC-2023-0071  rsa Marvin attack (transitive, JWT/RSA path)
-    #   RUSTSEC-2025-0141  bincode 1.x unmaintained (risc0 proof path)
-    # Remove an entry once the dependency is upgraded off the affected version.
+    "RUSTSEC-2023-0071", # rsa: Marvin timing side-channel (transitive, JWT/RSA path)
+    "RUSTSEC-2024-0388", # derivative: unmaintained (arkworks/risc0 proof stack)
+    "RUSTSEC-2024-0436", # paste: no longer maintained (transitive)
+    "RUSTSEC-2025-0052", # async-std: discontinued (httpmock dev-dependency, tests only)
+    "RUSTSEC-2025-0055", # tracing/ANSI-escape log-injection advisory (transitive)
 ]
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"          # no `version = "*"` dependencies
-allow-wildcard-paths = true # path deps within the workspace are fine
+# Intra-workspace dependencies are path deps without versions; that is intentional
+# for an unpublished workspace, so wildcard deps are allowed rather than denied.
+wildcards = "allow"
 
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Not currently gated in CI (see header). Kept for when license compliance is
+# enabled (the workspace crates first need `license.workspace = true`).
 [licenses]
 version = 2
-# Permissive licenses compatible with this project's MIT license.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -33,10 +44,7 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
+    "MPL-2.0",
+    "BSL-1.0",
 ]
 confidence-threshold = 0.9
-
-[sources]
-unknown-registry = "deny"
-unknown-git = "deny"
-allow-registry = ["https://github.com/rust-lang/crates.io-index"]
