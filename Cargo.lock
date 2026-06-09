@@ -1403,7 +1403,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chunker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "digstore-core",
  "hex",
@@ -1413,7 +1413,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
@@ -1466,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "serde",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-remote"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
