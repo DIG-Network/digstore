@@ -81,7 +81,10 @@ fn is_loopback_http(base: &str) -> bool {
     };
     // host[:port] up to the first '/'.
     let authority = rest.split('/').next().unwrap_or("");
-    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority);
+    let host = authority
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(authority);
     let host = host.trim_start_matches('[').trim_end_matches(']');
     host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
 }

@@ -5,7 +5,11 @@ use digstore_prover::{
 };
 
 fn block() -> ChiaBlockRef {
-    ChiaBlockRef { header_hash: Bytes32([0x55u8; 32]), height: 42, timestamp: 1_000_000 }
+    ChiaBlockRef {
+        header_hash: Bytes32([0x55u8; 32]),
+        height: 42,
+        timestamp: 1_000_000,
+    }
 }
 
 #[test]

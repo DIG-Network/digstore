@@ -9,6 +9,7 @@ pub const MAX_MEMORY_PAGES: u64 = 256;
 /// i.e. one 64 KiB page). Injection raises the EMITTED module's `min` to cover
 /// `DIGS_DATA_OFFSET + total_len` (D2), but the committed template literal MUST
 /// match the §5.1 nominal value of 1 page.
+#[allow(dead_code)] // documented spec constant; kept for reference (§5.1).
 pub const NOMINAL_MEMORY_MIN_PAGES: u64 = 1;
 
 /// Host functions the served module must import from the `dig_host` module

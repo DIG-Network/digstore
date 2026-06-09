@@ -115,8 +115,16 @@ impl ContentRequest {
     pub fn decode(b: &[u8]) -> Result<(Self, usize), DecodeError> {
         let mut r = Reader::new(b);
         let retrieval_key = r.bytes32()?;
-        let root_hash = if r.u8()? == 1 { Some(r.bytes32()?) } else { None };
-        let range = if r.u8()? == 1 { Some((r.u64()?, r.u64()?)) } else { None };
+        let root_hash = if r.u8()? == 1 {
+            Some(r.bytes32()?)
+        } else {
+            None
+        };
+        let range = if r.u8()? == 1 {
+            Some((r.u64()?, r.u64()?))
+        } else {
+            None
+        };
         let jwt = if r.u8()? == 1 {
             let n = r.u32()? as usize;
             Some(r.take(n)?.to_vec())
@@ -124,12 +132,21 @@ impl ContentRequest {
             None
         };
         let window = if r.u8()? == 1 {
-            Some(ValidityWindow { not_before: r.u64()?, not_after: r.u64()? })
+            Some(ValidityWindow {
+                not_before: r.u64()?,
+                not_after: r.u64()?,
+            })
         } else {
             None
         };
         Ok((
-            ContentRequest { retrieval_key, root_hash, range, jwt, window },
+            ContentRequest {
+                retrieval_key,
+                root_hash,
+                range,
+                jwt,
+                window,
+            },
             r.pos,
         ))
     }
@@ -153,9 +170,20 @@ impl ProofRequest {
     pub fn decode(b: &[u8]) -> Result<(Self, usize), DecodeError> {
         let mut r = Reader::new(b);
         let retrieval_key = r.bytes32()?;
-        let root_hash = if r.u8()? == 1 { Some(r.bytes32()?) } else { None };
+        let root_hash = if r.u8()? == 1 {
+            Some(r.bytes32()?)
+        } else {
+            None
+        };
         let mut client_nonce = [0u8; 32];
         client_nonce.copy_from_slice(r.take(32)?);
-        Ok((ProofRequest { retrieval_key, root_hash, client_nonce }, r.pos))
+        Ok((
+            ProofRequest {
+                retrieval_key,
+                root_hash,
+                client_nonce,
+            },
+            r.pos,
+        ))
     }
 }

@@ -69,8 +69,7 @@ pub fn run(ctx: &CliContext, args: CheckoutArgs) -> Result<(), CliError> {
             resource_key: Some(key.clone()),
         };
         let resp = serve::serve_content(ctx, &module_path, &urn, root)?;
-        let chunk_lens =
-            store_ops::resource_chunk_lens(ctx, &root, &key).unwrap_or_default();
+        let chunk_lens = store_ops::resource_chunk_lens(ctx, &root, &key).unwrap_or_default();
         let plaintext =
             client_crypto::decrypt_and_verify(&resp, &urn, salt.as_ref(), &root, &chunk_lens)?;
         let dest = safe_resource_path(&args.out, &key)?;

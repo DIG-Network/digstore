@@ -253,7 +253,11 @@ mod tests {
         let blob = b"DIGS-blob-bytes";
         let out = inject_data_section(&template, blob, 0x10).expect("inject ok");
         let (_, max) = memory_limits(&out);
-        assert_eq!(max, Some(256), "§5.1 emitted module must declare maximum 256");
+        assert_eq!(
+            max,
+            Some(256),
+            "§5.1 emitted module must declare maximum 256"
+        );
     }
 
     /// A template already declaring the ceiling stays at 256.

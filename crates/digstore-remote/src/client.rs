@@ -109,7 +109,10 @@ impl DigClient {
             .json()
             .await
             .map_err(|e| ClientError::Decode(e.to_string()))?;
-        Ok(FetchInfo { descriptor: d, roots })
+        Ok(FetchInfo {
+            descriptor: d,
+            roots,
+        })
     }
 
     /// §21.3 clone: download + verify the module. `verify` is called with
@@ -195,7 +198,10 @@ impl DigClient {
         // full module download with conditional request.
         let mut req = self.http.get(self.url(&format!("/stores/{id}/module")));
         if let Some(lr) = local_root {
-            req = req.header(reqwest::header::IF_NONE_MATCH, format!("\"{}\"", lr.to_hex()));
+            req = req.header(
+                reqwest::header::IF_NONE_MATCH,
+                format!("\"{}\"", lr.to_hex()),
+            );
         }
         let resp = req
             .send()
@@ -245,7 +251,10 @@ impl DigClient {
             .header("X-Dig-Parent", parent.to_hex())
             .header("X-Dig-Root", new_root.to_hex())
             .header("X-Dig-Signature", hex::encode(sig.0))
-            .header("X-Dig-Push-Mode", if pending { "pending" } else { "advance" })
+            .header(
+                "X-Dig-Push-Mode",
+                if pending { "pending" } else { "advance" },
+            )
             .body(module.to_vec());
         if let Some(t) = bearer {
             req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {t}"));

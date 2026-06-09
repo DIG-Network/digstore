@@ -3,8 +3,17 @@ use digstore_guest::packing::{guest_pack, guest_unpack};
 
 #[test]
 fn guest_pack_matches_core_pack() {
-    for &(p, l) in &[(0u32, 0u32), (1, 2), (0x1234_5678, 0x0000_00FF), (u32::MAX, 16)] {
-        assert_eq!(guest_pack(p, l), pack_ptr_len(p, l), "pack must match core for {p},{l}");
+    for &(p, l) in &[
+        (0u32, 0u32),
+        (1, 2),
+        (0x1234_5678, 0x0000_00FF),
+        (u32::MAX, 16),
+    ] {
+        assert_eq!(
+            guest_pack(p, l),
+            pack_ptr_len(p, l),
+            "pack must match core for {p},{l}"
+        );
     }
 }
 
@@ -19,7 +28,10 @@ fn guest_unpack_matches_core_unpack() {
 fn error_sentinel_round_trips() {
     // len==0 && (ptr as i32) < 0 => error per core::abi::is_error
     let err = pack_ptr_len(0xFFFF_FFFF, 0);
-    assert!(is_error(err), "high-bit ptr with zero len is an error sentinel");
+    assert!(
+        is_error(err),
+        "high-bit ptr with zero len is an error sentinel"
+    );
     let ok = pack_ptr_len(16, 32);
     assert!(!is_error(ok));
 }
@@ -34,7 +46,10 @@ fn content_request_round_trips() {
         root_hash: Some(Bytes32([9u8; 32])),
         range: Some((10, 200)),
         jwt: Some(b"header.payload.sig".to_vec()),
-        window: Some(ValidityWindow { not_before: 100, not_after: 999 }),
+        window: Some(ValidityWindow {
+            not_before: 100,
+            not_after: 999,
+        }),
     };
     let bytes = req.encode();
     let (decoded, consumed) = ContentRequest::decode(&bytes).expect("decode");

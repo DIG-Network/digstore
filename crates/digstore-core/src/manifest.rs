@@ -9,10 +9,10 @@ use crate::codec::{utf8_from, Decode, DecodeError, Decoder, Encode, Encoder};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-#[cfg(feature = "std")]
-use std::collections::BTreeMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap;
+#[cfg(feature = "std")]
+use std::collections::BTreeMap;
 
 /// One author of a store's metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]

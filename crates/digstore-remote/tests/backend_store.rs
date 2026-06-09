@@ -33,8 +33,9 @@ fn head_state_matches_store_genesis() {
     let store_id = b32(0x42);
     let config = config_at(&tmp, store_id);
     // build a store with one generation + module via the production helper.
-    let backend = StoreBackend::initialize_for_test(config, b48(7), vec![0u8; 128], b32(0x10), None)
-        .expect("init store backend");
+    let backend =
+        StoreBackend::initialize_for_test(config, b48(7), vec![0u8; 128], b32(0x10), None)
+            .expect("init store backend");
     let hs = backend.head_state(&store_id).unwrap();
     assert_eq!(hs.served_root, b32(0x10));
     assert_eq!(hs.served_size, 128);

@@ -54,11 +54,18 @@ fn parse_header_hash(s: &str) -> Result<Bytes32> {
 /// come from `record`; if `record` has no timestamp it is a non-transaction
 /// block, so we walk `prev_transaction_block_height` via `resolve` until a
 /// timestamped block is found, and inherit that timestamp.
-fn record_to_ref(record: BlockRecord, resolve: &mut BlockRecordResolver<'_>) -> Result<ChiaBlockRef> {
+fn record_to_ref(
+    record: BlockRecord,
+    resolve: &mut BlockRecordResolver<'_>,
+) -> Result<ChiaBlockRef> {
     let header_hash = parse_header_hash(&record.header_hash)?;
     let height = record.height;
     let timestamp = resolve_timestamp(&record, resolve)?;
-    Ok(ChiaBlockRef { header_hash, height, timestamp })
+    Ok(ChiaBlockRef {
+        header_hash,
+        height,
+        timestamp,
+    })
 }
 
 /// Walk down to the nearest previous transaction block to obtain a timestamp.
@@ -92,7 +99,8 @@ fn resolve_timestamp(record: &BlockRecord, resolve: &mut BlockRecordResolver<'_>
 pub fn parse_blockchain_state(resp: BlockchainStateResponse) -> Result<ChiaBlockRef> {
     if !resp.success {
         return Err(ProverError::ChainRpc(
-            resp.error.unwrap_or_else(|| "get_blockchain_state failed".into()),
+            resp.error
+                .unwrap_or_else(|| "get_blockchain_state failed".into()),
         ));
     }
     let peak = resp
@@ -100,7 +108,9 @@ pub fn parse_blockchain_state(resp: BlockchainStateResponse) -> Result<ChiaBlock
         .and_then(|s| s.peak)
         .ok_or_else(|| ProverError::ChainRpc("no peak in blockchain_state".into()))?;
     record_to_ref(peak, &mut |_h| {
-        Err(ProverError::ChainRpc("peak unexpectedly lacked a timestamp".into()))
+        Err(ProverError::ChainRpc(
+            "peak unexpectedly lacked a timestamp".into(),
+        ))
     })
 }
 
@@ -112,7 +122,8 @@ pub fn parse_block_record_resolved(
 ) -> Result<ChiaBlockRef> {
     if !resp.success {
         return Err(ProverError::ChainRpc(
-            resp.error.unwrap_or_else(|| "get_block_record failed".into()),
+            resp.error
+                .unwrap_or_else(|| "get_block_record failed".into()),
         ));
     }
     let rec = resp
@@ -136,7 +147,10 @@ impl Default for CoinsetChainSource {
 
 impl CoinsetChainSource {
     pub fn new(base_url: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), client: reqwest::blocking::Client::new() }
+        Self {
+            base_url: base_url.into(),
+            client: reqwest::blocking::Client::new(),
+        }
     }
 
     fn post_json(&self, endpoint: &str, body: String) -> Result<String> {
@@ -148,16 +162,21 @@ impl CoinsetChainSource {
             .body(body)
             .send()
             .map_err(|e| ProverError::ChainRpc(format!("{endpoint} send: {e}")))?;
-        resp.text().map_err(|e| ProverError::ChainRpc(format!("{endpoint} body: {e}")))
+        resp.text()
+            .map_err(|e| ProverError::ChainRpc(format!("{endpoint} body: {e}")))
     }
 
     fn fetch_record(&self, height: u32) -> Result<BlockRecord> {
-        let body = self.post_json("get_block_record_by_height", format!("{{\"height\": {height}}}"))?;
+        let body = self.post_json(
+            "get_block_record_by_height",
+            format!("{{\"height\": {height}}}"),
+        )?;
         let resp: BlockRecordResponse = serde_json::from_str(&body)
             .map_err(|e| ProverError::ChainRpc(format!("parse record: {e}")))?;
         if !resp.success {
             return Err(ProverError::ChainRpc(
-                resp.error.unwrap_or_else(|| "get_block_record_by_height failed".into()),
+                resp.error
+                    .unwrap_or_else(|| "get_block_record_by_height failed".into()),
             ));
         }
         resp.block_record
@@ -176,8 +195,10 @@ impl ChainSource for CoinsetChainSource {
     fn verify_block(&self, block: &ChiaBlockRef, freshness_window_secs: u64) -> Result<()> {
         // Confirm the block is on-chain: fetch the record at this height and
         // compare header hashes (walking down for a timestamp if needed).
-        let body =
-            self.post_json("get_block_record_by_height", format!("{{\"height\": {}}}", block.height))?;
+        let body = self.post_json(
+            "get_block_record_by_height",
+            format!("{{\"height\": {}}}", block.height),
+        )?;
         let resp: BlockRecordResponse = serde_json::from_str(&body)
             .map_err(|e| ProverError::ChainRpc(format!("parse record: {e}")))?;
         let on_chain = parse_block_record_resolved(resp, &mut |h| self.fetch_record(h))?;
@@ -190,7 +211,11 @@ impl ChainSource for CoinsetChainSource {
             return Err(ProverError::BlockInFuture(block.timestamp, now));
         }
         if now - block.timestamp > freshness_window_secs {
-            return Err(ProverError::BlockTooOld { block_ts: block.timestamp, now, window: freshness_window_secs });
+            return Err(ProverError::BlockTooOld {
+                block_ts: block.timestamp,
+                now,
+                window: freshness_window_secs,
+            });
         }
         Ok(())
     }

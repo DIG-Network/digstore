@@ -86,15 +86,9 @@ fn discovery_manifest_round_trips_by_conventional_key() {
         assert!(r["type"].is_string(), "entry has a type: {r}");
     }
     // index.html's inferred type is text/html.
-    let idx = resources
-        .iter()
-        .find(|r| r["key"] == "index.html")
-        .unwrap();
+    let idx = resources.iter().find(|r| r["key"] == "index.html").unwrap();
     assert_eq!(idx["type"], "text/html");
-    let dat = resources
-        .iter()
-        .find(|r| r["key"] == "data.json")
-        .unwrap();
+    let dat = resources.iter().find(|r| r["key"] == "data.json").unwrap();
     assert_eq!(dat["type"], "application/json");
 }
 

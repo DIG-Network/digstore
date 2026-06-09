@@ -75,8 +75,7 @@ pub fn write_kdf_fixtures(path: &Path) -> io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let set = KdfFixtureSet::generate();
-    let json =
-        serde_json::to_string_pretty(&set).map_err(io::Error::other)?;
+    let json = serde_json::to_string_pretty(&set).map_err(io::Error::other)?;
     std::fs::write(path, json)
 }
 
@@ -148,7 +147,6 @@ pub fn write_bls_fixtures(path: &Path) -> io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let set = BlsFixtureSet::generate();
-    let json =
-        serde_json::to_string_pretty(&set).map_err(io::Error::other)?;
+    let json = serde_json::to_string_pretty(&set).map_err(io::Error::other)?;
     std::fs::write(path, json)
 }

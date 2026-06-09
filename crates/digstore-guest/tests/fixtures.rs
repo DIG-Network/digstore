@@ -80,7 +80,7 @@ fn key_table_lookup_hit_and_miss() {
         chunk_indices: vec![0, 2, 5],
         total_size: 4096,
     };
-    let table_bytes = encode_key_table(&[entry.clone()]);
+    let table_bytes = encode_key_table(std::slice::from_ref(&entry));
     let blob = build_section_with_keytable([0xAA; 32], [0xBB; 32], &table_bytes);
     let ds = DataSection::parse(&blob).unwrap();
 
@@ -88,7 +88,10 @@ fn key_table_lookup_hit_and_miss() {
     assert_eq!(hit.chunk_indices, vec![0, 2, 5]);
     assert_eq!(hit.total_size, 4096);
 
-    assert!(ds.lookup_key(&Bytes32([0x99; 32])).is_none(), "miss returns None");
+    assert!(
+        ds.lookup_key(&Bytes32([0x99; 32])).is_none(),
+        "miss returns None"
+    );
 }
 
 /// Variant of the fixture that places a KeyTable section instead of a ChunkPool.
@@ -111,7 +114,12 @@ pub fn build_section_with_keytable(store_id: [u8; 32], root: [u8; 32], table: &[
         t.extend_from_slice(&(len as u32).to_be_bytes());
     };
     push(&mut table_bytes, SectionId::StoreId as u16, off0, s0.len());
-    push(&mut table_bytes, SectionId::CurrentRoot as u16, off1, s1.len());
+    push(
+        &mut table_bytes,
+        SectionId::CurrentRoot as u16,
+        off1,
+        s1.len(),
+    );
     push(&mut table_bytes, SectionId::KeyTable as u16, off2, s2.len());
     let mut out = header;
     out.extend_from_slice(&table_bytes);

@@ -119,7 +119,9 @@ impl DigHost for CapturingSigningHost {
     }
 }
 
-fn one_entry_fixture(host: &CapturingSigningHost) -> (DataSection<'static>, ContentRequest, GateConfig) {
+fn one_entry_fixture(
+    host: &CapturingSigningHost,
+) -> (DataSection<'static>, ContentRequest, GateConfig) {
     // Materialize the section into a Box so it lives for the test; we leak it to
     // get a 'static slice — fine for a unit test.
     let key = Bytes32([0x11; 32]);
@@ -172,14 +174,22 @@ fn gate_signs_real_challenge_built_from_nonce_store_id_time() {
         "gate must sign build_challenge(nonce, store_id, time), not a literal"
     );
     // Sanity: it is the 72-byte challenge wire, not the 9-byte literal b\"challenge\".
-    assert_eq!(captured.len(), 72, "challenge must be nonce(32)+store_id(32)+time(8)");
+    assert_eq!(
+        captured.len(),
+        72,
+        "challenge must be nonce(32)+store_id(32)+time(8)"
+    );
     assert_ne!(
         captured.as_slice(),
         b"challenge",
         "the signed message must NOT be the hardcoded literal"
     );
     // The store_id and timestamp must actually come from the data section / host.
-    assert_eq!(&captured[32..64], &STORE_ID, "challenge embeds the store_id");
+    assert_eq!(
+        &captured[32..64],
+        &STORE_ID,
+        "challenge embeds the store_id"
+    );
     assert_eq!(
         &captured[64..72],
         &HOST_TIME.to_be_bytes(),
@@ -205,7 +215,11 @@ fn gate_accepts_only_a_signature_over_the_exact_challenge() {
     let outcome = serve_content(&host, &ds, &req, &gc);
 
     // The gate still built and handed over the real challenge...
-    let captured = host.captured.borrow().clone().expect("gate must call create_attestation");
+    let captured = host
+        .captured
+        .borrow()
+        .clone()
+        .expect("gate must call create_attestation");
     let expected = build_challenge(expected_first_nonce(), STORE_ID, HOST_TIME);
     assert_eq!(captured, expected, "gate still builds the real challenge");
 

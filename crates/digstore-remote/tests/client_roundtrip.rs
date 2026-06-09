@@ -17,7 +17,15 @@ async fn spawn_server(be: Arc<InMemoryBackend>) -> String {
 #[tokio::test]
 async fn fetch_returns_descriptor_and_roots() {
     let (be, id, _hex) = one_store();
-    be.add_generation(&id, b32(0x10), b32(0x11), vec![0u8; 8], vec![], vec![], true);
+    be.add_generation(
+        &id,
+        b32(0x10),
+        b32(0x11),
+        vec![0u8; 8],
+        vec![],
+        vec![],
+        true,
+    );
     let base = spawn_server(be).await;
     let client = DigClient::new(base);
     let info = client.fetch(&id).await.unwrap();
@@ -56,7 +64,15 @@ async fn pull_up_to_date_when_local_equals_head() {
 #[tokio::test]
 async fn pull_downloads_module_when_behind() {
     let (be, id, _hex) = one_store();
-    be.add_generation(&id, b32(0x10), b32(0x12), vec![0u8; 32], vec![], vec![], true);
+    be.add_generation(
+        &id,
+        b32(0x10),
+        b32(0x12),
+        vec![0u8; 32],
+        vec![],
+        vec![],
+        true,
+    );
     let base = spawn_server(be).await;
     let client = DigClient::new(base);
     let res = client.pull(&id, Some(b32(0x10)), false).await.unwrap();
@@ -162,5 +178,8 @@ async fn push_non_fast_forward_is_client_error() {
             digstore_crypto::bls_sign(&sk, msg)
         })
         .await;
-    assert!(matches!(res, Err(digstore_remote::ClientError::NonFastForward)));
+    assert!(matches!(
+        res,
+        Err(digstore_remote::ClientError::NonFastForward)
+    ));
 }

@@ -204,11 +204,8 @@ fn verify_es256(jwk: &Jwk, signing_input: &[u8], sig: &[u8]) -> Result<(), JwtEr
     let y = jwk.y.as_ref().ok_or(JwtError::UnknownKey)?;
     let xb = B64.decode(x).map_err(|_| JwtError::Malformed)?;
     let yb = B64.decode(y).map_err(|_| JwtError::Malformed)?;
-    let point = EncodedPoint::from_affine_coordinates(
-        xb.as_slice().into(),
-        yb.as_slice().into(),
-        false,
-    );
+    let point =
+        EncodedPoint::from_affine_coordinates(xb.as_slice().into(), yb.as_slice().into(), false);
     let vk = VerifyingKey::from_encoded_point(&point).map_err(|_| JwtError::Malformed)?;
     let signature = Signature::from_slice(sig).map_err(|_| JwtError::BadSignature)?;
     vk.verify(signing_input, &signature)

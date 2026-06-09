@@ -15,10 +15,17 @@ pub struct MockChainSource {
 impl MockChainSource {
     /// `blocks[0]` is treated as the peak. `now` is the fixed wall clock.
     pub fn new(blocks: Vec<ChiaBlockRef>, now: u64) -> Self {
-        assert!(!blocks.is_empty(), "MockChainSource needs at least one block");
+        assert!(
+            !blocks.is_empty(),
+            "MockChainSource needs at least one block"
+        );
         let peak = blocks[0].clone();
         let map = blocks.into_iter().map(|b| (b.header_hash.0, b)).collect();
-        Self { blocks: map, peak, now }
+        Self {
+            blocks: map,
+            peak,
+            now,
+        }
     }
 
     /// Override the fixed "now" used for freshness checks.
@@ -58,7 +65,11 @@ mod tests {
     use digstore_core::Bytes32;
 
     fn block(h: u32, ts: u64, tag: u8) -> ChiaBlockRef {
-        ChiaBlockRef { header_hash: Bytes32([tag; 32]), height: h, timestamp: ts }
+        ChiaBlockRef {
+            header_hash: Bytes32([tag; 32]),
+            height: h,
+            timestamp: ts,
+        }
     }
 
     #[test]
@@ -79,27 +90,39 @@ mod tests {
     fn verify_block_rejects_stale_block() {
         let b = block(100, 900, 0x01);
         let src = MockChainSource::new(vec![b.clone()], 1_000);
-        assert!(matches!(src.verify_block(&b, 60).unwrap_err(), ProverError::BlockTooOld { .. }));
+        assert!(matches!(
+            src.verify_block(&b, 60).unwrap_err(),
+            ProverError::BlockTooOld { .. }
+        ));
     }
 
     #[test]
     fn verify_block_rejects_unknown_block() {
         let src = MockChainSource::new(vec![block(100, 990, 0x01)], 1_000);
         let unknown = block(101, 995, 0x02);
-        assert!(matches!(src.verify_block(&unknown, 60).unwrap_err(), ProverError::BlockNotOnChain(_)));
+        assert!(matches!(
+            src.verify_block(&unknown, 60).unwrap_err(),
+            ProverError::BlockNotOnChain(_)
+        ));
     }
 
     #[test]
     fn verify_block_rejects_future_block() {
         let b = block(100, 1_050, 0x01);
         let src = MockChainSource::new(vec![b.clone()], 1_000);
-        assert!(matches!(src.verify_block(&b, 60).unwrap_err(), ProverError::BlockInFuture(_, _)));
+        assert!(matches!(
+            src.verify_block(&b, 60).unwrap_err(),
+            ProverError::BlockInFuture(_, _)
+        ));
     }
 
     #[test]
     fn with_now_overrides_clock() {
         let b = block(100, 990, 0x01);
         let src = MockChainSource::new(vec![b.clone()], 1_000).with_now(2_000);
-        assert!(matches!(src.verify_block(&b, 60).unwrap_err(), ProverError::BlockTooOld { .. }));
+        assert!(matches!(
+            src.verify_block(&b, 60).unwrap_err(),
+            ProverError::BlockTooOld { .. }
+        ));
     }
 }

@@ -44,7 +44,12 @@ mod tests {
     use digstore_core::ChunkerConfig;
 
     fn cfg(min: usize, target: usize, max: usize, mask: u64) -> ChunkerConfig {
-        ChunkerConfig { min_size: min, target_size: target, max_size: max, mask }
+        ChunkerConfig {
+            min_size: min,
+            target_size: target,
+            max_size: max,
+            mask,
+        }
     }
 
     #[test]
@@ -93,10 +98,15 @@ mod tests {
     fn boundary_cuts_within_bounds_on_real_hash_match() {
         // Pseudo-random bytes with a small mask (1 low bit): the cut must land in
         // [min, max] and be reproducible.
-        let data: Vec<u8> = (0..1000u32).map(|i| (i.wrapping_mul(31) ^ 7) as u8).collect();
+        let data: Vec<u8> = (0..1000u32)
+            .map(|i| (i.wrapping_mul(31) ^ 7) as u8)
+            .collect();
         let c = cfg(100, 200, 400, 0x1);
         let b = find_boundary(&data, 0, &c);
-        assert!((100..=400).contains(&b), "boundary {b} must be within [min,max]");
+        assert!(
+            (100..=400).contains(&b),
+            "boundary {b} must be within [min,max]"
+        );
         // Determinism: same call yields the same answer.
         assert_eq!(b, find_boundary(&data, 0, &c));
     }

@@ -21,8 +21,7 @@ macro_rules! bytes_newtype {
 
             /// Parse from lowercase/uppercase hex; must be exactly `2*LEN` chars.
             pub fn from_hex(s: &str) -> Result<Self, CoreError> {
-                let bytes = hex::decode(s)
-                    .map_err(|e| CoreError::Parse(format!("hex: {e}")))?;
+                let bytes = hex::decode(s).map_err(|e| CoreError::Parse(format!("hex: {e}")))?;
                 if bytes.len() != $n {
                     return Err(CoreError::Parse(format!(
                         "expected {} bytes, got {}",

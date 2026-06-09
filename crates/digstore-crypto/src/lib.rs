@@ -40,10 +40,10 @@ pub use bls::{
     push_signing_message, sign_attestation, sign_node, sign_push, validate_public_key, verify_push,
 };
 pub use error::{BlsError, CryptoError, TamperError};
-pub use hash::sha256;
 pub use fixtures::{
     write_bls_fixtures, write_kdf_fixtures, BlsFixture, BlsFixtureSet, KdfFixture, KdfFixtureSet,
 };
+pub use hash::sha256;
 pub use kdf::derive_decryption_key;
 
 use digstore_core::Bytes48;

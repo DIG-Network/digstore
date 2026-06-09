@@ -16,7 +16,13 @@ fn cfg() -> HostImportsConfig {
 
 fn rb_rt() -> HostRuntime {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/return_buffer.wat")).unwrap();
-    HostRuntime::new(&module_bytes, cfg(), ExecutionLimits::default(), test_deps(FixedClock::new(100))).unwrap()
+    HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(FixedClock::new(100)),
+    )
+    .unwrap()
 }
 
 #[test]

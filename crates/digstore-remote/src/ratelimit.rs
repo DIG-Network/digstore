@@ -116,7 +116,10 @@ mod tests {
         let id = b32(1);
         assert!(rl.try_acquire(&id));
         assert!(rl.try_acquire(&id));
-        assert!(!rl.try_acquire(&id), "third call must be rate limited (429)");
+        assert!(
+            !rl.try_acquire(&id),
+            "third call must be rate limited (429)"
+        );
     }
 
     #[test]
@@ -133,7 +136,10 @@ mod tests {
     fn buckets_are_per_store() {
         let rl = RateLimiter::with_window(1, Duration::from_secs(3600));
         assert!(rl.try_acquire(&b32(1)));
-        assert!(rl.try_acquire(&b32(2)), "different store has its own bucket");
+        assert!(
+            rl.try_acquire(&b32(2)),
+            "different store has its own bucket"
+        );
     }
 
     #[test]

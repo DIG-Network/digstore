@@ -48,7 +48,15 @@ async fn get_descriptor_unknown_store_is_404() {
 #[tokio::test]
 async fn get_roots_lists_history() {
     let (be, id, id_hex) = one_store();
-    be.add_generation(&id, b32(0x10), b32(0x11), vec![0u8; 8], vec![], vec![], true);
+    be.add_generation(
+        &id,
+        b32(0x10),
+        b32(0x11),
+        vec![0u8; 8],
+        vec![],
+        vec![],
+        true,
+    );
     let app = router_for(be);
     let resp = app
         .oneshot(

@@ -25,7 +25,11 @@ fn all_structs_roundtrip() {
     });
     assert_roundtrip(SectionHeader {
         format_version: FORMAT_VERSION,
-        entries: vec![SectionEntry { id: 1, offset: 0, length: 8 }],
+        entries: vec![SectionEntry {
+            id: 1,
+            offset: 0,
+            length: 8,
+        }],
     });
     assert_roundtrip(KeyTableEntry {
         static_key: Bytes32([3; 32]),
@@ -40,7 +44,10 @@ fn all_structs_roundtrip() {
     });
     let mp = MerkleProof {
         leaf: Bytes32([6; 32]),
-        path: vec![ProofStep { hash: Bytes32([7; 32]), is_left: false }],
+        path: vec![ProofStep {
+            hash: Bytes32([7; 32]),
+            is_left: false,
+        }],
         root: Bytes32([8; 32]),
     };
     assert_roundtrip(mp.clone());
@@ -63,13 +70,20 @@ fn all_structs_roundtrip() {
         node_signature: Bytes96([14; 96]),
     };
     assert_roundtrip(ep.clone());
-    assert_roundtrip(ProofResponse { proof: ep, roothash: Bytes32([15; 32]) });
+    assert_roundtrip(ProofResponse {
+        proof: ep,
+        roothash: Bytes32([15; 32]),
+    });
     assert_roundtrip(ContentResponse {
         ciphertext: vec![1, 2, 3],
         merkle_proof: mp,
         roothash: Bytes32([16; 32]),
     });
-    assert_roundtrip(AttestationChallenge { nonce: [1; 32], store_id: [2; 32], timestamp: 3 });
+    assert_roundtrip(AttestationChallenge {
+        nonce: [1; 32],
+        store_id: [2; 32],
+        timestamp: 3,
+    });
     assert_roundtrip(AttestationResponse {
         host_public_key: [4; 48],
         host_instance_id: [5; 32],

@@ -45,7 +45,10 @@ impl RemoteServer {
     /// Build the axum Router exposing the full §21.2 surface.
     pub fn router(&self) -> Router {
         Router::new()
-            .route("/stores/:id", get(crate::handlers::descriptor::get_descriptor))
+            .route(
+                "/stores/:id",
+                get(crate::handlers::descriptor::get_descriptor),
+            )
             .route(
                 "/stores/:id/roots",
                 get(crate::handlers::descriptor::get_roots),
@@ -60,7 +63,10 @@ impl RemoteServer {
                 "/stores/:id/content",
                 post(crate::handlers::content::post_content),
             )
-            .route("/stores/:id/proof", post(crate::handlers::proof::post_proof))
+            .route(
+                "/stores/:id/proof",
+                post(crate::handlers::proof::post_proof),
+            )
             .route(
                 "/stores/:id/delta",
                 get(crate::handlers::delta::get_delta).post(crate::handlers::delta::post_delta),

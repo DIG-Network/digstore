@@ -9,10 +9,22 @@ fn missing_data_exports_report_missing_export() {
     let mut rt = probe_runtime(FixedClock::new(100));
     // import_probe.wat exports none of these; the wrappers must compile and
     // surface MissingExport rather than panicking.
-    assert!(matches!(rt.get_public_key().unwrap_err(), HostError::MissingExport(_)));
-    assert!(matches!(rt.get_roothash_history().unwrap_err(), HostError::MissingExport(_)));
-    assert!(matches!(rt.get_metadata().unwrap_err(), HostError::MissingExport(_)));
-    assert!(matches!(rt.get_authentication_info().unwrap_err(), HostError::MissingExport(_)));
+    assert!(matches!(
+        rt.get_public_key().unwrap_err(),
+        HostError::MissingExport(_)
+    ));
+    assert!(matches!(
+        rt.get_roothash_history().unwrap_err(),
+        HostError::MissingExport(_)
+    ));
+    assert!(matches!(
+        rt.get_metadata().unwrap_err(),
+        HostError::MissingExport(_)
+    ));
+    assert!(matches!(
+        rt.get_authentication_info().unwrap_err(),
+        HostError::MissingExport(_)
+    ));
 }
 
 fn cfg() -> HostImportsConfig {
@@ -26,7 +38,13 @@ fn cfg() -> HostImportsConfig {
 
 fn probe_runtime(clock: FixedClock) -> HostRuntime {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/import_probe.wat")).unwrap();
-    HostRuntime::new(&module_bytes, cfg(), ExecutionLimits::default(), test_deps(clock)).unwrap()
+    HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(clock),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -109,13 +127,21 @@ fn jwks_fetch_blocked_without_session() {
     let mut rt = probe_runtime(FixedClock::new(1_700_000_000));
     let url = b"http://127.0.0.1:1/jwks.json";
     rt.write_guest(5000, url).unwrap();
-    let r = rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32).unwrap();
+    let r = rt
+        .call_i32_export_2("probe_jwks", 5000, url.len() as i32)
+        .unwrap();
     assert_eq!(r, -100); // ErrorCode::NoSession
 }
 
 fn probe_runtime_with_clock(clock: FixedClock) -> HostRuntime {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/import_probe.wat")).unwrap();
-    HostRuntime::new(&module_bytes, cfg(), ExecutionLimits::default(), test_deps(clock)).unwrap()
+    HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(clock),
+    )
+    .unwrap()
 }
 
 // §12.4: an expired session is reported distinctly from an absent one.
@@ -132,7 +158,8 @@ fn expired_session_reports_session_expired() {
     let url = b"http://127.0.0.1:1/jwks.json";
     rt.write_guest(5000, url).unwrap();
     assert_eq!(
-        rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32).unwrap(),
+        rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32)
+            .unwrap(),
         -100
     );
 
@@ -145,7 +172,8 @@ fn expired_session_reports_session_expired() {
     clock.advance(301);
     assert_eq!(rt.call_i32_export("probe_verify").unwrap(), -101); // SessionExpired
     assert_eq!(
-        rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32).unwrap(),
+        rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32)
+            .unwrap(),
         -101 // SessionExpired, distinct from NoSession
     );
 }

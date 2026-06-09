@@ -219,7 +219,7 @@ pub fn verify_module_root(
     let store_id = Bytes32(sid);
     if &store_id != expected_store_id {
         return Err(err(
-            "module StoreId does not match the requested store id".into(),
+            "module StoreId does not match the requested store id".into()
         ));
     }
 

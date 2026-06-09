@@ -9,7 +9,11 @@ fn encrypt_then_decrypt_recovers_plaintext() {
     let plaintext = b"the quick brown fox jumps over the lazy dog".to_vec();
     let ct = encrypt_chunk(&key, &plaintext);
     assert_ne!(ct, plaintext, "ciphertext must differ from plaintext");
-    assert_eq!(ct.len(), plaintext.len() + 16, "ct must carry a 16-byte GCM tag");
+    assert_eq!(
+        ct.len(),
+        plaintext.len() + 16,
+        "ct must carry a 16-byte GCM tag"
+    );
     let recovered = decrypt_chunk(&key, &ct).expect("authentic ciphertext must decrypt");
     assert_eq!(recovered, plaintext);
 }

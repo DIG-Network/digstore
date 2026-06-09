@@ -62,8 +62,8 @@ pub fn run(ctx: &CliContext, args: CatArgs) -> Result<(), CliError> {
     // Per-chunk ciphertext lengths (from the local generation manifest) let the
     // client split the module's plain-concatenated served ciphertext (D5/C9).
     let resource_key = urn.resource_key.clone().unwrap_or_default();
-    let chunk_lens = store_ops::resource_chunk_lens(ctx, &trusted_root, &resource_key)
-        .unwrap_or_default();
+    let chunk_lens =
+        store_ops::resource_chunk_lens(ctx, &trusted_root, &resource_key).unwrap_or_default();
 
     let plaintext =
         client_crypto::decrypt_and_verify(&resp, &urn, salt.as_ref(), &trusted_root, &chunk_lens)?;

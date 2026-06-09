@@ -9,7 +9,11 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 /// store with genesis 0x10 (0 chunks) and child 0x40 (adds A2, A3) advanced.
-fn store_with_two_gens() -> (std::sync::Arc<digstore_remote::InMemoryBackend>, Bytes32, String) {
+fn store_with_two_gens() -> (
+    std::sync::Arc<digstore_remote::InMemoryBackend>,
+    Bytes32,
+    String,
+) {
     let (be, id, id_hex) = one_store();
     be.add_generation(
         &id,

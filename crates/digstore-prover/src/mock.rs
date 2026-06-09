@@ -13,7 +13,11 @@ pub const DEFAULT_FRESHNESS_WINDOW_SECS: u64 = 600;
 
 /// The mock commitment-chain proof bytes (deviation #3): a SHA-256 over the
 /// full statement. Recomputed identically by the verifier.
-fn mock_proof_bytes(program_hash: &Bytes32, public_input: &[u8], public_output: &Bytes32) -> Vec<u8> {
+fn mock_proof_bytes(
+    program_hash: &Bytes32,
+    public_input: &[u8],
+    public_output: &Bytes32,
+) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(MOCK_DOMAIN);
     buf.extend_from_slice(&program_hash.0);
@@ -32,7 +36,11 @@ pub struct MockProver {
 
 impl MockProver {
     pub fn new(secret: bls::SecretKey, pubkey: bls::PublicKey, chia_block: ChiaBlockRef) -> Self {
-        Self { secret, pubkey, chia_block }
+        Self {
+            secret,
+            pubkey,
+            chia_block,
+        }
     }
 }
 
@@ -87,13 +95,21 @@ impl Verifier for MockVerifier {
         // 2. public_input parse; bound block must equal proof.chia_block (§13.8)
         let (_nonce, pi_block) = parse_public_input(&proof.public_input)?;
         if pi_block != proof.chia_block {
-            return Err(ProverError::Codec("public_input block != proof.chia_block".into()));
+            return Err(ProverError::Codec(
+                "public_input block != proof.chia_block".into(),
+            ));
         }
         // 3. recompute the mock commitment chain (deviation #3). Tampering
         //    public_output OR proof bytes surfaces here.
-        let expected_proof = mock_proof_bytes(&proof.program_hash, &proof.public_input, &proof.public_output);
+        let expected_proof = mock_proof_bytes(
+            &proof.program_hash,
+            &proof.public_input,
+            &proof.public_output,
+        );
         if expected_proof != proof.proof {
-            return Err(ProverError::ZkProofInvalid("mock commitment chain mismatch".into()));
+            return Err(ProverError::ZkProofInvalid(
+                "mock commitment chain mismatch".into(),
+            ));
         }
         // 4. node attribution: BLS over (proof || public_input) (§13.7)
         let msg = signing_message(&proof.proof, &proof.public_input);
@@ -103,7 +119,9 @@ impl Verifier for MockVerifier {
         // 5. require a non-empty trusted-root set; root *binding* is enforced
         //    in Verifier::verify_response against the asserted ProofResponse root.
         if trusted_roots.is_empty() {
-            return Err(ProverError::UntrustedRoot("no trusted roots provided".into()));
+            return Err(ProverError::UntrustedRoot(
+                "no trusted roots provided".into(),
+            ));
         }
         // 6. chain freshness (§13.8)
         chain.verify_block(&proof.chia_block, DEFAULT_FRESHNESS_WINDOW_SECS)?;

@@ -1,6 +1,4 @@
-use crate::backend::{
-    DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord,
-};
+use crate::backend::{DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord};
 use crate::error::RemoteError;
 use digstore_core::{Bytes32, Bytes48, Bytes96};
 use std::collections::HashMap;
@@ -219,7 +217,10 @@ impl RemoteBackend for InMemoryBackend {
             Some(r) => *r,
             None => st.served_root,
         };
-        let g = st.generations.get(&target).ok_or(RemoteError::UnknownRoot)?;
+        let g = st
+            .generations
+            .get(&target)
+            .ok_or(RemoteError::UnknownRoot)?;
         // Only the served head is downloadable as the current module.
         if target != st.served_root {
             return Err(RemoteError::UnknownRoot);
@@ -436,7 +437,14 @@ mod tests {
     fn pending_push_does_not_advance_served_head() {
         let (be, id) = backend_with_one_store();
         let out = be
-            .accept_push(&id, &b32(0x10), &b32(0x20), &[0u8; 32], None, PushMode::Pending)
+            .accept_push(
+                &id,
+                &b32(0x10),
+                &b32(0x20),
+                &[0u8; 32],
+                None,
+                PushMode::Pending,
+            )
             .unwrap();
         assert_eq!(out, PushOutcome::Pending);
         let hs = be.head_state(&id).unwrap();
@@ -452,7 +460,14 @@ mod tests {
     fn advance_push_moves_served_head() {
         let (be, id) = backend_with_one_store();
         let out = be
-            .accept_push(&id, &b32(0x10), &b32(0x30), &[0u8; 48], None, PushMode::Advance)
+            .accept_push(
+                &id,
+                &b32(0x10),
+                &b32(0x30),
+                &[0u8; 48],
+                None,
+                PushMode::Advance,
+            )
             .unwrap();
         assert_eq!(out, PushOutcome::Advanced);
         let hs = be.head_state(&id).unwrap();

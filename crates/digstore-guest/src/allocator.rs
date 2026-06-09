@@ -31,7 +31,9 @@ pub const HEAP_BASE: usize = 8 * 1024 * 1024;
 /// Upper bound of the heap = the §5.1 module memory ceiling (16 MiB). Allocations
 /// beyond this fail (null), matching the host's `memory_bytes_max` limiter.
 pub const HEAP_END: usize = 16 * 1024 * 1024;
-/// Wasm page size.
+/// Wasm page size. Only referenced by the wasm32 `ensure_memory` path; gated to
+/// match so the native (test/clippy) build does not see it as dead code.
+#[cfg(target_arch = "wasm32")]
 const WASM_PAGE: usize = 65536;
 
 pub struct BumpAllocator {
@@ -145,7 +147,10 @@ mod tests {
         assert_ne!(p1, p2, "two allocations must not alias");
         assert_eq!((p1 as usize) % 8, 0, "p1 must be 8-aligned");
         assert_eq!((p2 as usize) % 8, 0, "p2 must be 8-aligned");
-        assert!((p2 as usize) >= (p1 as usize) + 64, "p2 must be past p1's region");
+        assert!(
+            (p2 as usize) >= (p1 as usize) + 64,
+            "p2 must be past p1's region"
+        );
     }
 
     #[test]

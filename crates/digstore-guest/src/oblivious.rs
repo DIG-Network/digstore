@@ -70,5 +70,8 @@ where
             }
         }
     }
-    AccessPlan { order: slots, real_positions: positions }
+    AccessPlan {
+        order: slots,
+        real_positions: positions,
+    }
 }

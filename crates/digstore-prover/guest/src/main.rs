@@ -26,5 +26,10 @@ fn main() {
     let public_input_hash: [u8; 32] = Sha256::digest(&input.public_input).into();
 
     // Journal: (program_hash, public_input_hash, roothash, public_output)
-    env::commit(&(input.program_hash, public_input_hash, input.roothash, public_output));
+    env::commit(&(
+        input.program_hash,
+        public_input_hash,
+        input.roothash,
+        public_output,
+    ));
 }

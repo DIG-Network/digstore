@@ -113,6 +113,9 @@ mod tests {
         let mut rb = ReturnBuffer::new(&cfg());
         let too_big = vec![0u8; 16 * 1024 * 1024 + 1];
         let err = rb.set(&too_big).unwrap_err();
-        assert!(matches!(err, crate::error::HostError::ReturnBufferOverflow { .. }));
+        assert!(matches!(
+            err,
+            crate::error::HostError::ReturnBufferOverflow { .. }
+        ));
     }
 }

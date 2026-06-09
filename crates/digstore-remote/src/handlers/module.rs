@@ -21,7 +21,10 @@ pub async fn head_module(State(s): State<AppState>, Path(id): Path<String>) -> R
     match res {
         Ok(hs) => {
             let mut headers = HeaderMap::new();
-            headers.insert(header::ETAG, etag_for_root(&hs.served_root).parse().unwrap());
+            headers.insert(
+                header::ETAG,
+                etag_for_root(&hs.served_root).parse().unwrap(),
+            );
             headers.insert(
                 header::CONTENT_LENGTH,
                 hs.served_size.to_string().parse().unwrap(),
@@ -135,9 +138,7 @@ pub async fn put_module(
     ) {
         (Some(p), Some(r), Some(sg)) => match (parse_b32(p), parse_b32(r), parse_sig(sg)) {
             (Ok(p), Ok(r), Ok(sg)) => (p, r, sg),
-            _ => {
-                return RemoteError::Validation("malformed push headers".into()).into_response()
-            }
+            _ => return RemoteError::Validation("malformed push headers".into()).into_response(),
         },
         _ => return RemoteError::Validation("missing push headers".into()).into_response(),
     };

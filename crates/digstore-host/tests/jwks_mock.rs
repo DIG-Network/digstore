@@ -18,7 +18,13 @@ fn cfg() -> HostImportsConfig {
 
 fn probe_runtime(clock: FixedClock) -> HostRuntime {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/import_probe.wat")).unwrap();
-    HostRuntime::new(&module_bytes, cfg(), ExecutionLimits::default(), test_deps(clock)).unwrap()
+    HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(clock),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -38,7 +44,9 @@ fn jwks_fetch_nosession_then_success() {
     rt.write_guest(5000, url.as_bytes()).unwrap();
 
     // 1. NoSession before any session.
-    let r0 = rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32).unwrap();
+    let r0 = rt
+        .call_i32_export_2("probe_jwks", 5000, url.len() as i32)
+        .unwrap();
     assert_eq!(r0, -100);
 
     // 2. Establish a session.
@@ -50,7 +58,9 @@ fn jwks_fetch_nosession_then_success() {
     assert!(rt.call_i32_export_1("probe_establish", 4096).unwrap() >= 0);
 
     // 3. Now the fetch succeeds and returns the body length.
-    let r1 = rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32).unwrap();
+    let r1 = rt
+        .call_i32_export_2("probe_jwks", 5000, url.len() as i32)
+        .unwrap();
     assert_eq!(r1 as usize, body.len());
     mock.assert();
 
