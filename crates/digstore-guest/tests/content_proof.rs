@@ -507,3 +507,87 @@ fn require_jwt_without_token_returns_decoy() {
         ContentOutcome::Decoy(_)
     ));
 }
+
+// --- D-SESSION-JWT-GATE (§12.4): "The session is the precondition for any JWT-
+// authorization logic the module chooses to enforce before releasing real
+// content." JWT-gated content with NO active session MUST return a Decoy even
+// when the presented JWT would otherwise validate. The gate fails closed to
+// Decoy when host.verify_session() is false. --------------------------------
+#[test]
+fn require_jwt_without_active_session_returns_decoy_even_with_valid_jwt() {
+    let key = Bytes32([0x11; 32]);
+    let entry = KeyTableEntry {
+        static_key: key,
+        generation: Bytes32([0xBB; 32]),
+        chunk_indices: vec![0],
+        total_size: 5,
+    };
+    let table = encode_key_table(&[entry]);
+    let pool = fixtures::pack_pool(&[b"alpha"]);
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let ds = DataSection::parse(&blob).unwrap();
+
+    // A JWT whose claims pass under the gate's policy (no iss/aud required,
+    // not expired at the mock host's clock) — so only the missing session can
+    // be responsible for the Decoy.
+    let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":9999999999,"nbf":0}"#);
+
+    let mut host = MockHost::default();
+    host.session_ok = false; // §12.4: no active session
+
+    let mut gc = gate_config();
+    gc.require_jwt = true;
+    let req = ContentRequest {
+        retrieval_key: key,
+        root_hash: None,
+        range: None,
+        jwt: Some(jwt),
+        window: None,
+    };
+    assert!(
+        matches!(
+            serve_content(&host, &ds, &req, &gc),
+            ContentOutcome::Decoy(_)
+        ),
+        "JWT-gated content with no active session MUST be a Decoy (§12.4)"
+    );
+}
+
+// Control: the SAME valid JWT WITH an active session releases real content,
+// proving the Decoy above is attributable to the missing session, not the JWT.
+#[test]
+fn require_jwt_with_active_session_and_valid_jwt_returns_real() {
+    let key = Bytes32([0x11; 32]);
+    let entry = KeyTableEntry {
+        static_key: key,
+        generation: Bytes32([0xBB; 32]),
+        chunk_indices: vec![0],
+        total_size: 5,
+    };
+    let table = encode_key_table(&[entry]);
+    let pool = fixtures::pack_pool(&[b"alpha"]);
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let ds = DataSection::parse(&blob).unwrap();
+
+    let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":9999999999,"nbf":0}"#);
+
+    let mut host = MockHost::default();
+    host.session_ok = true; // active session
+
+    let mut gc = gate_config();
+    gc.require_jwt = true;
+    let req = ContentRequest {
+        retrieval_key: key,
+        root_hash: None,
+        range: None,
+        jwt: Some(jwt),
+        window: None,
+    };
+    assert!(
+        matches!(
+            serve_content(&host, &ds, &req, &gc),
+            ContentOutcome::Real(_)
+        ),
+        "valid JWT with an active session must release real content"
+    );
+}
