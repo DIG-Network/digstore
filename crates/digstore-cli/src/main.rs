@@ -12,10 +12,11 @@ fn main() {
             )
             .try_init();
     }
+    let ui = digstore_cli::ui::Ui::from_flags(cli.color, cli.json, cli.quiet, cli.verbose);
     match commands::dispatch(cli) {
         Ok(()) => std::process::exit(0),
         Err(e) => {
-            eprintln!("error: {e}");
+            ui.error(&e);
             std::process::exit(e.exit_code());
         }
     }
