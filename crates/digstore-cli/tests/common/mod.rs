@@ -33,23 +33,32 @@ pub fn corrupt_data_section(module_path: &std::path::Path) {
 
     let mut bytes = std::fs::read(module_path).unwrap();
     let magic = b"DIGS";
-    let start = bytes
-        .windows(magic.len())
-        .position(|w| w == magic)
-        .expect("DIGS magic present in compiled module");
 
-    // Locate the ChunkPool (id 9) section in the canonical contract blob, then
-    // flip a byte a few into the FIRST chunk's ciphertext. ChunkPool body =
+    // The real guest wasm embeds the `DIGS` magic byte string in its own rodata
+    // (the `MAGIC`/`EMPTY_BLOB` constants), so the FIRST occurrence is NOT the
+    // injected data section. Scan ALL occurrences and pick the one that parses as
+    // a valid contract blob carrying a ChunkPool — that is the injected blob.
+    let mut found: Option<(usize, usize)> = None; // (blob_start, pool_off_in_blob)
+    for start in 0..bytes.len().saturating_sub(magic.len()) {
+        if &bytes[start..start + magic.len()] != magic {
+            continue;
+        }
+        let blob = &bytes[start..];
+        if let Ok(view) = DataView::parse(blob) {
+            if let Some(pool) = view.section(SectionId::ChunkPool) {
+                let pool_off = pool.as_ptr() as usize - blob.as_ptr() as usize;
+                found = Some((start, pool_off));
+                break;
+            }
+        }
+    }
+    let (start, pool_off_in_blob) =
+        found.expect("compiled module has an injected DIGS blob with a ChunkPool");
+
+    // Flip a byte a few into the FIRST chunk's ciphertext. ChunkPool body =
     // count(u32 BE) || per chunk: len(u32 BE) || bytes. The first ciphertext byte
     // is at pool_offset + 4 (count) + 4 (first len). Flipping it makes the client
     // merkle leaf (and GCM tag) fail while the module still instantiates.
-    let blob = &bytes[start..];
-    let view = DataView::parse(blob).expect("compiled module has a valid DIGS blob");
-    let pool = view
-        .section(SectionId::ChunkPool)
-        .expect("module has a ChunkPool section");
-    // Offset of the pool body within the whole module = start + (pool - blob).
-    let pool_off_in_blob = pool.as_ptr() as usize - blob.as_ptr() as usize;
     let target = start + pool_off_in_blob + 4 + 4 + 2;
     assert!(target < bytes.len(), "module too small to corrupt");
     bytes[target] ^= 0xFF;

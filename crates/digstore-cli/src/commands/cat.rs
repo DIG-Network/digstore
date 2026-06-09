@@ -27,8 +27,9 @@ pub fn run(ctx: &CliContext, args: CatArgs) -> Result<(), CliError> {
         if root != trusted_root {
             return Err(CliError::VerificationFailed("proof root mismatch".into()));
         }
-        // program_hash is over the TEMPLATE guest module (deviation #3).
-        let expected = digstore_crypto::sha256(digstore_compiler::baked_template_bytes());
+        // program_hash is over the REAL guest module the compiler used as its
+        // template (deviation #3 / D6).
+        let expected = digstore_crypto::sha256(serve::embedded_guest_wasm());
         if proof.program_hash != expected {
             return Err(CliError::VerificationFailed("program hash mismatch".into()));
         }
@@ -43,7 +44,14 @@ pub fn run(ctx: &CliContext, args: CatArgs) -> Result<(), CliError> {
         None => None,
     };
 
-    let plaintext = client_crypto::decrypt_and_verify(&resp, &urn, salt.as_ref(), &trusted_root)?;
+    // Per-chunk ciphertext lengths (from the local generation manifest) let the
+    // client split the module's plain-concatenated served ciphertext (D5/C9).
+    let resource_key = urn.resource_key.clone().unwrap_or_default();
+    let chunk_lens = store_ops::resource_chunk_lens(ctx, &trusted_root, &resource_key)
+        .unwrap_or_default();
+
+    let plaintext =
+        client_crypto::decrypt_and_verify(&resp, &urn, salt.as_ref(), &trusted_root, &chunk_lens)?;
 
     std::io::stdout()
         .write_all(&plaintext)

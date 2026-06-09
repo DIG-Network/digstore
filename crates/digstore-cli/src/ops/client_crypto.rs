@@ -46,34 +46,47 @@ pub fn verify_chunk_inclusion(
 }
 
 /// Full client pipeline (§9.3 + §11): verify the served bytes' merkle inclusion
-/// against the trusted root, then split the length-framed chunk ciphertexts and
-/// AES-256-GCM open each (tag verified) under the resource's URN key, finally
-/// concatenating the plaintext in order.
+/// against the trusted root, then split the PLAIN-concatenated chunk ciphertexts
+/// (BINDING contract D5/C9: exactly the bytes the module's `get_content` returns
+/// via `concat_output`, NO length framing) using the per-chunk ciphertext lengths
+/// from the local generation manifest, and AES-256-GCM open each (tag verified)
+/// under the resource's URN key, finally concatenating the plaintext in order.
+///
+/// `chunk_lens` are the ciphertext byte lengths of the resource's chunks in
+/// order. They MUST sum to `resp.ciphertext.len()`. If empty, the whole served
+/// blob is treated as a single chunk (the common single-chunk case).
 pub fn decrypt_and_verify(
     resp: &ContentResponse,
     urn: &Urn,
     secret_salt: Option<&[u8; 32]>,
     trusted_root: &Bytes32,
+    chunk_lens: &[usize],
 ) -> Result<Vec<u8>, CliError> {
     // 1) integrity: the served bytes are committed under the trusted root.
     verify_chunk_inclusion(&resp.ciphertext, &resp.merkle_proof, trusted_root)?;
 
-    // 2) confidentiality: split frames and open each chunk.
+    // 2) confidentiality: split the plain concat by known chunk lengths, open each.
     let key = derive_decryption_key(urn, secret_salt);
-    let mut plaintext = Vec::new();
     let buf = &resp.ciphertext;
+
+    // Build the split plan. Empty `chunk_lens` => one chunk == the whole blob.
+    let plan: Vec<usize> = if chunk_lens.is_empty() {
+        alloc_one(buf.len())
+    } else {
+        chunk_lens.to_vec()
+    };
+    let total: usize = plan.iter().sum();
+    if total != buf.len() {
+        return Err(CliError::VerificationFailed(format!(
+            "served ciphertext length {} does not match expected chunk total {}",
+            buf.len(),
+            total
+        )));
+    }
+
+    let mut plaintext = Vec::new();
     let mut p = 0usize;
-    while p < buf.len() {
-        if p + 4 > buf.len() {
-            return Err(CliError::VerificationFailed("truncated chunk frame".into()));
-        }
-        let len = u32::from_be_bytes([buf[p], buf[p + 1], buf[p + 2], buf[p + 3]]) as usize;
-        p += 4;
-        if p + len > buf.len() {
-            return Err(CliError::VerificationFailed(
-                "chunk frame out of bounds".into(),
-            ));
-        }
+    for len in plan {
         let ct = &buf[p..p + len];
         p += len;
         let pt = digstore_crypto::decrypt_chunk(&key, ct).map_err(|_| {
@@ -85,6 +98,11 @@ pub fn decrypt_and_verify(
         plaintext.extend_from_slice(&pt);
     }
     Ok(plaintext)
+}
+
+/// One-element split plan covering the whole blob (single-chunk resources).
+fn alloc_one(len: usize) -> Vec<usize> {
+    vec![len]
 }
 
 #[cfg(test)]
@@ -101,14 +119,13 @@ mod tests {
         }
     }
 
-    /// Build a framed, single-chunk resource ciphertext with a one-leaf tree.
-    fn framed_single(key: &[u8; 32], pt: &[u8]) -> (Vec<u8>, Bytes32) {
+    /// Build a single-chunk resource ciphertext (PLAIN concat == the one GCM
+    /// ciphertext, NO length framing — D5/C9) with its per-resource leaf =
+    /// SHA-256(served ciphertext).
+    fn plain_single(key: &[u8; 32], pt: &[u8]) -> (Vec<u8>, Bytes32) {
         let ct = digstore_crypto::encrypt_chunk(key, pt);
-        let mut framed = Vec::new();
-        framed.extend_from_slice(&(ct.len() as u32).to_be_bytes());
-        framed.extend_from_slice(&ct);
-        let leaf = digstore_crypto::sha256(&framed);
-        (framed, leaf)
+        let leaf = digstore_crypto::sha256(&ct);
+        (ct, leaf)
     }
 
     #[test]
@@ -132,9 +149,9 @@ mod tests {
         let urn = urn();
         let key = derive_decryption_key(&urn, None);
         let pt = b"the quick brown fox".to_vec();
-        let (framed, leaf) = framed_single(&key, &pt);
+        let (ct, leaf) = plain_single(&key, &pt);
         let resp = ContentResponse {
-            ciphertext: framed,
+            ciphertext: ct,
             merkle_proof: MerkleProof {
                 leaf,
                 path: vec![],
@@ -142,16 +159,42 @@ mod tests {
             },
             roothash: leaf,
         };
-        assert_eq!(decrypt_and_verify(&resp, &urn, None, &leaf).unwrap(), pt);
+        // Empty chunk_lens => the whole blob is one chunk.
+        assert_eq!(decrypt_and_verify(&resp, &urn, None, &leaf, &[]).unwrap(), pt);
+    }
+
+    #[test]
+    fn two_chunk_resource_splits_and_round_trips() {
+        let urn = urn();
+        let key = derive_decryption_key(&urn, None);
+        let ct_a = digstore_crypto::encrypt_chunk(&key, b"first chunk plaintext");
+        let ct_b = digstore_crypto::encrypt_chunk(&key, b"second chunk plaintext!");
+        let mut served = ct_a.clone();
+        served.extend_from_slice(&ct_b); // PLAIN concat (no length frames)
+        let leaf = digstore_crypto::sha256(&served);
+        let resp = ContentResponse {
+            ciphertext: served,
+            merkle_proof: MerkleProof {
+                leaf,
+                path: vec![],
+                root: leaf,
+            },
+            roothash: leaf,
+        };
+        let lens = [ct_a.len(), ct_b.len()];
+        let out = decrypt_and_verify(&resp, &urn, None, &leaf, &lens).unwrap();
+        let mut expected = b"first chunk plaintext".to_vec();
+        expected.extend_from_slice(b"second chunk plaintext!");
+        assert_eq!(out, expected);
     }
 
     #[test]
     fn wrong_trusted_root_fails_at_merkle_gate() {
         let urn = urn();
         let key = derive_decryption_key(&urn, None);
-        let (framed, leaf) = framed_single(&key, b"data");
+        let (ct, leaf) = plain_single(&key, b"data");
         let resp = ContentResponse {
-            ciphertext: framed,
+            ciphertext: ct,
             merkle_proof: MerkleProof {
                 leaf,
                 path: vec![],
@@ -159,7 +202,7 @@ mod tests {
             },
             roothash: leaf,
         };
-        let err = decrypt_and_verify(&resp, &urn, None, &Bytes32([0xFF; 32])).unwrap_err();
+        let err = decrypt_and_verify(&resp, &urn, None, &Bytes32([0xFF; 32]), &[]).unwrap_err();
         assert!(matches!(err, CliError::VerificationFailed(ref m) if m.contains("trusted root")));
     }
 
@@ -167,10 +210,10 @@ mod tests {
     fn tampered_ciphertext_fails_at_merkle_gate_first() {
         let urn = urn();
         let key = derive_decryption_key(&urn, None);
-        let (mut framed, leaf) = framed_single(&key, b"data");
-        framed[5] ^= 0xFF; // mutate ciphertext -> leaf mismatch
+        let (mut ct, leaf) = plain_single(&key, b"data");
+        ct[2] ^= 0xFF; // mutate ciphertext -> leaf mismatch
         let resp = ContentResponse {
-            ciphertext: framed,
+            ciphertext: ct,
             merkle_proof: MerkleProof {
                 leaf,
                 path: vec![],
@@ -178,7 +221,7 @@ mod tests {
             },
             roothash: leaf,
         };
-        let err = decrypt_and_verify(&resp, &urn, None, &leaf).unwrap_err();
+        let err = decrypt_and_verify(&resp, &urn, None, &leaf, &[]).unwrap_err();
         assert!(matches!(err, CliError::VerificationFailed(ref m) if m.contains("tampered chunk")));
     }
 
@@ -186,10 +229,10 @@ mod tests {
     fn decoy_fabricated_root_fails_at_merkle_gate() {
         let urn = urn();
         let key = derive_decryption_key(&urn, None);
-        let (framed, leaf) = framed_single(&key, b"decoy");
+        let (ct, leaf) = plain_single(&key, b"decoy");
         let trusted = Bytes32([0x11; 32]);
         let resp = ContentResponse {
-            ciphertext: framed,
+            ciphertext: ct,
             merkle_proof: MerkleProof {
                 leaf,
                 path: vec![],
@@ -197,7 +240,7 @@ mod tests {
             },
             roothash: leaf,
         };
-        let err = decrypt_and_verify(&resp, &urn, None, &trusted).unwrap_err();
+        let err = decrypt_and_verify(&resp, &urn, None, &trusted, &[]).unwrap_err();
         assert!(matches!(err, CliError::VerificationFailed(ref m) if m.contains("trusted root")));
     }
 
@@ -205,7 +248,7 @@ mod tests {
     fn two_leaf_path_verifies() {
         let urn = urn();
         let key = derive_decryption_key(&urn, None);
-        let (framed, leaf0) = framed_single(&key, b"resource-zero");
+        let (ct, leaf0) = plain_single(&key, b"resource-zero");
         let sibling = Bytes32([0x55; 32]);
         let tree = MerkleTree::from_leaves(vec![leaf0, sibling]);
         let root = tree.root();
@@ -218,12 +261,12 @@ mod tests {
             root,
         };
         let resp = ContentResponse {
-            ciphertext: framed,
+            ciphertext: ct,
             merkle_proof: proof,
             roothash: root,
         };
         assert_eq!(
-            decrypt_and_verify(&resp, &urn, None, &root).unwrap(),
+            decrypt_and_verify(&resp, &urn, None, &root, &[]).unwrap(),
             b"resource-zero"
         );
     }
