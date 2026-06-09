@@ -422,7 +422,92 @@ pub fn status(ctx: &CliContext) -> Result<StatusView, CliError> {
         .map(|r| r.resource_key)
         .collect();
     let root = current_root(ctx)?.map(|r| r.to_hex());
-    Ok(StatusView { root, staged })
+    Ok(StatusView {
+        root,
+        staged,
+        modified: Vec::new(),
+        untracked: Vec::new(),
+    })
+}
+
+/// Classify working-directory files vs. staging and the current generation.
+pub fn compute_status(ctx: &CliContext) -> Result<StatusView, CliError> {
+    let cfg = ctx.load_config()?;
+    let root_dir = ctx.dig_dir.parent().unwrap_or(&ctx.dig_dir).to_path_buf();
+    let current = current_root(ctx)?;
+
+    // Working set: key -> file content.
+    let working: std::collections::BTreeMap<String, Vec<u8>> =
+        crate::ops::walk::resolve_all(&root_dir)
+            .into_iter()
+            .filter_map(|r| fs::read(&r.path).ok().map(|c| (r.key, c)))
+            .collect();
+
+    // Staged set: key -> content.
+    let staged_map: std::collections::BTreeMap<String, Vec<u8>> =
+        match StagingArea::open(ctx.staging_path(&cfg.store_id)) {
+            Ok(s) => s
+                .records()
+                .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?
+                .into_iter()
+                .map(|r| (r.resource_key, r.content))
+                .collect(),
+            Err(_) => Default::default(),
+        };
+
+    let mut staged_keys: Vec<String> = staged_map.keys().cloned().collect();
+    staged_keys.sort();
+
+    let mut modified = Vec::new();
+    let mut untracked = Vec::new();
+    for (key, content) in &working {
+        if staged_map.contains_key(key) {
+            continue; // already shown as staged
+        }
+        match committed_content(ctx, &cfg, current.as_ref(), key)? {
+            Some(committed) => {
+                if committed != *content {
+                    modified.push(key.clone());
+                }
+            }
+            None => untracked.push(key.clone()),
+        }
+    }
+    modified.sort();
+    untracked.sort();
+
+    Ok(StatusView {
+        root: current.map(|r| r.to_hex()),
+        staged: staged_keys,
+        modified,
+        untracked,
+    })
+}
+
+/// Return the plaintext of a committed resource for `key` at `current` root,
+/// or `None` if the key is not a committed resource. Reuses the local
+/// serve+decrypt path used by `cat` via `ops::serve::read_resource_plaintext`.
+fn committed_content(
+    ctx: &CliContext,
+    cfg: &digstore_core::StoreConfig,
+    current: Option<&Bytes32>,
+    key: &str,
+) -> Result<Option<Vec<u8>>, CliError> {
+    let root = match current {
+        Some(r) => *r,
+        None => return Ok(None),
+    };
+    // Check whether this key is actually a committed resource.
+    if !list_generation_resources(ctx, &root)?
+        .iter()
+        .any(|k| k == key)
+    {
+        return Ok(None);
+    }
+    // Serve + decrypt exactly as `cat` does.
+    let plaintext = crate::ops::serve::read_resource_plaintext(ctx, cfg, &root, key)
+        .map_err(|e| CliError::Other(anyhow::anyhow!("read committed {key}: {e}")))?;
+    Ok(Some(plaintext))
 }
 
 #[derive(Debug)]
