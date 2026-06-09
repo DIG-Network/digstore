@@ -43,9 +43,15 @@ pub struct InitArgs {
 
 #[derive(Debug, Args)]
 pub struct AddArgs {
-    pub path: PathBuf,
+    /// Path to the file to stage. Omitted (or ignored) when `--discovery` is set.
+    pub path: Option<PathBuf>,
     #[arg(long)]
     pub key: Option<String>,
+    /// §8.5 social conventions: instead of staging a file, generate and stage the
+    /// `/.well-known/dig/manifest.json` discovery manifest listing the resources
+    /// already staged (publisher-elected keys, labels, and types).
+    #[arg(long)]
+    pub discovery: bool,
 }
 
 #[derive(Debug, Args)]
@@ -132,7 +138,7 @@ mod tests {
     fn parses_add_path() {
         let cli = Cli::try_parse_from(["digstore", "add", "file.txt"]).unwrap();
         match cli.command {
-            Command::Add(a) => assert_eq!(a.path.to_str().unwrap(), "file.txt"),
+            Command::Add(a) => assert_eq!(a.path.unwrap().to_str().unwrap(), "file.txt"),
             _ => panic!("expected add"),
         }
     }
