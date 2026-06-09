@@ -59,17 +59,17 @@ pub fn inject_data_section(template: &[u8], blob: &[u8], mem_offset: u32) -> Res
                 for m in reader {
                     let m = m.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
                     let min = m.initial.max(needed_pages);
-                    let max = m.maximum;
-                    if let Some(max_pages) = max {
-                        if needed_pages > max_pages {
-                            return Err(CompilerError::Validation(format!(
-                                "data section needs {needed_pages} pages but memory max is {max_pages}"
-                            )));
-                        }
+                    // §5.1: the emitted module always declares the 16 MiB ceiling
+                    // (`maximum: Some(256)`) regardless of the template's declared
+                    // maximum — never passed through as `None` or a smaller cap.
+                    if needed_pages > CEILING_PAGES {
+                        return Err(CompilerError::Validation(format!(
+                            "data section needs {needed_pages} pages but §5.1 memory ceiling is {CEILING_PAGES}"
+                        )));
                     }
                     mem.memory(MemoryType {
                         minimum: min,
-                        maximum: max,
+                        maximum: Some(CEILING_PAGES),
                         memory64: m.memory64,
                         shared: m.shared,
                         page_size_log2: None,
@@ -204,6 +204,11 @@ pub fn extract_data_section(module: &[u8], mem_offset: u32) -> Result<Vec<u8>> {
     Ok(raw[..view.total_len()].to_vec())
 }
 
+/// §5.1 module-declared memory ceiling (16 MiB = 256 pages). The emitted module
+/// MUST declare `maximum: Some(256)` regardless of the input template's declared
+/// maximum, so the inner bound is guaranteed (the host enforces the outer bound).
+const CEILING_PAGES: u64 = 256;
+
 /// Read a `i32.const N` (the only offset form Rust/LLVM emits for active wasm32
 /// data segments) from an offset const-expression.
 fn const_i32_offset(offset_expr: &wasmparser::ConstExpr) -> Result<i32> {
@@ -216,5 +221,49 @@ fn const_i32_offset(offset_expr: &wasmparser::ConstExpr) -> Result<i32> {
         other => Err(CompilerError::InvalidTemplate(format!(
             "unsupported active data-segment offset expression: {other:?}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasmparser::{Parser, Payload};
+
+    /// Read the (initial, maximum) page limits of memory 0 from a module.
+    fn memory_limits(module: &[u8]) -> (u64, Option<u64>) {
+        for payload in Parser::new(0).parse_all(module) {
+            if let Payload::MemorySection(reader) = payload.unwrap() {
+                let m = reader.into_iter().next().unwrap().unwrap();
+                return (m.initial, m.maximum);
+            }
+        }
+        panic!("no memory section");
+    }
+
+    /// §5.1: a template that declares NO memory maximum must still produce an
+    /// emitted module declaring `maximum: Some(256)` — the inner ceiling is
+    /// guaranteed, never passed through as `None`.
+    #[test]
+    fn inject_normalizes_unbounded_memory_to_ceiling() {
+        let watsrc = r#"(module (memory (export "memory") 1))"#;
+        let template = wat::parse_str(watsrc).unwrap();
+        let (_, max) = memory_limits(&template);
+        assert_eq!(max, None, "precondition: template has no declared max");
+
+        let blob = b"DIGS-blob-bytes";
+        let out = inject_data_section(&template, blob, 0x10).expect("inject ok");
+        let (_, max) = memory_limits(&out);
+        assert_eq!(max, Some(256), "§5.1 emitted module must declare maximum 256");
+    }
+
+    /// A template already declaring the ceiling stays at 256.
+    #[test]
+    fn inject_preserves_ceiling_memory_max() {
+        let watsrc = r#"(module (memory (export "memory") 4 256))"#;
+        let template = wat::parse_str(watsrc).unwrap();
+        let blob = b"DIGS";
+        let out = inject_data_section(&template, blob, 0x10).expect("inject ok");
+        let (_, max) = memory_limits(&out);
+        assert_eq!(max, Some(256));
     }
 }

@@ -82,6 +82,11 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
 
     let min = memory_min_pages
         .ok_or_else(|| CompilerError::InvalidTemplate("template declares no memory".into()))?;
+    // §5.1: a DECLARED maximum must not exceed the 16 MiB ceiling. A raw guest
+    // template (rustc/LLVM output) may legitimately declare NO maximum; the
+    // compiler normalizes the EMITTED module to `Some(256)` during injection
+    // (see `inject_data_section`) and the strict ceiling is enforced on that
+    // emitted module via `assert_memory_ceiling`.
     if let Some(max) = memory_max_pages {
         if max > MAX_MEMORY_PAGES {
             return Err(CompilerError::InvalidTemplate(format!(
@@ -96,6 +101,23 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
         memory_min_pages: min,
         memory_max_pages,
     })
+}
+
+/// Enforce the §5.1 module-declared memory ceiling on an EMITTED module: memory 0
+/// MUST declare `maximum: Some(256)` exactly (16 MiB). Unlike [`load_template`]
+/// (which tolerates a raw guest template that declares no maximum), this is the
+/// strict post-injection invariant — the served `.wasm` always carries the cap.
+pub fn assert_memory_ceiling(module: &[u8]) -> Result<()> {
+    let t = load_template(module)?;
+    match t.memory_max_pages {
+        Some(max) if max == MAX_MEMORY_PAGES => Ok(()),
+        Some(max) => Err(CompilerError::Validation(format!(
+            "emitted module memory max {max} pages must equal §5.1 ceiling {MAX_MEMORY_PAGES} (16 MiB)"
+        ))),
+        None => Err(CompilerError::Validation(format!(
+            "emitted module must declare memory maximum {MAX_MEMORY_PAGES} pages (§5.1 16 MiB ceiling)"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -132,6 +154,65 @@ mod tests {
             err.to_string().contains("get_content"),
             "unexpected error: {err}"
         );
+    }
+
+    const FULL_ABI_FUNCS: &str = r#"
+          (func (export "get_store_id") (result i64) (i64.const 0))
+          (func (export "get_current_roothash") (result i64) (i64.const 0))
+          (func (export "get_roothash_history") (result i64) (i64.const 0))
+          (func (export "get_public_key") (result i64) (i64.const 0))
+          (func (export "get_metadata") (result i64) (i64.const 0))
+          (func (export "get_authentication_info") (result i64) (i64.const 0))
+          (func (export "get_content") (param i32 i32) (result i64) (i64.const 0))
+          (func (export "get_proof") (param i32 i32) (result i64) (i64.const 0))
+          (func (export "alloc") (param i32) (result i32) (i32.const 0))
+          (func (export "dealloc") (param i32 i32))
+          (func (export "init") (result i32) (i32.const 0)))"#;
+
+    fn full_abi_module(memory_decl: &str) -> Vec<u8> {
+        let src = format!("(module\n          {memory_decl}\n{FULL_ABI_FUNCS}");
+        wat::parse_str(&src).unwrap()
+    }
+
+    #[test]
+    fn raw_template_without_declared_memory_max_is_accepted_by_load_template() {
+        // A raw guest template (rustc/LLVM) legitimately declares NO maximum;
+        // `load_template` tolerates it. The §5.1 ceiling is imposed on the
+        // EMITTED module by injection + `assert_memory_ceiling`.
+        let bytes = full_abi_module(r#"(memory (export "memory") 1)"#);
+        let t = load_template(&bytes).expect("raw template valid");
+        assert_eq!(t.memory_max_pages, None);
+    }
+
+    #[test]
+    fn emitted_module_without_declared_memory_max_fails_ceiling_check() {
+        // §5.1: the served module MUST declare `maximum: Some(256)`.
+        let bytes = full_abi_module(r#"(memory (export "memory") 1)"#);
+        let err = assert_memory_ceiling(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("must declare memory maximum"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn emitted_module_with_memory_max_under_ceiling_fails_ceiling_check() {
+        // §5.1: the module-declared cap is EXACTLY 256 pages (16 MiB).
+        let bytes = full_abi_module(r#"(memory (export "memory") 1 128)"#);
+        let err = assert_memory_ceiling(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("must equal §5.1 ceiling"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn emitted_module_with_memory_max_exactly_ceiling_passes() {
+        let bytes = full_abi_module(r#"(memory (export "memory") 1 256)"#);
+        assert_memory_ceiling(&bytes).expect("256 is the ceiling");
+        // The baked template is committed with the exact ceiling too.
+        let t = load_template(baked_template_bytes()).expect("baked template valid");
+        assert_eq!(t.memory_max_pages, Some(MAX_MEMORY_PAGES));
     }
 
     #[test]
