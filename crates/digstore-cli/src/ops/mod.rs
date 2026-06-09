@@ -5,3 +5,4 @@ pub mod discovery;
 pub mod remote_ops;
 pub mod serve;
 pub mod store_ops;
+pub mod walk;
