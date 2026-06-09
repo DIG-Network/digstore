@@ -242,14 +242,20 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
 
     // Build the encrypted chunk pool + key table. Each resource's chunks are
     // AES-256-GCM-sealed under its per-URN key. The served resource ciphertext is
-    // the length-framed concat of its chunk ciphertexts (so the client can split
-    // and GCM-open chunk-by-chunk). The generation merkle tree has ONE leaf per
-    // resource: `leaf = SHA-256(framed resource ciphertext)`, so a single
+    // the PLAIN ordered concat of its chunk ciphertexts (BINDING contract D5/C9:
+    // exactly what the guest's `get_content` returns via `concat_output`). The
+    // generation merkle tree has ONE leaf per resource:
+    // `leaf = SHA-256(concat_output(ordered chunk ciphertexts))`, so a single
     // `ContentResponse.merkle_proof` fully verifies the served bytes to the root.
+    // Leaves are ordered ascending by `static_key` to match the compiler's
+    // `current_generation_leaves` (D5), so the store-reported root equals the
+    // module's injected `CurrentRoot` and the client gate `proof.root ==
+    // trusted_root` holds.
     let mut pool_bodies: Vec<Vec<u8>> = Vec::new(); // chunk ciphertext bodies, global order
     let mut pool_hashes: Vec<Bytes32> = Vec::new(); // SHA-256(chunk ciphertext) (manifest/diff)
     let mut key_records: Vec<(String, Vec<u32>, u64)> = Vec::new();
-    let mut resource_leaves: Vec<Bytes32> = Vec::new();
+    // (static_key, leaf) so we can sort leaves ascending by static_key (D5).
+    let mut keyed_leaves: Vec<([u8; 32], Bytes32)> = Vec::new();
 
     for rec in &records {
         let urn = canonical_resource_urn(cfg.store_id, &rec.resource_key);
@@ -261,20 +267,28 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
             chunks
         };
         let mut indices = Vec::with_capacity(chunks.len());
-        let mut framed = Vec::new();
+        let mut chunk_cts: Vec<Vec<u8>> = Vec::with_capacity(chunks.len());
         for c in &chunks {
             let ct = digstore_crypto::encrypt_chunk(&aes_key, &c.data);
-            framed.extend_from_slice(&(ct.len() as u32).to_be_bytes());
-            framed.extend_from_slice(&ct);
             let h = digstore_crypto::sha256(&ct);
             let idx = pool_bodies.len() as u32;
+            chunk_cts.push(ct.clone());
             pool_bodies.push(ct);
             pool_hashes.push(h);
             indices.push(idx);
         }
-        resource_leaves.push(digstore_crypto::sha256(&framed));
+        // D5: leaf = SHA-256(concat_output(chunks)) — the exact bytes get_content
+        // returns for this resource (plain ordered concat, NO length framing).
+        let slices: Vec<&[u8]> = chunk_cts.iter().map(|c| c.as_slice()).collect();
+        let resource_blob = digstore_core::serving::concat_output(&slices);
+        keyed_leaves.push((urn.retrieval_key().0, digstore_crypto::sha256(&resource_blob)));
         key_records.push((rec.resource_key.clone(), indices, rec.content.len() as u64));
     }
+
+    // Ascending by static_key (raw 32 bytes; Bytes32 has no Ord) — the exact
+    // order the compiler injects and the guest ranks against (D5).
+    keyed_leaves.sort_by(|a, b| a.0.cmp(&b.0));
+    let resource_leaves: Vec<Bytes32> = keyed_leaves.into_iter().map(|(_, l)| l).collect();
 
     let tree = MerkleTree::from_leaves(resource_leaves);
     let root = tree.root();
@@ -417,7 +431,10 @@ fn compile_module(
         output_dir: ctx.modules_dir(),
         obfuscate: false,
         optimize: false,
-        template_override: None,
+        // D6: compile with the REAL guest wasm so the module serves itself via
+        // `HostRuntime::serve_content` (NOT the stub template). The CLI embeds the
+        // guest wasm at build time (see `build.rs` / `serve::embedded_guest_wasm`).
+        template_override: Some(crate::ops::serve::embedded_guest_wasm().to_vec()),
     };
     let outcome = Compiler::compile(
         &ccfg,
@@ -512,6 +529,35 @@ pub fn list_generation_resources(
         .iter()
         .map(|k| k.resource_key.clone())
         .collect())
+}
+
+/// Per-chunk CIPHERTEXT byte lengths for `resource_key` in `root`, in chunk
+/// order. The client uses these to split the module's PLAIN-concatenated served
+/// ciphertext (D5/C9) back into individual GCM chunks. Returns an empty vec if
+/// the resource is absent (the client then treats the blob as one chunk).
+pub fn resource_chunk_lens(
+    ctx: &CliContext,
+    root: &Bytes32,
+    resource_key: &str,
+) -> Result<Vec<usize>, CliError> {
+    let manifest = load_generation_manifest(ctx, root)?;
+    let by_index: BTreeMap<u32, u64> = manifest.chunks.iter().map(|c| (c.index, c.size)).collect();
+    let entry = manifest
+        .key_table
+        .iter()
+        .find(|k| k.resource_key == resource_key);
+    let entry = match entry {
+        Some(e) => e,
+        None => return Ok(Vec::new()),
+    };
+    let mut lens = Vec::with_capacity(entry.chunk_indices.len());
+    for idx in &entry.chunk_indices {
+        let size = by_index
+            .get(idx)
+            .ok_or_else(|| CliError::VerificationFailed("manifest chunk index missing".into()))?;
+        lens.push(*size as usize);
+    }
+    Ok(lens)
 }
 
 pub(crate) fn load_generation_manifest(
