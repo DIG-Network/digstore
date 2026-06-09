@@ -14,6 +14,33 @@ rand = "0.8"
 rand_chacha = "0.3"
 thiserror = "1"
 
+# Binary-only deps for the `dighost` host (do NOT leak into the lib API).
+clap = { version = "4", features = ["derive"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+object_store = { version = "0.11", features = ["aws"], optional = true }
+anyhow = { version = "1", optional = true }
+hex = { workspace = true, optional = true }
+url = { version = "2", optional = true }
+futures = { version = "0.3", optional = true }
+
+[features]
+default = ["dighost"]
+# The `dighost` binary and its storage/CLI deps. Enabled by default so a plain
+# `cargo build -p digstore-host` produces the binary, but gated so the lib can be
+# built dep-light with `--no-default-features`.
+dighost = ["clap", "tokio", "object_store", "anyhow", "hex", "url", "futures"]
+
+[[bin]]
+name = "dighost"
+path = "src/bin/dighost.rs"
+required-features = ["dighost"]
+
 [dev-dependencies]
 wat = "1"
 httpmock = "0.7"
+digstore-cli = { path = "../digstore-cli" }
+tempfile = "3"
+object_store = { version = "0.11", features = ["aws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures = "0.3"
+hex = { workspace = true }
