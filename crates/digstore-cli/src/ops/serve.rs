@@ -9,6 +9,23 @@
 //! a serialized [`ContentResponse`]. A retrieval miss yields a decoy whose proof
 //! does NOT verify (§14.2); the client's verification gate (`client_crypto`)
 //! rejects it. The host NEVER decrypts; decryption is a separate client step.
+//!
+//! ## §18.4 boundary: host returns verbatim; the CLI decode is client-side
+//!
+//! §18.4 says the host runtime "returns to the client exactly what the module
+//! produced: it neither decrypts nor inspects the payload," and §18 says the
+//! runtime "never parses content out of the module; it interacts only across the
+//! ABI." `digstore-host` is faithful to that: `HostRuntime::serve_content`
+//! returns the module's output bytes verbatim.
+//!
+//! This CLI is the `digstore` READER — the client on the trusting side of that
+//! boundary (it holds the URN and the URN-derived keys, §11.3). [`serve_content_raw`]
+//! surfaces the host's verbatim bytes; [`serve_content`] then DECODES the
+//! [`ContentResponse`] envelope framing CLIENT-SIDE so the reader can run merkle
+//! verification (§9.3) and AES-256-GCM decryption (§11). Decoding the envelope is
+//! NOT decryption and NOT data-section inspection: the decoded
+//! [`ContentResponse::ciphertext`] is still ciphertext. §18.4's "neither decrypts
+//! nor inspects" constrains the host process proper, which remains faithful.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -121,22 +138,21 @@ fn instantiate_host(
     .map_err(|e| CliError::VerificationFailed(format!("module load/instantiate failed: {e:?}")))
 }
 
-/// Serve content for `urn` by driving the REAL compiled module through
-/// [`HostRuntime::serve_content`] (BINDING contract D6). The module serves
-/// itself: its `get_content` performs the key-table lookup, oblivious gather, and
-/// builds a per-resource merkle proof to the injected `CurrentRoot`. We decode
-/// the returned [`ContentResponse`] and hand it back verbatim — the CLI does NOT
-/// parse the data section host-side. A retrieval miss returns a decoy whose proof
-/// does not verify; the caller's `client_crypto` gate rejects it. The `root`
-/// argument is the trusted root the caller verifies against (it is NOT trusted
-/// from the module).
-pub fn serve_content(
+/// Drive the REAL compiled module through [`HostRuntime::serve_content`] and
+/// return the module's output bytes EXACTLY as the host runtime produced them
+/// (BINDING contract D6).
+///
+/// This is the faithful §18.4 boundary: the host runtime "returns to the client
+/// exactly what the module produced: it neither decrypts nor inspects the
+/// payload." The returned bytes are the module's serialized [`ContentResponse`]
+/// envelope (encoded + encrypted) — we hand them back VERBATIM and perform no
+/// decode, no decrypt, and no data-section parsing here. The CLI's client-side
+/// decode (and decryption) is a separate step in [`serve_content`].
+pub fn serve_content_raw(
     ctx: &CliContext,
     module_path: &Path,
     urn: &Urn,
-    root: Bytes32,
-) -> Result<ContentResponse, CliError> {
-    let _ = root; // verification against the trusted root happens in client_crypto.
+) -> Result<Vec<u8>, CliError> {
     let store_id = urn.store_id;
     let pubkey = store_ops::load_host_pubkey(ctx).unwrap_or(Bytes48([0u8; 48]));
     let mut rt = instantiate_host(ctx, module_path, store_id, pubkey)?;
@@ -153,8 +169,38 @@ pub fn serve_content(
             "module returned an empty response (not self-serving)".into(),
         ));
     }
+    Ok(resp_bytes)
+}
 
-    // Decode the serialized ContentResponse the guest produced.
+/// Serve content for `urn` by driving the REAL compiled module through
+/// [`HostRuntime::serve_content`] (via [`serve_content_raw`]) and then DECODING
+/// the returned [`ContentResponse`] envelope CLIENT-SIDE (BINDING contract D6).
+///
+/// §18.4 boundary: the host runtime returns the module's bytes verbatim
+/// ([`serve_content_raw`]) — "it neither decrypts nor inspects the payload." This
+/// function runs in the `digstore` reader (the client that holds the URN and the
+/// keys, §11.3); decoding the envelope's framing is NOT decryption — the resulting
+/// [`ContentResponse::ciphertext`] is still AES-256-GCM ciphertext that only the
+/// caller's `client_crypto` step can open. The module serves itself: its
+/// `get_content` performs the key-table lookup, oblivious gather, and builds a
+/// per-resource merkle proof to the injected `CurrentRoot`. The CLI does NOT parse
+/// the data section host-side. A retrieval miss returns a decoy whose proof does
+/// not verify; the caller's `client_crypto` gate rejects it. The `root` argument
+/// is the trusted root the caller verifies against (it is NOT trusted from the
+/// module).
+pub fn serve_content(
+    ctx: &CliContext,
+    module_path: &Path,
+    urn: &Urn,
+    root: Bytes32,
+) -> Result<ContentResponse, CliError> {
+    let _ = root; // verification against the trusted root happens in client_crypto.
+
+    // 1. Host runtime: raw module output, verbatim (no decrypt/inspect — §18.4).
+    let resp_bytes = serve_content_raw(ctx, module_path, urn)?;
+
+    // 2. Client-side decode of the envelope framing (NOT decryption). The
+    //    decrypted plaintext is recovered later, in `client_crypto`, with the key.
     let mut dec = Decoder::new(&resp_bytes);
     let resp = ContentResponse::decode(&mut dec)
         .map_err(|e| CliError::VerificationFailed(format!("decode ContentResponse: {e:?}")))?;
