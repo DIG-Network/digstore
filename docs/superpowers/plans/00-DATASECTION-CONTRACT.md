@@ -107,6 +107,13 @@ init → add(file) → commit(compile real .wasm) → HostRuntime::new(module).s
 ```
 Plus: `serve_content` for a miss returns a decoy whose `proof.root != trusted_root` (fails the client gate); a private-store cat without salt fails the GCM tag.
 
+## D8. Merkle proof size under the carry-up rule (documented deviation #6)
+§9.1 builds the tree by **carrying an odd node up unchanged** (not duplicating it). §9.5 states a proof carries `ceil(log2(n))` sibling hashes. These two are in tension: a leaf that is the carried-up odd node at some level **skips** that level (it has no sibling there and `ProofStep{hash,is_left}` has no identity/no-op encoding under §9.3's "fold and hash" semantics), so its path is genuinely **shorter** than the full spine.
+
+- **Resolution (binding):** `MerkleTree::prove` emits no step for a carried-up node, so for any leaf `i`, `path.len() <= ceil(log2(n))`. The bound is **attained** by the full-spine leaf (index 0), which is never carried up — so §9.5's `ceil(log2(n))` is the exact worst-case/upper bound, realized by at least one leaf for every `n`.
+- **Why not pad to `==`:** forcing every path to exactly `ceil(log2(n))` would require either (a) the Bitcoin-style "duplicate the last node" rule, which **changes the root** and breaks §9.1's carry-up wording plus the D5 cross-crate root agreement (store `GenerationState.root`, compiler `CurrentRoot`, guest `build_real_proof`, cli verify), or (b) adding a non-spec sentinel `ProofStep` that `verify()` treats as identity, breaking §9.3's "combine, hash, ascend" fold. Both are larger spec violations than a tighter, sound bound. The `<=` bound is strictly safe: `verify()` still recomputes the trusted root, so soundness (§9.4) is unaffected.
+- **Tests (digstore-core/tests/merkle.rs):** `every_proof_path_is_at_most_ceil_log2_n_and_verifies` asserts `path.len() <= ceil(log2 n)` AND `verify()` for every leaf of many `n`; `full_spine_proof_size_is_exactly_ceil_log2_n` asserts the bound is attained at index 0; `carried_up_leaf_has_shorter_path_than_full_spine` documents the concrete `n=3` carry case.
+
 ## D7. Determinism + secretless retained
 - `encode_blob` is deterministic; the `Filler` section uses the existing deterministic ChaCha20 stream (deviation #2). Double-compile must stay byte-identical (compiler determinism test).
 - Secretless scan still holds: blob contains only ciphertext, public metadata, public keys, deterministic filler, and merkle leaves (hashes) — no decryption key, signing key, or salt.

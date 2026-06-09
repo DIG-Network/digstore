@@ -4,6 +4,13 @@
 //! - `node = SHA-256(left || right)`
 //! - an odd node is carried up unchanged
 //! - `root = generation root`
+//!
+//! Proof size (§9.5): a carried-up leaf skips a level, so its inclusion path is
+//! `<= ceil(log2 n)` siblings; the bound is attained by the full-spine leaf
+//! (index 0). The `<=` bound is the binding contract (see
+//! `00-DATASECTION-CONTRACT.md` D8 / design-doc deviation #5): forcing equality
+//! would require duplicating odd nodes (changing the root) or an identity
+//! `ProofStep` (breaking the §9.3 fold). Soundness (§9.4) is unaffected.
 
 use crate::bytes::Bytes32;
 use crate::codec::{Decode, DecodeError, Decoder, Encode, Encoder};
