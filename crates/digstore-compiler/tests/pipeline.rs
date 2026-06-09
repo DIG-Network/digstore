@@ -103,13 +103,10 @@ fn obfuscation_flag_sets_stat_and_still_writes_valid_module() {
 }
 
 #[test]
-fn pool_length_is_bucketed_and_independent_of_exact_content_size() {
-    use digstore_compiler::next_pool_bucket;
-    // Two content sizes in the same bucket round to the same pool length.
-    assert_eq!(next_pool_bucket(30), next_pool_bucket(50)); // both 64
-    assert_eq!(next_pool_bucket(70), next_pool_bucket(120)); // both 128
-
-    // The pipeline records the bucketed pool length in detail stats.
+fn pool_byte_len_is_total_unique_content_bytes() {
+    // D4: the ChunkPool holds the unique chunk ciphertexts in global-index order;
+    // deterministic filler is now a SEPARATE section (id 11), not interleaved. The
+    // detail `pool_byte_len` therefore reports the exact total content byte count.
     let dir = std::env::temp_dir().join(format!("digc-buck-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let gens = sample_generations();
@@ -122,7 +119,8 @@ fn pool_length_is_bucketed_and_independent_of_exact_content_size() {
         &trusted_keys(),
     )
     .unwrap();
-    // shared(22) + alpha(15) + beta(15) = 52 content bytes -> bucket 64.
-    assert_eq!(outcome.detail.pool_byte_len, 64);
+    // shared-chunk-body-0000(22) + alpha-body-1111(15) + beta-body-2222(14) = 51.
+    assert_eq!(outcome.detail.pool_byte_len, 51);
+    assert_eq!(outcome.detail.unique_chunk_count, 3);
     std::fs::remove_dir_all(&dir).ok();
 }

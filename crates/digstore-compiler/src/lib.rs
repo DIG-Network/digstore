@@ -20,9 +20,13 @@
 //!   `CompilationStats`). [`Compiler::compile`] returns a [`CompileOutcome`]
 //!   carrying both.
 //!
-//! ## Shared constant
-//! [`DATA_SECTION_MEM_OFFSET`] (65536 = page 1) is the agreed offset where the
-//! data section is placed; the `digstore-guest` crate reads from the same offset.
+//! ## Data-section contract (BINDING D1–D5)
+//! The byte-exact data-section format is owned by `digstore_core::datasection`.
+//! The compiler emits the blob via that module and injects it as an ACTIVE data
+//! segment at [`DATA_SECTION_MEM_OFFSET`] (= `digstore_core::datasection::DIGS_DATA_OFFSET`,
+//! 1 MiB), raising the module's memory min pages to fit. The `digstore-guest`
+//! crate reads from the same offset. The compiler's old private `SEG_*` format is
+//! deleted: core is the single source of truth.
 
 mod atomic_write;
 mod chunk_index;
@@ -34,7 +38,6 @@ mod inject;
 mod key_table;
 mod obfuscate;
 mod pipeline;
-mod pool;
 mod template;
 
 pub use config::{CompilerConfig, CompilerStats};
@@ -42,12 +45,7 @@ pub use error::{CompilerError, Result};
 pub use chunk_index::ChunkIndex;
 pub use key_table::{build_chunk_index_and_key_table, GenerationView, KeyTable, ResourceView};
 pub use filler::deterministic_filler;
-pub use pool::{build_pool, next_pool_bucket, ChunkLoc, InterleavedPool};
-pub use data_section::{
-    decode_store_header, decode_trusted_keys, encode_data_section, parse_offset_table,
-    DataSectionInputs, SectionEntry, SEG_KEY_TABLE, SEG_MANIFEST, SEG_POOL, SEG_STORE_HEADER,
-    SEG_TRUSTED_KEYS,
-};
+pub use data_section::{encode_data_section, DataSectionInputs};
 pub use template::{baked_template_bytes, load_template, Template, MAX_MEMORY_PAGES, REQUIRED_EXPORTS};
 pub use inject::inject_data_section;
 pub use obfuscate::obfuscate;
