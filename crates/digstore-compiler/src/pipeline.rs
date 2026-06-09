@@ -1,21 +1,28 @@
+use digstore_core::datasection::DIGS_DATA_OFFSET;
+use digstore_core::merkle::MerkleTree;
+use digstore_core::serving::concat_output;
 use digstore_core::{
-    Bytes32, Bytes48, CompilationResult, CompilationStats, MetadataManifest, TrustedHostKey,
+    AuthenticationInfo, Bytes32, Bytes48, CompilationResult, CompilationStats, MetadataManifest,
+    TrustedHostKey,
 };
+use sha2::{Digest, Sha256};
 
 use crate::atomic_write::atomic_write_module;
 use crate::config::{CompilerConfig, CompilerStats};
 use crate::data_section::{encode_data_section, DataSectionInputs};
 use crate::error::{CompilerError, Result};
+use crate::filler::deterministic_filler;
 use crate::inject::inject_data_section;
 use crate::key_table::{build_chunk_index_and_key_table, GenerationView};
 use crate::obfuscate::obfuscate;
-use crate::pool::build_pool;
 use crate::template::{baked_template_bytes, load_template};
 
-/// Fixed memory offset where the data-section blob is placed. This is page 1
-/// (65536), the reserved region declared by the guest template. SINGLE SOURCE OF
-/// TRUTH: the digstore-guest crate reads its data section from this same offset.
-pub const DATA_SECTION_MEM_OFFSET: u32 = 65536;
+/// Fixed linear-memory offset where the data-section blob is injected and the
+/// guest reads it (BINDING contract D2). SINGLE SOURCE OF TRUTH:
+/// [`digstore_core::datasection::DIGS_DATA_OFFSET`] (1 MiB). The compiler injects
+/// an ACTIVE data segment at `i32.const DATA_SECTION_MEM_OFFSET` and the guest's
+/// `embedded()` reads from this same pointer.
+pub const DATA_SECTION_MEM_OFFSET: u32 = DIGS_DATA_OFFSET;
 
 /// Outcome of a successful compilation (CONVENTIONS C6).
 ///
@@ -34,7 +41,8 @@ pub struct Compiler;
 
 impl Compiler {
     /// Run the full deterministic pipeline. `generations` must be in load order;
-    /// the last generation's root is the module's roothash / current generation.
+    /// the last generation is the current generation whose per-resource merkle
+    /// root becomes the module's `CurrentRoot` (D5).
     pub fn compile<G: GenerationView>(
         config: &CompilerConfig,
         store_id: Bytes32,
@@ -55,26 +63,43 @@ impl Compiler {
         let (chunk_index, key_table) = build_chunk_index_and_key_table(generations);
         key_table.verify_against(chunk_index.len() as u32)?;
 
-        // Current generation = last loaded.
-        let roothash = generations.last().unwrap().root();
+        // Generation roots (store-reported) drive the filename + root history.
+        let store_roothash = generations.last().unwrap().root();
         let root_history: Vec<Bytes32> = generations.iter().map(|g| g.root()).collect();
 
-        // Stage: interleaved pool with deterministic filler (§8.3, §19.3).
-        let bodies: Vec<Vec<u8>> = chunk_index.bodies_in_order().map(|b| b.to_vec()).collect();
-        let total_content_bytes: u64 = bodies.iter().map(|b| b.len() as u64).sum();
-        let pool = build_pool(&store_id, &roothash, &bodies);
+        // D5: per-resource merkle leaves of the CURRENT generation. leaf =
+        // SHA-256(concat_output(resource's ordered chunk ciphertexts)); leaves are
+        // ordered ascending by static_key (the order the guest ranks against). The
+        // current generation's root = MerkleTree::from_leaves(leaves).root().
+        let merkle_leaves = current_generation_leaves(generations.last().unwrap());
+        let current_root = MerkleTree::from_leaves(merkle_leaves.clone()).root();
 
-        // Stage 6: data-section encode (manifest via core Encode, NOT JSON).
+        // D4: ChunkPool body holds the unique chunk ciphertexts in GLOBAL INDEX
+        // order (the order `chunk_indices` address into). Filler is a SEPARATE
+        // section (id 11), not interleaved, so global indexing stays exact.
+        let chunk_pool_bodies: Vec<Vec<u8>> =
+            chunk_index.bodies_in_order().map(|b| b.to_vec()).collect();
+        let total_content_bytes: u64 = chunk_pool_bodies.iter().map(|b| b.len() as u64).sum();
+
+        // §8.3 filler (deviation #2): deterministic ChaCha20 keyed by
+        // SHA-256(store_id || roothash || domain). Length is a bucket over the
+        // content size so module size leaks only a coarse bucket.
+        let filler_len = next_filler_bucket(total_content_bytes as usize);
+        let filler = deterministic_filler(&store_id, &store_roothash, filler_len);
+
+        // Stage 6: data-section encode in the canonical contract format (D1).
         let inputs = DataSectionInputs {
             store_id,
-            roothash,
+            current_root,
             root_history,
             store_pubkey,
-            pool_bytes: pool.bytes.clone(),
-            pool_descriptors: pool.descriptors.clone(),
-            key_table: key_table.entries().to_vec(),
-            manifest,
             trusted_keys: trusted_keys.to_vec(),
+            manifest,
+            auth_info: default_auth_info(),
+            key_table: key_table.entries().to_vec(),
+            chunk_pool_bodies,
+            merkle_leaves,
+            filler,
         };
         let data_blob = encode_data_section(&inputs);
 
@@ -85,7 +110,8 @@ impl Compiler {
         };
         load_template(&template_bytes)?;
 
-        // Stage: data inject (bumps memory min pages to fit the blob).
+        // Stage: inject blob as an ACTIVE data segment at DIGS_DATA_OFFSET and bump
+        // memory min pages so DIGS_DATA_OFFSET + total_len fits (D2).
         let mut module = inject_data_section(&template_bytes, &data_blob, DATA_SECTION_MEM_OFFSET)?;
 
         // Stage 7: optional obfuscation (deterministic).
@@ -98,8 +124,9 @@ impl Compiler {
         // Stage 9: final validate (re-parse exports + memory bounds).
         load_template(&module)?;
 
-        // Stage 10: atomic write.
-        let output_path = atomic_write_module(&config.output_dir, &store_id, &roothash, &module)?;
+        // Stage 10: atomic write (filename uses the store-reported roothash).
+        let output_path =
+            atomic_write_module(&config.output_dir, &store_id, &store_roothash, &module)?;
         let output_size = std::fs::metadata(&output_path)?.len();
 
         // Canonical core stats (C6): chunk_count, total_bytes, generation_count.
@@ -115,14 +142,14 @@ impl Compiler {
             generation_count: generations.len() as u32,
             unique_chunk_count: chunk_index.len() as u32,
             resource_count: key_table.entries().len() as u32,
-            pool_byte_len: pool.bytes.len() as u64,
+            pool_byte_len: total_content_bytes,
             data_section_byte_len: data_blob.len() as u64,
             obfuscation_applied,
         };
 
         let result = CompilationResult {
             store_id,
-            roothash,
+            roothash: store_roothash,
             output_path,
             output_size,
             stats: core_stats,
@@ -130,4 +157,51 @@ impl Compiler {
 
         Ok(CompileOutcome { result, detail })
     }
+}
+
+/// Default (empty) authentication info embedded for stores that do not require a
+/// session or JWT. The guest serves these bytes verbatim from `get_authentication_info`.
+fn default_auth_info() -> AuthenticationInfo {
+    AuthenticationInfo {
+        requires_session: false,
+        requires_jwt: false,
+        jwks_url: None,
+        accepted_algorithms: Vec::new(),
+    }
+}
+
+/// Compute the current generation's per-resource merkle leaves (D5), ascending by
+/// `static_key`. leaf = SHA-256(concat_output(resource's ordered chunk ciphertexts)),
+/// i.e. SHA-256 of exactly the bytes `get_content` returns for that resource.
+fn current_generation_leaves<G: GenerationView>(current: &G) -> Vec<Bytes32> {
+    let mut keyed: Vec<([u8; 32], Bytes32)> = current
+        .resources()
+        .iter()
+        .map(|r| {
+            let bodies: Vec<Vec<u8>> = r.chunks().into_iter().map(|(_, body)| body).collect();
+            let slices: Vec<&[u8]> = bodies.iter().map(|b| b.as_slice()).collect();
+            let blob = concat_output(&slices);
+            let mut h = Sha256::new();
+            h.update(&blob);
+            let mut leaf = [0u8; 32];
+            leaf.copy_from_slice(&h.finalize());
+            (r.resource_key().0, Bytes32(leaf))
+        })
+        .collect();
+
+    // Ascending by static_key (raw 32 bytes; Bytes32 has no Ord). This is the
+    // exact order the guest's `resource_leaf_index` ranks against (D3/D5).
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    keyed.into_iter().map(|(_, leaf)| leaf).collect()
+}
+
+/// Smallest filler length >= `n`, stepping in powers of two from a 64-byte floor.
+/// Hides the exact content byte count so module size leaks only a coarse bucket
+/// (§8.3); the filler section carries this many deterministic ChaCha20 bytes.
+fn next_filler_bucket(n: usize) -> usize {
+    let mut b = 64usize;
+    while b < n {
+        b <<= 1;
+    }
+    b
 }
