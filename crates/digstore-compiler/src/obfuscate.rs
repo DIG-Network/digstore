@@ -18,6 +18,11 @@ const OBFUSCATION_MARKER: &[u8] =
 /// segment — so by wasm reachability they cannot affect observable behavior.
 const BOGUS_FUNCTION_COUNT: u32 = 8;
 
+/// Apply instruction substitution to every Nth `i32.const` in a body (§17.1
+/// instruction substitution). A stride of 3 genuinely transforms a meaningful
+/// fraction of constants while keeping the pass simple and deterministic.
+const SUBSTITUTION_STRIDE: u32 = 3;
+
 /// Apply deterministic, behavior-preserving obfuscation (§17.1).
 ///
 /// REAL transformations performed over the module's CODE section (decode via
@@ -36,11 +41,17 @@ const BOGUS_FUNCTION_COUNT: u32 = 8;
 ///    appended (new fn type + function entries + code bodies). They are never
 ///    called, exported, or referenced by any element segment, so by wasm
 ///    reachability they cannot affect behavior.
-/// 4. instruction substitution — DEFERRED. A general semantics-preserving operator
-///    substitution (e.g. `i32.const k` -> an equivalent computation) requires
-///    proving stack/type/value equivalence for every reachable operator context,
-///    which is risky to do soundly here. Per the task's "omit rather than risk
-///    behavior" guidance it is intentionally NOT applied; (1)-(3) are genuine.
+/// 4. instruction substitution — a deterministic subset of `i32.const k`
+///    operators (every [`SUBSTITUTION_STRIDE`]-th) is rewritten to the equivalent
+///    sequence `i32.const a; i32.const b; i32.add` where `a.wrapping_add(b) == k`.
+///    WASM `i32.add` is exactly two's-complement wrapping addition, so the net
+///    pushed value is byte-for-byte identical to `k`. The rewrite is STACK-NEUTRAL
+///    (one i32 pushed before, one i32 pushed after) and valid in ANY context an
+///    `i32.const` is valid, so it is provably behavior-preserving. `a` is derived
+///    purely from the function/const indices (no RNG), keeping the pass
+///    deterministic and byte-identical across compiles.
+///
+/// All four §17.1 techniques are genuinely implemented above (none are deferred).
 ///
 /// The custom-section marker is appended as METADATA only and is NOT relied upon
 /// as the transformation. Returns an error only if the input is unparseable or the
@@ -142,13 +153,42 @@ fn transform_body(
         ops.push(reader.read().map_err(parser_err)?);
     }
     let last = ops.len().saturating_sub(1);
+    // Per-body counter of i32.const operators seen, used to pick a deterministic
+    // subset for instruction substitution (every Nth const).
+    let mut const_index: u32 = 0;
     for (i, op) in ops.into_iter().enumerate() {
+        // (4) instruction substitution: deterministically rewrite a subset of
+        // `i32.const k` into `i32.const a; i32.const b; i32.add` with
+        // a.wrapping_add(b) == k. WASM i32.add is two's-complement wrapping add,
+        // so the net pushed value is byte-for-byte identical to the original k.
+        // It is STACK-NEUTRAL (one i32 pushed before, one after) and valid in
+        // ANY context an i32.const is valid, so it is provably behavior-preserving.
+        if let wasmparser::Operator::I32Const { value: k } = op {
+            // Substitute every SUBSTITUTION_STRIDE-th const. The seed mixes the
+            // function ordinal and the per-body const index — no RNG, fully
+            // deterministic and thus byte-identical across compiles.
+            let do_subst = const_index.is_multiple_of(SUBSTITUTION_STRIDE);
+            const_index = const_index.wrapping_add(1);
+            if do_subst {
+                let seed = func_ordinal
+                    .wrapping_mul(0x9E37_79B1)
+                    .wrapping_add(const_index);
+                let a = seed.wrapping_mul(0x9E37_79B1) as i32;
+                let b = k.wrapping_sub(a);
+                f.instruction(&Instruction::I32Const(a));
+                f.instruction(&Instruction::I32Const(b));
+                f.instruction(&Instruction::I32Add);
+                op_index = op_index.wrapping_add(1);
+                continue;
+            }
+        }
+
         let instr = reencoder.instruction(op).map_err(reencode_err)?;
         f.instruction(&instr);
         // Deterministic nop insertion: after every operator except the closing
         // End, insert a nop when (op_index + func_ordinal) is even. Derived purely
         // from indices => no RNG, fully deterministic.
-        if i != last && (op_index.wrapping_add(func_ordinal)) % 2 == 0 {
+        if i != last && (op_index.wrapping_add(func_ordinal)).is_multiple_of(2) {
             f.instruction(&Instruction::Nop);
         }
         op_index = op_index.wrapping_add(1);
@@ -298,6 +338,38 @@ mod tests {
         count
     }
 
+    /// Count total `i32.add` (0x6A) opcodes across all function bodies.
+    fn count_i32_adds(module_bytes: &[u8]) -> usize {
+        let mut count = 0usize;
+        for payload in Parser::new(0).parse_all(module_bytes) {
+            if let Payload::CodeSectionEntry(body) = payload.unwrap() {
+                let mut reader = body.get_operators_reader().unwrap();
+                while !reader.eof() {
+                    if matches!(reader.read().unwrap(), wasmparser::Operator::I32Add) {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// Count total `i32.const` (0x41) opcodes across all function bodies.
+    fn count_i32_consts(module_bytes: &[u8]) -> usize {
+        let mut count = 0usize;
+        for payload in Parser::new(0).parse_all(module_bytes) {
+            if let Payload::CodeSectionEntry(body) = payload.unwrap() {
+                let mut reader = body.get_operators_reader().unwrap();
+                while !reader.eof() {
+                    if matches!(reader.read().unwrap(), wasmparser::Operator::I32Const { .. }) {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    }
+
     /// Count the number of function bodies (code-section entries) in the module.
     fn count_function_bodies(module_bytes: &[u8]) -> usize {
         let mut count = 0usize;
@@ -330,6 +402,31 @@ mod tests {
         assert!(
             after > before,
             "obfuscation must insert real nops (before={before}, after={after})"
+        );
+    }
+
+    #[test]
+    fn obfuscation_performs_real_instruction_substitution() {
+        // §17.1 instruction substitution: the pass MUST genuinely rewrite some
+        // `i32.const k` operators into the equivalent `i32.const a; i32.const b;
+        // i32.add` sequence. Each substitution turns 1 const into 2 consts + 1
+        // add, so BOTH the i32.const count AND the i32.add count strictly grow.
+        // (RED before the substitution pass exists; GREEN after.)
+        let m = template();
+        let consts_before = count_i32_consts(&m);
+        let adds_before = count_i32_adds(&m);
+        let o = obfuscate(&m).expect("ok");
+        let consts_after = count_i32_consts(&o);
+        let adds_after = count_i32_adds(&o);
+        assert!(
+            adds_after > adds_before,
+            "instruction substitution must add real i32.add ops \
+             (adds before={adds_before}, after={adds_after})"
+        );
+        assert!(
+            consts_after > consts_before,
+            "instruction substitution must add real i32.const ops \
+             (consts before={consts_before}, after={consts_after})"
         );
     }
 
