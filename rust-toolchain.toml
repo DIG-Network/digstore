@@ -1,0 +1,9 @@
+# Pin the toolchain so CI is deterministic and matches local development. This
+# keeps `clippy -D warnings` stable — a freshly-installed `stable` on CI can add
+# new lints that turn a previously-green build red. Bump deliberately, then run
+# the full gate locally before pushing.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

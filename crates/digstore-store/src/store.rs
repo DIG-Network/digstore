@@ -218,7 +218,7 @@ impl<C: Clock> Store<C> {
         // D5 merkle tree: ONE leaf per resource, ascending by static_key (the
         // exact leaf order the compiler injects and the guest ranks against).
         // §9.4 invariant `state.root == tree.root()` still holds.
-        resource_leaves.sort_by(|a, b| a.0.cmp(&b.0));
+        resource_leaves.sort_by_key(|r| r.0);
         let leaves: Vec<Bytes32> = resource_leaves.iter().map(|(_, leaf)| *leaf).collect();
         let tree = MerkleTree::from_leaves(leaves);
         let root = tree.root();
