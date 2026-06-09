@@ -29,17 +29,28 @@ pub fn store_id_and_root(dir: &TempDir) -> (String, String) {
 /// Lands inside the chunk-ciphertext pool region so the host still instantiates
 /// the module (no code corruption) and the failure is CLIENT-side merkle/GCM.
 pub fn corrupt_data_section(module_path: &std::path::Path) {
+    use digstore_core::datasection::{DataView, SectionId};
+
     let mut bytes = std::fs::read(module_path).unwrap();
     let magic = b"DIGS";
     let start = bytes
         .windows(magic.len())
         .position(|w| w == magic)
         .expect("DIGS magic present in compiled module");
-    // Header = magic(4) + version(1) + count(4) + 5 rows*(1+4+4)=45 => 54 bytes.
-    // SEG_POOL is the first segment; its body is `u32 len || pool bytes`, so the
-    // pool ciphertext begins at header+4. Flip a byte a few into the first chunk
-    // ciphertext so the client merkle (leaf) and GCM tag both fail.
-    let target = start + 54 + 4 + 2;
+
+    // Locate the ChunkPool (id 9) section in the canonical contract blob, then
+    // flip a byte a few into the FIRST chunk's ciphertext. ChunkPool body =
+    // count(u32 BE) || per chunk: len(u32 BE) || bytes. The first ciphertext byte
+    // is at pool_offset + 4 (count) + 4 (first len). Flipping it makes the client
+    // merkle leaf (and GCM tag) fail while the module still instantiates.
+    let blob = &bytes[start..];
+    let view = DataView::parse(blob).expect("compiled module has a valid DIGS blob");
+    let pool = view
+        .section(SectionId::ChunkPool)
+        .expect("module has a ChunkPool section");
+    // Offset of the pool body within the whole module = start + (pool - blob).
+    let pool_off_in_blob = pool.as_ptr() as usize - blob.as_ptr() as usize;
+    let target = start + pool_off_in_blob + 4 + 4 + 2;
     assert!(target < bytes.len(), "module too small to corrupt");
     bytes[target] ^= 0xFF;
     std::fs::write(module_path, &bytes).unwrap();
