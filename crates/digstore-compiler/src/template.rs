@@ -5,6 +5,21 @@ use crate::error::{CompilerError, Result};
 /// Maximum linear-memory pages the served module may declare (§5.1: 16 MiB ceiling).
 pub const MAX_MEMORY_PAGES: u64 = 256;
 
+/// Host functions the served module must import from the `dig_host` module
+/// (§5.1 Import section / §6.3 Host Imports). The compiler bakes a guest
+/// template that declares all eight; `inject_data_section` preserves the Import
+/// section verbatim into the emitted module.
+pub const REQUIRED_HOST_IMPORTS: &[&str] = &[
+    "host_get_public_key",
+    "host_create_attestation",
+    "host_establish_session",
+    "host_verify_session",
+    "jwks_fetch",
+    "host_get_current_time",
+    "host_random_bytes",
+    "host_read_return_buffer",
+];
+
 /// Exports the served module must expose (guest ABI).
 pub const REQUIRED_EXPORTS: &[&str] = &[
     "get_store_id",
@@ -26,6 +41,8 @@ pub const REQUIRED_EXPORTS: &[&str] = &[
 pub struct Template {
     pub bytes: Vec<u8>,
     exports: Vec<String>,
+    /// `(module, name)` pairs of every function import the template declares.
+    imports: Vec<(String, String)>,
     /// Declared memory limits (min_pages, max_pages_opt) of memory 0.
     pub memory_min_pages: u64,
     pub memory_max_pages: Option<u64>,
@@ -39,6 +56,13 @@ impl Template {
     pub fn has_export(&self, name: &str) -> bool {
         self.exports.iter().any(|e| e == name)
     }
+
+    /// Whether the template imports `dig_host::{name}` (a function import).
+    pub fn has_host_import(&self, name: &str) -> bool {
+        self.imports
+            .iter()
+            .any(|(m, n)| m == "dig_host" && n == name)
+    }
 }
 
 /// The pinned template bytes assembled by `build.rs` from the committed `.wat`.
@@ -50,6 +74,7 @@ pub fn baked_template_bytes() -> &'static [u8] {
 /// required ABI surface, and assert memory bounds (a memory exists, max <= 256).
 pub fn load_template(bytes: &[u8]) -> Result<Template> {
     let mut exports = Vec::new();
+    let mut imports: Vec<(String, String)> = Vec::new();
     let mut memory_min_pages: Option<u64> = None;
     let mut memory_max_pages: Option<u64> = None;
     let mut memory64 = false;
@@ -58,6 +83,13 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
         match payload {
+            Payload::ImportSection(reader) => {
+                for import in reader {
+                    let import =
+                        import.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
+                    imports.push((import.module.to_string(), import.name.to_string()));
+                }
+            }
             Payload::ExportSection(reader) => {
                 for export in reader {
                     let export =
@@ -121,6 +153,7 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
     Ok(Template {
         bytes: bytes.to_vec(),
         exports,
+        imports,
         memory_min_pages: min,
         memory_max_pages,
         memory64,
@@ -143,6 +176,22 @@ pub fn assert_memory_ceiling(module: &[u8]) -> Result<()> {
             "emitted module must declare memory maximum {MAX_MEMORY_PAGES} pages (§5.1 16 MiB ceiling)"
         ))),
     }
+}
+
+/// Enforce the §5.1 Import section on a module: it MUST import every
+/// `dig_host` host function in [`REQUIRED_HOST_IMPORTS`] (§6.3). Used as a
+/// post-injection invariant so the emitted module can never silently regress to
+/// an export-only stub that declares no host imports.
+pub fn assert_host_imports(module: &[u8]) -> Result<()> {
+    let t = load_template(module)?;
+    for name in REQUIRED_HOST_IMPORTS {
+        if !t.has_host_import(name) {
+            return Err(CompilerError::Validation(format!(
+                "emitted module missing §5.1 dig_host import {name}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

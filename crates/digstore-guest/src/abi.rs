@@ -33,6 +33,15 @@ fn ret(bytes: Vec<u8>) -> i64 {
 
 #[no_mangle]
 pub extern "C" fn init() -> i32 {
+    // §5.1: keep all eight dig_host import declarations alive in the Import
+    // section. The anchor never calls the host at runtime (its body is behind a
+    // never-taken, optimizer-opaque branch) but ties the import declarations
+    // into the reachable call graph from an export so the linker emits them.
+    #[cfg(target_arch = "wasm32")]
+    {
+        return crate::imports::retain_dig_host_imports();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     0
 }
 
