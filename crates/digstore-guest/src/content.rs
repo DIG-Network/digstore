@@ -160,6 +160,14 @@ fn gate<H: DigHost + ?Sized>(
     }
     // JWT gate (verification wired in Task 19).
     if cfg.require_jwt {
+        // §12.4: "The session is the precondition for any JWT-authorization logic
+        // the module chooses to enforce before releasing real content." Require an
+        // active session BEFORE running any JWT logic; with no/invalid session
+        // (the host returns NoSession/SessionExpired, i.e. verify_session()==false)
+        // fail closed -> Decoy, even if the presented token would itself validate.
+        if !host.verify_session() {
+            return Err(());
+        }
         let jwt = req.jwt.as_ref().ok_or(())?;
         let policy = crate::jwt::ClaimPolicy {
             now: host.current_time(),
