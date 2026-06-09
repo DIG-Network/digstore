@@ -3,27 +3,23 @@ use crate::config;
 use crate::context::CliContext;
 use crate::error::CliError;
 
-pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: RemoteArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: RemoteArgs) -> Result<(), CliError> {
     match args.action {
         RemoteAction::Add { name, url } => {
             config::add_remote(ctx, &name, &url)?;
-            if !ctx.json {
-                println!("added remote {name} -> {url}");
-            }
+            ui.success(format!("added remote {name} -> {url}"));
         }
         RemoteAction::Remove { name } => {
             config::remove_remote(ctx, &name)?;
-            if !ctx.json {
-                println!("removed remote {name}");
-            }
+            ui.success(format!("removed remote {name}"));
         }
         RemoteAction::List => {
             let remotes = config::list_remotes(ctx)?;
-            if ctx.json {
-                println!("{}", serde_json::to_string_pretty(&remotes).unwrap());
+            if ui.json() {
+                ui.emit_json(&remotes);
             } else {
                 for (name, url) in remotes {
-                    println!("{name}\t{url}");
+                    ui.line(format!("{name}\t{url}"));
                 }
             }
         }

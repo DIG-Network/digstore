@@ -6,7 +6,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::remote_ops;
 
-pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: CloneArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(), CliError> {
     let store_url = if args.source.starts_with("urn:dig:") {
         let urn = Urn::parse(&args.source)
             .map_err(|e| CliError::InvalidArgument(format!("bad urn: {e}")))?;
@@ -30,16 +30,18 @@ pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: CloneArgs) -> Result<(),
         .map_err(|e| CliError::Other(e.into()))?;
     let summary = rt.block_on(remote_ops::clone_from(ctx, &store_url))?;
 
-    if ctx.json {
-        println!(
-            "{}",
-            serde_json::json!({ "store_id": summary.store_id_hex, "root": summary.root_hex, "module_size": summary.module_size })
-        );
+    if ui.json() {
+        ui.emit_json(&serde_json::json!({
+            "store_id": summary.store_id_hex,
+            "root": summary.root_hex,
+            "module_size": summary.module_size
+        }));
     } else {
-        println!(
+        ui.success(format!(
             "cloned {} at root {} ({} bytes)",
             summary.store_id_hex, summary.root_hex, summary.module_size
-        );
+        ));
+        ui.hint("digstore cat <urn>");
     }
     Ok(())
 }

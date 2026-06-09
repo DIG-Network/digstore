@@ -3,20 +3,21 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::store_ops;
 
-pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: InitArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), CliError> {
     let res = store_ops::init_store(ctx, args.private, args.data_dir)?;
-    if ctx.json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "store_id": res.store_id.to_hex(),
-                "host_public_key": res.host_public_key.to_hex(),
-            })
-        );
+    if ui.json() {
+        ui.emit_json(&serde_json::json!({
+            "store_id": res.store_id.to_hex(),
+            "host_public_key": res.host_public_key.to_hex(),
+        }));
     } else {
-        println!("Initialized digstore {}", res.store_id.to_hex());
-        println!("  dig dir: {}", ctx.dig_dir.display());
-        println!("  trusted host key: {}", res.host_public_key.to_hex());
+        ui.success(format!("Initialized digstore {}", res.store_id.to_hex()));
+        ui.line(format!("  dig dir: {}", ctx.dig_dir.display()));
+        ui.line(format!(
+            "  trusted host key: {}",
+            res.host_public_key.to_hex()
+        ));
+        ui.hint("digstore add -A");
     }
     Ok(())
 }

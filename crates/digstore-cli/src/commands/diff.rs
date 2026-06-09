@@ -6,12 +6,20 @@ use crate::error::CliError;
 use crate::ops::store_ops;
 use crate::output;
 
-pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: DiffArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DiffArgs) -> Result<(), CliError> {
     let from = Bytes32::from_hex(&args.from)
         .map_err(|_| CliError::InvalidArgument("from must be 32-byte hex".into()))?;
     let to = Bytes32::from_hex(&args.to)
         .map_err(|_| CliError::InvalidArgument("to must be 32-byte hex".into()))?;
     let entries = store_ops::diff(ctx, &from, &to)?;
-    print!("{}", output::render_diff(&entries, ctx.json));
+    if ui.json() {
+        ui.emit_json(&entries);
+    } else {
+        let text = output::render_diff(&entries, false);
+        let trimmed = text.trim_end_matches('\n');
+        if !trimmed.is_empty() {
+            ui.line(trimmed);
+        }
+    }
     Ok(())
 }

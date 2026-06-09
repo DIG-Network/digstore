@@ -43,7 +43,7 @@ fn safe_resource_path(base: &Path, key: &str) -> Result<PathBuf, CliError> {
     Ok(out)
 }
 
-pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: CheckoutArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CheckoutArgs) -> Result<(), CliError> {
     let root = Bytes32::from_hex(&args.root)
         .map_err(|_| CliError::InvalidArgument("root must be 32-byte hex".into()))?;
     let store_id = ctx.find_store_id()?;
@@ -79,18 +79,15 @@ pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: CheckoutArgs) -> Result<
         fs::write(&dest, &plaintext).map_err(|e| CliError::Other(e.into()))?;
         count += 1;
     }
-    if ctx.json {
-        println!(
-            "{}",
-            serde_json::json!({ "root": root.to_hex(), "files": count })
-        );
+    if ui.json() {
+        ui.emit_json(&serde_json::json!({ "root": root.to_hex(), "files": count }));
     } else {
-        println!(
+        ui.success(format!(
             "checked out {} files from {} into {}",
             count,
             root.to_hex(),
             args.out.display()
-        );
+        ));
     }
     Ok(())
 }
