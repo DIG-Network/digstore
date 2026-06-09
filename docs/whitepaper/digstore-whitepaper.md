@@ -287,8 +287,14 @@ store at that generation.
 
 ### 4.4 On-Disk Layout
 
+A store lives in a `.dig` directory in the project, the way a Git repository
+lives in `.git`. `digstore init` creates `.dig` in the current working
+directory; every other command discovers the store by walking up from the
+current directory to the nearest `.dig` (an explicit `--dig-dir` overrides this).
+So the CLI operates on the store that contains the directory you run it from.
+
 ```text
-~/.dig/
+<project>/.dig/
   {store_id}.staging.bin            # binary staging area (build time)
   generations/
     {roothash_hex}/
@@ -296,7 +302,7 @@ store at that generation.
       chunks/{chunk_hash_hex}       # one file per unique chunk
   modules/
     {store_id}-{roothash}.wasm      # compiled module, one per generation
-  config.toml                       # store configuration
+  config.toml                       # store configuration (0600 if private)
   signing_key.bin                   # BLS signing-key seed (0600; never embedded)
   trusted_keys.json                 # trusted host keys (public)
 ```
