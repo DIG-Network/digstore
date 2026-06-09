@@ -143,7 +143,7 @@ pub fn serve_content(
 
     let module_bytes = std::fs::read(module_path)
         .map_err(|_| CliError::NotFound(module_path.display().to_string()))?;
-    let (pool, descriptors, key_table) = parse_module_data_section(&module_bytes)?;
+    let key_table = parse_module_data_section(&module_bytes)?;
 
     // Rebuild every resource's framed ciphertext (chunk-len-prefixed) in
     // key-table order to recompute the leaf set, so the proof matches commit.
@@ -155,19 +155,9 @@ pub fn serve_content(
     for entry in &key_table {
         let mut framed = Vec::new();
         for &idx in &entry.chunk_indices {
-            let loc = descriptors
-                .get(idx as usize)
-                .ok_or_else(|| CliError::VerificationFailed("chunk index out of range".into()))?;
-            let start = loc.offset as usize;
-            let end = start + loc.len as usize;
-            if end > pool.len() {
-                return Err(CliError::VerificationFailed(
-                    "chunk loc out of bounds".into(),
-                ));
-            }
-            let body = &pool[start..end];
+            let body = read_pool_chunk(&module_bytes, idx)?;
             framed.extend_from_slice(&(body.len() as u32).to_be_bytes());
-            framed.extend_from_slice(body);
+            framed.extend_from_slice(&body);
         }
         leaves.push(digstore_crypto::sha256(&framed));
         framed_by_key.push((entry.static_key, framed));
@@ -208,58 +198,58 @@ pub fn serve_content(
     }
 }
 
-/// Extract `(pool_bytes, chunk_descriptors, key_table)` from a compiled module's
-/// injected `DIGS` data section. The data section is the verbatim
-/// `digstore_compiler::encode_data_section` blob embedded in the wasm data
-/// segment; we locate it by its magic and decode the pool + key-table segments
-/// using the compiler's canonical big-endian framing.
-#[allow(clippy::type_complexity)]
-fn parse_module_data_section(
-    module_bytes: &[u8],
-) -> Result<
-    (
-        Vec<u8>,
-        Vec<digstore_compiler::ChunkLoc>,
-        Vec<digstore_core::KeyTableEntry>,
-    ),
-    CliError,
-> {
-    use digstore_compiler::{parse_offset_table, SEG_KEY_TABLE, SEG_POOL};
-    use digstore_core::codec::{Decode, Decoder};
-
+/// Locate the verbatim `DIGS` data-section blob embedded in a compiled module's
+/// wasm data segment (BINDING contract D1). Found by its magic.
+fn locate_digs_blob(module_bytes: &[u8]) -> Result<&[u8], CliError> {
     let magic = b"DIGS";
     let start = module_bytes
         .windows(magic.len())
         .position(|w| w == magic)
         .ok_or_else(|| CliError::VerificationFailed("module has no DIGS data section".into()))?;
-    let blob = &module_bytes[start..];
-    let table = parse_offset_table(blob)
+    Ok(&module_bytes[start..])
+}
+
+/// Decode the KeyTable (id 8) from a compiled module's injected `DIGS` data
+/// section using the canonical [`digstore_core::datasection`] codec.
+fn parse_module_data_section(
+    module_bytes: &[u8],
+) -> Result<Vec<digstore_core::KeyTableEntry>, CliError> {
+    use digstore_core::datasection::{DataView, SectionId};
+
+    let blob = locate_digs_blob(module_bytes)?;
+    let view = DataView::parse(blob)
         .map_err(|e| CliError::VerificationFailed(format!("bad data section: {e:?}")))?;
+    let kt = view
+        .section(SectionId::KeyTable)
+        .ok_or_else(|| CliError::VerificationFailed("no key-table section".into()))?;
 
-    let seg = |kind: u8| -> Option<&[u8]> {
-        table
-            .iter()
-            .find(|e| e.kind == kind)
-            .map(|e| &blob[e.offset as usize..(e.offset + e.len) as usize])
-    };
+    use digstore_core::codec::{Decode, Decoder};
+    let mut dec = Decoder::new(kt);
+    let count = u32::decode(&mut dec)
+        .map_err(|e| CliError::VerificationFailed(format!("decode key-table count: {e:?}")))?;
+    let mut entries = Vec::with_capacity(count.min(4096) as usize);
+    for _ in 0..count {
+        let entry = digstore_core::KeyTableEntry::decode(&mut dec)
+            .map_err(|e| CliError::VerificationFailed(format!("decode key table: {e:?}")))?;
+        entries.push(entry);
+    }
+    Ok(entries)
+}
 
-    // SEG_POOL = byte_blob(pool) + Vec<ChunkLoc>.
-    let pool_seg =
-        seg(SEG_POOL).ok_or_else(|| CliError::VerificationFailed("no pool segment".into()))?;
-    let mut dec = Decoder::new(pool_seg);
-    let pool = Vec::<u8>::decode(&mut dec)
-        .map_err(|e| CliError::VerificationFailed(format!("decode pool: {e:?}")))?;
-    let descriptors = Vec::<digstore_compiler::ChunkLoc>::decode(&mut dec)
-        .map_err(|e| CliError::VerificationFailed(format!("decode pool descriptors: {e:?}")))?;
+/// Read the `global_index`-th chunk ciphertext from the module's injected
+/// ChunkPool (id 9) via the canonical [`digstore_core::datasection::read_chunk`].
+fn read_pool_chunk(module_bytes: &[u8], global_index: u32) -> Result<Vec<u8>, CliError> {
+    use digstore_core::datasection::{read_chunk, DataView, SectionId};
 
-    // SEG_KEY_TABLE = Vec<KeyTableEntry>.
-    let kt_seg = seg(SEG_KEY_TABLE)
-        .ok_or_else(|| CliError::VerificationFailed("no key-table segment".into()))?;
-    let mut dec = Decoder::new(kt_seg);
-    let key_table = Vec::<digstore_core::KeyTableEntry>::decode(&mut dec)
-        .map_err(|e| CliError::VerificationFailed(format!("decode key table: {e:?}")))?;
-
-    Ok((pool, descriptors, key_table))
+    let blob = locate_digs_blob(module_bytes)?;
+    let view = DataView::parse(blob)
+        .map_err(|e| CliError::VerificationFailed(format!("bad data section: {e:?}")))?;
+    let pool = view
+        .section(SectionId::ChunkPool)
+        .ok_or_else(|| CliError::VerificationFailed("no chunk-pool section".into()))?;
+    read_chunk(pool, global_index)
+        .map(|c| c.to_vec())
+        .ok_or_else(|| CliError::VerificationFailed("chunk index out of range".into()))
 }
 
 /// Deterministic decoy ciphertext keyed by the retrieval key (§14.2).
