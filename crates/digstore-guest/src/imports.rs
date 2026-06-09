@@ -16,6 +16,39 @@ extern "C" {
     pub fn host_read_return_buffer(dest_ptr: i32) -> i32;
 }
 
+/// §5.1 Import section retention. The served module MUST declare all eight
+/// `dig_host` host functions (§6.3). LLVM only emits a wasm import that is
+/// actually *called* on a reachable path, so any host function the guest does
+/// not currently call would be silently dropped from the Import section. This
+/// `#[no_mangle]` anchor references every raw import behind an
+/// `init`-only-reachable, never-taken branch so the linker keeps all eight
+/// declarations without altering runtime behavior (it returns before any call).
+///
+/// It is wired into `init` (see `abi.rs`) so it is reachable from an export and
+/// cannot itself be stripped.
+#[cfg(target_arch = "wasm32")]
+#[inline(never)]
+pub fn retain_dig_host_imports() -> i32 {
+    // `core::hint::black_box(false)` is opaque to the optimizer, so the calls
+    // below stay in the reachable call graph (forcing the imports to be
+    // declared) even though the branch is never taken at runtime.
+    if core::hint::black_box(false) {
+        let mut acc: i64 = 0;
+        unsafe {
+            acc ^= host_get_public_key() as i64;
+            acc ^= host_create_attestation(0) as i64;
+            acc ^= host_establish_session(0) as i64;
+            acc ^= host_verify_session() as i64;
+            acc ^= jwks_fetch(0, 0) as i64;
+            acc ^= host_get_current_time();
+            acc ^= host_random_bytes(0) as i64;
+            acc ^= host_read_return_buffer(0) as i64;
+        }
+        return acc as i32;
+    }
+    0
+}
+
 /// Convert a host return code (>=0 length / <0 error) plus a return-buffer copy
 /// into a Rust result.
 pub fn read_result(code: i32) -> Result<Vec<u8>, ErrorCode> {

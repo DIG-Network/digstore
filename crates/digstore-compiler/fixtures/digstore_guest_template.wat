@@ -1,4 +1,15 @@
 (module
+  ;; §5.1 Import section / §6.3 Host Imports (dig_host). The compiler bakes a
+  ;; guest template that declares all eight host functions; inject_data_section
+  ;; preserves the Import section verbatim into the emitted module.
+  (import "dig_host" "host_get_public_key" (func (result i32)))
+  (import "dig_host" "host_create_attestation" (func (param i32) (result i32)))
+  (import "dig_host" "host_establish_session" (func (param i32) (result i32)))
+  (import "dig_host" "host_verify_session" (func (result i32)))
+  (import "dig_host" "jwks_fetch" (func (param i32 i32) (result i32)))
+  (import "dig_host" "host_get_current_time" (func (result i64)))
+  (import "dig_host" "host_random_bytes" (func (param i32) (result i32)))
+  (import "dig_host" "host_read_return_buffer" (func (param i32) (result i32)))
   (memory (export "memory") 4 256)
   (func (export "get_store_id") (result i64) (i64.const 0))
   (func (export "get_current_roothash") (result i64) (i64.const 0))

@@ -65,4 +65,35 @@ fn module_validates_and_exports_full_abi() {
     ] {
         assert!(exports.contains(required), "missing ABI export: {required} (have: {exports:?})");
     }
+
+    // §5.1 Import section / §6.3 Host Imports: the guest module MUST declare all
+    // eight dig_host host functions. LLVM only emits an import that is reachable
+    // from an export, so `init` anchors them (see `imports::retain_dig_host_imports`);
+    // this guards that retention against silent regression.
+    let mut imports = std::collections::BTreeSet::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        if let wasmparser::Payload::ImportSection(reader) = payload.unwrap() {
+            for i in reader {
+                let i = i.unwrap();
+                if i.module == "dig_host" {
+                    imports.insert(i.name.to_string());
+                }
+            }
+        }
+    }
+    for required in [
+        "host_get_public_key",
+        "host_create_attestation",
+        "host_establish_session",
+        "host_verify_session",
+        "jwks_fetch",
+        "host_get_current_time",
+        "host_random_bytes",
+        "host_read_return_buffer",
+    ] {
+        assert!(
+            imports.contains(required),
+            "missing §5.1 dig_host import: {required} (have: {imports:?})"
+        );
+    }
 }

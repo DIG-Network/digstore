@@ -15,7 +15,9 @@ use crate::filler::deterministic_filler;
 use crate::inject::inject_data_section;
 use crate::key_table::{build_chunk_index_and_key_table, GenerationView};
 use crate::obfuscate::obfuscate;
-use crate::template::{assert_memory_ceiling, baked_template_bytes, load_template};
+use crate::template::{
+    assert_host_imports, assert_memory_ceiling, baked_template_bytes, load_template,
+};
 
 /// Fixed linear-memory offset where the data-section blob is injected and the
 /// guest reads it (BINDING contract D2). SINGLE SOURCE OF TRUTH:
@@ -127,6 +129,10 @@ impl Compiler {
         // guest template (which may declare no max) to this exact cap.
         load_template(&module)?;
         assert_memory_ceiling(&module)?;
+        // §5.1 Import section: the emitted module MUST import all eight dig_host
+        // host functions (§6.3) — guards against a template regressing to an
+        // export-only stub.
+        assert_host_imports(&module)?;
 
         // Stage 10: atomic write (filename uses the store-reported roothash).
         let output_path =
