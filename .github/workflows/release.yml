@@ -26,11 +26,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
+      - name: Install pinned Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup target add wasm32-unknown-unknown
-          rustup default stable
+          rustup show   # installs the toolchain pinned in rust-toolchain.toml (incl. wasm32 target)
           rustc --version
 
       - name: Cache cargo + target

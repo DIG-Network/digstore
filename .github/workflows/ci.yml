@@ -35,12 +35,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain (rustup is preinstalled on GitHub runners)
+      - name: Install pinned Rust toolchain
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup target add wasm32-unknown-unknown
-          rustup default stable
+          rustup show   # installs the toolchain pinned in rust-toolchain.toml (channel + components + targets)
           rustc --version && cargo --version
 
       - name: Cache cargo + target
@@ -88,10 +86,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+      - name: Install pinned Rust toolchain
+        run: rustup show
 
       - name: Cache cargo tools
         uses: actions/cache@v4
