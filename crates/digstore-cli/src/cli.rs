@@ -40,6 +40,7 @@ pub enum Command {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore init\n  digstore init --private")]
 pub struct InitArgs {
     #[arg(long)]
     pub private: bool,
@@ -69,27 +70,32 @@ pub struct AddArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore commit -m \"first generation\"")]
 pub struct CommitArgs {
     #[arg(short, long)]
     pub message: Option<String>,
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore status")]
 pub struct StatusArgs {}
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore log\n  digstore log --limit 10")]
 pub struct LogArgs {
     #[arg(short, long)]
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore diff <rootA> <rootB>")]
 pub struct DiffArgs {
     pub from: String,
     pub to: String,
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore checkout <root> --out ./out")]
 pub struct CheckoutArgs {
     pub root: String,
     #[arg(long, short)]
@@ -99,6 +105,7 @@ pub struct CheckoutArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore cat urn:dig:chia:<storeID>:<root>/readme")]
 pub struct CatArgs {
     pub urn: String,
     #[arg(long)]
@@ -108,6 +115,7 @@ pub struct CatArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore remote add origin https://host/stores/<storeID>")]
 pub struct RemoteArgs {
     #[command(subcommand)]
     pub action: RemoteAction,
@@ -121,17 +129,20 @@ pub enum RemoteAction {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore clone https://host/stores/<storeID>")]
 pub struct CloneArgs {
     pub source: String,
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore push origin")]
 pub struct PushArgs {
     #[arg(default_value = "origin")]
     pub remote: String,
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore pull origin")]
 pub struct PullArgs {
     #[arg(default_value = "origin")]
     pub remote: String,
