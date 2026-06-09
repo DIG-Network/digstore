@@ -165,6 +165,102 @@ pub fn rekey_module_trusted(
     inject_data_section(module, &new_blob, DATA_SECTION_MEM_OFFSET)
 }
 
+/// Identity and content root extracted and cryptographically verified from a
+/// compiled module's embedded data section. Produced by [`verify_module_root`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleIdentity {
+    /// Embedded StoreId, confirmed to equal the caller's expected store id.
+    pub store_id: Bytes32,
+    /// Embedded store BLS G1 public key, confirmed to hash to `store_id`.
+    pub public_key: Bytes48,
+    /// Per-resource merkle root recomputed from the embedded MerkleNodes leaves,
+    /// confirmed to equal the embedded CurrentRoot.
+    pub root: Bytes32,
+}
+
+/// Extract and verify a downloaded module's self-describing identity, returning
+/// the recomputed generation root. This is the integrity gate a `clone`/`pull`
+/// MUST run before trusting or executing a module fetched from a remote.
+///
+/// Enforced PURELY from the module bytes (no trust in any server-supplied field):
+///  1. embedded `StoreId` == `expected_store_id` (the id the caller asked for);
+///  2. `SHA-256(embedded PublicKey) == StoreId` — the §20.1 self-certifying store
+///     identity: the module names the publisher key whose hash is the store id;
+///  3. the merkle root recomputed from the embedded `MerkleNodes` leaves equals
+///     the embedded `CurrentRoot` (the served content is internally consistent).
+///
+/// The caller MUST ALSO check `identity.root == claimed_served_root` so the bytes
+/// are bound to the root advertised by the descriptor/ETag.
+///
+/// LIMITATION: this proves the module is a self-consistent build for the requested
+/// store identity, but NOT that `root` is the publisher's latest authorized root —
+/// that additionally requires verifying a publisher BLS signature over
+/// `(root, store_id)`, which the current wire protocol does not transport.
+pub fn verify_module_root(
+    module: &[u8],
+    expected_store_id: &Bytes32,
+) -> Result<ModuleIdentity, crate::error::CompilerError> {
+    use crate::inject::extract_data_section;
+    use crate::pipeline::DATA_SECTION_MEM_OFFSET;
+    use digstore_core::datasection::{decode_merkle_leaves, DataView, SectionId};
+    use digstore_core::merkle::MerkleTree;
+
+    let err = |m: String| crate::error::CompilerError::InvalidTemplate(m);
+
+    let blob = extract_data_section(module, DATA_SECTION_MEM_OFFSET)?;
+    let view = DataView::parse(&blob).map_err(|e| err(format!("bad DIGS blob: {e:?}")))?;
+
+    let sid = view
+        .section(SectionId::StoreId)
+        .ok_or_else(|| err("missing StoreId section".into()))?;
+    let sid: [u8; 32] = sid
+        .try_into()
+        .map_err(|_| err("StoreId section not 32 bytes".into()))?;
+    let store_id = Bytes32(sid);
+    if &store_id != expected_store_id {
+        return Err(err(
+            "module StoreId does not match the requested store id".into(),
+        ));
+    }
+
+    let pk = view
+        .section(SectionId::PublicKey)
+        .ok_or_else(|| err("missing PublicKey section".into()))?;
+    let pk_arr: [u8; 48] = pk
+        .try_into()
+        .map_err(|_| err("PublicKey section not 48 bytes".into()))?;
+    if digstore_core::sha256(&pk_arr) != store_id {
+        return Err(err(
+            "SHA-256(PublicKey) != StoreId: store identity is not self-certifying".into(),
+        ));
+    }
+
+    let cr = view
+        .section(SectionId::CurrentRoot)
+        .ok_or_else(|| err("missing CurrentRoot section".into()))?;
+    let cr: [u8; 32] = cr
+        .try_into()
+        .map_err(|_| err("CurrentRoot section not 32 bytes".into()))?;
+    let current_root = Bytes32(cr);
+
+    let mn = view
+        .section(SectionId::MerkleNodes)
+        .ok_or_else(|| err("missing MerkleNodes section".into()))?;
+    let leaves = decode_merkle_leaves(mn).map_err(|e| err(format!("bad MerkleNodes: {e:?}")))?;
+    let recomputed = MerkleTree::from_leaves(leaves).root();
+    if recomputed != current_root {
+        return Err(err(
+            "recomputed merkle root does not match embedded CurrentRoot".into(),
+        ));
+    }
+
+    Ok(ModuleIdentity {
+        store_id,
+        public_key: Bytes48(pk_arr),
+        root: current_root,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -18,7 +18,8 @@ use crate::backend::{
 };
 use crate::error::RemoteError;
 use digstore_store::{RootHistory, Store, StorePaths, SystemClock};
-use digstore_core::{Bytes32, Bytes48, GenerationState, StoreConfig};
+use digstore_core::{Bytes32, Bytes48, Bytes96, GenerationState, StoreConfig};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// Deterministic decoy bytes keyed by the retrieval key (§14.2). Identical
@@ -64,6 +65,7 @@ impl StoreBackend {
         public_key: Bytes48,
         module_bytes: Vec<u8>,
         genesis_root: Bytes32,
+        genesis_sig: Option<Bytes96>,
     ) -> Result<Self, RemoteError> {
         let store_id = config.store_id;
         let data_dir = config.data_dir.clone();
@@ -91,14 +93,18 @@ impl StoreBackend {
         std::fs::write(paths.module_file(&genesis_root.to_hex()), &module_bytes)
             .map_err(|e| RemoteError::Internal(format!("module write: {e}")))?;
 
-        Ok(StoreBackend {
+        let backend = StoreBackend {
             store_id,
             data_dir,
             public_key,
             max_module_size,
             paths,
             pending: Mutex::new(None),
-        })
+        };
+        if let Some(sig) = genesis_sig {
+            backend.write_sig(&genesis_root, &sig)?;
+        }
+        Ok(backend)
     }
 
     fn ensure_store(&self, store_id: &Bytes32) -> Result<(), RemoteError> {
@@ -106,6 +112,31 @@ impl StoreBackend {
             return Err(RemoteError::UnknownStore);
         }
         Ok(())
+    }
+
+    /// Path to the per-root push-signature sidecar (`<data_dir>/sigs/{root}.sig`,
+    /// 96 raw bytes). A sidecar avoids a backward-incompatible `roots.log` format
+    /// change while still persisting the §21.6 head authorization.
+    fn sig_file(&self, root: &Bytes32) -> PathBuf {
+        PathBuf::from(&self.data_dir)
+            .join("sigs")
+            .join(format!("{}.sig", root.to_hex()))
+    }
+
+    fn write_sig(&self, root: &Bytes32, sig: &Bytes96) -> Result<(), RemoteError> {
+        let path = self.sig_file(root);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| RemoteError::Internal(format!("sigs dir: {e}")))?;
+        }
+        std::fs::write(&path, sig.0)
+            .map_err(|e| RemoteError::Internal(format!("sig write: {e}")))
+    }
+
+    fn read_sig(&self, root: &Bytes32) -> Option<Bytes96> {
+        let bytes = std::fs::read(self.sig_file(root)).ok()?;
+        let arr: [u8; 96] = bytes.try_into().ok()?;
+        Some(Bytes96(arr))
     }
 
     fn history(&self) -> Result<Vec<GenerationState>, RemoteError> {
@@ -137,6 +168,7 @@ impl RemoteBackend for StoreBackend {
             pending_root: *self.pending.lock().unwrap(),
             served_size: module.len() as u64,
             public_key: self.public_key,
+            served_sig: self.read_sig(&head.root),
         })
     }
 
@@ -212,6 +244,7 @@ impl RemoteBackend for StoreBackend {
         _parent: &Bytes32,
         new_root: &Bytes32,
         module_bytes: &[u8],
+        sig: Option<&Bytes96>,
         mode: PushMode,
     ) -> Result<PushOutcome, RemoteError> {
         self.ensure_store(store_id)?;
@@ -221,6 +254,12 @@ impl RemoteBackend for StoreBackend {
             .map_err(|e| RemoteError::Internal(format!("modules dir: {e}")))?;
         std::fs::write(self.paths.module_file(&new_root.to_hex()), module_bytes)
             .map_err(|e| RemoteError::Internal(format!("module write: {e}")))?;
+
+        // Persist the verified push signature so a later clone/pull can re-verify
+        // head authorization (§21.6).
+        if let Some(s) = sig {
+            self.write_sig(new_root, s)?;
+        }
 
         match mode {
             PushMode::Advance => {

@@ -92,7 +92,15 @@ fn host_deps(cfg: BlindServeConfig) -> HostDeps {
         clock: Arc::new(FixedClock::new(cfg.clock_unix)),
         chain,
         prover: Arc::new(prover),
-        rng_seed: Some([99u8; 32]),
+        // SECURITY: use real OS entropy, not a hardcoded seed. The host RNG seeds
+        // attestation challenge nonces and the indistinguishable decoys returned
+        // on a retrieval miss; a predictable seed would let an observer tell a
+        // decoy from real content, defeating oblivious serving.
+        // NOTE: the MockProver / MockChainSource / FixedClock above remain
+        // placeholders and are NOT production-grade (forgeable proofs, fixed
+        // freshness/time) — wiring the RISC0 backend and a real chain/clock is a
+        // tracked follow-up.
+        rng_seed: None,
         instance_id: Bytes32([1u8; 32]),
         attestation: None,
     }

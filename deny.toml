@@ -1,0 +1,42 @@
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/).
+# Run `cargo deny check` in CI to fail the build on known-vulnerable, unmaintained,
+# or unlicensed dependencies. Install with `cargo install cargo-deny`.
+
+[advisories]
+# Use the RustSec advisory DB. `vulnerability`/`unmaintained` default to deny in
+# recent cargo-deny; listed explicitly for clarity.
+version = 2
+yanked = "deny"
+ignore = [
+    # Tracked, no fixed upstream yet (see SECURITY.md). Re-evaluate on each audit:
+    #   RUSTSEC-2023-0071  rsa Marvin attack (transitive, JWT/RSA path)
+    #   RUSTSEC-2025-0141  bincode 1.x unmaintained (risc0 proof path)
+    # Remove an entry once the dependency is upgraded off the affected version.
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"          # no `version = "*"` dependencies
+allow-wildcard-paths = true # path deps within the workspace are fine
+
+[licenses]
+version = 2
+# Permissive licenses compatible with this project's MIT license.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

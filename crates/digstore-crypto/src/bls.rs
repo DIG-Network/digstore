@@ -114,8 +114,23 @@ pub fn bls_verify(pk: &Bytes48, msg: &[u8], sig: &Bytes96) -> bool {
     pk.verify(msg, &sig)
 }
 
-/// Validate that `pk` is a canonical G1 public key, surfacing a typed error.
+/// Canonical compressed encoding of the G1 identity (point at infinity):
+/// compression+infinity flag bits set in the first byte, all coordinate bytes
+/// zero (zcash/chia BLS12-381 serialization).
+const G1_INFINITY: [u8; 48] = {
+    let mut a = [0u8; 48];
+    a[0] = 0xc0;
+    a
+};
+
+/// Validate that `pk` is a canonical, NON-identity G1 public key, surfacing a
+/// typed error. The identity (point at infinity) is rejected: it is never a
+/// legitimate key and accepting it enables degenerate-signature / rogue-key
+/// style abuses where a signature can verify under a "key" no one controls.
 pub fn validate_public_key(pk: &Bytes48) -> Result<(), BlsError> {
+    if pk.0 == G1_INFINITY {
+        return Err(BlsError::InvalidPublicKey);
+    }
     match PublicKey::from_bytes(pk) {
         Ok(_) => Ok(()),
         Err(_) => Err(BlsError::InvalidPublicKey),

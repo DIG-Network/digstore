@@ -307,6 +307,17 @@ fn run(args: ServeArgs) -> Result<()> {
     if module_bytes.len() < 4 || &module_bytes[0..4] != b"\0asm" {
         bail!("fetched object is not a wasm module (bad magic)");
     }
+    // Bound the untrusted fetched module before validate/compile: an attacker who
+    // controls the object-store response must not be able to hand us a multi-GB
+    // blob that exhausts memory during wasmtime validation/compilation.
+    const MAX_MODULE_BYTES: usize = 256 * 1024 * 1024;
+    if module_bytes.len() > MAX_MODULE_BYTES {
+        bail!(
+            "module is {} bytes, exceeds the {} byte limit",
+            module_bytes.len(),
+            MAX_MODULE_BYTES
+        );
+    }
 
     let plan = ServePlan {
         module_bytes,

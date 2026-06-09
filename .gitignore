@@ -1,5 +1,15 @@
 /target
-Cargo.lock
+# Cargo.lock IS committed: this workspace ships binaries (digstore, dighost), so
+# the full dependency tree must be pinned and auditable (cargo-audit/deny).
 **/*.rs.bk
 *.wasm
 .dig/
+
+# Loose/working files that must never be committed.
+/part3_extracted.txt
+/part3_digstore_artifact.pdf
+/.audit-confirmed.json
+/.wp-audit.json
+/.wp-doc-findings.md
+# Rendered whitepaper HTML intermediate (the .md source and .pdf are kept).
+/docs/whitepaper/digstore-whitepaper.html

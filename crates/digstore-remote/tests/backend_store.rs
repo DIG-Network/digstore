@@ -33,7 +33,7 @@ fn head_state_matches_store_genesis() {
     let store_id = b32(0x42);
     let config = config_at(&tmp, store_id);
     // build a store with one generation + module via the production helper.
-    let backend = StoreBackend::initialize_for_test(config, b48(7), vec![0u8; 128], b32(0x10))
+    let backend = StoreBackend::initialize_for_test(config, b48(7), vec![0u8; 128], b32(0x10), None)
         .expect("init store backend");
     let hs = backend.head_state(&store_id).unwrap();
     assert_eq!(hs.served_root, b32(0x10));
@@ -46,7 +46,7 @@ fn serve_content_miss_returns_decoy_never_error() {
     let tmp = unique_tmp("decoy");
     let store_id = b32(0x43);
     let config = config_at(&tmp, store_id);
-    let backend = StoreBackend::initialize_for_test(config, b48(7), vec![0u8; 64], b32(0x10))
+    let backend = StoreBackend::initialize_for_test(config, b48(7), vec![0u8; 64], b32(0x10), None)
         .expect("init store backend");
     let (ct, _proof, root) = backend
         .serve_content(&store_id, &b32(0x99), &b32(0x10), None)

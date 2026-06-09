@@ -139,11 +139,13 @@ pub fn init_store(
     // Persist the host signing key SEED (never embedded in modules). The BLS
     // SecretKey is not extractable, so we persist the deterministic seed and
     // reconstruct the key via `from_seed`.
-    fs::write(ctx.dig_dir.join("signing_key.bin"), seed).map_err(|e| CliError::Other(e.into()))?;
+    write_secret_file(&ctx.dig_dir.join("signing_key.bin"), &seed)
+        .map_err(|e| CliError::Other(e.into()))?;
 
-    // Surface SecretSalt deterministically for scripting `cat --salt`.
+    // Surface SecretSalt deterministically for scripting `cat --salt`. This is
+    // the private master-key material, so it is owner-only on disk.
     if let Visibility::Private(salt) = &cfg.visibility {
-        fs::write(ctx.salt_path(), Bytes32(salt.0).to_hex())
+        write_secret_file(&ctx.salt_path(), Bytes32(salt.0).to_hex().as_bytes())
             .map_err(|e| CliError::Other(e.into()))?;
     }
 
@@ -771,44 +773,43 @@ fn current_time() -> u64 {
         .unwrap_or(0)
 }
 
+/// Generate 32 bytes of cryptographically secure randomness for key/salt seeds.
+///
+/// Uses the operating system CSPRNG via `getrandom` (`/dev/urandom`, `getrandom(2)`,
+/// `BCryptGenRandom`, etc.). There is deliberately NO weak fallback: predictable
+/// seeds (time/pid/pointer-derived) would make BLS signing keys and the private
+/// `SecretSalt` guessable, so if the OS RNG is unavailable we panic rather than
+/// emit attacker-predictable key material.
 fn random_seed() -> [u8; 32] {
-    // Independent OS randomness via getrandom (pulled in transitively); fall back
-    // to a time-mixed seed if unavailable.
     let mut seed = [0u8; 32];
-    if getrandom_fill(&mut seed).is_err() {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let h = digstore_crypto::sha256(&nanos.to_le_bytes());
-        seed = h.0;
-    }
+    getrandom::getrandom(&mut seed)
+        .expect("operating system CSPRNG must be available to generate key material");
     seed
 }
 
-fn getrandom_fill(buf: &mut [u8]) -> Result<(), ()> {
-    // Use std's address-space + time entropy mixed through SHA-256. This avoids a
-    // direct getrandom dependency while remaining unique per init.
-    let a = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let b = std::process::id() as u128;
-    let c = buf.as_ptr() as u128;
-    let mut acc = Vec::new();
-    acc.extend_from_slice(&a.to_le_bytes());
-    acc.extend_from_slice(&b.to_le_bytes());
-    acc.extend_from_slice(&c.to_le_bytes());
-    let mut out = Vec::new();
-    let mut counter = 0u32;
-    while out.len() < buf.len() {
-        let mut block = acc.clone();
-        block.extend_from_slice(&counter.to_le_bytes());
-        out.extend_from_slice(&digstore_crypto::sha256(&block).0);
-        counter += 1;
+/// Write a secret file (BLS signing seed, private salt) with owner-only
+/// permissions. On Unix the file is created mode `0600`; on Windows it inherits
+/// the user-profile ACL (the `.dig` dir lives under the user's home), which is
+/// already restricted to the owner.
+fn write_secret_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(bytes)?;
+        f.flush()?;
+        Ok(())
     }
-    buf.copy_from_slice(&out[..buf.len()]);
-    Ok(())
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, bytes)
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -882,7 +883,8 @@ pub(crate) fn persist_host_identity(
     public_key: digstore_core::Bytes48,
 ) -> Result<(), CliError> {
     fs::create_dir_all(&ctx.dig_dir).map_err(|e| CliError::Other(e.into()))?;
-    fs::write(ctx.dig_dir.join("signing_key.bin"), seed).map_err(|e| CliError::Other(e.into()))?;
+    write_secret_file(&ctx.dig_dir.join("signing_key.bin"), seed)
+        .map_err(|e| CliError::Other(e.into()))?;
     let trusted = vec![TrustedHostKey {
         public_key: public_key.0,
         label: format!("dig-host-key-v1:{}", public_key.to_hex()),

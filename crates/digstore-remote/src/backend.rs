@@ -1,5 +1,5 @@
 use crate::error::RemoteError;
-use digstore_core::{Bytes32, Bytes48};
+use digstore_core::{Bytes32, Bytes48, Bytes96};
 
 /// The current head state of a store on the remote (§21.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +12,12 @@ pub struct HeadState {
     pub served_size: u64,
     /// Store BLS G1 public key.
     pub public_key: Bytes48,
+    /// Publisher BLS signature over `SHA-256(served_root || store_id)` (§21.6),
+    /// i.e. the push authorization for the currently served head. A client uses
+    /// it to verify the served root was authorized by the store key (whose hash
+    /// is the store id), not merely that the module is self-consistent. `None`
+    /// for a head that was never push-signed (e.g. an unsigned seeded genesis).
+    pub served_sig: Option<Bytes96>,
 }
 
 /// One entry in the linear root history.
@@ -88,13 +94,17 @@ pub trait RemoteBackend: Send + Sync + 'static {
 
     /// Accept a pushed module. The caller has ALREADY verified the BLS push
     /// signature and fast-forward eligibility; this only persists state.
-    /// `parent` is the root the push claims to fast-forward from.
+    /// `parent` is the root the push claims to fast-forward from. `sig` is the
+    /// verified publisher push signature over `SHA-256(new_root || store_id)`;
+    /// it is persisted so a later clone/pull can re-verify head authorization
+    /// (§21.6). `None` is accepted only for test/seed paths that bypass push auth.
     fn accept_push(
         &self,
         store_id: &Bytes32,
         parent: &Bytes32,
         new_root: &Bytes32,
         module_bytes: &[u8],
+        sig: Option<&Bytes96>,
         mode: PushMode,
     ) -> Result<PushOutcome, RemoteError>;
 

@@ -2,7 +2,28 @@ use crate::auth::push_signing_message;
 use crate::error::ClientError;
 use crate::etag::parse_if_none_match;
 use crate::wire::{DeltaNegotiateRequest, DeltaResponse, RootHistory, StoreDescriptor};
+use base64::Engine;
 use digstore_core::{Bytes32, Bytes96};
+
+/// Verify that every chunk in a server-supplied delta actually hashes to the
+/// content address it is advertised under. Chunks are content-addressed by
+/// `SHA-256(ciphertext)`, so a server (or MITM) cannot substitute chunk bytes
+/// without detection. Returns a verification error on the first mismatch.
+fn verify_delta_integrity(delta: &DeltaResponse) -> Result<(), ClientError> {
+    for c in &delta.chunks {
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(&c.data_b64)
+            .map_err(|_| ClientError::Decode("bad base64 in delta chunk".into()))?;
+        let want = Bytes32::from_hex(&c.hash)
+            .map_err(|_| ClientError::Decode("bad delta chunk hash hex".into()))?;
+        if digstore_core::sha256(&data) != want {
+            return Err(ClientError::Verification(
+                "delta chunk does not hash to its advertised content id".into(),
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Result of `fetch`: descriptor + root history (§21.3).
 #[derive(Debug, Clone)]
@@ -39,9 +60,18 @@ pub struct DigClient {
 
 impl DigClient {
     pub fn new(base_url: impl Into<String>) -> Self {
+        // Disable automatic redirect following: a malicious/compromised server
+        // must not be able to bounce a push (which carries the X-Dig-Signature and
+        // the module body, and optionally a bearer token) to an attacker-chosen
+        // host, nor use redirects as an SSRF primitive. Redirects are a protocol
+        // error here, surfaced as a non-success status.
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         DigClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            http: reqwest::Client::new(),
+            http,
         }
     }
 
@@ -153,6 +183,7 @@ impl DigClient {
                         .json()
                         .await
                         .map_err(|e| ClientError::Decode(e.to_string()))?;
+                    verify_delta_integrity(&delta)?;
                     return Ok(PullResult::Delta {
                         root: remote_root,
                         delta,
@@ -254,8 +285,11 @@ impl DigClient {
         if !resp.status().is_success() {
             return Err(ClientError::Status(resp.status().as_u16()));
         }
-        resp.json()
+        let delta: DeltaResponse = resp
+            .json()
             .await
-            .map_err(|e| ClientError::Decode(e.to_string()))
+            .map_err(|e| ClientError::Decode(e.to_string()))?;
+        verify_delta_integrity(&delta)?;
+        Ok(delta)
     }
 }

@@ -193,8 +193,12 @@ pub async fn put_module(
 
     let body_vec = body.to_vec();
     let backend = s.backend.clone();
-    let res =
-        run_blocking(move || backend.accept_push(&store_id, &parent, &root, &body_vec, mode)).await;
+    // `sig` was verified at the BLS check above; persist it so a later clone/pull
+    // can re-verify head authorization (§21.6).
+    let res = run_blocking(move || {
+        backend.accept_push(&store_id, &parent, &root, &body_vec, Some(&sig), mode)
+    })
+    .await;
     match res {
         Ok(PushOutcome::Advanced) => {
             (StatusCode::CREATED, [(header::ETAG, etag_for_root(&root))]).into_response()

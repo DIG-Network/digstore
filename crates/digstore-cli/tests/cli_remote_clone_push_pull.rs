@@ -1,5 +1,5 @@
 mod common;
-use common::{dig, store_id_and_root, tmp_dig, TestServer};
+use common::{dig, genesis_push_sig, store_id_and_root, tmp_dig, TestServer};
 use predicates::prelude::*;
 
 /// Read the source store's host public key (48 bytes) from trusted_keys.json.
@@ -49,8 +49,9 @@ fn clone_then_cat_round_trips_from_remote() {
     )
     .unwrap();
     let pk = host_pubkey(&src);
+    let sig = genesis_push_sig(&src, &store_id, &root);
 
-    let server = TestServer::start_with_module(&store_id, &root, pk, &module);
+    let server = TestServer::start_with_module(&store_id, &root, pk, &module, sig);
     let base = server.base_url();
 
     let dst = tmp_dig();
@@ -67,6 +68,41 @@ fn clone_then_cat_round_trips_from_remote() {
         String::from_utf8_lossy(&cat.stderr)
     );
     assert_eq!(cat.stdout, content);
+}
+
+#[test]
+fn clone_rejects_unauthenticated_or_forged_head() {
+    // A real, self-consistent module is served, but with a BOGUS publisher
+    // signature over the served root. verify_module_root would pass (the module
+    // is genuine and self-certifying), so this isolates the §21.6 authenticated-
+    // head check: clone MUST fail closed because the served root is not validly
+    // signed by the store key. This is the attack a malicious origin would mount.
+    let src = tmp_dig();
+    let f = src.path().join("doc.txt");
+    std::fs::write(&f, b"content").unwrap();
+    dig(&src).arg("init").assert().success();
+    dig(&src).args(["add"]).arg(&f).args(["--key", "doc"]).assert().success();
+    dig(&src).args(["commit"]).assert().success();
+
+    let (store_id, root) = store_id_and_root(&src);
+    let module = std::fs::read(
+        src.path().join("modules").join(format!("{store_id}-{root}.wasm")),
+    )
+    .unwrap();
+    let pk = host_pubkey(&src);
+
+    // Bogus 96-byte signature (does not verify against the store key).
+    let server = TestServer::start_with_module(&store_id, &root, pk, &module, [0u8; 96]);
+    let base = server.base_url();
+
+    let dst = tmp_dig();
+    std::fs::remove_dir_all(dst.path()).ok();
+    let url = format!("{base}/stores/{store_id}");
+    dig(&dst)
+        .args(["clone", &url])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("signature").or(predicate::str::contains("verif")));
 }
 
 #[test]

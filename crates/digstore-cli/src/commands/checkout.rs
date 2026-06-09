@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::{Component, Path, PathBuf};
 
 use digstore_core::{Bytes32, Urn};
 
@@ -6,6 +7,41 @@ use crate::cli::CheckoutArgs;
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::{client_crypto, serve, store_ops};
+
+/// Join an UNTRUSTED resource key onto the output directory, refusing any key
+/// that would escape it. Resource keys come from a cloned/pulled store's key
+/// table, i.e. attacker-controlled data, so a key like `../../etc/passwd`,
+/// `/etc/passwd`, or `C:\Windows\...` must never be written outside `base`.
+/// Only plain relative path components are accepted; `..`, absolute roots,
+/// Windows drive prefixes, and any component containing `:` (drive / NTFS ADS)
+/// are rejected.
+fn safe_resource_path(base: &Path, key: &str) -> Result<PathBuf, CliError> {
+    let reject = || CliError::InvalidArgument(format!("unsafe resource key path: {key:?}"));
+    if key.is_empty() {
+        return Err(reject());
+    }
+    let mut out = base.to_path_buf();
+    let mut pushed = false;
+    for comp in Path::new(key).components() {
+        match comp {
+            Component::Normal(c) => {
+                if c.to_string_lossy().contains(':') {
+                    return Err(reject());
+                }
+                out.push(c);
+                pushed = true;
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(reject())
+            }
+        }
+    }
+    if !pushed {
+        return Err(reject());
+    }
+    Ok(out)
+}
 
 pub fn run(ctx: &CliContext, args: CheckoutArgs) -> Result<(), CliError> {
     let root = Bytes32::from_hex(&args.root)
@@ -37,7 +73,7 @@ pub fn run(ctx: &CliContext, args: CheckoutArgs) -> Result<(), CliError> {
             store_ops::resource_chunk_lens(ctx, &root, &key).unwrap_or_default();
         let plaintext =
             client_crypto::decrypt_and_verify(&resp, &urn, salt.as_ref(), &root, &chunk_lens)?;
-        let dest = args.out.join(&key);
+        let dest = safe_resource_path(&args.out, &key)?;
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| CliError::Other(e.into()))?;
         }

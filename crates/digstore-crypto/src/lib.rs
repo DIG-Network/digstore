@@ -1,10 +1,14 @@
 //! Host-side cryptography for Digstore.
 //!
 //! # Documented deviations
-//! - **Fixed GCM nonce (paper §11.2):** AES-256-GCM uses a fixed all-zero
-//!   12-byte nonce. Safe *only* because every canonical URN derives a unique
-//!   AES-256 key (unique-key-per-URN invariant). A key is never reused across
-//!   two plaintexts.
+//! - **Chunk AEAD (paper §11.2):** chunks are sealed with **AES-256-GCM-SIV**
+//!   (RFC 8452), a nonce-misuse-resistant AEAD, under a fixed 12-byte nonce.
+//!   Each canonical URN still derives a unique AES-256 key, but GCM-SIV no longer
+//!   *depends* on key uniqueness for safety: reusing a (key, nonce) across two
+//!   distinct plaintexts neither leaks a keystream XOR nor permits authentication
+//!   -key recovery (the GCM "forbidden attack"). The fixed nonce keeps encryption
+//!   deterministic so the ciphertext-committed merkle root is reproducible. See
+//!   [`aead`].
 //! - **BLS (paper §11.3, §12, §13.7, §21.6):** Chia AugScheme via `chia-bls`
 //!   (blst). G1 public keys are 48 bytes, G2 signatures are 96 bytes. Messages
 //!   are augmented with the public key and hashed with the Chia DST, exactly as
