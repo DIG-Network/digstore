@@ -47,7 +47,7 @@
 //! merkle-to-root, decoy detection, tamper detection, private-salt key change)
 //! is therefore genuine.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -248,6 +248,82 @@ pub fn add_path(ctx: &CliContext, path: &Path, key: Option<String>) -> Result<Ad
         chunk_count,
         total_size: data.len() as u64,
     })
+}
+
+/// Result of an `add` invocation.
+pub struct AddOutcome {
+    pub staged: Vec<(String, u64)>, // (key, size) newly staged
+    pub unchanged: usize,
+    pub dry_run: bool,
+}
+
+/// Resolve `paths`/`all` and stage each file under its store-root-relative key.
+pub fn add_files(
+    ctx: &CliContext,
+    paths: &[PathBuf],
+    all: bool,
+    dry_run: bool,
+    key: Option<String>,
+) -> Result<AddOutcome, CliError> {
+    use crate::ops::walk::{self, Resolved};
+
+    let cfg = ctx.load_config()?;
+    let root = ctx.dig_dir.parent().unwrap_or(&ctx.dig_dir).to_path_buf();
+
+    // Resolve the file set.
+    let mut resolved: Vec<Resolved> = Vec::new();
+    if all {
+        resolved = walk::resolve_all(&root);
+    } else {
+        for p in paths {
+            let arg = p.to_string_lossy();
+            walk::resolve_arg(&root, &arg, &mut resolved).map_err(CliError::InvalidArgument)?;
+        }
+    }
+    resolved.sort_by(|a, b| a.key.cmp(&b.key));
+    resolved.dedup_by(|a, b| a.key == b.key);
+
+    // --key only with exactly one file.
+    if key.is_some() && resolved.len() != 1 {
+        return Err(CliError::InvalidArgument(
+            "--key requires exactly one file path".into(),
+        ));
+    }
+
+    let mut staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
+        .map_err(|e| CliError::Other(anyhow::anyhow!("load staging: {e}")))?;
+    let already: HashMap<String, Vec<u8>> = staging
+        .records()
+        .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?
+        .into_iter()
+        .map(|r| (r.resource_key, r.content))
+        .collect();
+
+    let mut outcome = AddOutcome {
+        staged: Vec::new(),
+        unchanged: 0,
+        dry_run,
+    };
+    for r in resolved {
+        let data = fs::read(&r.path).map_err(|e| CliError::Other(e.into()))?;
+        let effective_key = key.clone().unwrap_or_else(|| r.key.clone());
+        if already
+            .get(&effective_key)
+            .map(|c| c == &data)
+            .unwrap_or(false)
+        {
+            outcome.unchanged += 1;
+            continue;
+        }
+        let size = data.len() as u64;
+        if !dry_run {
+            staging
+                .append(&effective_key, &data)
+                .map_err(|e| CliError::Other(anyhow::anyhow!("stage: {e}")))?;
+            outcome.staged.push((effective_key, size));
+        }
+    }
+    Ok(outcome)
 }
 
 /// §8.5 social conventions: stage the `/.well-known/dig/manifest.json` discovery

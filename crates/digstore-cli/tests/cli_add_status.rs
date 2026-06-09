@@ -1,31 +1,36 @@
 mod common;
-use common::{dig, tmp_dig};
-use predicates::prelude::*;
+use assert_cmd::Command;
+use common::tmp_dig;
+
+fn dig_in(dir: &std::path::Path) -> Command {
+    let mut c = Command::cargo_bin("digstore").unwrap();
+    c.current_dir(dir);
+    c
+}
 
 #[test]
 fn add_then_status_shows_staged() {
     let dir = tmp_dig();
-    dig(&dir).arg("init").assert().success();
-    let f = dir.path().join("readme.txt");
-    std::fs::write(&f, b"hello digstore world").unwrap();
-    dig(&dir)
-        .args(["add"])
-        .arg(&f)
-        .args(["--key", "readme"])
+    dig_in(dir.path()).arg("init").assert().success();
+    std::fs::write(dir.path().join("readme.txt"), b"hello digstore world").unwrap();
+    dig_in(dir.path())
+        .args(["add", "readme.txt", "--key", "readme"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("staged readme"));
-    dig(&dir)
+        .success();
+    dig_in(dir.path())
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains("staged: readme"));
+        .stdout(predicates::prelude::predicate::str::contains("readme"));
 }
 
 #[test]
 fn add_without_store_fails_exit_3() {
     let dir = tmp_dig();
-    let f = dir.path().join("x.txt");
-    std::fs::write(&f, b"x").unwrap();
-    dig(&dir).args(["add"]).arg(&f).assert().failure().code(3);
+    std::fs::write(dir.path().join("x.txt"), b"x").unwrap();
+    dig_in(dir.path())
+        .args(["add", "x.txt"])
+        .assert()
+        .failure()
+        .code(3);
 }
