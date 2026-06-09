@@ -90,6 +90,39 @@ fn multi_chunk_resource_round_trips() {
 }
 
 #[test]
+fn cat_keyless_urn_resolves_to_index_html_default_view() {
+    // §8.5 social convention: a URN with NO resource key resolves to the store's
+    // landing resource `index.html` (its default view) when that key exists.
+    let dir = tmp_dig();
+    let content = b"<html><body>landing page default view</body></html>";
+    let f = dir.path().join("index.html");
+    std::fs::write(&f, content).unwrap();
+
+    dig(&dir).arg("init").assert().success();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "index.html"])
+        .assert()
+        .success();
+    dig(&dir).args(["commit"]).assert().success();
+
+    let (store_id, root) = store_id_and_root(&dir);
+    // Key-less URN: no trailing `/resource` segment.
+    let urn = format!("urn:dig:chia:{}:{}", store_id, root);
+    let out = dig(&dir).args(["cat", &urn]).output().unwrap();
+    assert!(
+        out.status.success(),
+        "cat of key-less URN failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.stdout, content,
+        "key-less URN must serve index.html's content (§8.5 default view)"
+    );
+}
+
+#[test]
 fn cat_unknown_resource_decoy_fails_verification_exit_5() {
     let dir = tmp_dig();
     let f = dir.path().join("doc.txt");

@@ -20,6 +20,21 @@ pub fn run(ctx: &CliContext, args: CatArgs) -> Result<(), CliError> {
 
     let module_path = store_ops::module_path_for(ctx, &urn.store_id, Some(trusted_root))?;
 
+    // §8.5 social conventions: a URN with no resource key resolves to the store's
+    // landing resource `index.html` (its default view) when that key exists in the
+    // generation manifest; otherwise it falls back to the store-level empty key.
+    // Bind the resolution into an effective URN so EVERY downstream step — the
+    // module's retrieval-key lookup, the per-chunk lengths, and the client
+    // decryption key — derives from the same key (C9/C10).
+    let urn = if urn.resource_key.is_none() {
+        Urn {
+            resource_key: Some(store_ops::resolve_resource_key(ctx, &trusted_root, &urn)),
+            ..urn
+        }
+    } else {
+        urn
+    };
+
     let resp = serve::serve_content(ctx, &module_path, &urn, trusted_root)?;
 
     if args.verify_proof {
