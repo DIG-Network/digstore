@@ -30,8 +30,18 @@ pub const MAGIC: &[u8; 4] = b"DIGS";
 /// Current data-section format version.
 pub const VERSION: u8 = 1;
 /// Fixed linear-memory offset where the compiler injects the blob and the guest
-/// reads it: 1 MiB; above guest static data, below the 16 MiB cap.
-pub const DIGS_DATA_OFFSET: u32 = 0x0010_0000;
+/// reads it: **2 MiB**, chosen to sit ABOVE the guest's static data (its rodata
+/// lives at the wasm default global base of 1 MiB and ends well under 2 MiB) and
+/// BELOW the guest's bump heap (which starts at 8 MiB) and the 16 MiB module cap.
+///
+/// BINDING contract D2 fix: the original 1 MiB value collided with the guest's
+/// own static-data segment (the wasm linker places rodata at 1 MiB) — the
+/// injected blob overwrote the guest's rodata, and the guest's heap (formerly an
+/// 8 MiB static array starting just past 1 MiB) overlapped the injected chunk
+/// pool, so a real compiled module dropped chunks past the first ~2 and did NOT
+/// serve itself. The blob now occupies the dedicated window `[2 MiB, 8 MiB)`,
+/// clear of both the guest's rodata below and its heap above.
+pub const DIGS_DATA_OFFSET: u32 = 0x0020_0000;
 
 /// Byte length of the fixed blob header (`magic` + `version` + `count`).
 const HEADER_LEN: usize = 4 + 1 + 4;

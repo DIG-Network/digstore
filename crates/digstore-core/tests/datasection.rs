@@ -15,7 +15,10 @@ use digstore_core::Bytes32;
 fn constants_match_contract() {
     assert_eq!(MAGIC, b"DIGS");
     assert_eq!(VERSION, 1);
-    assert_eq!(DIGS_DATA_OFFSET, 0x0010_0000);
+    // D2 fix: 2 MiB — above the guest's rodata (1 MiB), below its heap (8 MiB)
+    // and the 16 MiB cap. (Was 1 MiB, which collided with the guest's own
+    // static data + heap and broke self-serving for multi-chunk resources.)
+    assert_eq!(DIGS_DATA_OFFSET, 0x0020_0000);
     // Section IDs 1..=11.
     assert_eq!(SectionId::StoreId as u16, 1);
     assert_eq!(SectionId::CurrentRoot as u16, 2);
