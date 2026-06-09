@@ -274,6 +274,48 @@ fn attestation_from_untrusted_key_returns_decoy() {
 }
 
 #[test]
+fn attestation_with_no_embedded_trusted_set_returns_decoy() {
+    // §12.2/§12.3 (D-ATTEST-TRUSTSET): if the module embeds NO TrustedKeys
+    // section, the gate must load an empty trusted set and fail closed — a
+    // host signing with a perfectly valid key is still not a *member* of the
+    // (empty) embedded set, so content calls return a Decoy, never real bytes.
+    let key = Bytes32([0x11; 32]);
+    let entry = KeyTableEntry {
+        static_key: key,
+        generation: Bytes32([0xBB; 32]),
+        chunk_indices: vec![0],
+        total_size: 5,
+    };
+    let table = encode_key_table(&[entry]);
+    let pool = fixtures::pack_pool(&[b"alpha"]);
+    // Build a blob WITHOUT a TrustedKeys (id 5) section.
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let ds = DataSection::parse(&blob).unwrap();
+    assert!(
+        ds.section(SectionId::TrustedKeys).is_none(),
+        "fixture must omit the TrustedKeys section for this case"
+    );
+
+    let host = SigningHost::new(&[42u8; 32]); // signs validly, but not embedded
+    let mut gc = gate_config();
+    gc.require_attestation = true;
+    let req = ContentRequest {
+        retrieval_key: key,
+        root_hash: None,
+        range: None,
+        jwt: None,
+        window: None,
+    };
+    assert!(
+        matches!(
+            serve_content(&host, &ds, &req, &gc),
+            ContentOutcome::Decoy(_)
+        ),
+        "no embedded trusted set MUST fail closed -> Decoy"
+    );
+}
+
+#[test]
 fn attestation_with_corrupted_signature_returns_decoy() {
     // Trusted key, fresh, correct shape — but the signature bytes are tampered.
     // The pairing check must fail -> Decoy.
