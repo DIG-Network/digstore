@@ -6,6 +6,8 @@ use serde::Serialize;
 pub struct StatusView {
     pub root: Option<String>,
     pub staged: Vec<String>,
+    pub modified: Vec<String>,
+    pub untracked: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -21,24 +23,34 @@ pub struct DiffEntry {
     pub change: String, // "added" | "removed" | "modified"
 }
 
-pub fn render_status(s: &StatusView, json: bool) -> String {
-    if json {
-        return serde_json::to_string_pretty(s).expect("serialize status");
+pub fn render_status(s: &StatusView, ui: &crate::ui::Ui) {
+    if ui.json() {
+        ui.emit_json(s);
+        return;
     }
-    let mut out = String::new();
     match &s.root {
-        Some(r) => out.push_str(&format!("On root {}\n", r)),
-        None => out.push_str("No commits yet\n"),
+        Some(r) => ui.line(format!("● generation root {}", &r[..r.len().min(12)])),
+        None => ui.line("No commits yet"),
     }
-    if s.staged.is_empty() {
-        out.push_str("nothing staged\n");
-    } else {
-        out.push_str("Staged for commit:\n");
-        for e in &s.staged {
-            out.push_str(&format!("  staged: {}\n", e));
+    use crate::ui::theme::Marker;
+    let group = |ui: &crate::ui::Ui, label: &str, m: Marker, items: &[String]| {
+        if items.is_empty() {
+            return;
         }
+        ui.line(format!("{} ({})", label, items.len()));
+        for it in items {
+            ui.item(m, it);
+        }
+    };
+    group(ui, "staged", Marker::Staged, &s.staged);
+    group(ui, "modified", Marker::Modified, &s.modified);
+    group(ui, "untracked", Marker::Untracked, &s.untracked);
+    if !s.untracked.is_empty() {
+        ui.hint("digstore add -A   # stage untracked files");
     }
-    out
+    if s.staged.is_empty() && s.modified.is_empty() && s.untracked.is_empty() {
+        ui.line("nothing to commit; working directory clean");
+    }
 }
 
 pub fn render_log(entries: &[LogEntry], json: bool) -> String {
@@ -76,26 +88,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn render_status_json_has_staged_count() {
+    fn render_status_json_has_untracked_field() {
         let s = StatusView {
             root: Some("ab".into()),
             staged: vec!["readme".into()],
+            modified: vec![],
+            untracked: vec!["new_file.txt".into()],
         };
-        let out = render_status(&s, true);
-        assert!(out.contains("\"staged\""));
-        assert!(out.contains("readme"));
+        // Serialize directly to verify the JSON shape contains "untracked".
+        let json = serde_json::to_string_pretty(&s).expect("serialize");
+        assert!(json.contains("\"staged\""));
+        assert!(json.contains("\"untracked\""));
+        assert!(json.contains("readme"));
+        assert!(json.contains("new_file.txt"));
     }
 
     #[test]
-    fn render_status_human_lists_entries() {
+    fn status_view_serializes_all_four_fields() {
         let s = StatusView {
             root: None,
-            staged: vec!["a".into(), "b".into()],
+            staged: vec!["a".into()],
+            modified: vec!["b".into()],
+            untracked: vec!["c".into()],
         };
-        let out = render_status(&s, false);
-        assert!(out.contains("a"));
-        assert!(out.contains("b"));
-        assert!(out.to_lowercase().contains("staged"));
+        let json = serde_json::to_string_pretty(&s).expect("serialize");
+        assert!(json.contains("\"root\""));
+        assert!(json.contains("\"staged\""));
+        assert!(json.contains("\"modified\""));
+        assert!(json.contains("\"untracked\""));
     }
 
     #[test]

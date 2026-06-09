@@ -207,6 +207,32 @@ pub fn serve_content(
     Ok(resp)
 }
 
+/// Serve and decrypt a committed resource, returning its plaintext bytes.
+///
+/// This is the shared serve+decrypt path used by both `cat` and `compute_status`.
+/// It builds the canonical root-independent URN for `key`, drives the compiled
+/// module through the host runtime via [`serve_content`], verifies the merkle
+/// proof against `root`, and AES-256-GCM-opens the ciphertext using the store
+/// salt — exactly the steps `commands/cat.rs` performs.
+pub fn read_resource_plaintext(
+    ctx: &crate::context::CliContext,
+    cfg: &digstore_core::StoreConfig,
+    root: &digstore_core::Bytes32,
+    key: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let urn = store_ops::canonical_resource_urn(cfg.store_id, key);
+    let module_path = store_ops::module_path_for(ctx, &cfg.store_id, Some(*root))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let resp = serve_content(ctx, &module_path, &urn, *root).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let chunk_lens = store_ops::resource_chunk_lens(ctx, root, key).unwrap_or_default();
+    let salt: Option<[u8; 32]> = match &cfg.visibility {
+        digstore_core::Visibility::Private(s) => Some(s.0),
+        digstore_core::Visibility::Public => None,
+    };
+    crate::ops::client_crypto::decrypt_and_verify(&resp, &urn, salt.as_ref(), root, &chunk_lens)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
 /// Serve a proof for `urn`. Produces a genuine `ExecutionProof` via the
 /// `MockProver` over the served output commitment.
 pub fn serve_proof(
