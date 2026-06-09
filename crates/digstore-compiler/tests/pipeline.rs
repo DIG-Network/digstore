@@ -22,6 +22,7 @@ fn empty_trusted_set_is_refused() {
         store_pubkey(),
         &gens,
         sample_manifest(),
+        common::no_auth(),
         &[],
     )
     .unwrap_err();
@@ -42,6 +43,7 @@ fn produces_result_with_exact_filename_and_stats() {
         store_pubkey(),
         &gens,
         sample_manifest(),
+        common::no_auth(),
         &trusted_keys(),
     )
     .expect("compiles");
@@ -91,6 +93,7 @@ fn obfuscation_flag_sets_stat_and_still_writes_valid_module() {
         store_pubkey(),
         &gens,
         sample_manifest(),
+        common::no_auth(),
         &trusted_keys(),
     )
     .expect("compiles");
@@ -116,6 +119,7 @@ fn pool_byte_len_is_total_unique_content_bytes() {
         store_pubkey(),
         &gens,
         sample_manifest(),
+        common::no_auth(),
         &trusted_keys(),
     )
     .unwrap();

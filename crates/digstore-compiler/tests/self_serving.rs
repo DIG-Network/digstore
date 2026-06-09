@@ -189,6 +189,7 @@ fn real_compiled_module_serves_itself_with_verifying_proof() {
         store_pubkey,
         &gens,
         common::sample_manifest(),
+        common::no_auth(),
         &trusted,
     )
     .expect("real module compiles");
@@ -299,6 +300,7 @@ fn real_compiled_module_miss_returns_decoy_failing_the_client_proof_gate() {
         Bytes48([0xCDu8; 48]),
         &gens,
         common::sample_manifest(),
+        common::no_auth(),
         &common::trusted_keys(),
     )
     .expect("compiles");
@@ -396,6 +398,7 @@ fn obfuscation_is_behavior_preserving_identical_served_bytes_on_and_off() {
             Bytes48([0xCDu8; 48]),
             &build_gens(),
             common::sample_manifest(),
+            common::no_auth(),
             &common::trusted_keys(),
         )
         .expect("compiles");
@@ -488,6 +491,7 @@ fn obfuscated_real_module_still_serves_itself_with_verifying_proof() {
         Bytes48([0xCDu8; 48]),
         &gens,
         common::sample_manifest(),
+        common::no_auth(),
         &common::trusted_keys(),
     )
     .expect("obfuscated module compiles");

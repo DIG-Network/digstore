@@ -80,6 +80,7 @@ fn test_module_is_secretless() {
         store_pubkey(),
         &generations(),
         sample_manifest(),
+        common::no_auth(),
         &trusted,
     )
     .expect("compiles");
