@@ -113,6 +113,43 @@ fn jwks_fetch_blocked_without_session() {
     assert_eq!(r, -100); // ErrorCode::NoSession
 }
 
+fn probe_runtime_with_clock(clock: FixedClock) -> HostRuntime {
+    let module_bytes = wat::parse_str(include_str!("fixtures/wat/import_probe.wat")).unwrap();
+    HostRuntime::new(&module_bytes, cfg(), ExecutionLimits::default(), test_deps(clock)).unwrap()
+}
+
+// §12.4: an expired session is reported distinctly from an absent one.
+// host_verify_session returns 1 while valid and SessionExpired (-101) once
+// past the TTL; jwks_fetch returns SessionExpired (-101) for a present-but-
+// expired session and NoSession (-100) only when no session exists.
+#[test]
+fn expired_session_reports_session_expired() {
+    let clock = FixedClock::new(1_700_000_000);
+    let mut rt = probe_runtime_with_clock(clock.clone());
+
+    // Absent session: verify -> 0, jwks -> NoSession (-100).
+    assert_eq!(rt.call_i32_export("probe_verify").unwrap(), 0);
+    let url = b"http://127.0.0.1:1/jwks.json";
+    rt.write_guest(5000, url).unwrap();
+    assert_eq!(
+        rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32).unwrap(),
+        -100
+    );
+
+    // Establish a session; it is now valid (TTL = 300s).
+    write_challenge(&mut rt, 4096);
+    assert!(rt.call_i32_export_1("probe_establish", 4096).unwrap() >= 0);
+    assert_eq!(rt.call_i32_export("probe_verify").unwrap(), 1);
+
+    // Advance the clock past the 300s TTL: the session now exists but is expired.
+    clock.advance(301);
+    assert_eq!(rt.call_i32_export("probe_verify").unwrap(), -101); // SessionExpired
+    assert_eq!(
+        rt.call_i32_export_2("probe_jwks", 5000, url.len() as i32).unwrap(),
+        -101 // SessionExpired, distinct from NoSession
+    );
+}
+
 #[test]
 fn read_return_buffer_copies_into_guest() {
     let mut rt = probe_runtime(FixedClock::new(100));

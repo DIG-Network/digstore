@@ -39,6 +39,16 @@ impl SessionTable {
         self.current.map(|s| s.is_valid_at(now)).unwrap_or(false)
     }
 
+    /// True when a session record exists (regardless of expiry).
+    pub fn exists(&self) -> bool {
+        self.current.is_some()
+    }
+
+    /// True when a session exists but has passed its expiry (§12.4).
+    pub fn is_expired_at(&self, now: u64) -> bool {
+        self.current.map(|s| !s.is_valid_at(now)).unwrap_or(false)
+    }
+
     pub fn active_store_id(&self, now: u64) -> Option<[u8; 32]> {
         self.current
             .filter(|s| s.is_valid_at(now))
@@ -74,6 +84,21 @@ mod tests {
         table.establish([9u8; 32], [3u8; 32], 100, 60);
         assert!(!table.is_valid(161));
         assert_eq!(table.active_store_id(161), None);
+    }
+
+    #[test]
+    fn exists_and_expiry_accessors_distinguish_absent_from_expired() {
+        let mut table = SessionTable::new();
+        // Absent: no record, not expired.
+        assert!(!table.exists());
+        assert!(!table.is_expired_at(100));
+        // Established and valid: exists, not expired.
+        table.establish([9u8; 32], [3u8; 32], 100, 60);
+        assert!(table.exists());
+        assert!(!table.is_expired_at(120));
+        // Past TTL: still exists, now expired.
+        assert!(table.exists());
+        assert!(table.is_expired_at(161));
     }
 
     #[test]
