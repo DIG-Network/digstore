@@ -42,7 +42,7 @@ mod template;
 
 pub use atomic_write::{atomic_write_module, output_filename};
 pub use chunk_index::ChunkIndex;
-pub use config::{CompilerConfig, CompilerStats};
+pub use config::{CompilerConfig, CompilerStats, COMPILER_VERSION};
 pub use data_section::{encode_data_section, rekey_module_trusted, DataSectionInputs};
 pub use error::{CompilerError, Result};
 pub use filler::deterministic_filler;

@@ -8,7 +8,7 @@ use digstore_core::{
 use sha2::{Digest, Sha256};
 
 use crate::atomic_write::atomic_write_module;
-use crate::config::{CompilerConfig, CompilerStats};
+use crate::config::{CompilerConfig, CompilerStats, COMPILER_VERSION};
 use crate::data_section::{encode_data_section, DataSectionInputs};
 use crate::error::{CompilerError, Result};
 use crate::filler::deterministic_filler;
@@ -149,6 +149,8 @@ impl Compiler {
             pool_byte_len: total_content_bytes,
             data_section_byte_len: data_blob.len() as u64,
             obfuscation_applied,
+            // §5: the artifact carries the compiler version that produced it.
+            compiler_version: COMPILER_VERSION.to_string(),
         };
 
         let result = CompilationResult {
