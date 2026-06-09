@@ -328,7 +328,7 @@ impl<C: Clock> Store<C> {
     }
 
     /// Deterministic path of the compiled module for a given root (§4.4):
-    /// `{store_id}-{root}.wasm` under `modules/`. Consumed by `digstore-compiler`.
+    /// `{store_id}-{root}.dig` under `modules/`. Consumed by `digstore-compiler`.
     pub fn module_path(&self, root: Bytes32) -> std::path::PathBuf {
         self.paths.module_file(&root.to_hex())
     }

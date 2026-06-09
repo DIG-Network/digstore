@@ -1,7 +1,7 @@
 //! `dighost` — the runnable, S3-compatible Digstore host (Artifact 3).
 //!
 //! `dighost` is the neutral DIG-Node pipe (paper §15, §18). It loads a compiled
-//! `{storeID}-{root}.wasm` module from a **storage source** (a local path, an
+//! `{storeID}-{root}.dig` module from a **storage source** (a local path, an
 //! `s3://bucket/key` URL, or any S3-compatible endpoint), instantiates it via
 //! `digstore_host::HostRuntime`, and on a request carrying a **32-byte retrieval
 //! key** calls `serve_content` and **streams the served bytes**

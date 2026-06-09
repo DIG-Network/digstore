@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 ///   roots.log                         // append-only root history
 ///   generations/{roothash_hex}/manifest.json
 ///   generations/{roothash_hex}/chunks/{chunk_hash_hex}   // sparse after dedup
-///   modules/{store_id_hex}-{roothash_hex}.wasm
+///   modules/{store_id_hex}-{roothash_hex}.dig
 /// ```
 #[derive(Debug, Clone)]
 pub struct StorePaths {
@@ -68,7 +68,7 @@ impl StorePaths {
 
     pub fn module_file(&self, root_hex: &str) -> PathBuf {
         self.modules_dir()
-            .join(format!("{}-{}.wasm", self.store_id_hex, root_hex))
+            .join(format!("{}-{}.dig", self.store_id_hex, root_hex))
     }
 
     pub fn store_id_hex(&self) -> &str {
@@ -125,7 +125,7 @@ mod tests {
         let root_hex = "ab".repeat(32);
         assert_eq!(
             p.module_file(&root_hex),
-            PathBuf::from(format!("/data/modules/{sid_hex}-{root_hex}.wasm"))
+            PathBuf::from(format!("/data/modules/{sid_hex}-{root_hex}.dig"))
         );
         assert_eq!(p.generations_dir(), PathBuf::from("/data/generations"));
         assert_eq!(p.modules_dir(), PathBuf::from("/data/modules"));

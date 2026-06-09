@@ -10,7 +10,7 @@ pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Compiler options (paper §19.1: obfuscation + optimization toggles).
 #[derive(Debug, Clone)]
 pub struct CompilerConfig {
-    /// Directory the final `{store_id}-{roothash}.wasm` is written to.
+    /// Directory the final `{store_id}-{roothash}.dig` is written to.
     pub output_dir: PathBuf,
     /// Apply deterministic obfuscation passes (§17.1).
     pub obfuscate: bool,

@@ -472,6 +472,6 @@ fn current_root_and_history_accessors() {
     let expected = dir
         .path()
         .join("modules")
-        .join(format!("{sid_hex}-{}.wasm", r1.to_hex()));
+        .join(format!("{sid_hex}-{}.dig", r1.to_hex()));
     assert_eq!(store.module_path(r1), expected);
 }

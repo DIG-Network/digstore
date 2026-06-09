@@ -217,7 +217,7 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     store_ops::persist_host_identity(ctx, &local_seed, local_pubkey)?;
 
     let module_path = ctx.modules_dir().join(format!(
-        "{}-{}.wasm",
+        "{}-{}.dig",
         store_id.to_hex(),
         remote_root.to_hex()
     ));
@@ -320,7 +320,7 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
                 .ok_or_else(|| CliError::VerificationFailed("root not in remote /roots".into()))?;
             let module_path =
                 ctx.modules_dir()
-                    .join(format!("{}-{}.wasm", cfg.store_id.to_hex(), root.to_hex()));
+                    .join(format!("{}-{}.dig", cfg.store_id.to_hex(), root.to_hex()));
             fs::write(&module_path, &bytes).map_err(|e| CliError::Other(e.into()))?;
             store_ops::append_history(
                 ctx,

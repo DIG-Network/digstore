@@ -25,7 +25,8 @@
 
 Digstore is a self-contained, content-addressable, encrypted-at-rest store
 format. A Digstore store **is** a WebAssembly module. Store content compiles into
-a single `.wasm` binary whose data section embeds the chunked, encrypted content,
+a single module file — a WebAssembly binary distributed with the `.dig` extension
+— whose data section embeds the chunked, encrypted content,
 the merkle commitments, the root history, the store's public key, and a set of
 trusted-host keys. The module exposes a fixed export ABI. A host runtime
 instantiates it in a sandbox and retrieves content by executing it. The artifact
@@ -51,7 +52,7 @@ real lookup from a miss.
 
 A store is identified by a 32-byte store ID equal to `SHA-256` of the store's BLS
 public key, so the identifier is self-certifying. Every commit produces a new
-module file named `{storeID}-{rootHash}.wasm`, computes a new merkle root, and
+module file named `{storeID}-{rootHash}.dig`, computes a new merkle root, and
 appends it to the root history. The module is the single distribution unit: one
 portable executable that is both the data and the server.
 
@@ -165,7 +166,7 @@ signed root.
 | Encryption at rest | Out-of-band or none | URN-derived AES-256-GCM-SIV, embedded in module |
 | Invalid lookups | Error / 404 | Deterministic decoy, logarithmic size distribution |
 | Byte-range retrieval | Application-specific | Resource key + range, served by module |
-| Distribution unit | One container file | One `{storeID}-{rootHash}.wasm` file |
+| Distribution unit | One container file | One `{storeID}-{rootHash}.dig` file |
 
 What the Digstore module delivers:
 
@@ -183,7 +184,8 @@ What the Digstore module delivers:
   provider relays ciphertext addressed by a hash and never sees the URN.
 - **A Git-shaped interface.** `init`, `add`, `commit`, `log`, `diff`,
   `checkout`, `clone` — the verbs and mental model Git already taught.
-- **One portable executable.** The store is a single `.wasm` file. Copying it is
+- **One portable executable.** The store is a single `.dig` file (a WebAssembly
+  module). Copying it is
   a backup; running it is a server.
 
 What the WASM store deliberately does not do: no working tree (content is read by
@@ -301,7 +303,7 @@ So the CLI operates on the store that contains the directory you run it from.
       manifest.json                 # generation metadata
       chunks/{chunk_hash_hex}       # one file per unique chunk
   modules/
-    {store_id}-{roothash}.wasm      # compiled module, one per generation
+    {store_id}-{roothash}.dig       # compiled module (WASM binary), one per generation
   config.toml                       # store configuration (0600 if private)
   signing_key.bin                   # BLS signing-key seed (0600; never embedded)
   trusted_keys.json                 # trusted host keys (public)
@@ -395,7 +397,7 @@ The compiler runs a fixed sequence of stages (`digstore-compiler`):
 7. **Obfuscation.** Optionally apply code-obfuscation passes (§17).
 8. **Optimization.** Optional `wasm-opt`.
 9. **Validation.** Re-parse and validate the emitted module.
-10. **Output.** Write atomically to `{hex(store_id)}-{hex(roothash)}.wasm` via a
+10. **Output.** Write atomically to `{hex(store_id)}-{hex(roothash)}.dig` via a
     temporary file and rename.
 
 Compilation requires at least one trusted host key; the compiler refuses to emit

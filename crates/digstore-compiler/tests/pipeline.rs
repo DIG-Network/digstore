@@ -52,7 +52,7 @@ fn produces_result_with_exact_filename_and_stats() {
     assert_eq!(result.store_id, store_id());
     assert_eq!(result.roothash, last_root);
     let expected_name = format!(
-        "{}-{}.wasm",
+        "{}-{}.dig",
         hex::encode(store_id().0),
         hex::encode(last_root.0)
     );
