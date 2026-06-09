@@ -17,6 +17,8 @@ pub enum ProverError {
     RootBindingMismatch { bound: String, asserted: String },
     #[error("node signature verification failed")]
     NodeSignatureInvalid,
+    #[error("node pubkey {0} is not in the attestation trusted-key set (§13.7, §12.2)")]
+    NodeKeyNotAttested(String),
     #[error("chain block outside freshness window: block ts {block_ts}, now {now}, window {window}s")]
     BlockTooOld { block_ts: u64, now: u64, window: u64 },
     #[error("chain block timestamp {0} is in the future relative to now {1}")]

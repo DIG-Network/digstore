@@ -1,4 +1,4 @@
-use digstore_core::{Bytes32, ChiaBlockRef, ExecutionProof};
+use digstore_core::{Bytes32, Bytes48, ChiaBlockRef, ExecutionProof};
 use digstore_crypto::bls;
 use digstore_prover::{
     build_public_input, MockChainSource, MockProver, MockVerifier, Prover, ProverError,
@@ -42,4 +42,54 @@ fn wrong_pubkey_is_rejected() {
     let chain = MockChainSource::new(vec![block], 1_000_100);
     let err = MockVerifier::default().verify(&proof, ph, &[root], &chain).unwrap_err();
     assert!(matches!(err, ProverError::NodeSignatureInvalid));
+}
+
+// §13.7 + §12.2: the serving node is identified by the BLS key it already uses
+// for attestation, "one key for both roles". A proof whose node_pubkey is NOT a
+// member of the module's embedded §12 attestation trusted-key set MUST be
+// rejected, so the "one key for both roles" guarantee is structural, not a
+// matter of convention.
+
+#[test]
+fn node_pubkey_in_attestation_trusted_set_is_accepted() {
+    let (proof, ph, root, block) = fresh_proof();
+    let chain = MockChainSource::new(vec![block], 1_000_100);
+    // The node's own attestation key (the [7u8;32] seed used by fresh_proof) is
+    // the trusted attestation key embedded in the module.
+    let node_pk = bls::SecretKey::from_seed(&[7u8; 32]).public_key();
+    let trusted_node_keys = [node_pk.to_bytes()];
+    MockVerifier::default()
+        .verify_node_attested(&proof, ph, &[root], &trusted_node_keys, &chain)
+        .expect("a proof signed by an attestation-trusted node key must verify");
+}
+
+#[test]
+fn node_pubkey_not_in_attestation_trusted_set_is_rejected() {
+    let (proof, ph, root, block) = fresh_proof();
+    let chain = MockChainSource::new(vec![block], 1_000_100);
+    // A DIFFERENT key is the only trusted attestation key. The proof carries a
+    // genuine signature under its own node key, so signature verification passes,
+    // but the node key is not bound to the §12 attestation set: reject.
+    let other_pk = bls::SecretKey::from_seed(&[0xABu8; 32]).public_key();
+    let trusted_node_keys: [Bytes48; 1] = [other_pk.to_bytes()];
+    let err = MockVerifier::default()
+        .verify_node_attested(&proof, ph, &[root], &trusted_node_keys, &chain)
+        .unwrap_err();
+    assert!(
+        matches!(err, ProverError::NodeKeyNotAttested(_)),
+        "expected NodeKeyNotAttested, got {err:?}"
+    );
+}
+
+#[test]
+fn empty_attestation_trusted_set_is_rejected() {
+    let (proof, ph, root, block) = fresh_proof();
+    let chain = MockChainSource::new(vec![block], 1_000_100);
+    let err = MockVerifier::default()
+        .verify_node_attested(&proof, ph, &[root], &[], &chain)
+        .unwrap_err();
+    assert!(
+        matches!(err, ProverError::NodeKeyNotAttested(_)),
+        "expected NodeKeyNotAttested for empty trusted set, got {err:?}"
+    );
 }
