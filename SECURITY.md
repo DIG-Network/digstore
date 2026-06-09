@@ -121,6 +121,11 @@ not mistaken for closed.
 
 ```sh
 cargo test --workspace
-cargo install cargo-deny && cargo deny check
-cargo install cargo-audit && cargo audit
+cargo install cargo-deny --locked && cargo deny check advisories bans sources
 ```
+
+CI (`.github/workflows/ci.yml`) runs fmt, clippy, build+test on Linux+Windows,
+and the `cargo deny` supply-chain checks on every PR and push to `main`. The
+`cargo deny` license-compliance check is not yet gated — the workspace crates
+need explicit `license` fields and the full transitive license set must be
+enumerated first; this is a tracked follow-up.
