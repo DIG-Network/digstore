@@ -161,10 +161,47 @@ pub fn init_store(
     )
     .map_err(|e| CliError::Other(e.into()))?;
 
+    // Git convenience: ignore the `.dig/` store directory in the project's
+    // `.gitignore` (creating it if absent). Best-effort — never fails `init`.
+    ensure_dig_gitignored(&ctx.dig_dir);
+
     Ok(InitResult {
         store_id,
         host_public_key,
     })
+}
+
+/// Ensure the project's `.gitignore` ignores the `.dig/` store directory.
+///
+/// Only applies to the conventional layout where the store lives in a directory
+/// literally named `.dig` (the default for `digstore init`); when `--dig-dir`
+/// points somewhere else the caller is managing their own layout, so this is a
+/// no-op. Creates `.gitignore` in the store's parent directory if it does not
+/// exist, appends `.dig/` if not already present (idempotent), and preserves any
+/// existing content. Best-effort: any IO error is ignored so `init` still
+/// succeeds.
+fn ensure_dig_gitignored(dig_dir: &Path) {
+    if dig_dir.file_name().and_then(|n| n.to_str()) != Some(".dig") {
+        return;
+    }
+    let project_root = match dig_dir.parent() {
+        Some(p) => p,
+        None => return,
+    };
+    let gitignore = project_root.join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    let already = existing
+        .lines()
+        .any(|l| matches!(l.trim(), ".dig" | ".dig/"));
+    if already {
+        return;
+    }
+    let mut updated = existing;
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(".dig/\n");
+    let _ = std::fs::write(&gitignore, updated);
 }
 
 #[derive(Debug)]

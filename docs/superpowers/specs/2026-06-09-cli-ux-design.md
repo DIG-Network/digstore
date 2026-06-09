@@ -161,6 +161,15 @@ grouped, counted sections with markers and a hint when there are untracked files
 clap subcommand aliases: `st`→`status`, `ci`→`commit`, `co`→`checkout`. Enable
 clap's suggestion feature so `digstore stauts` suggests `status`.
 
+### 3.5 `init` ignores the store dir in `.gitignore`
+
+`digstore init` (default `.dig/` layout) ensures the project's `.gitignore`
+ignores the `.dig/` store directory: it creates `.gitignore` in the store's
+parent directory if absent, otherwise appends `.dig/` only when not already
+present (idempotent), preserving existing content. Best-effort — a `.gitignore`
+write error never fails `init`. Skipped when `--dig-dir` points to a non-`.dig`
+directory (the user is managing their own layout). **(Implemented.)**
+
 ## 4. Output & theming
 
 - **Verbs** (right-aligned, colored): `Staging`, `Chunking`, `Sealing`, `Committed`,
