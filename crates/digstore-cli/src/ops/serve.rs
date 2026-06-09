@@ -169,7 +169,7 @@ pub fn serve_proof(
     urn: &Urn,
     root: Bytes32,
 ) -> Result<(ExecutionProof, Bytes32), CliError> {
-    use digstore_prover::{build_public_input, Prover, ServingInputs};
+    use digstore_prover::{build_public_input, MockVerifier, Prover, ServingInputs, Verifier};
 
     let resp = serve_content(ctx, module_path, urn, root)?;
     let module_bytes = std::fs::read(module_path)
@@ -179,14 +179,21 @@ pub fn serve_proof(
     // over those embedded bytes.
     let program_hash = digstore_crypto::sha256(embedded_guest_wasm());
 
-    let prover_sk = BlsSecretKey::from_seed(&[7u8; 32]);
-    let prover_pk = prover_sk.public_key();
+    // §13.7 "one key for both roles": the serving node signs the proof with the
+    // SAME BLS key it uses for §12 host attestation — the key whose public half
+    // the compiler embedded as the module's trusted host key. We load that
+    // attestation signing key (init wrote `signing_key.bin`) rather than minting
+    // an independent prover key, so node attribution is bound to the attestation
+    // identity by construction.
+    let node_sk = store_ops::load_signing_key(ctx)
+        .unwrap_or_else(|_| BlsSecretKey::from_seed(&[42u8; 32]));
+    let node_pk = node_sk.public_key();
     let block = ChiaBlockRef {
         header_hash: Bytes32([0x55u8; 32]),
         height: 100,
         timestamp: 1_700_000_000,
     };
-    let prover = MockProver::new(prover_sk, prover_pk, block.clone());
+    let prover = MockProver::new(node_sk, node_pk, block.clone());
     let public_input = build_public_input(&[0u8; digstore_prover::NONCE_LEN], &block);
     let serving = ServingInputs {
         retrieval_key: urn.retrieval_key(),
@@ -196,6 +203,19 @@ pub fn serve_proof(
     let proof = prover
         .prove(program_hash, &public_input, &serving)
         .map_err(|e| CliError::VerificationFailed(format!("prove: {e:?}")))?;
+
+    // §13.7 + §12.2 (structural): the proof's node_pubkey MUST be a member of the
+    // module's embedded §12 attestation trusted-key set, otherwise "one key for
+    // both roles" is unenforced. Verify the binding against the persisted trusted
+    // keys using the deterministic mock chain for freshness.
+    let trusted_node_keys = store_ops::load_trusted_keys(ctx)
+        .map(|ks| ks.into_iter().map(|k| Bytes48(k.public_key)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let chain = digstore_prover::MockChainSource::new(vec![block.clone()], 1_700_000_000);
+    MockVerifier::default()
+        .verify_node_attested(&proof, program_hash, &[root], &trusted_node_keys, &chain)
+        .map_err(|e| CliError::VerificationFailed(format!("node-attested verify: {e:?}")))?;
+
     let _ = module_bytes;
     Ok((proof, root))
 }

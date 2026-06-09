@@ -1,7 +1,7 @@
 use crate::chain::ChainSource;
 use crate::error::{ProverError, Result};
 use crate::serving_inputs::ServingInputs;
-use digstore_core::{Bytes32, ExecutionProof, ProofResponse};
+use digstore_core::{Bytes32, Bytes48, ExecutionProof, ProofResponse};
 
 /// Produces an [`ExecutionProof`] for a serving run (§13.1-13.3).
 ///
@@ -54,6 +54,31 @@ pub trait Verifier {
             });
         }
         self.verify(&response.proof, expected_program_hash, trusted_roots, chain)
+    }
+
+    /// Verify a proof AND structurally bind its `node_pubkey` to the §12
+    /// attestation trusted-key set (§13.7: "the serving node is identified by
+    /// the BLS key it already uses for attestation, one key for both roles").
+    ///
+    /// `trusted_node_keys` is the same set of BLS public keys the compiler
+    /// embedded as the module's trusted host/attestation keys (§5.2, §12.2-12.3).
+    /// A proof whose `node_pubkey` is not a member of that set is rejected
+    /// *before* signature verification, so the "one key for both roles"
+    /// guarantee is enforced cryptographically rather than by convention. After
+    /// the membership check this delegates to [`Verifier::verify`] (which checks
+    /// the node signature, commitment, roots, and chain freshness).
+    fn verify_node_attested(
+        &self,
+        proof: &ExecutionProof,
+        expected_program_hash: Bytes32,
+        trusted_roots: &[Bytes32],
+        trusted_node_keys: &[Bytes48],
+        chain: &dyn ChainSource,
+    ) -> Result<()> {
+        if !trusted_node_keys.contains(&proof.node_pubkey) {
+            return Err(ProverError::NodeKeyNotAttested(proof.node_pubkey.to_hex()));
+        }
+        self.verify(proof, expected_program_hash, trusted_roots, chain)
     }
 
     /// Verify a proof AND confirm it is bound to `expected_nonce` (§13.5).
