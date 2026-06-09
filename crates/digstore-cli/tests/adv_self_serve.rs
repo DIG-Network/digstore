@@ -21,8 +21,12 @@ use digstore_crypto::bls::BlsSecretKey;
 use digstore_host::{ExecutionLimits, FixedClock, HostDeps, HostRuntime};
 use digstore_prover::{MockChainSource, MockProver};
 
-fn host_deps(store_id: Bytes32) -> HostDeps {
-    let sk = BlsSecretKey::from_seed(&[42u8; 32]);
+fn host_deps(store_id: Bytes32, signing_seed: &[u8]) -> HostDeps {
+    // §12.2: the host attests with the STORE's host signing key — the same key
+    // whose public half the compiler embedded as the trusted key. We reconstruct
+    // it from the persisted seed (`signing_key.bin`) so the guest's attestation
+    // verification accepts this host (otherwise it serves decoys, correctly).
+    let sk = BlsSecretKey::from_seed(signing_seed);
     let pk = sk.public_key().to_bytes();
     let prover_sk = BlsSecretKey::from_seed(&[7u8; 32]);
     let prover_pk = prover_sk.public_key();
@@ -77,11 +81,13 @@ fn adversarial_real_module_self_serves_with_verifying_proof() {
     eprintln!("[evidence] trusted_root (from commit) = {:?}", trusted_root);
 
     // ---- 2. Load the REAL module and drive serve_content for the resource
+    let signing_seed = std::fs::read(ctx.dig_dir.join("signing_key.bin"))
+        .expect("init persisted the host signing seed");
     let mut rt = HostRuntime::new(
         &module,
         HostImportsConfig::default(),
         ExecutionLimits::default(),
-        host_deps(store_id),
+        host_deps(store_id, &signing_seed),
     )
     .expect("host instantiates the real compiled module");
 
@@ -113,10 +119,7 @@ fn adversarial_real_module_self_serves_with_verifying_proof() {
     let leaf_ok = resp.merkle_proof.leaf == digstore_crypto::sha256(&resp.ciphertext);
     let verifies = resp.merkle_proof.verify();
     let root_matches = resp.merkle_proof.root == trusted_root;
-    eprintln!(
-        "[evidence] proof.leaf == sha256(ciphertext): {}",
-        leaf_ok
-    );
+    eprintln!("[evidence] proof.leaf == sha256(ciphertext): {}", leaf_ok);
     eprintln!("[evidence] proof.verify(): {}", verifies);
     eprintln!(
         "[evidence] proof.root == trusted_root: {} (proof.root={:?}, trusted={:?})",
@@ -127,10 +130,7 @@ fn adversarial_real_module_self_serves_with_verifying_proof() {
         leaf_ok,
         "REFUTATION: proof.leaf != SHA-256(served ciphertext)"
     );
-    assert!(
-        verifies,
-        "REFUTATION: served merkle proof does NOT verify"
-    );
+    assert!(verifies, "REFUTATION: served merkle proof does NOT verify");
     assert!(
         root_matches,
         "REFUTATION: proof.root != trusted root from commit"

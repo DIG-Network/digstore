@@ -281,7 +281,10 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
         // returns for this resource (plain ordered concat, NO length framing).
         let slices: Vec<&[u8]> = chunk_cts.iter().map(|c| c.as_slice()).collect();
         let resource_blob = digstore_core::serving::concat_output(&slices);
-        keyed_leaves.push((urn.retrieval_key().0, digstore_crypto::sha256(&resource_blob)));
+        keyed_leaves.push((
+            urn.retrieval_key().0,
+            digstore_crypto::sha256(&resource_blob),
+        ));
         key_records.push((rec.resource_key.clone(), indices, rec.content.len() as u64));
     }
 
@@ -724,6 +727,39 @@ pub(crate) fn load_signing_key(
     let bytes =
         fs::read(ctx.dig_dir.join("signing_key.bin")).map_err(|e| CliError::Other(e.into()))?;
     Ok(digstore_crypto::bls::SecretKey::from_seed(&bytes))
+}
+
+/// Generate a fresh host BLS signing identity: returns the 32-byte seed and the
+/// 48-byte G1 public key. The seed is the only persisted secret; the BLS key is
+/// reconstructed via `from_seed`.
+pub(crate) fn generate_host_key() -> ([u8; 32], digstore_core::Bytes48) {
+    let seed = random_seed();
+    let secret = digstore_crypto::bls::SecretKey::from_seed(&seed);
+    (seed, secret.public_key().to_bytes())
+}
+
+/// Persist a host signing identity into the dig dir: the secret seed
+/// (`signing_key.bin`, never embedded in modules) and the public trusted-key
+/// record (`trusted_keys.json`). Used by both `init` and `clone` so a node that
+/// serves a module always holds a key the module trusts (§12.2).
+pub(crate) fn persist_host_identity(
+    ctx: &CliContext,
+    seed: &[u8; 32],
+    public_key: digstore_core::Bytes48,
+) -> Result<(), CliError> {
+    fs::create_dir_all(&ctx.dig_dir).map_err(|e| CliError::Other(e.into()))?;
+    fs::write(ctx.dig_dir.join("signing_key.bin"), seed).map_err(|e| CliError::Other(e.into()))?;
+    let trusted = vec![TrustedHostKey {
+        public_key: public_key.0,
+        label: format!("dig-host-key-v1:{}", public_key.to_hex()),
+    }];
+    fs::write(
+        ctx.dig_dir.join("trusted_keys.json"),
+        serde_json::to_string_pretty(&serialize_keys(&trusted))
+            .map_err(|e| CliError::Other(e.into()))?,
+    )
+    .map_err(|e| CliError::Other(e.into()))?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -70,8 +70,46 @@ fn read_chunk(ds: &DataSection, index: u32) -> Option<Vec<u8>> {
     None
 }
 
+/// Decode the embedded TrustedKeys section (id 5) into a [`TrustedSet`] of
+/// 48-byte BLS G1 public keys. The body matches the compiler's codec
+/// (`data_section::encode_trusted_keys`): u32 BE count, then per entry a raw
+/// `[u8; 48]` public key followed by a `String` label (u32 BE len + bytes).
+/// An absent or malformed section yields an empty set (the gate then fails
+/// closed, matching §12.3's "refuse a module whose trusted set is empty").
+fn embedded_trusted_set(ds: &DataSection) -> crate::attestation::TrustedSet {
+    use digstore_core::codec::Decoder;
+
+    let body = match ds.section(SectionId::TrustedKeys) {
+        Some(b) => b,
+        None => return crate::attestation::TrustedSet::from_pubkeys(&[]),
+    };
+    let mut dec = Decoder::new(body);
+    let count = match u32::decode(&mut dec) {
+        Ok(c) => c,
+        Err(_) => return crate::attestation::TrustedSet::from_pubkeys(&[]),
+    };
+    let mut keys: Vec<[u8; 48]> = Vec::new();
+    for _ in 0..count {
+        let pk = match <[u8; 48]>::decode(&mut dec) {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        // Skip the label string (length-prefixed) — only the key matters here.
+        if alloc::string::String::decode(&mut dec).is_err() {
+            break;
+        }
+        keys.push(pk);
+    }
+    crate::attestation::TrustedSet::from_pubkeys(&keys)
+}
+
 /// Run the gate chain. Returns Err with a decoy-trigger reason if any gate fails.
-fn gate<H: DigHost + ?Sized>(host: &H, req: &ContentRequest, cfg: &GateConfig) -> Result<(), ()> {
+fn gate<H: DigHost + ?Sized>(
+    host: &H,
+    ds: &DataSection,
+    req: &ContentRequest,
+    cfg: &GateConfig,
+) -> Result<(), ()> {
     // Obfuscation seam: a default-true opaque predicate the compiler pass targets.
     if !crate::obfuscation_hooks::opaque_true() {
         return Err(());
@@ -80,16 +118,39 @@ fn gate<H: DigHost + ?Sized>(host: &H, req: &ContentRequest, cfg: &GateConfig) -
     if !within_window(&req.window, host.current_time()) {
         return Err(());
     }
-    // Attestation gate.
+    // Attestation gate (§12.2): issue a fresh challenge, have the host sign it,
+    // then VERIFY the returned signature against the embedded trusted set. Any
+    // failure (untrusted key / bad signature / stale / malformed / absent
+    // trusted set) fails closed -> the caller returns a decoy.
     if cfg.require_attestation {
         let nonce = host.random_bytes(32).map_err(|_| ())?;
         if nonce.len() < 32 {
             return Err(());
         }
+        let mut nonce32 = [0u8; 32];
+        nonce32.copy_from_slice(&nonce[..32]);
+
+        // The signed message is the challenge: nonce(32) || store_id(32) || time(u64 BE).
+        let now = host.current_time();
+        let challenge = crate::attestation::build_challenge(nonce32, ds.store_id().0, now);
+
         // A real host returns a signed AttestationResponse; an error => fail closed.
-        if host.create_attestation(b"challenge").is_err() {
-            return Err(());
-        }
+        let resp_bytes = host.create_attestation(&challenge).map_err(|_| ())?;
+        let resp = digstore_core::AttestationResponse::from_bytes(&resp_bytes).map_err(|_| ())?;
+
+        // §12.2: verify the BLS signature over the challenge under
+        // host_public_key, check freshness, and check trusted-set membership.
+        // The challenge embeds `now`, so the signed time is `now` (freshness ok).
+        let trusted = embedded_trusted_set(ds);
+        crate::attestation::verify_attestation(
+            &trusted,
+            &challenge,
+            &resp.host_public_key,
+            &resp.signature,
+            now,
+            now,
+        )
+        .map_err(|_| ())?;
     }
     // JWT gate (verification wired in Task 19).
     if cfg.require_jwt {
@@ -116,7 +177,7 @@ pub fn serve_content<H: DigHost + ?Sized>(
     cfg: &GateConfig,
 ) -> ContentOutcome {
     let root = req.root_hash.unwrap_or_else(|| ds.current_root());
-    if gate(host, req, cfg).is_err() {
+    if gate(host, ds, req, cfg).is_err() {
         return ContentOutcome::Decoy(decoy_content_response(&req.retrieval_key, &root));
     }
     let entry = match ds.lookup_key(&req.retrieval_key) {
@@ -132,7 +193,8 @@ pub fn serve_content<H: DigHost + ?Sized>(
         0
     };
     let plan = build_access_plan(&entry.chunk_indices, pool_size, |c| {
-        host.random_bytes(c).unwrap_or_else(|_| alloc::vec![0u8; c as usize])
+        host.random_bytes(c)
+            .unwrap_or_else(|_| alloc::vec![0u8; c as usize])
     });
 
     // Read EVERY slot in the plan (cover + real) so the access pattern is uniform,
@@ -152,7 +214,11 @@ pub fn serve_content<H: DigHost + ?Sized>(
 
     let merkle_proof = build_real_proof(ds, &entry, &root);
 
-    ContentOutcome::Real(ContentResponse { ciphertext, merkle_proof, roothash: root })
+    ContentOutcome::Real(ContentResponse {
+        ciphertext,
+        merkle_proof,
+        roothash: root,
+    })
 }
 
 /// Build a genuinely-verifying inclusion proof (contract D5).

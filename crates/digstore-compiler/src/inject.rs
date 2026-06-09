@@ -166,6 +166,44 @@ pub fn inject_data_section(template: &[u8], blob: &[u8], mem_offset: u32) -> Res
     Ok(bytes)
 }
 
+/// Extract the embedded DIGS data-section blob from a compiled module.
+///
+/// Scans the module's active data segments for the one placed at `mem_offset`
+/// (the compiler injects the DIGS blob LAST at `DIGS_DATA_OFFSET`, so the last
+/// matching segment wins, mirroring instantiation order). Returns the canonical
+/// blob sized by its own self-describing `total_len` (the segment payload may be
+/// padded). This is the inverse of [`inject_data_section`] and lets a consumer
+/// (e.g. `dig clone`) re-key a module to a new trusted host key without the
+/// original generation inputs.
+pub fn extract_data_section(module: &[u8], mem_offset: u32) -> Result<Vec<u8>> {
+    use digstore_core::datasection::DataView;
+
+    let mut found: Option<Vec<u8>> = None;
+    for payload in Parser::new(0).parse_all(module) {
+        let payload = payload.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
+        if let Payload::DataSection(reader) = payload {
+            for seg in reader {
+                let seg = seg.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
+                if let DataKind::Active { offset_expr, .. } = seg.kind {
+                    let off = const_i32_offset(&offset_expr)?;
+                    if off as u32 == mem_offset && seg.data.len() >= 4 && &seg.data[..4] == b"DIGS"
+                    {
+                        // Last matching segment wins (instantiation order).
+                        found = Some(seg.data.to_vec());
+                    }
+                }
+            }
+        }
+    }
+    let raw = found.ok_or_else(|| {
+        CompilerError::InvalidTemplate("no DIGS data segment at expected offset".into())
+    })?;
+    // Trim to the self-describing total length so re-encoding is exact.
+    let view = DataView::parse(&raw)
+        .map_err(|e| CompilerError::InvalidTemplate(format!("bad DIGS blob: {e:?}")))?;
+    Ok(raw[..view.total_len()].to_vec())
+}
+
 /// Read a `i32.const N` (the only offset form Rust/LLVM emits for active wasm32
 /// data segments) from an offset const-expression.
 fn const_i32_offset(offset_expr: &wasmparser::ConstExpr) -> Result<i32> {

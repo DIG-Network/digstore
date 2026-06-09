@@ -68,8 +68,13 @@ fn multi_chunk_round_trip() {
 }
 
 /// Build a minimal HostDeps for driving the compiled module directly.
-fn host_deps(store_id: Bytes32) -> HostDeps {
-    let sk = BlsSecretKey::from_seed(&[42u8; 32]);
+///
+/// §12.2: the host attests with the STORE's host signing key — the same key
+/// whose public half the compiler embedded as the trusted key. We reconstruct it
+/// from the persisted seed (`signing_key.bin`) so the guest's attestation
+/// verification accepts this host; otherwise it would (correctly) serve decoys.
+fn host_deps(store_id: Bytes32, signing_seed: &[u8]) -> HostDeps {
+    let sk = BlsSecretKey::from_seed(signing_seed);
     let pk = sk.public_key().to_bytes();
     let prover_sk = BlsSecretKey::from_seed(&[7u8; 32]);
     let prover_pk = prover_sk.public_key();
@@ -113,11 +118,13 @@ fn commit_module_self_serves_through_host_serve_content() {
     let retrieval_key = canonical.retrieval_key();
 
     let module = std::fs::read(&res.output_path).unwrap();
+    let signing_seed = std::fs::read(ctx.dig_dir.join("signing_key.bin"))
+        .expect("init persisted the host signing seed");
     let mut rt = HostRuntime::new(
         &module,
         HostImportsConfig::default(),
         ExecutionLimits::default(),
-        host_deps(store_id),
+        host_deps(store_id, &signing_seed),
     )
     .expect("host instantiates the compiled module");
 
@@ -169,7 +176,10 @@ fn commit_module_self_serves_through_host_serve_content() {
     let lens = store_ops::resource_chunk_lens(&ctx, &res.roothash, "doc").unwrap();
     let opened =
         client_crypto::decrypt_and_verify(&resp, &urn, None, &res.roothash, &lens).unwrap();
-    assert_eq!(opened, content, "client decrypt of self-served bytes == original");
+    assert_eq!(
+        opened, content,
+        "client decrypt of self-served bytes == original"
+    );
 }
 
 #[test]
