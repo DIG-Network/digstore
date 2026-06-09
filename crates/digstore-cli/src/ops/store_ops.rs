@@ -206,6 +206,91 @@ pub fn add_path(ctx: &CliContext, path: &Path, key: Option<String>) -> Result<Ad
     })
 }
 
+/// §8.5 social conventions: stage the `/.well-known/dig/manifest.json` discovery
+/// manifest as a NORMAL resource. The publisher elects to expose the resources
+/// currently staged (every staged key except the discovery key itself), each
+/// with a human label (the key) and an inferred content type. `commit` then
+/// seals/chunks/merkle-roots it exactly like any other resource, so a discoverer
+/// who knows the store ID can construct its URN, derive the retrieval key, and
+/// `cat` it back (`read_discovery_manifest`).
+///
+/// Returns the staged entries (for presentation).
+pub fn stage_discovery_manifest(
+    ctx: &CliContext,
+) -> Result<crate::ops::discovery::DiscoveryManifest, CliError> {
+    use crate::ops::discovery::{
+        infer_content_type, DiscoveryEntry, DiscoveryManifest, DISCOVERY_RESOURCE_KEY,
+    };
+
+    let cfg = ctx.load_config()?;
+    let mut staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
+        .map_err(|e| CliError::Other(anyhow::anyhow!("load staging: {e}")))?;
+
+    // Publisher-elected resources = everything staged so far, except the
+    // discovery manifest itself (so re-staging is idempotent in content).
+    let mut entries: Vec<DiscoveryEntry> = staging
+        .records()
+        .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?
+        .into_iter()
+        .map(|r| r.resource_key)
+        .filter(|k| k != DISCOVERY_RESOURCE_KEY)
+        .map(|key| DiscoveryEntry {
+            label: key.clone(),
+            content_type: infer_content_type(&key),
+            key,
+        })
+        .collect();
+    // Deterministic order independent of staging order (§19.3 spirit).
+    entries.sort_by(|a, b| a.key.cmp(&b.key));
+    entries.dedup_by(|a, b| a.key == b.key);
+
+    let manifest = DiscoveryManifest::new(entries);
+    let body = manifest.to_json_bytes();
+
+    // Enforce StoreConfig.max_size (§20.2), mirroring `add_path`.
+    if cfg.max_size != 0 {
+        let already: u64 = staging
+            .records()
+            .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?
+            .iter()
+            .filter(|r| r.resource_key != DISCOVERY_RESOURCE_KEY)
+            .map(|r| r.content.len() as u64)
+            .sum();
+        if already + body.len() as u64 > cfg.max_size {
+            return Err(CliError::InvalidArgument(
+                "staged size with discovery manifest exceeds store max_size".into(),
+            ));
+        }
+    }
+
+    staging
+        .append(DISCOVERY_RESOURCE_KEY, &body)
+        .map_err(|e| CliError::Other(anyhow::anyhow!("stage discovery: {e}")))?;
+    Ok(manifest)
+}
+
+/// §8.5 reader: fetch and parse the discovery manifest by its conventional
+/// retrieval key. This is an ordinary `cat` — it drives the real compiled module
+/// through the host, GCM-decrypts client-side, and parses the bytes. Returns
+/// `NotFound` if the publisher did not publish one.
+pub fn read_discovery_manifest(
+    ctx: &CliContext,
+    store_id: Bytes32,
+    root: Bytes32,
+    salt: Option<&[u8; 32]>,
+) -> Result<crate::ops::discovery::DiscoveryManifest, CliError> {
+    use crate::ops::discovery::{DiscoveryManifest, DISCOVERY_RESOURCE_KEY};
+
+    let urn = canonical_resource_urn(store_id, DISCOVERY_RESOURCE_KEY);
+    let module_path = module_path_for(ctx, &store_id, Some(root))?;
+    let resp = crate::ops::serve::serve_content(ctx, &module_path, &urn, root)?;
+    let chunk_lens = resource_chunk_lens(ctx, &root, DISCOVERY_RESOURCE_KEY).unwrap_or_default();
+    let bytes =
+        crate::ops::client_crypto::decrypt_and_verify(&resp, &urn, salt, &root, &chunk_lens)?;
+    DiscoveryManifest::from_json_bytes(&bytes)
+        .map_err(|e| CliError::Other(anyhow::anyhow!("parse discovery manifest: {e}")))
+}
+
 pub fn status(ctx: &CliContext) -> Result<StatusView, CliError> {
     let cfg = ctx.load_config()?;
     let staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
