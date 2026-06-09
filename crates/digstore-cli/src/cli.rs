@@ -48,14 +48,22 @@ pub struct InitArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    after_help = "EXAMPLES:\n  digstore add file.txt\n  digstore add -A\n  digstore add . src/*.rs\n  digstore add logo.png --key assets/logo.png"
+)]
 pub struct AddArgs {
-    /// Path to the file to stage. Omitted (or ignored) when `--discovery` is set.
-    pub path: Option<PathBuf>,
+    /// Files, directories, or glob patterns to stage (relative to the store root).
+    pub paths: Vec<PathBuf>,
+    /// Stage every file under the store root (honoring .digignore/.gitignore).
+    #[arg(short = 'A', long)]
+    pub all: bool,
+    /// Show what would be staged without staging anything.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Resource key override (only valid with exactly one file path).
     #[arg(long)]
     pub key: Option<String>,
-    /// §8.5 social conventions: instead of staging a file, generate and stage the
-    /// `/.well-known/dig/manifest.json` discovery manifest listing the resources
-    /// already staged (publisher-elected keys, labels, and types).
+    /// Stage the /.well-known/dig/manifest.json discovery manifest.
     #[arg(long)]
     pub discovery: bool,
 }
@@ -144,7 +152,7 @@ mod tests {
     fn parses_add_path() {
         let cli = Cli::try_parse_from(["digstore", "add", "file.txt"]).unwrap();
         match cli.command {
-            Command::Add(a) => assert_eq!(a.path.unwrap().to_str().unwrap(), "file.txt"),
+            Command::Add(a) => assert_eq!(a.paths[0].to_str().unwrap(), "file.txt"),
             _ => panic!("expected add"),
         }
     }
