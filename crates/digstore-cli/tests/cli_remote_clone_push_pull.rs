@@ -45,7 +45,7 @@ fn clone_then_cat_round_trips_from_remote() {
     let module = std::fs::read(
         src.path()
             .join("modules")
-            .join(format!("{store_id}-{root}.wasm")),
+            .join(format!("{store_id}-{root}.dig")),
     )
     .unwrap();
     let pk = host_pubkey(&src);
@@ -93,7 +93,7 @@ fn clone_rejects_unauthenticated_or_forged_head() {
     let module = std::fs::read(
         src.path()
             .join("modules")
-            .join(format!("{store_id}-{root}.wasm")),
+            .join(format!("{store_id}-{root}.dig")),
     )
     .unwrap();
     let pk = host_pubkey(&src);

@@ -5,10 +5,12 @@ use digstore_core::Bytes32;
 
 use crate::error::Result;
 
-/// The exact output filename: `{hex(store_id)}-{hex(roothash)}.wasm` (§19.4).
+/// The exact output filename: `{hex(store_id)}-{hex(roothash)}.dig` (§19.4).
+/// The compiled store module is a WebAssembly binary, but it is distributed with
+/// the `.dig` extension (it is a Digstore store, not a generic `.wasm`).
 pub fn output_filename(store_id: &Bytes32, roothash: &Bytes32) -> String {
     format!(
-        "{}-{}.wasm",
+        "{}-{}.dig",
         hex::encode(store_id.0),
         hex::encode(roothash.0)
     )
@@ -40,14 +42,14 @@ mod tests {
     use digstore_core::Bytes32;
 
     #[test]
-    fn output_filename_is_hex_store_dash_hex_root_dot_wasm() {
+    fn output_filename_is_hex_store_dash_hex_root_dot_dig() {
         let sid = Bytes32([0xAB; 32]);
         let root = Bytes32([0x01; 32]);
         let name = output_filename(&sid, &root);
         assert_eq!(
             name,
             "abababababababababababababababababababababababababababababababab-\
-0101010101010101010101010101010101010101010101010101010101010101.wasm"
+0101010101010101010101010101010101010101010101010101010101010101.dig"
         );
     }
 

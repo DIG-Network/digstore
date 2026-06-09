@@ -26,7 +26,7 @@ fn tampered_module_data_section_fails_client_verification_exit_5() {
     let module = dir
         .path()
         .join("modules")
-        .join(format!("{store_id}-{root}.wasm"));
+        .join(format!("{store_id}-{root}.dig"));
     corrupt_data_section(&module);
 
     let urn = format!("urn:dig:chia:{store_id}:{root}/doc");

@@ -620,7 +620,7 @@ pub fn module_path_for(
     };
     let path = ctx
         .modules_dir()
-        .join(format!("{}-{}.wasm", store_id.to_hex(), root.to_hex()));
+        .join(format!("{}-{}.dig", store_id.to_hex(), root.to_hex()));
     if !path.exists() {
         return Err(CliError::NotFound(format!(
             "module for root {}",
@@ -997,7 +997,7 @@ mod tests {
         let store_id = ctx.find_store_id().unwrap();
         let p = module_path_for(&ctx, &store_id, None).unwrap();
         assert!(p.ends_with(format!(
-            "{}-{}.wasm",
+            "{}-{}.dig",
             store_id.to_hex(),
             res.roothash.to_hex()
         )));

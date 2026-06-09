@@ -22,7 +22,7 @@ fn commit_creates_module_and_log_lists_it() {
     let modules: Vec<_> = std::fs::read_dir(dir.path().join("modules"))
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map(|x| x == "wasm").unwrap_or(false))
+        .filter(|e| e.path().extension().map(|x| x == "dig").unwrap_or(false))
         .collect();
     assert_eq!(modules.len(), 1);
     dig(&dir)
