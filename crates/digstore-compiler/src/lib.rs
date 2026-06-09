@@ -51,7 +51,8 @@ pub use key_table::{build_chunk_index_and_key_table, GenerationView, KeyTable, R
 pub use obfuscate::obfuscate;
 pub use pipeline::{CompileOutcome, Compiler, DATA_SECTION_MEM_OFFSET};
 pub use template::{
-    baked_template_bytes, load_template, Template, MAX_MEMORY_PAGES, REQUIRED_EXPORTS,
+    assert_memory_ceiling, baked_template_bytes, load_template, Template, MAX_MEMORY_PAGES,
+    REQUIRED_EXPORTS,
 };
 
 // Re-export the canonical core result/stats so consumers reference one home (C6).

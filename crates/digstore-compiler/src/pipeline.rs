@@ -15,7 +15,7 @@ use crate::filler::deterministic_filler;
 use crate::inject::inject_data_section;
 use crate::key_table::{build_chunk_index_and_key_table, GenerationView};
 use crate::obfuscate::obfuscate;
-use crate::template::{baked_template_bytes, load_template};
+use crate::template::{assert_memory_ceiling, baked_template_bytes, load_template};
 
 /// Fixed linear-memory offset where the data-section blob is injected and the
 /// guest reads it (BINDING contract D2). SINGLE SOURCE OF TRUTH:
@@ -121,8 +121,12 @@ impl Compiler {
         }
 
         // Stage 8 (wasm-opt) intentionally skipped for determinism portability.
-        // Stage 9: final validate (re-parse exports + memory bounds).
+        // Stage 9: final validate (re-parse exports + memory bounds), then assert
+        // the §5.1 module-declared memory ceiling on the EMITTED module: it MUST
+        // declare `maximum: Some(256)` (16 MiB). Injection normalizes the raw
+        // guest template (which may declare no max) to this exact cap.
         load_template(&module)?;
+        assert_memory_ceiling(&module)?;
 
         // Stage 10: atomic write (filename uses the store-reported roothash).
         let output_path =
