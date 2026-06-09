@@ -3,7 +3,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::store_ops;
 
-pub fn run(ctx: &CliContext, args: CommitArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: CommitArgs) -> Result<(), CliError> {
     let res = store_ops::commit(ctx, args.message)?;
     if ctx.json {
         println!(

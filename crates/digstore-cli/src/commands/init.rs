@@ -3,7 +3,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::store_ops;
 
-pub fn run(ctx: &CliContext, args: InitArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: InitArgs) -> Result<(), CliError> {
     let res = store_ops::init_store(ctx, args.private, args.data_dir)?;
     if ctx.json {
         println!(

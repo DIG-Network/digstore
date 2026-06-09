@@ -6,7 +6,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::remote_ops;
 
-pub fn run(ctx: &CliContext, args: CloneArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: CloneArgs) -> Result<(), CliError> {
     let store_url = if args.source.starts_with("urn:dig:") {
         let urn = Urn::parse(&args.source)
             .map_err(|e| CliError::InvalidArgument(format!("bad urn: {e}")))?;

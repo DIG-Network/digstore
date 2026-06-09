@@ -13,6 +13,12 @@ pub struct Cli {
     pub json: bool,
     #[arg(short, long, global = true)]
     pub verbose: bool,
+    /// Color output: auto (default), always, or never.
+    #[arg(long, global = true, default_value = "auto")]
+    pub color: crate::ui::ColorChoice,
+    /// Suppress progress and hints.
+    #[arg(short, long, global = true)]
+    pub quiet: bool,
     #[command(subcommand)]
     pub command: Command,
 }

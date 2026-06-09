@@ -10,25 +10,11 @@ use serde::Serialize;
 use crate::ui::theme::{marker_line, verb_line, Marker};
 
 /// `--color` mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum ColorChoice {
     Auto,
     Always,
     Never,
-}
-
-impl std::str::FromStr for ColorChoice {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "auto" => Ok(ColorChoice::Auto),
-            "always" => Ok(ColorChoice::Always),
-            "never" => Ok(ColorChoice::Never),
-            other => Err(format!(
-                "invalid --color value '{other}' (auto|always|never)"
-            )),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

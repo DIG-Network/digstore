@@ -4,7 +4,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::remote_ops;
 
-pub fn run(ctx: &CliContext, args: PullArgs) -> Result<(), CliError> {
+pub fn run(ctx: &CliContext, _ui: &crate::ui::Ui, args: PullArgs) -> Result<(), CliError> {
     let base = config::resolve_remote_url(ctx, &args.remote)?;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

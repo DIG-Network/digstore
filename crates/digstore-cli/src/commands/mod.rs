@@ -18,6 +18,8 @@ pub mod remote;
 pub mod status;
 
 pub fn dispatch(cli: Cli) -> Result<(), CliError> {
+    // Build the Ui once from the global flags; pass it by reference into every command.
+    let ui = crate::ui::Ui::from_flags(cli.color, cli.json, cli.quiet, cli.verbose);
     // `init` anchors to the current directory; every other command discovers the
     // store by walking up from the current directory (Git-style), so the CLI runs
     // against the working directory it was invoked in.
@@ -28,17 +30,17 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         CliContext::resolve(explicit, cli.json, cli.verbose)
     };
     match cli.command {
-        Command::Init(a) => init::run(&ctx, a),
-        Command::Add(a) => add::run(&ctx, a),
-        Command::Commit(a) => commit::run(&ctx, a),
-        Command::Status(a) => status::run(&ctx, a),
-        Command::Log(a) => log::run(&ctx, a),
-        Command::Diff(a) => diff::run(&ctx, a),
-        Command::Checkout(a) => checkout::run(&ctx, a),
-        Command::Cat(a) => cat::run(&ctx, a),
-        Command::Remote(a) => remote::run(&ctx, a),
-        Command::Clone(a) => clone::run(&ctx, a),
-        Command::Push(a) => push::run(&ctx, a),
-        Command::Pull(a) => pull::run(&ctx, a),
+        Command::Init(a) => init::run(&ctx, &ui, a),
+        Command::Add(a) => add::run(&ctx, &ui, a),
+        Command::Commit(a) => commit::run(&ctx, &ui, a),
+        Command::Status(a) => status::run(&ctx, &ui, a),
+        Command::Log(a) => log::run(&ctx, &ui, a),
+        Command::Diff(a) => diff::run(&ctx, &ui, a),
+        Command::Checkout(a) => checkout::run(&ctx, &ui, a),
+        Command::Cat(a) => cat::run(&ctx, &ui, a),
+        Command::Remote(a) => remote::run(&ctx, &ui, a),
+        Command::Clone(a) => clone::run(&ctx, &ui, a),
+        Command::Push(a) => push::run(&ctx, &ui, a),
+        Command::Pull(a) => pull::run(&ctx, &ui, a),
     }
 }
