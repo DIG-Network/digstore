@@ -119,12 +119,16 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
         )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
-    // host_verify_session() -> i32 (1 valid / 0 invalid) (§12).
+    // host_verify_session() -> i32 (§6.3/§12.4): 1 = valid; an expired session
+    // returns SessionExpired (-101) distinctly; 0 = no session (invalid).
     linker
         .func_wrap(m, "host_verify_session", |caller: Caller<'_, RuntimeState>| -> i32 {
             let now = caller.data().host.clock.now_unix_secs();
-            if caller.data().host.sessions.is_valid(now) {
+            let sessions = &caller.data().host.sessions;
+            if sessions.is_valid(now) {
                 1
+            } else if sessions.is_expired_at(now) {
+                ErrorCode::SessionExpired as i32
             } else {
                 0
             }
@@ -140,8 +144,15 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
             "jwks_fetch",
             |mut caller: Caller<'_, RuntimeState>, url_ptr: i32, url_len: i32| -> i32 {
                 let now = caller.data().host.clock.now_unix_secs();
-                if !caller.data().host.sessions.is_valid(now) {
-                    return ErrorCode::NoSession as i32;
+                // §6.3/§12.4: distinguish a present-but-expired session
+                // (SessionExpired) from an entirely absent one (NoSession).
+                let sessions = &caller.data().host.sessions;
+                if !sessions.is_valid(now) {
+                    return if sessions.is_expired_at(now) {
+                        ErrorCode::SessionExpired as i32
+                    } else {
+                        ErrorCode::NoSession as i32
+                    };
                 }
                 let timeout_secs = caller.data().host.http_timeout_secs;
                 let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
