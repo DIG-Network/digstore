@@ -7,7 +7,9 @@ description = "dig-compiler: deterministic transform from on-disk generations to
 [dependencies]
 digstore-core = { path = "../digstore-core" }
 digstore-store = { path = "../digstore-store" }
-wasm-encoder = "0.221"
+# `wasmparser` feature enables `wasm_encoder::reencode` (operator round-trip),
+# used by the §17.1 obfuscation pass to decode + re-encode the code section.
+wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = "0.221"
 chacha20 = "0.9"
 sha2 = "0.10"

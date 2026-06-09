@@ -348,6 +348,105 @@ fn real_compiled_module_miss_returns_decoy_failing_the_client_proof_gate() {
 }
 
 #[test]
+fn obfuscation_is_behavior_preserving_identical_served_bytes_on_and_off() {
+    // §17.1 KEY GATE: obfuscation must be behavior-preserving. Compile the SAME
+    // fixture twice — once with obfuscation OFF, once ON — instantiate BOTH via
+    // HostRuntime, call serve_content for the same retrieval key, and assert the
+    // served bytes (ContentResponse wire bytes) are BYTE-IDENTICAL.
+    let guest = std::fs::read(GUEST_WASM)
+        .expect("guest wasm must be built (cargo build -p digstore-guest --target wasm32-unknown-unknown --release)");
+
+    let store_id = Bytes32([0x7Au8; 32]);
+    let urn = Urn {
+        chain: "chia".to_string(),
+        store_id,
+        root_hash: None,
+        resource_key: Some("index.html".to_string()),
+    };
+    let key = derive_decryption_key(&urn.canonical(), None);
+    let ct_a = encrypt_chunk(&key, b"behavior-preservation chunk A 0123456789");
+    let ct_b = encrypt_chunk(&key, b"behavior-preservation chunk B abcdefghij");
+
+    let build_gens = || {
+        vec![FixtureGen {
+            root: Bytes32([0x11u8; 32]),
+            resources: vec![FixtureResource {
+                retrieval_key: urn.retrieval_key(),
+                chunks: vec![(sha256(&ct_a), ct_a.clone()), (sha256(&ct_b), ct_b.clone())],
+            }],
+        }]
+    };
+
+    let compile = |obfuscate: bool| -> Vec<u8> {
+        let dir = std::env::temp_dir().join(format!(
+            "digc-bp-{}-{}",
+            obfuscate,
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = CompilerConfig {
+            output_dir: dir.clone(),
+            obfuscate,
+            optimize: false,
+            template_override: Some(guest.clone()),
+        };
+        let outcome = Compiler::compile(
+            &cfg,
+            store_id,
+            Bytes48([0xCDu8; 48]),
+            &build_gens(),
+            common::sample_manifest(),
+            &common::trusted_keys(),
+        )
+        .expect("compiles");
+        let bytes = std::fs::read(&outcome.result.output_path).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        bytes
+    };
+
+    let serve = |module: &[u8], retrieval_key: Bytes32| -> Vec<u8> {
+        let mut rt = HostRuntime::new(
+            module,
+            host_cfg(),
+            ExecutionLimits::default(),
+            host_deps(store_id),
+        )
+        .expect("host instantiates");
+        rt.serve_content(&content_request(retrieval_key))
+            .expect("serve_content Ok")
+    };
+
+    let plain = compile(false);
+    let obf = compile(true);
+
+    // The modules themselves MUST differ (obfuscation actually transformed code).
+    assert_ne!(plain, obf, "obfuscated module must differ from the plain one");
+
+    // HIT: identical served bytes for the real resource.
+    let hit_plain = serve(&plain, urn.retrieval_key());
+    let hit_obf = serve(&obf, urn.retrieval_key());
+    assert!(!hit_plain.is_empty(), "plain module must self-serve");
+    assert_eq!(
+        hit_plain, hit_obf,
+        "§17.1: obfuscation must NOT change served bytes (hit)"
+    );
+
+    // MISS: identical decoy bytes too (the whole serve path is preserved).
+    let miss_key = Bytes32([0xEEu8; 32]);
+    let miss_plain = serve(&plain, miss_key);
+    let miss_obf = serve(&obf, miss_key);
+    assert_eq!(
+        miss_plain, miss_obf,
+        "§17.1: obfuscation must NOT change served bytes (miss/decoy)"
+    );
+
+    // Sanity: the served hit really is a verifying ContentResponse.
+    let mut dec = Decoder::new(&hit_obf);
+    let resp = ContentResponse::decode(&mut dec).expect("decodes");
+    assert!(resp.merkle_proof.verify(), "obfuscated hit must verify");
+}
+
+#[test]
 fn obfuscated_real_module_still_serves_itself_with_verifying_proof() {
     // §17.1: obfuscation is behavior-preserving. An OBFUSCATED real module must
     // still serve itself, with the merkle proof verifying against the same root.
