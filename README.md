@@ -176,3 +176,4 @@ to the maintainer rather than opening a public issue.
 ## License
 
 MIT.
+# digstore
