@@ -3,6 +3,53 @@ use digstore_store::{FixedClock, StagingArea, Store};
 use std::io::Write;
 use tempfile::tempdir;
 
+/// The canonical chunker config `Store::commit` uses (mirror for tests).
+fn test_chunker() -> digstore_core::ChunkerConfig {
+    digstore_core::ChunkerConfig {
+        min_size: 16 * 1024,
+        target_size: 64 * 1024,
+        max_size: 256 * 1024,
+        mask: (1u64 << 16) - 1,
+    }
+}
+
+/// Independently recompute the D5 per-resource ciphertext merkle leaves for a
+/// set of staged `(resource_key, plaintext)` pairs under `store_id`, exactly as
+/// the compiler does: leaf = SHA-256(concat_output(ordered chunk ciphertexts)),
+/// resources ascending by static_key.
+fn expected_resource_leaves(
+    store_id: Bytes32,
+    salt: Option<&digstore_core::SecretSalt>,
+    staged: &[(&str, &[u8])],
+) -> Vec<Bytes32> {
+    use digstore_chunker::chunk_slice;
+    use digstore_core::serving::concat_output;
+    use digstore_core::Urn;
+
+    let mut keyed: Vec<([u8; 32], Bytes32)> = staged
+        .iter()
+        .map(|(rk, content)| {
+            let urn = Urn {
+                chain: "chia".to_string(),
+                store_id,
+                root_hash: None,
+                resource_key: Some(rk.to_string()),
+            };
+            let aes_key = digstore_crypto::derive_decryption_key(&urn.canonical(), salt);
+            let chunks = chunk_slice(content, &test_chunker());
+            let cts: Vec<Vec<u8>> = chunks
+                .iter()
+                .map(|c| digstore_crypto::encrypt_chunk(&aes_key, &c.data))
+                .collect();
+            let slices: Vec<&[u8]> = cts.iter().map(|c| c.as_slice()).collect();
+            let blob = concat_output(&slices);
+            (urn.retrieval_key().0, digstore_crypto::sha256(&blob))
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    keyed.into_iter().map(|(_, leaf)| leaf).collect()
+}
+
 fn config(dir: &std::path::Path) -> StoreConfig {
     StoreConfig {
         store_id: Bytes32([0x44u8; 32]),
@@ -94,13 +141,17 @@ fn commit_creates_generation_and_advances_history() {
 
 #[test]
 fn commit_generation_root_equals_recomputed_tree_root() {
-    // §9.4 invariant: the PERSISTED GenerationState.root equals the Merkle tree
-    // root freshly recomputed from the persisted chunk leaves (in pool order).
-    // This is the store-side half of PROPERTIES §9.4 — independent of the value
-    // `commit()` returned: we re-derive the root from on-disk state.
+    // §9.4 invariant (D5 model): the PERSISTED GenerationState.root equals the
+    // Merkle tree root freshly recomputed from the persisted ON-DISK state — one
+    // leaf PER RESOURCE = SHA-256(concat_output(ordered chunk ciphertexts)),
+    // resources ascending by static_key. We re-derive the root purely from the
+    // persisted manifest + persisted ciphertext chunk bodies (resolved by hash),
+    // independent of the value `commit()` returned.
     use digstore_core::merkle::MerkleTree;
+    use digstore_core::serving::concat_output;
     use digstore_core::Bytes32 as CoreBytes32;
     use digstore_store::GenerationManifest;
+    use std::collections::BTreeMap;
 
     let dir = tempdir().unwrap();
     let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
@@ -113,21 +164,81 @@ fn commit_generation_root_equals_recomputed_tree_root() {
     let hist = store.root_history().unwrap();
     let persisted_state_root = hist.last().unwrap().root;
 
-    // Recompute the tree from the persisted manifest's chunk leaves in pool order.
-    let manifest =
-        GenerationManifest::read_from(store.paths().generation_manifest(&persisted_state_root.to_hex()))
-            .unwrap();
-    let mut refs = manifest.chunks.clone();
-    refs.sort_by_key(|c| c.index);
-    let leaves: Vec<CoreBytes32> = refs.iter().map(|c| c.hash).collect();
+    // Recompute the per-resource ciphertext leaves from on-disk state.
+    let manifest = GenerationManifest::read_from(
+        store.paths().generation_manifest(&persisted_state_root.to_hex()),
+    )
+    .unwrap();
+    // index -> ciphertext-hash, so chunk_indices can locate the stored bytes.
+    let by_index: BTreeMap<u32, CoreBytes32> =
+        manifest.chunks.iter().map(|c| (c.index, c.hash)).collect();
+
+    // One leaf per resource, ascending by static_key (raw 32 bytes).
+    let mut keyed: Vec<([u8; 32], CoreBytes32)> = manifest
+        .key_table
+        .iter()
+        .map(|kt| {
+            let cts: Vec<Vec<u8>> = kt
+                .chunk_indices
+                .iter()
+                .map(|i| {
+                    let hash = by_index[i];
+                    store.resolve_chunk(hash).unwrap() // persisted ciphertext bytes
+                })
+                .collect();
+            let slices: Vec<&[u8]> = cts.iter().map(|b| b.as_slice()).collect();
+            let blob = concat_output(&slices);
+            (kt.static_key.0, digstore_crypto::sha256(&blob))
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    let leaves: Vec<CoreBytes32> = keyed.into_iter().map(|(_, leaf)| leaf).collect();
     let recomputed = MerkleTree::from_leaves(leaves).root();
 
     assert_eq!(
         persisted_state_root, recomputed,
-        "persisted GenerationState.root must equal the freshly recomputed tree root"
+        "persisted GenerationState.root must equal the freshly recomputed per-resource tree root"
     );
     // The manifest's own root field must agree too (state == manifest == tree).
     assert_eq!(manifest.root, recomputed);
+}
+
+#[test]
+fn commit_state_root_equals_per_resource_ciphertext_tree_root() {
+    // D5 / §9.4: the persisted GenerationState.root MUST equal the merkle tree
+    // built over PER-RESOURCE ciphertext leaves (leaf = SHA-256(concat_output(
+    // ordered chunk ciphertexts)), resources ascending by static_key) — the
+    // exact same leaves the compiler injects as MerkleNodes and over which it
+    // sets CurrentRoot. This makes GenerationState.root == compiler CurrentRoot
+    // for the same inputs.
+    use digstore_core::merkle::MerkleTree;
+
+    let dir = tempdir().unwrap();
+    let store_id = Bytes32([0x44u8; 32]);
+    let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
+    // Two resources, one large enough to force multiple chunks.
+    let big = vec![0x5Au8; 300_000];
+    store.stage_file("data.bin", &big).unwrap();
+    store.stage_file("note.txt", b"a small note").unwrap();
+    let returned = store.commit().unwrap();
+
+    // Persisted head root (GenerationState.root), read back from history.
+    let hist = store.root_history().unwrap();
+    let persisted_state_root = hist.last().unwrap().root;
+    assert_eq!(persisted_state_root, returned);
+
+    // Independently recompute the per-resource ciphertext leaves + tree root.
+    let leaves = expected_resource_leaves(
+        store_id,
+        None, // public store -> no secret salt
+        &[("data.bin", &big), ("note.txt", b"a small note")],
+    );
+    let expected_root = MerkleTree::from_leaves(leaves).root();
+
+    assert_eq!(
+        persisted_state_root, expected_root,
+        "GenerationState.root must equal the per-resource ciphertext tree root"
+    );
 }
 
 #[test]
