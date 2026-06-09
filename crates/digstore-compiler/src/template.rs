@@ -5,6 +5,12 @@ use crate::error::{CompilerError, Result};
 /// Maximum linear-memory pages the served module may declare (§5.1: 16 MiB ceiling).
 pub const MAX_MEMORY_PAGES: u64 = 256;
 
+/// Nominal linear-memory minimum the guest template declares (§5.1: `minimum: 1`,
+/// i.e. one 64 KiB page). Injection raises the EMITTED module's `min` to cover
+/// `DIGS_DATA_OFFSET + total_len` (D2), but the committed template literal MUST
+/// match the §5.1 nominal value of 1 page.
+pub const NOMINAL_MEMORY_MIN_PAGES: u64 = 1;
+
 /// Host functions the served module must import from the `dig_host` module
 /// (§5.1 Import section / §6.3 Host Imports). The compiler bakes a guest
 /// template that declares all eight; `inject_data_section` preserves the Import
@@ -312,6 +318,21 @@ mod tests {
         assert!(
             err.to_string().contains("shared"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn baked_template_declares_nominal_memory_min_of_one_page() {
+        // §5.1 (Module Sections) fixes the nominal `MemoryType { minimum: 1, .. }`
+        // (one 64 KiB page). The committed guest template literal MUST equal that
+        // nominal minimum; injection (D2) independently raises the EMITTED module's
+        // `min` to cover DIGS_DATA_OFFSET + total_len.
+        let t = load_template(baked_template_bytes()).expect("baked template valid");
+        assert_eq!(
+            t.memory_min_pages, NOMINAL_MEMORY_MIN_PAGES,
+            "§5.1 nominal MemoryType.minimum is {NOMINAL_MEMORY_MIN_PAGES} page; \
+             baked template declares {}",
+            t.memory_min_pages
         );
     }
 
