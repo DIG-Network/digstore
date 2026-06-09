@@ -7,7 +7,10 @@ use crate::history::RootHistory;
 use crate::paths::StorePaths;
 use crate::staging::StagingArea;
 use digstore_chunker::chunk_slice;
-use digstore_core::{Bytes32, ChunkerConfig, GenerationState, MerkleTree, StoreConfig, Urn};
+use digstore_core::serving::concat_output;
+use digstore_core::{
+    Bytes32, ChunkerConfig, GenerationState, MerkleTree, SecretSalt, StoreConfig, Urn, Visibility,
+};
 use std::path::Path;
 
 /// The host-side Store entity (§4). Owns the on-disk layout, staging, and
@@ -124,8 +127,12 @@ impl<C: Clock> Store<C> {
         self.stage_file(&resource_key, &bytes)
     }
 
-    /// Finalize a generation (§20.3, §8.2): chunk staged content, build the
-    /// per-generation merkle tree, append the root to history, write the
+    /// Finalize a generation (§20.3, §8.2): chunk staged content, AES-256-GCM
+    /// seal each chunk under its resource's per-URN key (chunks are stored as
+    /// CIPHERTEXT, content-addressed by `SHA-256(ciphertext)`), build the
+    /// PER-RESOURCE merkle tree (leaf = `SHA-256(concat_output(ordered chunk
+    /// ciphertexts))`, resources ascending by `static_key` — the exact leaves
+    /// the compiler injects, D5), append the root to history, write the
     /// generation directory. Returns the new root hash. Does NOT compile the
     /// module (that is `digstore-compiler`'s job over this generation dir).
     pub fn commit(&mut self) -> Result<Bytes32> {
@@ -144,24 +151,24 @@ impl<C: Clock> Store<C> {
             mask: (1u64 << 16) - 1,
         };
 
+        // Per-store secret salt (private stores mix it into the per-URN key, §11.4).
+        let salt: Option<SecretSalt> = match &self.config.visibility {
+            Visibility::Private(s) => Some(*s),
+            Visibility::Public => None,
+        };
+
         // Build the chunk pool in staged-record order (the §8.3 source consumed
         // by the compiler) and the key table mapping each resource to its
-        // ordered pool indices.
+        // ordered pool indices. Chunks are stored as CIPHERTEXT: each resource's
+        // chunks are AES-256-GCM-sealed under its per-URN key, and the merkle
+        // leaf is committed over those SAME ciphertext bytes (D4/D5), so the
+        // committed root matches what the compiler injects.
         let mut pool: Vec<(Bytes32, Vec<u8>)> = Vec::new();
         let mut key_table: Vec<KeyTableRecord> = Vec::new();
+        // (static_key raw, resource ciphertext leaf) per resource, for the D5 tree.
+        let mut resource_leaves: Vec<([u8; 32], Bytes32)> = Vec::new();
 
         for rec in &records {
-            let chunks = chunk_slice(&rec.content, &chunker);
-            let mut indices = Vec::with_capacity(chunks.len());
-            let mut total: u64 = 0;
-            for chunk in &chunks {
-                // `chunk.hash` is SHA-256(chunk.data) (PROPERTIES 9.4 leaf rule).
-                let hash = chunk.hash;
-                let index = pool.len() as u32;
-                pool.push((hash, chunk.data.clone()));
-                indices.push(index);
-                total += chunk.data.len() as u64;
-            }
             // root_hash: None -> retrieval key is root-independent (documented).
             let urn = Urn {
                 chain: "chia".to_string(),
@@ -169,17 +176,50 @@ impl<C: Clock> Store<C> {
                 root_hash: None,
                 resource_key: Some(rec.resource_key.clone()),
             };
+            let static_key = urn.retrieval_key();
+            // Per-URN AES-256 key (§11.1): public store uses the fixed salt domain,
+            // private store mixes the secret salt.
+            let aes_key = digstore_crypto::derive_decryption_key(&urn.canonical(), salt.as_ref());
+
+            let chunks = chunk_slice(&rec.content, &chunker);
+            let mut indices = Vec::with_capacity(chunks.len());
+            let mut total: u64 = 0;
+            // Ciphertext bodies of this resource's chunks, in resource order.
+            let mut ct_bodies: Vec<Vec<u8>> = Vec::with_capacity(chunks.len());
+            for chunk in &chunks {
+                // Encrypt the plaintext chunk; the pool/merkle commit over ciphertext.
+                let ct = digstore_crypto::encrypt_chunk(&aes_key, &chunk.data);
+                // Content-addressed by SHA-256(ciphertext) — dedup key is the
+                // ciphertext hash (still per-chunk, unchanged storage model).
+                let hash = digstore_crypto::sha256(&ct);
+                let index = pool.len() as u32;
+                total += chunk.data.len() as u64;
+                ct_bodies.push(ct.clone());
+                pool.push((hash, ct));
+                indices.push(index);
+            }
+
+            // D5 leaf = SHA-256(concat_output(ordered chunk ciphertexts)) — the
+            // exact bytes `get_content` returns for this resource.
+            let slices: Vec<&[u8]> = ct_bodies.iter().map(|b| b.as_slice()).collect();
+            let blob = concat_output(&slices);
+            let leaf = digstore_crypto::sha256(&blob);
+            resource_leaves.push((static_key.0, leaf));
+
             key_table.push(KeyTableRecord {
                 resource_key: rec.resource_key.clone(),
-                static_key: urn.retrieval_key(),
+                static_key,
                 generation: Bytes32([0u8; 32]), // placeholder set after root
                 chunk_indices: indices,
                 total_size: total,
             });
         }
 
-        // Merkle tree over chunk leaves in pool order (§9.1, owned by core).
-        let leaves: Vec<Bytes32> = pool.iter().map(|(h, _)| *h).collect();
+        // D5 merkle tree: ONE leaf per resource, ascending by static_key (the
+        // exact leaf order the compiler injects and the guest ranks against).
+        // §9.4 invariant `state.root == tree.root()` still holds.
+        resource_leaves.sort_by(|a, b| a.0.cmp(&b.0));
+        let leaves: Vec<Bytes32> = resource_leaves.iter().map(|(_, leaf)| *leaf).collect();
         let tree = MerkleTree::from_leaves(leaves);
         let root = tree.root();
         let root_hex = root.to_hex();
