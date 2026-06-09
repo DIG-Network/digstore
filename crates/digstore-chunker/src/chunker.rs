@@ -51,7 +51,10 @@ pub fn chunk_slice(data: &[u8], cfg: &ChunkerConfig) -> Vec<Chunk> {
 /// chunk starting at `buf[0]` — a forced max cut (it saw the full max window) or,
 /// only at EOF, a trailing short chunk. Output is byte-identical to `chunk_slice`
 /// over the concatenated reader contents.
-pub fn chunk_stream<R: std::io::Read>(mut reader: R, cfg: &ChunkerConfig) -> std::io::Result<Vec<Chunk>> {
+pub fn chunk_stream<R: std::io::Read>(
+    mut reader: R,
+    cfg: &ChunkerConfig,
+) -> std::io::Result<Vec<Chunk>> {
     const READ_BLOCK: usize = 64 * 1024;
     let mut chunks = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
@@ -94,7 +97,12 @@ mod tests {
 
     fn small_cfg() -> ChunkerConfig {
         // Small bounds so tests run on modest inputs.
-        ChunkerConfig { min_size: 64, target_size: 256, max_size: 1024, mask: 0xFF }
+        ChunkerConfig {
+            min_size: 64,
+            target_size: 256,
+            max_size: 1024,
+            mask: 0xFF,
+        }
     }
 
     #[test]
@@ -114,7 +122,9 @@ mod tests {
 
     #[test]
     fn chunks_reconstruct_original_input() {
-        let data: Vec<u8> = (0..5000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        let data: Vec<u8> = (0..5000u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+            .collect();
         let chunks = chunk_slice(&data, &small_cfg());
         let mut rebuilt = Vec::new();
         for c in &chunks {
@@ -125,7 +135,9 @@ mod tests {
 
     #[test]
     fn chunk_offsets_are_contiguous_from_zero() {
-        let data: Vec<u8> = (0..5000u32).map(|i| (i.wrapping_mul(40503) >> 7) as u8).collect();
+        let data: Vec<u8> = (0..5000u32)
+            .map(|i| (i.wrapping_mul(40503) >> 7) as u8)
+            .collect();
         let chunks = chunk_slice(&data, &small_cfg());
         let mut expected_offset = 0usize;
         for c in &chunks {
@@ -138,12 +150,24 @@ mod tests {
     #[test]
     fn all_but_last_chunk_obey_size_bounds() {
         let cfg = small_cfg();
-        let data: Vec<u8> = (0..20_000u32).map(|i| (i.wrapping_mul(2246822519) >> 11) as u8).collect();
+        let data: Vec<u8> = (0..20_000u32)
+            .map(|i| (i.wrapping_mul(2246822519) >> 11) as u8)
+            .collect();
         let chunks = chunk_slice(&data, &cfg);
         assert!(chunks.len() > 1, "expected multiple chunks");
         for c in &chunks[..chunks.len() - 1] {
-            assert!(c.len() >= cfg.min_size, "chunk len {} < min {}", c.len(), cfg.min_size);
-            assert!(c.len() <= cfg.max_size, "chunk len {} > max {}", c.len(), cfg.max_size);
+            assert!(
+                c.len() >= cfg.min_size,
+                "chunk len {} < min {}",
+                c.len(),
+                cfg.min_size
+            );
+            assert!(
+                c.len() <= cfg.max_size,
+                "chunk len {} > max {}",
+                c.len(),
+                cfg.max_size
+            );
         }
         // Last chunk only needs <= max.
         assert!(chunks.last().unwrap().len() <= cfg.max_size);
@@ -191,10 +215,16 @@ mod tests {
     #[test]
     fn stream_equals_slice_for_various_read_sizes() {
         let cfg = small_cfg();
-        let data: Vec<u8> = (0..30_000u32).map(|i| (i.wrapping_mul(2654435761) >> 9) as u8).collect();
+        let data: Vec<u8> = (0..30_000u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 9) as u8)
+            .collect();
         let want = chunk_slice(&data, &cfg);
         for step in [1usize, 7, 64, 250, 1024, 4096, 100_000] {
-            let reader = CountingReader { data: &data, pos: 0, step };
+            let reader = CountingReader {
+                data: &data,
+                pos: 0,
+                step,
+            };
             let got = chunk_stream(reader, &cfg).unwrap();
             assert_eq!(got, want, "stream != slice for read step {step}");
         }
@@ -202,7 +232,11 @@ mod tests {
 
     #[test]
     fn stream_empty_reader_yields_no_chunks() {
-        let reader = CountingReader { data: &[], pos: 0, step: 16 };
+        let reader = CountingReader {
+            data: &[],
+            pos: 0,
+            step: 16,
+        };
         let got = chunk_stream(reader, &small_cfg()).unwrap();
         assert!(got.is_empty());
     }
@@ -210,7 +244,11 @@ mod tests {
     #[test]
     fn stream_tiny_reader_yields_single_chunk() {
         let data = vec![9u8, 8, 7];
-        let reader = CountingReader { data: &data, pos: 0, step: 1 };
+        let reader = CountingReader {
+            data: &data,
+            pos: 0,
+            step: 1,
+        };
         let got = chunk_stream(reader, &small_cfg()).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].data, data);

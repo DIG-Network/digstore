@@ -231,8 +231,8 @@ pub fn serve_proof(
     // attestation signing key (init wrote `signing_key.bin`) rather than minting
     // an independent prover key, so node attribution is bound to the attestation
     // identity by construction.
-    let node_sk = store_ops::load_signing_key(ctx)
-        .unwrap_or_else(|_| BlsSecretKey::from_seed(&[42u8; 32]));
+    let node_sk =
+        store_ops::load_signing_key(ctx).unwrap_or_else(|_| BlsSecretKey::from_seed(&[42u8; 32]));
     let node_pk = node_sk.public_key();
     let block = ChiaBlockRef {
         header_hash: Bytes32([0x55u8; 32]),
@@ -255,7 +255,11 @@ pub fn serve_proof(
     // both roles" is unenforced. Verify the binding against the persisted trusted
     // keys using the deterministic mock chain for freshness.
     let trusted_node_keys = store_ops::load_trusted_keys(ctx)
-        .map(|ks| ks.into_iter().map(|k| Bytes48(k.public_key)).collect::<Vec<_>>())
+        .map(|ks| {
+            ks.into_iter()
+                .map(|k| Bytes48(k.public_key))
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     let chain = digstore_prover::MockChainSource::new(vec![block.clone()], 1_700_000_000);
     MockVerifier::default()

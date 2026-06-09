@@ -18,8 +18,12 @@ fn keygen_is_deterministic_and_pubkey_validates() {
 
 #[test]
 fn distinct_seeds_yield_distinct_pubkeys() {
-    let p1 = bls::SecretKey::from_seed(&[0x01u8; 32]).public_key().to_bytes();
-    let p2 = bls::SecretKey::from_seed(&[0x02u8; 32]).public_key().to_bytes();
+    let p1 = bls::SecretKey::from_seed(&[0x01u8; 32])
+        .public_key()
+        .to_bytes();
+    let p2 = bls::SecretKey::from_seed(&[0x02u8; 32])
+        .public_key()
+        .to_bytes();
     assert_ne!(p1, p2);
 }
 
@@ -28,7 +32,9 @@ fn from_bytes_rejects_non_canonical_public_key() {
     use digstore_core::Bytes48;
     use digstore_crypto::CryptoError;
     let bogus = Bytes48([0xFFu8; 48]);
-    let err = bls::PublicKey::from_bytes(&bogus).err().expect("must reject");
+    let err = bls::PublicKey::from_bytes(&bogus)
+        .err()
+        .expect("must reject");
     assert_eq!(
         err,
         CryptoError::Bls(digstore_crypto::BlsError::InvalidPublicKey)
@@ -48,12 +54,18 @@ fn sign_then_verify_round_trip_methods() {
     let pk = sk.public_key();
     let msg = b"digstore execution proof payload";
     let sig = sk.sign(msg);
-    assert!(pk.verify(msg, &sig), "valid signature must verify (method API)");
+    assert!(
+        pk.verify(msg, &sig),
+        "valid signature must verify (method API)"
+    );
 
     // Byte round-trip of the signature and public key (C1 to_bytes/from_bytes).
     let sig2 = bls::Signature::from_bytes(&sig.to_bytes()).expect("sig bytes round-trip");
     let pk2 = bls::PublicKey::from_bytes(&pk.to_bytes()).expect("pk bytes round-trip");
-    assert!(pk2.verify(msg, &sig2), "byte-roundtripped key/sig must verify");
+    assert!(
+        pk2.verify(msg, &sig2),
+        "byte-roundtripped key/sig must verify"
+    );
 }
 
 #[test]
@@ -62,7 +74,10 @@ fn sign_then_verify_round_trip_free_helpers() {
     let (sk, pk) = bls::bls_keygen(&[0x10u8; 32]);
     let msg = b"digstore execution proof payload";
     let sig = bls_sign(&sk, msg);
-    assert!(bls_verify(&pk, msg, &sig), "valid signature must verify (free fn)");
+    assert!(
+        bls_verify(&pk, msg, &sig),
+        "valid signature must verify (free fn)"
+    );
 }
 
 #[test]
@@ -72,7 +87,10 @@ fn verify_rejects_wrong_public_key() {
     let (_sk2, other_pk) = bls::bls_keygen(&[0x21u8; 32]);
     let msg = b"message";
     let sig = bls_sign(&sk, msg);
-    assert!(!bls_verify(&other_pk, msg, &sig), "wrong key must not verify");
+    assert!(
+        !bls_verify(&other_pk, msg, &sig),
+        "wrong key must not verify"
+    );
 }
 
 #[test]
@@ -80,7 +98,10 @@ fn verify_rejects_wrong_message() {
     use digstore_crypto::{bls_sign, bls_verify};
     let (sk, pk) = bls::bls_keygen(&[0x30u8; 32]);
     let sig = bls_sign(&sk, b"original");
-    assert!(!bls_verify(&pk, b"tampered", &sig), "altered message must not verify");
+    assert!(
+        !bls_verify(&pk, b"tampered", &sig),
+        "altered message must not verify"
+    );
 }
 
 #[test]
@@ -89,7 +110,10 @@ fn verify_rejects_malformed_signature_bytes() {
     use digstore_crypto::bls_verify;
     let (_sk, pk) = bls::bls_keygen(&[0x40u8; 32]);
     let bogus = Bytes96([0xFFu8; 96]);
-    assert!(!bls_verify(&pk, b"x", &bogus), "non-canonical sig bytes must not verify");
+    assert!(
+        !bls_verify(&pk, b"x", &bogus),
+        "non-canonical sig bytes must not verify"
+    );
     // And the typed from_bytes path rejects too.
     assert!(bls::Signature::from_bytes(&bogus).is_err());
 }
@@ -102,7 +126,10 @@ fn verify_rejects_malformed_public_key_bytes() {
     let sig = bls_sign(&sk, b"x");
     let bogus_pk = Bytes48([0xFFu8; 48]);
     let sig96 = Bytes96(sig.0);
-    assert!(!bls_verify(&bogus_pk, b"x", &sig96), "non-canonical pk bytes must not verify");
+    assert!(
+        !bls_verify(&bogus_pk, b"x", &sig96),
+        "non-canonical pk bytes must not verify"
+    );
 }
 
 #[test]
@@ -122,7 +149,11 @@ fn chia_aug_scheme_known_vector() {
         "8f336467f057b373bb3c43815a10ec131119d1bf50c14fa3f9ad86c0ec074f920f936a5315a8365a37fee0afa34c32c6",
     )
     .unwrap();
-    assert_eq!(&pk.to_bytes().0[..], &expected_pk[..], "G1 pubkey must match Chia reference");
+    assert_eq!(
+        &pk.to_bytes().0[..],
+        &expected_pk[..],
+        "G1 pubkey must match Chia reference"
+    );
 
     let msg = [7u8, 8, 9];
     let sig = sk.sign(&msg);
@@ -130,7 +161,11 @@ fn chia_aug_scheme_known_vector() {
         "a5ce62a76c749a06c85b2d3762523b2e1d6756455767d2023967480433f7225c5cf42b3e14d0df41c0e6f9ecc18a39c30fdbfdbfd422945b478cc1675adf046aefbf4810e3ab9b0eb09855d3e5540cb0924e0f3d0e324bb59c59659b1c6b4283",
     )
     .unwrap();
-    assert_eq!(&sig.to_bytes().0[..], &expected_sig[..], "AugScheme G2 sig must match Chia reference");
+    assert_eq!(
+        &sig.to_bytes().0[..],
+        &expected_sig[..],
+        "AugScheme G2 sig must match Chia reference"
+    );
 
     // The frozen vector must self-verify through our verifier.
     let pk48 = Bytes48(expected_pk.try_into().unwrap());
@@ -151,7 +186,10 @@ fn sign_push_then_verify_push_round_trip_and_binding() {
     let store_id = Bytes32([0xBBu8; 32]);
 
     let sig = sign_push(&sk, &root, &store_id);
-    assert!(verify_push(&pk, &root, &store_id, &sig), "push sig must verify with verify_push");
+    assert!(
+        verify_push(&pk, &root, &store_id, &sig),
+        "push sig must verify with verify_push"
+    );
 
     // CONVENTIONS C7: the signed message is SHA-256(root || store_id) (32 bytes).
     let mut concat = Vec::new();
@@ -184,24 +222,55 @@ fn sign_node_binds_program_output_anchor_and_input() {
     let height: u32 = 0x00ABCDEF;
     let public_input = vec![9u8, 8, 7];
 
-    let sig = sign_node(&sk, &program_hash, &public_output, &header_hash, height, &public_input);
+    let sig = sign_node(
+        &sk,
+        &program_hash,
+        &public_output,
+        &header_hash,
+        height,
+        &public_input,
+    );
 
     // Verifies against the canonical message.
-    let msg = node_signing_message(&program_hash, &public_output, &header_hash, height, &public_input);
+    let msg = node_signing_message(
+        &program_hash,
+        &public_output,
+        &header_hash,
+        height,
+        &public_input,
+    );
     assert!(bls_verify(&pk, &msg, &sig));
 
     // height is big-endian: a different height must not verify.
-    let wrong_height = node_signing_message(&program_hash, &public_output, &header_hash, height + 1, &public_input);
+    let wrong_height = node_signing_message(
+        &program_hash,
+        &public_output,
+        &header_hash,
+        height + 1,
+        &public_input,
+    );
     assert!(!bls_verify(&pk, &wrong_height, &sig));
 
     // Changing the bound output must not verify.
     let other_output = Bytes32([0x99u8; 32]);
-    let wrong_out = node_signing_message(&program_hash, &other_output, &header_hash, height, &public_input);
+    let wrong_out = node_signing_message(
+        &program_hash,
+        &other_output,
+        &header_hash,
+        height,
+        &public_input,
+    );
     assert!(!bls_verify(&pk, &wrong_out, &sig));
 
     // Changing the anchor (header_hash) must not verify.
     let other_anchor = Bytes32([0x77u8; 32]);
-    let wrong_anchor = node_signing_message(&program_hash, &public_output, &other_anchor, height, &public_input);
+    let wrong_anchor = node_signing_message(
+        &program_hash,
+        &public_output,
+        &other_anchor,
+        height,
+        &public_input,
+    );
     assert!(!bls_verify(&pk, &wrong_anchor, &sig));
 }
 
@@ -239,14 +308,18 @@ fn sign_attestation_binds_nonce_store_and_timestamp() {
 
     let sig = sign_attestation(&sk, &challenge);
 
-    let msg = attestation_signing_message(&challenge.nonce, &challenge.store_id, challenge.timestamp);
+    let msg =
+        attestation_signing_message(&challenge.nonce, &challenge.store_id, challenge.timestamp);
     assert!(bls_verify(&pk, &msg, &sig));
 
     // Layout: 32 + 32 + 8 = 72 bytes, timestamp big-endian.
     assert_eq!(msg.len(), 72);
     assert_eq!(&msg[0..32], &[0x5Au8; 32]);
     assert_eq!(&msg[32..64], &[0x6Bu8; 32]);
-    assert_eq!(&msg[64..72], &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+    assert_eq!(
+        &msg[64..72],
+        &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+    );
 
     // A different nonce must not verify.
     let wrong = attestation_signing_message(&[0x00; 32], &challenge.store_id, challenge.timestamp);

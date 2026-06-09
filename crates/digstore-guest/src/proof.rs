@@ -104,7 +104,8 @@ pub fn serve_proof<H: DigHost + ?Sized>(
         0
     };
     let plan = build_access_plan(&entry.chunk_indices, pool_size, |c| {
-        host.random_bytes(c).unwrap_or_else(|_| alloc::vec![0u8; c as usize])
+        host.random_bytes(c)
+            .unwrap_or_else(|_| alloc::vec![0u8; c as usize])
     });
     let mut gathered: Vec<Vec<u8>> = Vec::with_capacity(plan.order.len());
     for idx in &plan.order {

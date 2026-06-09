@@ -103,7 +103,11 @@ pub fn decoy_content_response(retrieval_key: &Bytes32, root: &Bytes32) -> Conten
         path,
         root: *root,
     };
-    ContentResponse { ciphertext, merkle_proof, roothash: *root }
+    ContentResponse {
+        ciphertext,
+        merkle_proof,
+        roothash: *root,
+    }
 }
 
 #[cfg(test)]

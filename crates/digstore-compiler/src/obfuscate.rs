@@ -84,9 +84,7 @@ pub fn obfuscate(module_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(final_bytes)
 }
 
-fn reencode_err(
-    e: wasm_encoder::reencode::Error<core::convert::Infallible>,
-) -> CompilerError {
+fn reencode_err(e: wasm_encoder::reencode::Error<core::convert::Infallible>) -> CompilerError {
     CompilerError::Validation(format!("reencode failed: {e:?}"))
 }
 
@@ -202,11 +200,7 @@ fn parser_err(e: wasmparser::BinaryReaderError) -> CompilerError {
 
 /// Assemble the final module in canonical wasm section order, substituting the
 /// rebuilt Type / Function / Code sections and appending the metadata marker.
-fn assemble(
-    module_bytes: &[u8],
-    code: CodeSection,
-    bogus_type_index: u32,
-) -> Result<Vec<u8>> {
+fn assemble(module_bytes: &[u8], code: CodeSection, bogus_type_index: u32) -> Result<Vec<u8>> {
     let mut module = wasm_encoder::Module::new();
     let mut reencoder = RoundtripReencoder;
     let mut code = Some(code);
@@ -361,7 +355,10 @@ mod tests {
             if let Payload::CodeSectionEntry(body) = payload.unwrap() {
                 let mut reader = body.get_operators_reader().unwrap();
                 while !reader.eof() {
-                    if matches!(reader.read().unwrap(), wasmparser::Operator::I32Const { .. }) {
+                    if matches!(
+                        reader.read().unwrap(),
+                        wasmparser::Operator::I32Const { .. }
+                    ) {
                         count += 1;
                     }
                 }

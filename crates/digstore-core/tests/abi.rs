@@ -2,7 +2,12 @@ use digstore_core::{is_error, pack_ptr_len, unpack_ptr_len};
 
 #[test]
 fn pack_unpack_roundtrip() {
-    let cases = [(0u32, 0u32), (1, 64), (0x0001_0000, 0xFFFF), (0xDEAD_BEEF, 1024)];
+    let cases = [
+        (0u32, 0u32),
+        (1, 64),
+        (0x0001_0000, 0xFFFF),
+        (0xDEAD_BEEF, 1024),
+    ];
     for (ptr, len) in cases {
         let packed = pack_ptr_len(ptr, len);
         assert_eq!(unpack_ptr_len(packed), (ptr, len));

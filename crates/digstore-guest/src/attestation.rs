@@ -33,7 +33,9 @@ pub struct TrustedSet {
 
 impl TrustedSet {
     pub fn from_pubkeys(keys: &[[u8; 48]]) -> Self {
-        TrustedSet { keys: keys.to_vec() }
+        TrustedSet {
+            keys: keys.to_vec(),
+        }
     }
     pub fn contains(&self, pk: &[u8; 48]) -> bool {
         self.keys.iter().any(|k| k == pk)

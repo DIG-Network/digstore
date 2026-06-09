@@ -98,7 +98,11 @@ fn served_proof_verifies_against_injected_current_root() {
     ];
     let blob = encode_blob(&sections);
     let ds = DataSection::parse(&blob).unwrap();
-    assert_eq!(ds.current_root(), current_root, "injected root must round-trip");
+    assert_eq!(
+        ds.current_root(),
+        current_root,
+        "injected root must round-trip"
+    );
 
     let host = MockHost::default();
 

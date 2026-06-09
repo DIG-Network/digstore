@@ -215,8 +215,13 @@ pub fn sign_node(
     height: u32,
     public_input: &[u8],
 ) -> Bytes96 {
-    let msg =
-        node_signing_message(program_hash, public_output, chia_header_hash, height, public_input);
+    let msg = node_signing_message(
+        program_hash,
+        public_output,
+        chia_header_hash,
+        height,
+        public_input,
+    );
     bls_sign(node_sk, &msg)
 }
 

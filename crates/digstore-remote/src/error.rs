@@ -73,13 +73,22 @@ mod tests {
             RemoteError::Unauthorized("bad sig".into()).status(),
             StatusCode::FORBIDDEN
         );
-        assert_eq!(RemoteError::MissingBearer.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            RemoteError::MissingBearer.status(),
+            StatusCode::UNAUTHORIZED
+        );
         assert_eq!(RemoteError::NonFastForward.status(), StatusCode::CONFLICT);
-        assert_eq!(RemoteError::TooLarge(1).status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(
+            RemoteError::TooLarge(1).status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
         assert_eq!(
             RemoteError::Validation("x".into()).status(),
             StatusCode::UNPROCESSABLE_ENTITY
         );
-        assert_eq!(RemoteError::RateLimited.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            RemoteError::RateLimited.status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 }

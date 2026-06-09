@@ -30,7 +30,13 @@ fn load() -> HostRuntime {
         );
     }
     let bytes = std::fs::read(FIXTURE).unwrap();
-    HostRuntime::new(&bytes, cfg(), ExecutionLimits::default(), test_deps(FixedClock::new(1_700_000_000))).unwrap()
+    HostRuntime::new(
+        &bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(FixedClock::new(1_700_000_000)),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -58,7 +64,14 @@ fn guest_public_key_is_48_bytes() {
 #[ignore = "requires sample.wasm; run with --ignored after building the guest fixture"]
 fn guest_serve_content_returns_response() {
     let mut rt = load();
-    let req = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/hello_request.bin")).unwrap();
+    let req = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/hello_request.bin"
+    ))
+    .unwrap();
     let out = rt.serve_content(&req).unwrap();
-    assert!(!out.is_empty(), "content response must be non-empty (real or decoy)");
+    assert!(
+        !out.is_empty(),
+        "content response must be non-empty (real or decoy)"
+    );
 }

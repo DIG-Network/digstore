@@ -63,10 +63,7 @@ fn encode_blob_byte_exact_header_layout() {
 
     // Bodies are concatenated in row order.
     assert_eq!(&blob[bodies_start..bodies_start + 32], &store[..]);
-    assert_eq!(
-        &blob[bodies_start + 32..bodies_start + 36],
-        &root[..]
-    );
+    assert_eq!(&blob[bodies_start + 32..bodies_start + 36], &root[..]);
     assert_eq!(blob.len(), bodies_start + 32 + 4);
 }
 
@@ -294,7 +291,10 @@ fn full_blob_with_many_sections() {
 
     let view = DataView::parse(&blob).unwrap();
     assert_eq!(view.section(SectionId::StoreId), Some(&store_id.0[..]));
-    assert_eq!(view.section(SectionId::CurrentRoot), Some(&current_root.0[..]));
+    assert_eq!(
+        view.section(SectionId::CurrentRoot),
+        Some(&current_root.0[..])
+    );
     assert_eq!(view.section(SectionId::PublicKey), Some(&pubkey[..]));
     assert_eq!(view.total_len(), blob.len());
 

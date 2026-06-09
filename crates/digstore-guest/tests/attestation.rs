@@ -20,7 +20,10 @@ struct Vector {
 
 fn load_vectors() -> Vec<Vector> {
     let v: Value = serde_json::from_str(BLS_VECTORS_JSON).expect("parse bls_vectors.json");
-    let arr = v.get("vectors").and_then(Value::as_array).expect("vectors array");
+    let arr = v
+        .get("vectors")
+        .and_then(Value::as_array)
+        .expect("vectors array");
     arr.iter()
         .map(|item| {
             let pk = hex::decode(item["pubkey_hex"].as_str().unwrap()).unwrap();
@@ -30,7 +33,11 @@ fn load_vectors() -> Vec<Vector> {
             pubkey.copy_from_slice(&pk);
             let mut signature = [0u8; 96];
             signature.copy_from_slice(&sig);
-            Vector { pubkey, message: msg, signature }
+            Vector {
+                pubkey,
+                message: msg,
+                signature,
+            }
         })
         .collect()
 }
@@ -68,9 +75,18 @@ fn accepts_valid_host_signature() {
     let trusted = TrustedSet::from_pubkeys(&[v.pubkey]);
     let signed_time = 1_700_000_000u64;
     let now = signed_time + 5; // within freshness window
-    let res =
-        verify_attestation(&trusted, &v.message, &v.pubkey, &v.signature, signed_time, now);
-    assert!(res.is_ok(), "valid AugScheme signature from a trusted key must verify");
+    let res = verify_attestation(
+        &trusted,
+        &v.message,
+        &v.pubkey,
+        &v.signature,
+        signed_time,
+        now,
+    );
+    assert!(
+        res.is_ok(),
+        "valid AugScheme signature from a trusted key must verify"
+    );
 }
 
 #[test]
@@ -94,8 +110,14 @@ fn rejects_stale_attestation() {
     let trusted = TrustedSet::from_pubkeys(&[v.pubkey]);
     let signed_time = 1_700_000_000u64;
     let now = signed_time + 10_000; // far outside freshness window
-    let res =
-        verify_attestation(&trusted, &v.message, &v.pubkey, &v.signature, signed_time, now);
+    let res = verify_attestation(
+        &trusted,
+        &v.message,
+        &v.pubkey,
+        &v.signature,
+        signed_time,
+        now,
+    );
     assert_eq!(res, Err(AttestationError::Stale));
 }
 
@@ -105,7 +127,13 @@ fn rejects_untrusted_key() {
     let trusted = TrustedSet::from_pubkeys(&[[0u8; 48]]); // some other key
     let signed_time = 1_700_000_000u64;
     let now = signed_time + 1;
-    let res =
-        verify_attestation(&trusted, &v.message, &v.pubkey, &v.signature, signed_time, now);
+    let res = verify_attestation(
+        &trusted,
+        &v.message,
+        &v.pubkey,
+        &v.signature,
+        signed_time,
+        now,
+    );
     assert_eq!(res, Err(AttestationError::UntrustedKey));
 }

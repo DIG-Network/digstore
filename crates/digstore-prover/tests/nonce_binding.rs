@@ -8,13 +8,22 @@ use digstore_prover::{
 fn make_proof(nonce: [u8; 32]) -> (ExecutionProof, Bytes32, Bytes32, ChiaBlockRef) {
     let sk = bls::SecretKey::from_seed(&[7u8; 32]);
     let pk = sk.public_key();
-    let block = ChiaBlockRef { header_hash: Bytes32([0x55u8; 32]), height: 42, timestamp: 1_000_000 };
+    let block = ChiaBlockRef {
+        header_hash: Bytes32([0x55u8; 32]),
+        height: 42,
+        timestamp: 1_000_000,
+    };
     let program_hash = Bytes32([0xAAu8; 32]);
     let roothash = Bytes32([0xBBu8; 32]);
     let public_input = build_public_input(&nonce, &block);
-    let serving =
-        ServingInputs { retrieval_key: Bytes32([1u8; 32]), roothash, chunk_ciphertext: vec![vec![9, 9, 9]] };
-    let proof = MockProver::new(sk, pk, block.clone()).prove(program_hash, &public_input, &serving).unwrap();
+    let serving = ServingInputs {
+        retrieval_key: Bytes32([1u8; 32]),
+        roothash,
+        chunk_ciphertext: vec![vec![9, 9, 9]],
+    };
+    let proof = MockProver::new(sk, pk, block.clone())
+        .prove(program_hash, &public_input, &serving)
+        .unwrap();
     (proof, program_hash, roothash, block)
 }
 

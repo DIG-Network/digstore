@@ -70,8 +70,11 @@ pub trait RemoteBackend: Send + Sync + 'static {
 
     /// Raw module bytes for the served head, or UnknownStore/UnknownRoot.
     /// If `root` is Some, it must equal the served head root (else UnknownRoot).
-    fn module_bytes(&self, store_id: &Bytes32, root: Option<&Bytes32>)
-        -> Result<Vec<u8>, RemoteError>;
+    fn module_bytes(
+        &self,
+        store_id: &Bytes32,
+        root: Option<&Bytes32>,
+    ) -> Result<Vec<u8>, RemoteError>;
 
     /// Serve content for a retrieval key + root + optional range.
     /// MUST return Ok with a decoy on a retrieval miss (never 404 for content,
@@ -109,8 +112,12 @@ pub trait RemoteBackend: Send + Sync + 'static {
     ) -> Result<PushOutcome, RemoteError>;
 
     /// Compute the delta from `from` to `to` along linear ancestry (§21.5).
-    fn delta(&self, store_id: &Bytes32, from: &Bytes32, to: &Bytes32)
-        -> Result<DeltaSet, RemoteError>;
+    fn delta(
+        &self,
+        store_id: &Bytes32,
+        from: &Bytes32,
+        to: &Bytes32,
+    ) -> Result<DeltaSet, RemoteError>;
 
     /// Negotiated delta from a client have-summary (§21.5 POST /delta).
     fn delta_from_have(

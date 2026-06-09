@@ -83,9 +83,13 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
 
     // host_get_current_time() -> i64 (§12). Injectable Clock.
     linker
-        .func_wrap(m, "host_get_current_time", |caller: Caller<'_, RuntimeState>| -> i64 {
-            caller.data().host.clock.now_unix_secs() as i64
-        })
+        .func_wrap(
+            m,
+            "host_get_current_time",
+            |caller: Caller<'_, RuntimeState>| -> i64 {
+                caller.data().host.clock.now_unix_secs() as i64
+            },
+        )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
     // host_random_bytes(count) -> i32 length written, or InvalidParameter (§12).
@@ -112,13 +116,17 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
 
     // host_get_public_key() -> i32 length (48 bytes BLS G1) written (§12).
     linker
-        .func_wrap(m, "host_get_public_key", |mut caller: Caller<'_, RuntimeState>| -> i32 {
-            let pk = caller.data().host.keys.bls_public.0; // [u8; 48]
-            match caller.data_mut().host.return_buffer.set(&pk) {
-                Ok(n) => n as i32,
-                Err(_) => ErrorCode::GeneralError as i32,
-            }
-        })
+        .func_wrap(
+            m,
+            "host_get_public_key",
+            |mut caller: Caller<'_, RuntimeState>| -> i32 {
+                let pk = caller.data().host.keys.bls_public.0; // [u8; 48]
+                match caller.data_mut().host.return_buffer.set(&pk) {
+                    Ok(n) => n as i32,
+                    Err(_) => ErrorCode::GeneralError as i32,
+                }
+            },
+        )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
     const CHALLENGE_LEN: usize = 32 + 32 + 8;
@@ -195,17 +203,21 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
     // host_verify_session() -> i32 (§6.3/§12.4): 1 = valid; an expired session
     // returns SessionExpired (-101) distinctly; 0 = no session (invalid).
     linker
-        .func_wrap(m, "host_verify_session", |caller: Caller<'_, RuntimeState>| -> i32 {
-            let now = caller.data().host.clock.now_unix_secs();
-            let sessions = &caller.data().host.sessions;
-            if sessions.is_valid(now) {
-                1
-            } else if sessions.is_expired_at(now) {
-                ErrorCode::SessionExpired as i32
-            } else {
-                0
-            }
-        })
+        .func_wrap(
+            m,
+            "host_verify_session",
+            |caller: Caller<'_, RuntimeState>| -> i32 {
+                let now = caller.data().host.clock.now_unix_secs();
+                let sessions = &caller.data().host.sessions;
+                if sessions.is_valid(now) {
+                    1
+                } else if sessions.is_expired_at(now) {
+                    ErrorCode::SessionExpired as i32
+                } else {
+                    0
+                }
+            },
+        )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
     // jwks_fetch(url_ptr, url_len) -> i32. SESSION-GATED (§6.3).

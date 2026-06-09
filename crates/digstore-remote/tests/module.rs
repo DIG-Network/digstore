@@ -64,11 +64,7 @@ async fn get_module_returns_wasm_bytes_with_etag() {
         "application/wasm"
     );
     assert_eq!(
-        resp.headers()
-            .get(header::ETAG)
-            .unwrap()
-            .to_str()
-            .unwrap(),
+        resp.headers().get(header::ETAG).unwrap().to_str().unwrap(),
         format!("\"{}\"", "10".repeat(32))
     );
     let body = resp.into_body().collect().await.unwrap().to_bytes();

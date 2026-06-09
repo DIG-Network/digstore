@@ -128,7 +128,11 @@ impl<'a> DataView<'a> {
         let count = u32::from_be_bytes([raw[5], raw[6], raw[7], raw[8]]) as usize;
 
         let rows_end = HEADER_LEN
-            .checked_add(count.checked_mul(ROW_LEN).ok_or(DecodeError::UnexpectedEof)?)
+            .checked_add(
+                count
+                    .checked_mul(ROW_LEN)
+                    .ok_or(DecodeError::UnexpectedEof)?,
+            )
             .ok_or(DecodeError::UnexpectedEof)?;
         if raw.len() < rows_end {
             return Err(DecodeError::UnexpectedEof);
@@ -139,18 +143,10 @@ impl<'a> DataView<'a> {
         for i in 0..count {
             let base = HEADER_LEN + i * ROW_LEN;
             let id = u16::from_be_bytes([raw[base], raw[base + 1]]);
-            let offset = u32::from_be_bytes([
-                raw[base + 2],
-                raw[base + 3],
-                raw[base + 4],
-                raw[base + 5],
-            ]);
-            let len = u32::from_be_bytes([
-                raw[base + 6],
-                raw[base + 7],
-                raw[base + 8],
-                raw[base + 9],
-            ]);
+            let offset =
+                u32::from_be_bytes([raw[base + 2], raw[base + 3], raw[base + 4], raw[base + 5]]);
+            let len =
+                u32::from_be_bytes([raw[base + 6], raw[base + 7], raw[base + 8], raw[base + 9]]);
             // Every body must lie within the blob.
             let end = (offset as usize)
                 .checked_add(len as usize)

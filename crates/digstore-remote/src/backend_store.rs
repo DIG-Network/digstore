@@ -13,12 +13,10 @@
 //!   a 404 (§14.2). The `serve_content`/`serve_proof` signatures match the
 //!   trait so the production host can be slotted in without changing callers.
 
-use crate::backend::{
-    DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord,
-};
+use crate::backend::{DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord};
 use crate::error::RemoteError;
-use digstore_store::{RootHistory, Store, StorePaths, SystemClock};
 use digstore_core::{Bytes32, Bytes48, Bytes96, GenerationState, StoreConfig};
+use digstore_store::{RootHistory, Store, StorePaths, SystemClock};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -129,8 +127,7 @@ impl StoreBackend {
             std::fs::create_dir_all(dir)
                 .map_err(|e| RemoteError::Internal(format!("sigs dir: {e}")))?;
         }
-        std::fs::write(&path, sig.0)
-            .map_err(|e| RemoteError::Internal(format!("sig write: {e}")))
+        std::fs::write(&path, sig.0).map_err(|e| RemoteError::Internal(format!("sig write: {e}")))
     }
 
     fn read_sig(&self, root: &Bytes32) -> Option<Bytes96> {
@@ -293,8 +290,8 @@ impl RemoteBackend for StoreBackend {
         to: &Bytes32,
     ) -> Result<DeltaSet, RemoteError> {
         self.ensure_store(store_id)?;
-        let store = Store::open(&self.data_dir, SystemClock)
-            .map_err(|_| RemoteError::UnknownStore)?;
+        let store =
+            Store::open(&self.data_dir, SystemClock).map_err(|_| RemoteError::UnknownStore)?;
         let from_manifest = store
             .generation_manifest(*from)
             .map_err(|_| RemoteError::UnknownRoot)?;
@@ -328,8 +325,8 @@ impl RemoteBackend for StoreBackend {
         have: &[Bytes32],
     ) -> Result<DeltaSet, RemoteError> {
         self.ensure_store(store_id)?;
-        let store = Store::open(&self.data_dir, SystemClock)
-            .map_err(|_| RemoteError::UnknownStore)?;
+        let store =
+            Store::open(&self.data_dir, SystemClock).map_err(|_| RemoteError::UnknownStore)?;
         let to_manifest = store
             .generation_manifest(*to)
             .map_err(|_| RemoteError::UnknownRoot)?;

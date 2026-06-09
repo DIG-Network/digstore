@@ -45,7 +45,11 @@ mod tests {
     use super::*;
 
     fn inputs(root: [u8; 32], chunks: Vec<Vec<u8>>) -> ServingInputs {
-        ServingInputs { retrieval_key: Bytes32([7u8; 32]), roothash: Bytes32(root), chunk_ciphertext: chunks }
+        ServingInputs {
+            retrieval_key: Bytes32([7u8; 32]),
+            roothash: Bytes32(root),
+            chunk_ciphertext: chunks,
+        }
     }
 
     #[test]
@@ -81,7 +85,10 @@ mod tests {
     fn output_bytes_matches_core_concat_output_ordering() {
         // C9: ServingInputs::output_bytes() MUST equal digstore_core::serving::concat_output
         // ordering, so the guest's get_content concat and the prover's serving output agree.
-        let inp = inputs([0u8; 32], vec![vec![0x01, 0x02], vec![0x03], vec![0x04, 0x05, 0x06]]);
+        let inp = inputs(
+            [0u8; 32],
+            vec![vec![0x01, 0x02], vec![0x03], vec![0x04, 0x05, 0x06]],
+        );
         let refs: Vec<&[u8]> = inp.chunk_ciphertext.iter().map(|c| c.as_slice()).collect();
         let guest_style = digstore_core::serving::concat_output(&refs);
         assert_eq!(inp.output_bytes(), guest_style);

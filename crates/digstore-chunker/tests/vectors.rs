@@ -8,11 +8,17 @@ fn gear_table_has_256_entries() {
 #[test]
 fn gear_table_is_nontrivial() {
     // Not the all-zero placeholder from the scaffold.
-    assert!(GEAR_TABLE.iter().any(|&x| x != 0), "gear table must not be all zero");
+    assert!(
+        GEAR_TABLE.iter().any(|&x| x != 0),
+        "gear table must not be all zero"
+    );
     // High-quality table: every entry distinct so no two bytes alias.
     let mut seen = std::collections::HashSet::new();
     for &v in GEAR_TABLE.iter() {
-        assert!(seen.insert(v), "gear table entries must be distinct, found dup {v:#018x}");
+        assert!(
+            seen.insert(v),
+            "gear table entries must be distinct, found dup {v:#018x}"
+        );
     }
 }
 
@@ -118,7 +124,10 @@ fn front_insert_preserves_trailing_chunks() {
     // CDC re-synchronizes and shares this many (paper §3 dedup heritage).
     let expected_shared: usize = 1;
     assert_eq!(shared, expected_shared, "dedup re-sync count changed");
-    assert!(shared >= 1, "CDC must share at least one trailing chunk after front insert");
+    assert!(
+        shared >= 1,
+        "CDC must share at least one trailing chunk after front insert"
+    );
 }
 
 use digstore_chunker::Chunker;
@@ -139,5 +148,8 @@ fn chunker_struct_roundtrip_via_public_api() {
         assert_eq!(c.hash.to_hex().len(), 64);
     }
     assert_eq!(rebuilt, data);
-    assert!(chunks.len() > 1, "300 KiB under 64 KiB target should yield multiple chunks");
+    assert!(
+        chunks.len() > 1,
+        "300 KiB under 64 KiB target should yield multiple chunks"
+    );
 }

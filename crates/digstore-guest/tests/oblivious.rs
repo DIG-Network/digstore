@@ -16,7 +16,10 @@ fn padded_count_buckets_monotonically() {
 #[test]
 fn padded_count_never_below_true_count() {
     for n in 0..1000usize {
-        assert!(padded_count(n) >= n.max(1), "bucket must cover true count {n}");
+        assert!(
+            padded_count(n) >= n.max(1),
+            "bucket must cover true count {n}"
+        );
     }
 }
 
@@ -29,7 +32,9 @@ impl Rng {
     fn bytes(&self, count: u32) -> Vec<u8> {
         let n = self.0.get();
         self.0.set(n + 1);
-        (0..count).map(|i| (n.wrapping_mul(97).wrapping_add(i.wrapping_mul(13))) as u8).collect()
+        (0..count)
+            .map(|i| (n.wrapping_mul(97).wrapping_add(i.wrapping_mul(13))) as u8)
+            .collect()
     }
 }
 
@@ -49,7 +54,10 @@ fn plan_includes_all_real_indices_plus_cover() {
     // real_positions maps each real index to its slot in `order`.
     assert_eq!(plan.real_positions.len(), real.len());
     for (idx, pos) in real.iter().zip(plan.real_positions.iter()) {
-        assert_eq!(plan.order[*pos], *idx, "real_positions must point at the real index");
+        assert_eq!(
+            plan.order[*pos], *idx,
+            "real_positions must point at the real index"
+        );
     }
 }
 
@@ -61,7 +69,10 @@ fn two_calls_reorder_differently() {
     let rng_b = Rng(Cell::new(999));
     let a = build_access_plan(&real, pool_size, |c| rng_a.bytes(c));
     let b = build_access_plan(&real, pool_size, |c| rng_b.bytes(c));
-    assert_ne!(a.order, b.order, "different randomness must reorder the plan");
+    assert_ne!(
+        a.order, b.order,
+        "different randomness must reorder the plan"
+    );
     // But both still contain all real indices.
     for r in &real {
         assert!(a.order.contains(r) && b.order.contains(r));

@@ -8,7 +8,10 @@ fn none_window_is_always_valid() {
 
 #[test]
 fn inside_window_is_valid() {
-    let w = Some(ValidityWindow { not_before: 100, not_after: 200 });
+    let w = Some(ValidityWindow {
+        not_before: 100,
+        not_after: 200,
+    });
     assert!(within_window(&w, 100));
     assert!(within_window(&w, 150));
     assert!(within_window(&w, 200));
@@ -16,7 +19,10 @@ fn inside_window_is_valid() {
 
 #[test]
 fn outside_window_is_invalid() {
-    let w = Some(ValidityWindow { not_before: 100, not_after: 200 });
+    let w = Some(ValidityWindow {
+        not_before: 100,
+        not_after: 200,
+    });
     assert!(!within_window(&w, 99));
     assert!(!within_window(&w, 201));
 }

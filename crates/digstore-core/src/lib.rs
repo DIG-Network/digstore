@@ -15,10 +15,10 @@ pub mod merkle;
 pub mod urn;
 pub mod wire;
 
-pub use error::{CoreError, ErrorCode};
 pub use abi::{is_error, pack_ptr_len, unpack_ptr_len};
-pub use codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 pub use bytes::{Bytes32, Bytes48, Bytes96};
+pub use codec::{Decode, DecodeError, Decoder, Encode, Encoder};
+pub use error::{CoreError, ErrorCode};
 pub use hash::sha256;
 
 /// Alias module so `digstore_core::types::Bytes32` resolves (host/guest use this path).
@@ -44,17 +44,17 @@ pub mod serving {
     }
 }
 
-pub use urn::Urn;
-pub use merkle::{MerkleProof, MerkleTree, ProofStep};
-pub use keytable::{KeyTableEntry, PathWalk};
-pub use manifest::{Author, MetadataManifest};
-pub use wire::{
-    AttestationChallenge, AttestationResponse, AuthenticationInfo, ChiaBlockRef, ContentResponse,
-    ExecutionProof, ProofPrelude, ProofResponse,
-};
+#[cfg(feature = "std")]
+pub use config::CompilationResult;
 pub use config::{
     ChunkerConfig, CompilationStats, CompilerError, Generation, GenerationId, GenerationState,
     HostImportsConfig, SecretSalt, StoreConfig, TrustedHostKey, Visibility,
 };
-#[cfg(feature = "std")]
-pub use config::CompilationResult;
+pub use keytable::{KeyTableEntry, PathWalk};
+pub use manifest::{Author, MetadataManifest};
+pub use merkle::{MerkleProof, MerkleTree, ProofStep};
+pub use urn::Urn;
+pub use wire::{
+    AttestationChallenge, AttestationResponse, AuthenticationInfo, ChiaBlockRef, ContentResponse,
+    ExecutionProof, ProofPrelude, ProofResponse,
+};

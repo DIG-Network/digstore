@@ -16,7 +16,13 @@ fn cfg() -> HostImportsConfig {
 
 fn echo_rt() -> HostRuntime {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/serve_echo.wat")).unwrap();
-    HostRuntime::new(&module_bytes, cfg(), ExecutionLimits::default(), test_deps(FixedClock::new(100))).unwrap()
+    HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(FixedClock::new(100)),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -45,7 +51,13 @@ fn serve_content_empty_request_is_ok() {
 #[test]
 fn serve_content_propagates_guest_error_sentinel() {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/serve_err.wat")).unwrap();
-    let mut rt = HostRuntime::new(&module_bytes, cfg(), ExecutionLimits::default(), test_deps(FixedClock::new(100))).unwrap();
+    let mut rt = HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(FixedClock::new(100)),
+    )
+    .unwrap();
     let err = rt.serve_content(b"anything").unwrap_err();
     assert!(
         matches!(err, HostError::GuestError(ErrorCode::NotFound)),
@@ -56,7 +68,13 @@ fn serve_content_propagates_guest_error_sentinel() {
 #[test]
 fn serve_proof_propagates_guest_error_sentinel() {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/serve_err.wat")).unwrap();
-    let mut rt = HostRuntime::new(&module_bytes, cfg(), ExecutionLimits::default(), test_deps(FixedClock::new(100))).unwrap();
+    let mut rt = HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        test_deps(FixedClock::new(100)),
+    )
+    .unwrap();
     let err = rt.serve_proof(b"anything").unwrap_err();
     assert!(
         matches!(err, HostError::GuestError(ErrorCode::NotFound)),

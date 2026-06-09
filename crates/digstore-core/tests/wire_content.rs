@@ -8,7 +8,10 @@ use digstore_core::Bytes32;
 fn sample_merkle_proof() -> MerkleProof {
     MerkleProof {
         leaf: Bytes32([1; 32]),
-        path: vec![ProofStep { hash: Bytes32([2; 32]), is_left: true }],
+        path: vec![ProofStep {
+            hash: Bytes32([2; 32]),
+            is_left: true,
+        }],
         root: Bytes32([3; 32]),
     }
 }

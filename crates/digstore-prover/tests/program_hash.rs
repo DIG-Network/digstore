@@ -9,14 +9,25 @@ use digstore_prover::{
 fn program_hash_mismatch_is_rejected() {
     let sk = bls::SecretKey::from_seed(&[7u8; 32]);
     let pk = sk.public_key();
-    let block = ChiaBlockRef { header_hash: Bytes32([0x55u8; 32]), height: 42, timestamp: 1_000_000 };
+    let block = ChiaBlockRef {
+        header_hash: Bytes32([0x55u8; 32]),
+        height: 42,
+        timestamp: 1_000_000,
+    };
     let proven = Bytes32([0xAAu8; 32]);
     let root = Bytes32([0xBBu8; 32]);
     let public_input = build_public_input(&[0x33u8; 32], &block);
-    let serving =
-        ServingInputs { retrieval_key: Bytes32([1u8; 32]), roothash: root, chunk_ciphertext: vec![vec![1]] };
-    let proof = MockProver::new(sk, pk, block.clone()).prove(proven, &public_input, &serving).unwrap();
+    let serving = ServingInputs {
+        retrieval_key: Bytes32([1u8; 32]),
+        roothash: root,
+        chunk_ciphertext: vec![vec![1]],
+    };
+    let proof = MockProver::new(sk, pk, block.clone())
+        .prove(proven, &public_input, &serving)
+        .unwrap();
     let chain = MockChainSource::new(vec![block], 1_000_100);
-    let err = MockVerifier::default().verify(&proof, Bytes32([0xCCu8; 32]), &[root], &chain).unwrap_err();
+    let err = MockVerifier::default()
+        .verify(&proof, Bytes32([0xCCu8; 32]), &[root], &chain)
+        .unwrap_err();
     assert!(matches!(err, ProverError::ProgramHashMismatch { .. }));
 }

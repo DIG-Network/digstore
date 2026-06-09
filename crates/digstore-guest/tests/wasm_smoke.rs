@@ -63,7 +63,10 @@ fn module_validates_and_exports_full_abi() {
         "init",
         "memory",
     ] {
-        assert!(exports.contains(required), "missing ABI export: {required} (have: {exports:?})");
+        assert!(
+            exports.contains(required),
+            "missing ABI export: {required} (have: {exports:?})"
+        );
     }
 
     // §5.1 Import section / §6.3 Host Imports: the guest module MUST declare all

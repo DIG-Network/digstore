@@ -113,7 +113,10 @@ pub fn embedded<'a>() -> DataSection<'a> {
         //    directly from the rows here (we cannot call DataView::parse yet — the
         //    bodies are not in this slice, so its in-bounds check would reject the
         //    body offsets).
-        let table_len = match count.checked_mul(ROW_LEN).and_then(|t| t.checked_add(HEADER_LEN)) {
+        let table_len = match count
+            .checked_mul(ROW_LEN)
+            .and_then(|t| t.checked_add(HEADER_LEN))
+        {
             Some(n) => n,
             None => return empty(),
         };

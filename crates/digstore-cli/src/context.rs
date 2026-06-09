@@ -14,16 +14,54 @@ pub struct CliContext {
 }
 
 impl CliContext {
+    /// Resolve the store directory for a normal command (everything except
+    /// `init`). Behaves like Git: an explicit `--dig-dir` wins; otherwise walk up
+    /// from the current working directory looking for an existing `.dig`
+    /// directory and use the nearest one, so the CLI operates on the store that
+    /// contains the directory you ran it from. If none is found, default to
+    /// `<cwd>/.dig`.
     pub fn resolve(explicit: Option<PathBuf>, json: bool, verbose: bool) -> Self {
-        let dig_dir = explicit.unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".dig")
-        });
+        let dig_dir = explicit
+            .or_else(Self::discover_dig_dir)
+            .unwrap_or_else(Self::cwd_dig_dir);
         CliContext {
             dig_dir,
             json,
             verbose,
+        }
+    }
+
+    /// Resolve the store directory for `init`. Anchored to the current working
+    /// directory (`<cwd>/.dig`) and does NOT walk up — `digstore init` creates a
+    /// store here, the way `git init` creates a repo in the current directory.
+    pub fn resolve_init(explicit: Option<PathBuf>, json: bool, verbose: bool) -> Self {
+        let dig_dir = explicit.unwrap_or_else(Self::cwd_dig_dir);
+        CliContext {
+            dig_dir,
+            json,
+            verbose,
+        }
+    }
+
+    /// `<current working directory>/.dig` (absolute, since `current_dir` is).
+    fn cwd_dig_dir() -> PathBuf {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(".dig")
+    }
+
+    /// Walk up from the current working directory; return the nearest ancestor's
+    /// `.dig` directory if one exists (Git-style repository discovery).
+    fn discover_dig_dir() -> Option<PathBuf> {
+        let mut dir = std::env::current_dir().ok()?;
+        loop {
+            let candidate = dir.join(".dig");
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+            if !dir.pop() {
+                return None;
+            }
         }
     }
 

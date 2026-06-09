@@ -9,7 +9,12 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 /// Build a store whose public key is a real BLS key; return (backend, id, id_hex, secret_key).
-fn signed_store() -> (Arc<InMemoryBackend>, Bytes32, String, digstore_crypto::bls::SecretKey) {
+fn signed_store() -> (
+    Arc<InMemoryBackend>,
+    Bytes32,
+    String,
+    digstore_crypto::bls::SecretKey,
+) {
     let (sk, pk) = digstore_crypto::bls_keygen(&[42u8; 32]);
     let be = Arc::new(InMemoryBackend::new());
     let id = b32(1);
@@ -86,9 +91,7 @@ async fn bad_signature_is_403() {
         ))
         .await
         .unwrap();
-    assert!(
-        resp.status() == StatusCode::FORBIDDEN || resp.status() == StatusCode::UNAUTHORIZED
-    );
+    assert!(resp.status() == StatusCode::FORBIDDEN || resp.status() == StatusCode::UNAUTHORIZED);
     assert_eq!(
         be.head_state(&id).unwrap().served_root,
         b32(0x10),
@@ -233,7 +236,6 @@ async fn malformed_signature_header_is_422_or_403() {
         .await
         .unwrap();
     assert!(
-        resp.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || resp.status() == StatusCode::FORBIDDEN
+        resp.status() == StatusCode::UNPROCESSABLE_ENTITY || resp.status() == StatusCode::FORBIDDEN
     );
 }

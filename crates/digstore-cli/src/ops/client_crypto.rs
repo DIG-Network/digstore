@@ -160,7 +160,10 @@ mod tests {
             roothash: leaf,
         };
         // Empty chunk_lens => the whole blob is one chunk.
-        assert_eq!(decrypt_and_verify(&resp, &urn, None, &leaf, &[]).unwrap(), pt);
+        assert_eq!(
+            decrypt_and_verify(&resp, &urn, None, &leaf, &[]).unwrap(),
+            pt
+        );
     }
 
     #[test]

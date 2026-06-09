@@ -3,7 +3,12 @@ use digstore_chunker::{chunk_slice, chunk_stream, Chunk};
 use proptest::prelude::*;
 
 fn small_cfg() -> digstore_core::ChunkerConfig {
-    digstore_core::ChunkerConfig { min_size: 64, target_size: 256, max_size: 1024, mask: 0xFF }
+    digstore_core::ChunkerConfig {
+        min_size: 64,
+        target_size: 256,
+        max_size: 1024,
+        mask: 0xFF,
+    }
 }
 
 proptest! {

@@ -28,9 +28,7 @@ pub use client::{DigClient, FetchInfo, PullResult, PushResult};
 pub use ratelimit::RateLimiter;
 pub use server::{AppState, RemoteServer};
 
-pub use backend::{
-    DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord,
-};
+pub use backend::{DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord};
 pub use backend_inmem::InMemoryBackend;
 pub use backend_store::StoreBackend;
 pub use error::{ClientError, RemoteError};

@@ -69,7 +69,9 @@ pub fn build_s3(
     let (bucket, key) = parse_s3_url(url)?;
     let mut builder = AmazonS3Builder::from_env().with_bucket_name(&bucket);
     if let Some(ep) = endpoint {
-        builder = builder.with_endpoint(ep).with_virtual_hosted_style_request(false);
+        builder = builder
+            .with_endpoint(ep)
+            .with_virtual_hosted_style_request(false);
     }
     if let Some(r) = region {
         builder = builder.with_region(r);
@@ -127,10 +129,7 @@ pub async fn fetch_bytes(store: &dyn ObjectStore, key: &ObjPath) -> Result<Vec<u
         .get(key)
         .await
         .with_context(|| format!("object_store GET failed for key {key}"))?;
-    let bytes = get
-        .bytes()
-        .await
-        .context("reading object bytes")?;
+    let bytes = get.bytes().await.context("reading object bytes")?;
     Ok(bytes.to_vec())
 }
 
@@ -163,7 +162,10 @@ pub fn parse_host_key_seed(host_key: &str) -> Result<[u8; 32]> {
 pub fn parse_retrieval_key(hexstr: &str) -> Result<[u8; 32]> {
     let bytes = hex::decode(hexstr).context("--retrieval-key must be 64-hex")?;
     if bytes.len() != 32 {
-        bail!("--retrieval-key must be 32 bytes (64 hex chars), got {}", bytes.len());
+        bail!(
+            "--retrieval-key must be 32 bytes (64 hex chars), got {}",
+            bytes.len()
+        );
     }
     let mut k = [0u8; 32];
     k.copy_from_slice(&bytes);
@@ -332,13 +334,20 @@ fn run(args: ServeArgs) -> Result<()> {
             .map_err(|e| anyhow!("serve task join error: {e}"))?
     })?;
 
-    eprintln!("[dighost] served {} bytes (ContentResponse envelope)", served.len());
+    eprintln!(
+        "[dighost] served {} bytes (ContentResponse envelope)",
+        served.len()
+    );
 
     match &args.out {
         Some(path) => {
             std::fs::write(path, &served)
                 .with_context(|| format!("writing --out {}", path.display()))?;
-            eprintln!("[dighost] wrote {} bytes to {}", served.len(), path.display());
+            eprintln!(
+                "[dighost] wrote {} bytes to {}",
+                served.len(),
+                path.display()
+            );
         }
         None => {
             use std::io::Write;
@@ -389,7 +398,9 @@ mod tests {
         assert_eq!(key, "abc-deadbeef.wasm");
         // The builder is configured (build() would need creds; we only assert it
         // constructs and that an endpoint-backed build succeeds offline).
-        let store = builder.build().expect("AmazonS3 builds with endpoint override");
+        let store = builder
+            .build()
+            .expect("AmazonS3 builds with endpoint override");
         let _ = store; // routing confirmed: an AmazonS3 store was produced.
     }
 

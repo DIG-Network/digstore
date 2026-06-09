@@ -8,7 +8,11 @@ fn jwks_fetch_blocked_without_session() {
     let mut h = MockHost::default();
     h.session_ok = false; // no valid session yet
     let res = gated_jwks_fetch(&h, b"https://issuer/jwks.json");
-    assert_eq!(res, Err(ErrorCode::NoSession), "jwks must be gated until a session exists");
+    assert_eq!(
+        res,
+        Err(ErrorCode::NoSession),
+        "jwks must be gated until a session exists"
+    );
 }
 
 #[test]
@@ -70,7 +74,10 @@ fn make_jwt(header: &str, payload: &str) -> Vec<u8> {
 
 #[test]
 fn decodes_three_segments() {
-    let jwt = make_jwt(r#"{"alg":"RS256","kid":"k1"}"#, r#"{"exp":2000,"iss":"acme"}"#);
+    let jwt = make_jwt(
+        r#"{"alg":"RS256","kid":"k1"}"#,
+        r#"{"exp":2000,"iss":"acme"}"#,
+    );
     let parts: JwtParts = decode_unverified(&jwt).expect("decode");
     assert_eq!(parts.alg, "RS256");
     assert_eq!(parts.kid.as_deref(), Some("k1"));
@@ -80,9 +87,16 @@ fn decodes_three_segments() {
 
 #[test]
 fn rejects_expired() {
-    let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":1000,"nbf":0,"iss":"acme","aud":"dig"}"#);
+    let jwt = make_jwt(
+        r#"{"alg":"ES256"}"#,
+        r#"{"exp":1000,"nbf":0,"iss":"acme","aud":"dig"}"#,
+    );
     let parts = decode_unverified(&jwt).unwrap();
-    let policy = ClaimPolicy { now: 1500, expected_iss: Some("acme"), expected_aud: Some("dig") };
+    let policy = ClaimPolicy {
+        now: 1500,
+        expected_iss: Some("acme"),
+        expected_aud: Some("dig"),
+    };
     assert_eq!(check_claims(&parts.claims, &policy), Err(JwtError::Expired));
 }
 
@@ -93,14 +107,32 @@ fn rejects_not_yet_valid_and_bad_aud_iss() {
         r#"{"exp":9999,"nbf":5000,"iss":"acme","aud":"dig"}"#,
     ))
     .unwrap();
-    let p = ClaimPolicy { now: 100, expected_iss: Some("acme"), expected_aud: Some("dig") };
+    let p = ClaimPolicy {
+        now: 100,
+        expected_iss: Some("acme"),
+        expected_aud: Some("dig"),
+    };
     assert_eq!(check_claims(&parts.claims, &p), Err(JwtError::NotYetValid));
 
-    let p2 = ClaimPolicy { now: 6000, expected_iss: Some("other"), expected_aud: Some("dig") };
-    assert_eq!(check_claims(&parts.claims, &p2), Err(JwtError::IssuerMismatch));
+    let p2 = ClaimPolicy {
+        now: 6000,
+        expected_iss: Some("other"),
+        expected_aud: Some("dig"),
+    };
+    assert_eq!(
+        check_claims(&parts.claims, &p2),
+        Err(JwtError::IssuerMismatch)
+    );
 
-    let p3 = ClaimPolicy { now: 6000, expected_iss: Some("acme"), expected_aud: Some("nope") };
-    assert_eq!(check_claims(&parts.claims, &p3), Err(JwtError::AudienceMismatch));
+    let p3 = ClaimPolicy {
+        now: 6000,
+        expected_iss: Some("acme"),
+        expected_aud: Some("nope"),
+    };
+    assert_eq!(
+        check_claims(&parts.claims, &p3),
+        Err(JwtError::AudienceMismatch)
+    );
 }
 
 #[test]
@@ -110,7 +142,11 @@ fn accepts_valid_claims() {
         r#"{"exp":9999,"nbf":0,"iss":"acme","aud":"dig"}"#,
     ))
     .unwrap();
-    let p = ClaimPolicy { now: 5000, expected_iss: Some("acme"), expected_aud: Some("dig") };
+    let p = ClaimPolicy {
+        now: 5000,
+        expected_iss: Some("acme"),
+        expected_aud: Some("dig"),
+    };
     assert!(check_claims(&parts.claims, &p).is_ok());
 }
 

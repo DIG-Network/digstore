@@ -29,9 +29,7 @@ fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || needle.len() > haystack.len() {
         return false;
     }
-    haystack
-        .windows(needle.len())
-        .any(|w| w == needle)
+    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 #[test]
@@ -43,7 +41,8 @@ fn host_runtime_neither_decrypts_nor_inspects_the_payload() {
 
     // A long, unique, high-entropy-looking ASCII marker so an accidental match is
     // implausible. This exact run must NEVER appear in served (ciphertext) bytes.
-    let marker: &[u8] = b"SENTINEL-PLAINTEXT-MUST-NOT-LEAK-THROUGH-THE-HOST-RUNTIME-0xC0FFEE-9z9z9z";
+    let marker: &[u8] =
+        b"SENTINEL-PLAINTEXT-MUST-NOT-LEAK-THROUGH-THE-HOST-RUNTIME-0xC0FFEE-9z9z9z";
     let mut original = Vec::new();
     original.extend_from_slice(b"prefix bytes; ");
     original.extend_from_slice(marker);
@@ -69,7 +68,10 @@ fn host_runtime_neither_decrypts_nor_inspects_the_payload() {
     // module's output verbatim (§18.4) — encrypted + encoded.
     let module_path = store_ops::module_path_for(&ctx, &store_id, Some(trusted_root)).unwrap();
     let raw = serve::serve_content_raw(&ctx, &module_path, &urn).unwrap();
-    assert!(!raw.is_empty(), "host must return the module's non-empty output");
+    assert!(
+        !raw.is_empty(),
+        "host must return the module's non-empty output"
+    );
     assert!(
         !contains_subslice(&raw, marker),
         "SPEC §18.4 VIOLATION: plaintext marker leaked in RAW host output (host inspected/decrypted)"

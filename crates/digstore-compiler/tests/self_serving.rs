@@ -380,11 +380,8 @@ fn obfuscation_is_behavior_preserving_identical_served_bytes_on_and_off() {
     };
 
     let compile = |obfuscate: bool| -> Vec<u8> {
-        let dir = std::env::temp_dir().join(format!(
-            "digc-bp-{}-{}",
-            obfuscate,
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("digc-bp-{}-{}", obfuscate, std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let cfg = CompilerConfig {
             output_dir: dir.clone(),
@@ -423,7 +420,10 @@ fn obfuscation_is_behavior_preserving_identical_served_bytes_on_and_off() {
     let obf = compile(true);
 
     // The modules themselves MUST differ (obfuscation actually transformed code).
-    assert_ne!(plain, obf, "obfuscated module must differ from the plain one");
+    assert_ne!(
+        plain, obf,
+        "obfuscated module must differ from the plain one"
+    );
 
     // HIT: identical served bytes for the real resource.
     let hit_plain = serve(&plain, urn.retrieval_key());

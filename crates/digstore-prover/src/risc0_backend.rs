@@ -32,13 +32,26 @@ pub struct Risc0Prover {
 }
 
 impl Risc0Prover {
-    pub fn new(node_secret: bls::SecretKey, node_pubkey: bls::PublicKey, chia_block: ChiaBlockRef) -> Self {
-        Self { node_secret, node_pubkey, chia_block }
+    pub fn new(
+        node_secret: bls::SecretKey,
+        node_pubkey: bls::PublicKey,
+        chia_block: ChiaBlockRef,
+    ) -> Self {
+        Self {
+            node_secret,
+            node_pubkey,
+            chia_block,
+        }
     }
 }
 
 impl Prover for Risc0Prover {
-    fn prove(&self, program_hash: Bytes32, public_input: &[u8], serving_inputs: &ServingInputs) -> Result<ExecutionProof> {
+    fn prove(
+        &self,
+        program_hash: Bytes32,
+        public_input: &[u8],
+        serving_inputs: &ServingInputs,
+    ) -> Result<ExecutionProof> {
         let (_nonce, block) = parse_public_input(public_input)?;
         if block != self.chia_block {
             return Err(ProverError::Backend("public_input block mismatch".into()));
@@ -80,7 +93,13 @@ impl Prover for Risc0Prover {
 pub struct Risc0Verifier;
 
 impl Verifier for Risc0Verifier {
-    fn verify(&self, proof: &ExecutionProof, expected_program_hash: Bytes32, trusted_roots: &[Bytes32], chain: &dyn ChainSource) -> Result<()> {
+    fn verify(
+        &self,
+        proof: &ExecutionProof,
+        expected_program_hash: Bytes32,
+        trusted_roots: &[Bytes32],
+        chain: &dyn ChainSource,
+    ) -> Result<()> {
         if proof.program_hash != expected_program_hash {
             return Err(ProverError::ProgramHashMismatch {
                 expected: expected_program_hash.to_hex(),
@@ -89,7 +108,9 @@ impl Verifier for Risc0Verifier {
         }
         let (_nonce, pi_block) = parse_public_input(&proof.public_input)?;
         if pi_block != proof.chia_block {
-            return Err(ProverError::Codec("public_input block != proof.chia_block".into()));
+            return Err(ProverError::Codec(
+                "public_input block != proof.chia_block".into(),
+            ));
         }
         let receipt: Receipt = bincode::deserialize(&proof.proof)
             .map_err(|e| ProverError::ZkProofInvalid(format!("receipt de: {e}")))?;
@@ -97,8 +118,15 @@ impl Verifier for Risc0Verifier {
             .verify(DIGSTORE_SERVING_GUEST_ID)
             .map_err(|e| ProverError::ZkProofInvalid(format!("receipt verify: {e}")))?;
         // Journal: (program_hash, public_input_hash, roothash, public_output)
-        let (j_program_hash, j_pi_hash, _j_root, j_output): ([u8; 32], [u8; 32], [u8; 32], [u8; 32]) =
-            receipt.journal.decode().map_err(|e| ProverError::ZkProofInvalid(format!("journal decode: {e}")))?;
+        let (j_program_hash, j_pi_hash, _j_root, j_output): (
+            [u8; 32],
+            [u8; 32],
+            [u8; 32],
+            [u8; 32],
+        ) = receipt
+            .journal
+            .decode()
+            .map_err(|e| ProverError::ZkProofInvalid(format!("journal decode: {e}")))?;
         if j_program_hash != proof.program_hash.0 {
             return Err(ProverError::ProgramHashMismatch {
                 expected: proof.program_hash.to_hex(),
@@ -116,7 +144,9 @@ impl Verifier for Risc0Verifier {
             return Err(ProverError::NodeSignatureInvalid);
         }
         if trusted_roots.is_empty() {
-            return Err(ProverError::UntrustedRoot("no trusted roots provided".into()));
+            return Err(ProverError::UntrustedRoot(
+                "no trusted roots provided".into(),
+            ));
         }
         chain.verify_block(&proof.chia_block, DEFAULT_FRESHNESS_WINDOW_SECS)?;
         Ok(())

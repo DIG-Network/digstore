@@ -6,8 +6,16 @@ fn header_starts_with_magic_and_version() {
     let header = SectionHeader {
         format_version: FORMAT_VERSION,
         entries: vec![
-            SectionEntry { id: 1, offset: 100, length: 50 },
-            SectionEntry { id: 2, offset: 150, length: 25 },
+            SectionEntry {
+                id: 1,
+                offset: 100,
+                length: 50,
+            },
+            SectionEntry {
+                id: 2,
+                offset: 150,
+                length: 25,
+            },
         ],
     };
     let bytes = header.to_bytes();
@@ -20,8 +28,16 @@ fn header_offset_table_roundtrip() {
     let header = SectionHeader {
         format_version: FORMAT_VERSION,
         entries: vec![
-            SectionEntry { id: 7, offset: 0, length: 4096 },
-            SectionEntry { id: 9, offset: 4096, length: 1024 },
+            SectionEntry {
+                id: 7,
+                offset: 0,
+                length: 4096,
+            },
+            SectionEntry {
+                id: 9,
+                offset: 4096,
+                length: 1024,
+            },
         ],
     };
     let bytes = header.to_bytes();
@@ -56,8 +72,16 @@ fn lookup_finds_section_by_id() {
     let header = SectionHeader {
         format_version: FORMAT_VERSION,
         entries: vec![
-            SectionEntry { id: 3, offset: 10, length: 20 },
-            SectionEntry { id: 5, offset: 30, length: 40 },
+            SectionEntry {
+                id: 3,
+                offset: 10,
+                length: 20,
+            },
+            SectionEntry {
+                id: 5,
+                offset: 30,
+                length: 40,
+            },
         ],
     };
     assert_eq!(header.find(5), Some((30, 40)));

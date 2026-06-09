@@ -19,8 +19,14 @@ pub enum ProverError {
     NodeSignatureInvalid,
     #[error("node pubkey {0} is not in the attestation trusted-key set (§13.7, §12.2)")]
     NodeKeyNotAttested(String),
-    #[error("chain block outside freshness window: block ts {block_ts}, now {now}, window {window}s")]
-    BlockTooOld { block_ts: u64, now: u64, window: u64 },
+    #[error(
+        "chain block outside freshness window: block ts {block_ts}, now {now}, window {window}s"
+    )]
+    BlockTooOld {
+        block_ts: u64,
+        now: u64,
+        window: u64,
+    },
     #[error("chain block timestamp {0} is in the future relative to now {1}")]
     BlockInFuture(u64, u64),
     #[error("block not found on trusted chain: {0}")]
@@ -46,13 +52,22 @@ mod tests {
 
     #[test]
     fn error_display_is_descriptive() {
-        let e = ProverError::ProgramHashMismatch { expected: "aa".into(), actual: "bb".into() };
+        let e = ProverError::ProgramHashMismatch {
+            expected: "aa".into(),
+            actual: "bb".into(),
+        };
         assert_eq!(e.to_string(), "program hash mismatch: expected aa, got bb");
     }
 
     #[test]
     fn root_binding_error_display() {
-        let e = ProverError::RootBindingMismatch { bound: "aa".into(), asserted: "bb".into() };
-        assert_eq!(e.to_string(), "proof is bound to roothash aa, but response asserts bb");
+        let e = ProverError::RootBindingMismatch {
+            bound: "aa".into(),
+            asserted: "bb".into(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "proof is bound to roothash aa, but response asserts bb"
+        );
     }
 }

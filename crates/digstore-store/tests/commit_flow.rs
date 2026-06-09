@@ -156,7 +156,9 @@ fn commit_generation_root_equals_recomputed_tree_root() {
     let dir = tempdir().unwrap();
     let mut store = Store::init(config(dir.path()), FixedClock::new(1)).unwrap();
     // Force several chunks across two resources so the tree has interior nodes.
-    store.stage_file("data.bin", &vec![0x5Au8; 300_000]).unwrap();
+    store
+        .stage_file("data.bin", &vec![0x5Au8; 300_000])
+        .unwrap();
     store.stage_file("note.txt", b"a small note").unwrap();
     let _returned = store.commit().unwrap();
 
@@ -166,7 +168,9 @@ fn commit_generation_root_equals_recomputed_tree_root() {
 
     // Recompute the per-resource ciphertext leaves from on-disk state.
     let manifest = GenerationManifest::read_from(
-        store.paths().generation_manifest(&persisted_state_root.to_hex()),
+        store
+            .paths()
+            .generation_manifest(&persisted_state_root.to_hex()),
     )
     .unwrap();
     // index -> ciphertext-hash, so chunk_indices can locate the stored bytes.

@@ -22,10 +22,8 @@ pub use clock::{Clock, FixedClock, SystemClock};
 pub use config::{ExecutionLimits, MAX_MEMORY_BYTES, WASM_PAGE_SIZE};
 pub use error::HostError;
 pub use random::HostRng;
-pub use session::{Session, SessionTable};
-pub use teehook::{AttestationBackend, BlsAttestationBackend, SharedBackend};
-pub use state::{HostKeys, HostState, ReturnBuffer};
 pub use runtime::{HostDeps, HostRuntime, RuntimeState};
-pub use serve_blind::{
-    request_for_retrieval_key, serve_blind, BlindServeConfig,
-};
+pub use serve_blind::{request_for_retrieval_key, serve_blind, BlindServeConfig};
+pub use session::{Session, SessionTable};
+pub use state::{HostKeys, HostState, ReturnBuffer};
+pub use teehook::{AttestationBackend, BlsAttestationBackend, SharedBackend};

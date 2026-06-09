@@ -107,8 +107,8 @@ impl HostRuntime {
 
         Module::validate(&engine, module_bytes)
             .map_err(|e| HostError::Validation(e.to_string()))?;
-        let module = Module::new(&engine, module_bytes)
-            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+        let module =
+            Module::new(&engine, module_bytes).map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
         let rng = match deps.rng_seed {
             Some(s) => HostRng::from_seed(s),

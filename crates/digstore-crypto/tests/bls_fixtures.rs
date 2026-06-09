@@ -11,7 +11,8 @@ fn fixture_set_self_verifies_and_tags_scheme() {
     assert!(!set.vectors.is_empty(), "must emit at least one vector");
     for v in &set.vectors {
         let pk = digstore_core::Bytes48(hex::decode(&v.pubkey_hex).unwrap().try_into().unwrap());
-        let sig = digstore_core::Bytes96(hex::decode(&v.signature_hex).unwrap().try_into().unwrap());
+        let sig =
+            digstore_core::Bytes96(hex::decode(&v.signature_hex).unwrap().try_into().unwrap());
         let msg = hex::decode(&v.message_hex).unwrap();
         assert!(
             digstore_crypto::bls_verify(&pk, &msg, &sig),
@@ -40,7 +41,11 @@ fn committed_bls_fixture_matches_generated() {
         assert_eq!(a.seed_hex, b.seed_hex);
         assert_eq!(a.message_hex, b.message_hex);
         assert_eq!(a.pubkey_hex, b.pubkey_hex, "pubkey drift in '{}'", a.name);
-        assert_eq!(a.signature_hex, b.signature_hex, "sig drift in '{}'", a.name);
+        assert_eq!(
+            a.signature_hex, b.signature_hex,
+            "sig drift in '{}'",
+            a.name
+        );
     }
 }
 

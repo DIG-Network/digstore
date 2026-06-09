@@ -75,17 +75,32 @@ fn build_fixture() -> (tempfile::TempDir, Fixture) {
 
 /// Fetch module bytes from any object_store (mirrors the binary's fetch path).
 async fn fetch(store: &dyn ObjectStore, key: &ObjPath) -> Vec<u8> {
-    store.get(key).await.unwrap().bytes().await.unwrap().to_vec()
+    store
+        .get(key)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec()
 }
 
 /// Serve over a given object_store and return the verbatim served bytes.
-fn serve_over_store(store: Arc<dyn ObjectStore>, key: ObjPath, fx: &Fixture, rk: [u8; 32]) -> Vec<u8> {
+fn serve_over_store(
+    store: Arc<dyn ObjectStore>,
+    key: ObjPath,
+    fx: &Fixture,
+    rk: [u8; 32],
+) -> Vec<u8> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     let bytes = rt.block_on(async { fetch(store.as_ref(), &key).await });
-    assert_eq!(bytes, fx.module, "object_store returned the exact module bytes");
+    assert_eq!(
+        bytes, fx.module,
+        "object_store returned the exact module bytes"
+    );
     let cfg = BlindServeConfig::from_seed(fx.store_id, &fx.seed);
     serve_blind(&bytes, &rk, cfg).expect("serve_blind ok")
 }
@@ -101,10 +116,7 @@ fn inmemory_serve_by_retrieval_key_verifies_to_root() {
             .build()
             .unwrap();
         rt.block_on(async {
-            store
-                .put(&key, fx.module.clone().into())
-                .await
-                .unwrap();
+            store.put(&key, fx.module.clone().into()).await.unwrap();
         });
     }
 
@@ -174,7 +186,10 @@ fn miss_returns_nonverifying_decoy() {
     let miss_rk = miss_urn.retrieval_key().0;
 
     let served = serve_over_store(store, key, &fx, miss_rk);
-    assert!(!served.is_empty(), "decoy must still be non-empty (same wire shape)");
+    assert!(
+        !served.is_empty(),
+        "decoy must still be non-empty (same wire shape)"
+    );
     let mut dec = Decoder::new(&served);
     let resp = ContentResponse::decode(&mut dec).expect("decoy decodes as ContentResponse");
 

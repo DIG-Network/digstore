@@ -36,7 +36,10 @@ fn option_none_is_zero_tag() {
 fn option_some_is_one_tag_then_value() {
     let v: Option<u32> = Some(0x01020304);
     assert_eq!(v.to_bytes(), vec![0x01, 0x01, 0x02, 0x03, 0x04]);
-    assert_eq!(Option::<u32>::from_bytes(&[0x01, 0x00, 0x00, 0x00, 0x09]).unwrap(), Some(9));
+    assert_eq!(
+        Option::<u32>::from_bytes(&[0x01, 0x00, 0x00, 0x00, 0x09]).unwrap(),
+        Some(9)
+    );
     assert_eq!(Option::<u32>::from_bytes(&[0x00]).unwrap(), None);
 }
 
@@ -50,7 +53,10 @@ fn vec_count_prefixed_be() {
     let v: Vec<u16> = vec![0x0102, 0x0304];
     // 4-byte BE count (2) then two u16.
     assert_eq!(v.to_bytes(), vec![0, 0, 0, 2, 0x01, 0x02, 0x03, 0x04]);
-    assert_eq!(Vec::<u16>::from_bytes(&[0, 0, 0, 0]).unwrap(), Vec::<u16>::new());
+    assert_eq!(
+        Vec::<u16>::from_bytes(&[0, 0, 0, 0]).unwrap(),
+        Vec::<u16>::new()
+    );
 }
 
 #[test]

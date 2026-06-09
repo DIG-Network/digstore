@@ -50,7 +50,10 @@ impl BlsAttestationBackend {
 
 impl AttestationBackend for BlsAttestationBackend {
     fn attest(&self, challenge: &[u8]) -> Result<Bytes96, HostError> {
-        Ok(digstore_crypto::bls::bls_sign(self.secret.as_ref(), challenge))
+        Ok(digstore_crypto::bls::bls_sign(
+            self.secret.as_ref(),
+            challenge,
+        ))
     }
     fn public_key(&self) -> Bytes48 {
         self.public

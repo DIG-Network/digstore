@@ -81,12 +81,19 @@ fn clone_rejects_unauthenticated_or_forged_head() {
     let f = src.path().join("doc.txt");
     std::fs::write(&f, b"content").unwrap();
     dig(&src).arg("init").assert().success();
-    dig(&src).args(["add"]).arg(&f).args(["--key", "doc"]).assert().success();
+    dig(&src)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "doc"])
+        .assert()
+        .success();
     dig(&src).args(["commit"]).assert().success();
 
     let (store_id, root) = store_id_and_root(&src);
     let module = std::fs::read(
-        src.path().join("modules").join(format!("{store_id}-{root}.wasm")),
+        src.path()
+            .join("modules")
+            .join(format!("{store_id}-{root}.wasm")),
     )
     .unwrap();
     let pk = host_pubkey(&src);

@@ -20,7 +20,9 @@ pub fn build_public_input(nonce: &[u8; 32], block: &ChiaBlockRef) -> Vec<u8> {
 /// Inverse of [`build_public_input`]. Rejects under- AND over-length input.
 pub fn parse_public_input(bytes: &[u8]) -> Result<([u8; 32], ChiaBlockRef)> {
     if bytes.len() < NONCE_LEN {
-        return Err(ProverError::Codec("public_input too short for nonce".into()));
+        return Err(ProverError::Codec(
+            "public_input too short for nonce".into(),
+        ));
     }
     let mut nonce = [0u8; 32];
     nonce.copy_from_slice(&bytes[..NONCE_LEN]);
@@ -50,7 +52,11 @@ mod tests {
     use digstore_core::Bytes32;
 
     fn sample_block() -> ChiaBlockRef {
-        ChiaBlockRef { header_hash: Bytes32([0xABu8; 32]), height: 5_000_000, timestamp: 1_900_000_000 }
+        ChiaBlockRef {
+            header_hash: Bytes32([0xABu8; 32]),
+            height: 5_000_000,
+            timestamp: 1_900_000_000,
+        }
     }
 
     #[test]
@@ -73,7 +79,10 @@ mod tests {
     #[test]
     fn parse_rejects_short_input() {
         let short = vec![0u8; 10];
-        assert!(matches!(parse_public_input(&short), Err(ProverError::Codec(_))));
+        assert!(matches!(
+            parse_public_input(&short),
+            Err(ProverError::Codec(_))
+        ));
     }
 
     #[test]
@@ -81,7 +90,10 @@ mod tests {
         let nonce = [0x11u8; 32];
         let mut pi = build_public_input(&nonce, &sample_block());
         pi.push(0xFF); // 77 bytes — one trailing byte
-        assert!(matches!(parse_public_input(&pi), Err(ProverError::Codec(_))));
+        assert!(matches!(
+            parse_public_input(&pi),
+            Err(ProverError::Codec(_))
+        ));
     }
 
     #[test]
