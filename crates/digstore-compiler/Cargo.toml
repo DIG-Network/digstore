@@ -21,3 +21,6 @@ wat = "1"
 wasmtime = "45"
 wasmparser = "0.221"
 wat = "1"
+digstore-host = { path = "../digstore-host" }
+digstore-prover = { path = "../digstore-prover" }
+digstore-crypto = { path = "../digstore-crypto" }

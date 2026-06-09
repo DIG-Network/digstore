@@ -1,4 +1,6 @@
-use digstore_compiler::{baked_template_bytes, inject_data_section, load_template, REQUIRED_EXPORTS};
+use digstore_compiler::{
+    baked_template_bytes, inject_data_section, load_template, REQUIRED_EXPORTS,
+};
 use wasmparser::{Parser, Payload, Validator, WasmFeatures};
 
 /// Collect (section_id, payload_bytes) for every TOP-LEVEL section, in order,
@@ -40,7 +42,10 @@ fn non_data_sections_are_byte_identical_after_injection() {
         .into_iter()
         .filter(|(id, _)| *id != 5)
         .collect();
-    assert_eq!(before, after, "non-Data, non-Memory sections must be byte-identical");
+    assert_eq!(
+        before, after,
+        "non-Data, non-Memory sections must be byte-identical"
+    );
 }
 
 #[test]
@@ -82,6 +87,50 @@ fn injected_data_blob_is_present_in_data_section() {
 }
 
 #[test]
+fn existing_data_segments_are_preserved_alongside_the_injected_blob() {
+    use wasmparser::{Parser, Payload};
+    // A template with its OWN data segment (e.g. the guest's .rodata) at offset
+    // 1024. Injecting the DIGS blob at a DIFFERENT offset must NOT drop the
+    // template's segment — a real module needs its own static data to run.
+    let watsrc = r#"(module
+      (memory (export "memory") 4 256)
+      (func (export "get_store_id") (result i64) (i64.const 0))
+      (func (export "get_current_roothash") (result i64) (i64.const 0))
+      (func (export "get_roothash_history") (result i64) (i64.const 0))
+      (func (export "get_public_key") (result i64) (i64.const 0))
+      (func (export "get_metadata") (result i64) (i64.const 0))
+      (func (export "get_authentication_info") (result i64) (i64.const 0))
+      (func (export "get_content") (param i32 i32) (result i64) (i64.const 0))
+      (func (export "get_proof") (param i32 i32) (result i64) (i64.const 0))
+      (func (export "alloc") (param i32) (result i32) (i32.const 0))
+      (func (export "dealloc") (param i32 i32))
+      (func (export "init") (result i32) (i32.const 0))
+      (data (i32.const 1024) "GUEST-RODATA-MARKER"))"#;
+    let template = wat::parse_str(watsrc).unwrap();
+    let blob = vec![0xABu8; 32];
+    // Inject at a high offset so it does not overlap the template's 1024 segment.
+    let out = inject_data_section(&template, &blob, 1_048_576).expect("inject ok");
+
+    let mut saw_rodata = false;
+    let mut saw_blob = false;
+    for payload in Parser::new(0).parse_all(&out) {
+        if let Payload::DataSection(reader) = payload.unwrap() {
+            for seg in reader {
+                let data = seg.unwrap().data;
+                if data == b"GUEST-RODATA-MARKER" {
+                    saw_rodata = true;
+                }
+                if data == blob.as_slice() {
+                    saw_blob = true;
+                }
+            }
+        }
+    }
+    assert!(saw_rodata, "template's own data segment must be preserved");
+    assert!(saw_blob, "injected DIGS blob must be present");
+}
+
+#[test]
 fn large_blob_bumps_memory_min_pages_and_stays_valid() {
     let template = baked_template_bytes().to_vec();
     // Offset 65536 + 1 MiB blob => needs ceil((65536+1048576)/65536) = 17 pages
@@ -102,5 +151,8 @@ fn large_blob_bumps_memory_min_pages_and_stays_valid() {
             }
         }
     }
-    assert!(min_pages >= 17, "memory min pages not bumped, got {min_pages}");
+    assert!(
+        min_pages >= 17,
+        "memory min pages not bumped, got {min_pages}"
+    );
 }

@@ -20,21 +20,84 @@ pub fn obfuscate(module_bytes: &[u8]) -> Result<Vec<u8>> {
         let payload = payload.map_err(|e| CompilerError::Validation(e.to_string()))?;
         match payload {
             Payload::CodeSectionStart { range, .. } => {
-                module.section(&RawSection { id: 10, data: &module_bytes[range] });
+                module.section(&RawSection {
+                    id: 10,
+                    data: &module_bytes[range],
+                });
             }
             Payload::CodeSectionEntry(_) => {} // part of the code-section range above
-            Payload::TypeSection(r) => { module.section(&RawSection { id: 1, data: &module_bytes[r.range()] }); }
-            Payload::ImportSection(r) => { module.section(&RawSection { id: 2, data: &module_bytes[r.range()] }); }
-            Payload::FunctionSection(r) => { module.section(&RawSection { id: 3, data: &module_bytes[r.range()] }); }
-            Payload::TableSection(r) => { module.section(&RawSection { id: 4, data: &module_bytes[r.range()] }); }
-            Payload::MemorySection(r) => { module.section(&RawSection { id: 5, data: &module_bytes[r.range()] }); }
-            Payload::GlobalSection(r) => { module.section(&RawSection { id: 6, data: &module_bytes[r.range()] }); }
-            Payload::ExportSection(r) => { module.section(&RawSection { id: 7, data: &module_bytes[r.range()] }); }
-            Payload::StartSection { range, .. } => { module.section(&RawSection { id: 8, data: &module_bytes[range] }); }
-            Payload::ElementSection(r) => { module.section(&RawSection { id: 9, data: &module_bytes[r.range()] }); }
-            Payload::DataCountSection { range, .. } => { module.section(&RawSection { id: 12, data: &module_bytes[range] }); }
-            Payload::DataSection(r) => { module.section(&RawSection { id: 11, data: &module_bytes[r.range()] }); }
-            Payload::CustomSection(r) => { module.section(&RawSection { id: 0, data: &module_bytes[r.range()] }); }
+            Payload::TypeSection(r) => {
+                module.section(&RawSection {
+                    id: 1,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::ImportSection(r) => {
+                module.section(&RawSection {
+                    id: 2,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::FunctionSection(r) => {
+                module.section(&RawSection {
+                    id: 3,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::TableSection(r) => {
+                module.section(&RawSection {
+                    id: 4,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::MemorySection(r) => {
+                module.section(&RawSection {
+                    id: 5,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::GlobalSection(r) => {
+                module.section(&RawSection {
+                    id: 6,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::ExportSection(r) => {
+                module.section(&RawSection {
+                    id: 7,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::StartSection { range, .. } => {
+                module.section(&RawSection {
+                    id: 8,
+                    data: &module_bytes[range],
+                });
+            }
+            Payload::ElementSection(r) => {
+                module.section(&RawSection {
+                    id: 9,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::DataCountSection { range, .. } => {
+                module.section(&RawSection {
+                    id: 12,
+                    data: &module_bytes[range],
+                });
+            }
+            Payload::DataSection(r) => {
+                module.section(&RawSection {
+                    id: 11,
+                    data: &module_bytes[r.range()],
+                });
+            }
+            Payload::CustomSection(r) => {
+                module.section(&RawSection {
+                    id: 0,
+                    data: &module_bytes[r.range()],
+                });
+            }
             _ => {}
         }
     }
@@ -74,7 +137,10 @@ mod tests {
         let m = template();
         let a = obfuscate(&m).expect("a");
         let b = obfuscate(&m).expect("b");
-        assert_eq!(a, b, "obfuscation must be byte-identical for identical input");
+        assert_eq!(
+            a, b,
+            "obfuscation must be byte-identical for identical input"
+        );
     }
 
     #[test]

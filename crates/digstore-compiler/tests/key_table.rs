@@ -66,5 +66,8 @@ fn verify_against_flags_out_of_range_index() {
     assert!(table.verify_against(index.len() as u32).is_ok());
     // Pretend there are fewer chunks than referenced -> MissingChunk(2).
     let err = table.verify_against(2).unwrap_err();
-    assert!(matches!(err, digstore_compiler::CompilerError::MissingChunk(2)));
+    assert!(matches!(
+        err,
+        digstore_compiler::CompilerError::MissingChunk(2)
+    ));
 }

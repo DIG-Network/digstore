@@ -11,9 +11,7 @@
 
 mod common;
 
-use common::{
-    chunk, resource_key, sample_manifest, store_id, FakeGeneration, ResourceSpec,
-};
+use common::{chunk, resource_key, sample_manifest, store_id, FakeGeneration, ResourceSpec};
 use digstore_compiler::{Compiler, CompilerConfig};
 use digstore_core::{Bytes32, Bytes48, TrustedHostKey};
 
@@ -63,9 +61,7 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || haystack.len() < needle.len() {
         return false;
     }
-    haystack
-        .windows(needle.len())
-        .any(|w| w == needle)
+    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 #[test]

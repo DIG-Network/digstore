@@ -90,14 +90,23 @@ pub fn encode_data_section(i: &DataSectionInputs) -> Vec<u8> {
     let sections: Vec<(u16, Vec<u8>)> = vec![
         (SectionId::StoreId as u16, i.store_id.0.to_vec()),
         (SectionId::CurrentRoot as u16, i.current_root.0.to_vec()),
-        (SectionId::RootHistory as u16, encode_root_history(&i.root_history)),
+        (
+            SectionId::RootHistory as u16,
+            encode_root_history(&i.root_history),
+        ),
         (SectionId::PublicKey as u16, i.store_pubkey.0.to_vec()),
-        (SectionId::TrustedKeys as u16, encode_trusted_keys(&i.trusted_keys)),
+        (
+            SectionId::TrustedKeys as u16,
+            encode_trusted_keys(&i.trusted_keys),
+        ),
         (SectionId::Metadata as u16, i.manifest.to_bytes()),
         (SectionId::AuthInfo as u16, i.auth_info.to_bytes()),
         (SectionId::KeyTable as u16, encode_key_table(&i.key_table)),
         (SectionId::ChunkPool as u16, encode_chunk_pool(&pool_refs)),
-        (SectionId::MerkleNodes as u16, encode_merkle_nodes(&i.merkle_leaves)),
+        (
+            SectionId::MerkleNodes as u16,
+            encode_merkle_nodes(&i.merkle_leaves),
+        ),
         (SectionId::Filler as u16, i.filler.clone()),
     ];
 
@@ -201,7 +210,10 @@ mod tests {
             view.section(SectionId::CurrentRoot).unwrap(),
             &inp.current_root.0
         );
-        assert_eq!(view.section(SectionId::PublicKey).unwrap(), &inp.store_pubkey.0);
+        assert_eq!(
+            view.section(SectionId::PublicKey).unwrap(),
+            &inp.store_pubkey.0
+        );
 
         // RootHistory decodes as Vec<Bytes32>.
         let rh = view.section(SectionId::RootHistory).unwrap();

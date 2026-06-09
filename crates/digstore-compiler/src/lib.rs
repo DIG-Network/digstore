@@ -40,17 +40,19 @@ mod obfuscate;
 mod pipeline;
 mod template;
 
-pub use config::{CompilerConfig, CompilerStats};
-pub use error::{CompilerError, Result};
-pub use chunk_index::ChunkIndex;
-pub use key_table::{build_chunk_index_and_key_table, GenerationView, KeyTable, ResourceView};
-pub use filler::deterministic_filler;
-pub use data_section::{encode_data_section, DataSectionInputs};
-pub use template::{baked_template_bytes, load_template, Template, MAX_MEMORY_PAGES, REQUIRED_EXPORTS};
-pub use inject::inject_data_section;
-pub use obfuscate::obfuscate;
 pub use atomic_write::{atomic_write_module, output_filename};
+pub use chunk_index::ChunkIndex;
+pub use config::{CompilerConfig, CompilerStats};
+pub use data_section::{encode_data_section, DataSectionInputs};
+pub use error::{CompilerError, Result};
+pub use filler::deterministic_filler;
+pub use inject::inject_data_section;
+pub use key_table::{build_chunk_index_and_key_table, GenerationView, KeyTable, ResourceView};
+pub use obfuscate::obfuscate;
 pub use pipeline::{CompileOutcome, Compiler, DATA_SECTION_MEM_OFFSET};
+pub use template::{
+    baked_template_bytes, load_template, Template, MAX_MEMORY_PAGES, REQUIRED_EXPORTS,
+};
 
 // Re-export the canonical core result/stats so consumers reference one home (C6).
 pub use digstore_core::{CompilationResult, CompilationStats};
