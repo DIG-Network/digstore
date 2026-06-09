@@ -38,20 +38,17 @@ fn stream(seed: [u8; 32], len: usize) -> Vec<u8> {
     buf
 }
 
-/// Logarithmic size in [MIN_SIZE, MAX_SIZE], deterministic per retrieval key.
+/// Maps a 64-bit seed word to its log-spaced size in `[MIN_SIZE, MAX_SIZE]`.
 ///
-/// Maps an 8-byte seed fraction through OCTAVES log-spaced bands: the high bits
-/// pick the octave (size doubles per octave), the low bits pick a uniform offset
-/// inside that octave's [2^k, 2^(k+1)) window. The result spreads across the
-/// whole band rather than collapsing to a few values.
-pub fn decoy_size(retrieval_key: &Bytes32) -> usize {
-    let s = seed(retrieval_key, b"digstore-decoy-size-v1");
-    let mut raw = [0u8; 8];
-    raw.copy_from_slice(&s[0..8]);
-    let v = u64::from_be_bytes(raw);
-
-    // octave in [0, OCTAVES); within-octave fraction taken from the low 32 bits.
-    let octave = (v >> 40) % OCTAVES; // top bits choose the octave
+/// The top 3 bits (`v >> 61`) choose the octave (size doubles per octave), and
+/// the low 32 bits choose a uniform offset inside that octave's
+/// `[2^k, 2^(k+1))` window. With `OCTAVES == 8` the top 3 bits cover exactly
+/// the octave range, so no seed bits are dead: bits 32..=60 are reserved/unused
+/// only because they fall between the offset's low 32 bits and the octave's top
+/// 3 bits, which is intentional headroom rather than an addressing gap.
+fn size_of(v: u64) -> usize {
+    // octave in [0, OCTAVES); top 3 bits choose the octave.
+    let octave = (v >> 61) % OCTAVES; // top bits choose the octave
     let frac = v & 0xFFFF_FFFF; // low 32 bits choose the offset
 
     let band_lo = (MIN_SIZE as u64) << octave; // 2^octave * MIN
@@ -60,6 +57,21 @@ pub fn decoy_size(retrieval_key: &Bytes32) -> usize {
     let offset = if span == 0 { 0 } else { (frac * span) >> 32 };
     let size = (band_lo + offset) as usize;
     size.clamp(MIN_SIZE, MAX_SIZE)
+}
+
+/// Logarithmic size in [MIN_SIZE, MAX_SIZE], deterministic per retrieval key.
+///
+/// Maps an 8-byte seed fraction through OCTAVES log-spaced bands via
+/// [`size_of`]: the top 3 bits pick the octave (size doubles per octave), the
+/// low 32 bits pick a uniform offset inside that octave's `[2^k, 2^(k+1))`
+/// window. The result spreads across the whole band rather than collapsing to a
+/// few values.
+pub fn decoy_size(retrieval_key: &Bytes32) -> usize {
+    let s = seed(retrieval_key, b"digstore-decoy-size-v1");
+    let mut raw = [0u8; 8];
+    raw.copy_from_slice(&s[0..8]);
+    let v = u64::from_be_bytes(raw);
+    size_of(v)
 }
 
 /// Deterministic decoy ciphertext of `decoy_size` bytes.
@@ -92,4 +104,48 @@ pub fn decoy_content_response(retrieval_key: &Bytes32, root: &Bytes32) -> Conten
         root: *root,
     };
     ContentResponse { ciphertext, merkle_proof, roothash: *root }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// §14.2 "top bits choose the octave": the octave band of the size is a
+    /// function of the TOP 3 bits of the seed word (`v >> 61`), not of any
+    /// middle bits. This pins the actual bit layout the doc comment describes
+    /// and rules out the dead-bits regime where bits 32..=39 carried signal.
+    #[test]
+    fn octave_uses_top_three_bits() {
+        // For each of the 8 octaves, the band floor must be MIN_SIZE << octave.
+        for octave in 0..OCTAVES {
+            // Place `octave` in the top 3 bits; zero everywhere else => offset 0
+            // => size lands exactly on the band floor.
+            let v = octave << 61;
+            let expected_floor = (MIN_SIZE as u64) << octave;
+            assert_eq!(
+                size_of(v) as u64,
+                expected_floor,
+                "top 3 bits = {octave} must select band floor {expected_floor}"
+            );
+        }
+    }
+
+    /// The bits between the offset (low 32) and the octave (top 3) carry no
+    /// signal: flipping any of bits 32..=60 while holding the top 3 bits and the
+    /// low 32 bits fixed must NOT change the size. Under the old `v >> 40`
+    /// selector, flipping bits 40..=42 changed the octave; this asserts it does
+    /// not anymore.
+    #[test]
+    fn middle_bits_are_dead() {
+        let base = 0u64; // octave 0, offset 0
+        let size_base = size_of(base);
+        for bit in 32..=60u32 {
+            let v = base | (1u64 << bit);
+            assert_eq!(
+                size_of(v),
+                size_base,
+                "flipping bit {bit} must not change the size (no middle-bit signal)"
+            );
+        }
+    }
 }
