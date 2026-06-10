@@ -46,7 +46,7 @@ export function TitleBar({ chrome }) {
       <div className="titlebar" data-tauri-drag-region>
         {title}
         <div className="tb-spacer"></div>
-        <div className="ctrls win" data-tauri-no-drag>
+        <div className="ctrls winchrome" data-tauri-no-drag>
           <span className="c" onClick={() => winOp("min")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M5 12h14" />
