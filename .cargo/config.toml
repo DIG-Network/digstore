@@ -1,0 +1,15 @@
+# Workspace cargo config.
+#
+# Test/CI environment only: shrink the compiler's uniform-blob budget so test
+# processes don't each pad every module to the full 128 MiB `FIXED_BLOB_LEN`.
+# This makes `CompilerConfig::default()` use a 1 MiB uniform blob, keeping the
+# test suite fast and keeping commit-compiling tests (and the in-memory remote
+# backend's push cap) within bounds.
+#
+# NO production impact: a shipped `cargo build --release` binary reads the real
+# environment at runtime, where `DIGSTORE_UNIFORM_BLOB_LEN` is unset, so the
+# default resolves to the full 128 MiB budget. Tests that must validate the
+# full production budget (e.g. the near-cap ceiling validator) set
+# `uniform_blob_len`/`FIXED_BLOB_LEN` EXPLICITLY rather than relying on the env.
+[env]
+DIGSTORE_UNIFORM_BLOB_LEN = "1048576"
