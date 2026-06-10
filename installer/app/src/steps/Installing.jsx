@@ -29,7 +29,7 @@ export function Installing({ pct, lines, nowFile, error }) {
             <div className="ln" key={i} dangerouslySetInnerHTML={{ __html: l }} />
           ))}
           {!done && !error && (
-            <div className="ln">
+            <div className="ln caret-line">
               <span className="ac">▍</span>
             </div>
           )}

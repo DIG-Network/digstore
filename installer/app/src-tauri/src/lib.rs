@@ -37,6 +37,16 @@ fn installer_meta(app: AppHandle) -> Meta {
     Meta { version, compiler: "1.0.0".to_string() }
 }
 
+/// Returns the version of the **bundled `digstore` CLI** that this installer
+/// will install — i.e. the semver printed by `digstore --version` from the
+/// app's resources. This is the version the badge should display (distinct
+/// from the installer app's own version). Falls back to "0.3.0" if the binary
+/// can't be queried (e.g. missing in a dev run) so the UI never blanks out.
+#[tauri::command]
+fn bundled_digstore_version(app: AppHandle) -> String {
+    bundled_version(&app).unwrap_or_else(|| "0.3.0".to_string())
+}
+
 fn bundled_version(app: &AppHandle) -> Option<String> {
     let res = app.path().resource_dir().ok()?;
     let bin = res.join("bin").join(install::bin_name());
@@ -130,6 +140,7 @@ pub fn run() {
         .manage(InstallState { cancelled: Arc::new(AtomicBool::new(false)) })
         .invoke_handler(tauri::generate_handler![
             installer_meta,
+            bundled_digstore_version,
             default_install_path,
             run_install,
             cancel_install,
