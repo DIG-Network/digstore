@@ -48,7 +48,7 @@ pub mod serving {
 pub use config::CompilationResult;
 pub use config::{
     ChunkerConfig, CompilationStats, CompilerError, Generation, GenerationId, GenerationState,
-    HostImportsConfig, SecretSalt, StoreConfig, TrustedHostKey, Visibility,
+    HostImportsConfig, SecretSalt, StoreConfig, TrustedHostKey, Visibility, MAX_STORE_BYTES,
 };
 pub use keytable::{KeyTableEntry, PathWalk};
 pub use manifest::{Author, MetadataManifest};

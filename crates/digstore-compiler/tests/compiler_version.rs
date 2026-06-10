@@ -35,6 +35,8 @@ fn compile_outcome_records_compiler_version() {
         obfuscate: false,
         optimize: false,
         template_override: None,
+        // Small uniform budget keeps the emitted module tiny/fast.
+        uniform_blob_len: 64 * 1024,
     };
     let outcome = Compiler::compile(
         &cfg,

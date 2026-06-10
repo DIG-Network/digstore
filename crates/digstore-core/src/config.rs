@@ -4,6 +4,14 @@ use crate::bytes::Bytes32;
 use crate::merkle::MerkleTree;
 use alloc::string::String;
 
+/// Per-store hard cap on staged plaintext content (§3). 128 MB, decimal.
+///
+/// Single source of truth: the CLI enforces it at stage/commit, the compiler
+/// uses it as the uniform-filler budget (`FIXED_BLOB_LEN` must cover a max-cap
+/// store's ciphertext + key table + merkle + header), and the host derives its
+/// memory bound from the resulting module size.
+pub const MAX_STORE_BYTES: u64 = 128_000_000;
+
 #[cfg(feature = "std")]
 use std::path::PathBuf;
 

@@ -180,6 +180,9 @@ fn real_compiled_module_serves_itself_with_verifying_proof() {
         obfuscate: false,
         optimize: false,
         template_override: Some(guest),
+        // Small uniform budget keeps these D6 self-serve modules fast (the filler
+        // is a separate section; it never changes the served bytes or root).
+        uniform_blob_len: 1024 * 1024,
     };
     let store_pubkey = Bytes48([0xCDu8; 48]);
     let trusted = common::trusted_keys();
@@ -293,6 +296,9 @@ fn real_compiled_module_miss_returns_decoy_failing_the_client_proof_gate() {
         obfuscate: false,
         optimize: false,
         template_override: Some(guest),
+        // Small uniform budget keeps these D6 self-serve modules fast (the filler
+        // is a separate section; it never changes the served bytes or root).
+        uniform_blob_len: 1024 * 1024,
     };
     let outcome = Compiler::compile(
         &cfg,
@@ -388,6 +394,7 @@ fn obfuscation_is_behavior_preserving_identical_served_bytes_on_and_off() {
             obfuscate,
             optimize: false,
             template_override: Some(guest.clone()),
+            uniform_blob_len: 1024 * 1024,
         };
         let outcome = Compiler::compile(
             &cfg,
@@ -484,6 +491,7 @@ fn obfuscated_real_module_still_serves_itself_with_verifying_proof() {
         obfuscate: true, // <-- exercise the obfuscation pass on a real module
         optimize: false,
         template_override: Some(guest),
+        uniform_blob_len: 1024 * 1024,
     };
     let outcome = Compiler::compile(
         &cfg,

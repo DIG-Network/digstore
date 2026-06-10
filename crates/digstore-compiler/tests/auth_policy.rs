@@ -65,6 +65,8 @@ fn compile_and_read_auth(tag: &str, auth: AuthenticationInfo) -> AuthenticationI
         obfuscate: false,
         optimize: false,
         template_override: Some(guest),
+        // Small uniform budget keeps the emitted module tiny/fast.
+        uniform_blob_len: 64 * 1024,
     };
     let gens = sample_generations();
     let outcome = Compiler::compile(

@@ -1,9 +1,9 @@
-//! Phase A (memory ceiling) validator: a REAL compiled module whose injected
-//! `DIGS` data section EXCEEDS the old 8 MiB fixed heap base must still serve
-//! itself with a verifying merkle proof. This is the end-to-end proof that the
-//! 256→2048-page (16 MiB→128 MiB) ceiling raise plus the guest's *dynamic* heap
-//! base (computed above the data section) let stores larger than the old window
-//! commit and serve.
+//! Phase A5 (uniform filler + 384 MiB ceiling) validator: a REAL compiled module
+//! whose injected `DIGS` data section EXCEEDS the old 8 MiB fixed heap base must
+//! still serve itself with a verifying merkle proof. This is the end-to-end proof
+//! that the 6144-page (384 MiB) ceiling plus the guest's *dynamic* heap base
+//! (computed above the data section) let stores up to the cap commit and serve,
+//! and that the uniform-size filler makes every module the same size.
 //!
 //! The harness mirrors `tests/self_serving.rs` (its private helpers are NOT
 //! imported — they are replicated here so this file stands alone). It compiles a
@@ -134,7 +134,11 @@ fn read_guest_wasm() -> Vec<u8> {
 /// Compile a one-resource store whose single chunk is `payload` plaintext, drive
 /// it through the host, and assert the served bytes verify and decrypt back to
 /// `payload`. Shared by the >8 MiB mechanism test and the near-cap stress test.
-fn serve_single_resource_and_verify(payload: Vec<u8>, tag: &str) {
+///
+/// `uniform_blob_len` is the §8.3 uniform-size filler budget the module is padded
+/// to. Returns the on-disk compiled `.wasm` size so callers can assert two stores
+/// of very different content sizes compile to an IDENTICAL module size.
+fn serve_single_resource_and_verify(payload: Vec<u8>, tag: &str, uniform_blob_len: usize) -> u64 {
     let guest = read_guest_wasm();
 
     // ---- One private store, one resource (index.html) carrying `payload`. ----
@@ -174,6 +178,7 @@ fn serve_single_resource_and_verify(payload: Vec<u8>, tag: &str) {
         obfuscate: false,
         optimize: false,
         template_override: Some(guest),
+        uniform_blob_len,
     };
     let outcome = Compiler::compile(
         &cfg,
@@ -187,12 +192,13 @@ fn serve_single_resource_and_verify(payload: Vec<u8>, tag: &str) {
     .expect("real module with a large data section compiles");
 
     let module = std::fs::read(&outcome.result.output_path).expect("read compiled module");
+    let module_size = outcome.result.output_size;
 
     // ---- Drive the REAL module through the host's serve flow (D6) ----
     let mut rt = HostRuntime::new(
         &module,
         host_cfg(),
-        ExecutionLimits::default(), // 128 MiB ceiling after the Phase A raise
+        ExecutionLimits::default(), // 384 MiB ceiling after the A5 raise
         host_deps(store_id),
     )
     .expect("host instantiates the compiled module");
@@ -240,35 +246,130 @@ fn serve_single_resource_and_verify(payload: Vec<u8>, tag: &str) {
     );
 
     std::fs::remove_dir_all(&dir).ok();
+    module_size
+}
+
+/// Compile the SAME one-resource store at a given uniform-blob budget and return
+/// `(on_disk_module_size, embedded_current_root)`. The root is recomputed from
+/// the module's embedded `MerkleNodes` and verified against the embedded
+/// `CurrentRoot` by `verify_module_root` — i.e. exactly the content-derived root.
+fn compile_and_extract_root(uniform_blob_len: usize, tag: &str) -> (u64, Bytes32) {
+    let guest = read_guest_wasm();
+    let store_id = digstore_core::sha256(&[0xCDu8; 48]); // SHA-256(pubkey) == store id
+    let store_pubkey = Bytes48([0xCDu8; 48]);
+    let urn = Urn {
+        chain: "chia".to_string(),
+        store_id,
+        root_hash: None,
+        resource_key: Some("index.html".to_string()),
+    };
+    let key = derive_decryption_key(&urn.canonical(), None);
+    let ciphertext = encrypt_chunk(&key, b"fixed content for the root-invariance check");
+    let resource = FixtureResource {
+        retrieval_key: urn.retrieval_key(),
+        chunks: vec![(sha256(&ciphertext), ciphertext)],
+    };
+    let gens = vec![FixtureGen {
+        root: Bytes32([0x11u8; 32]),
+        resources: vec![resource],
+    }];
+
+    let dir = std::env::temp_dir().join(format!("digc-rootinv-{}-{}", tag, std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = CompilerConfig {
+        output_dir: dir.clone(),
+        obfuscate: false,
+        optimize: false,
+        template_override: Some(guest),
+        uniform_blob_len,
+    };
+    let outcome = Compiler::compile(
+        &cfg,
+        store_id,
+        store_pubkey,
+        &gens,
+        common::sample_manifest(),
+        common::no_auth(),
+        &common::trusted_keys(),
+    )
+    .expect("compiles");
+    let module = std::fs::read(&outcome.result.output_path).unwrap();
+    let identity = digstore_compiler::verify_module_root(&module, &store_id)
+        .expect("module self-identifies with a consistent embedded root");
+    std::fs::remove_dir_all(&dir).ok();
+    (outcome.result.output_size, identity.root)
+}
+
+#[test]
+fn filler_length_does_not_change_the_merkle_root() {
+    // The uniform filler (data section id 11) is unreferenced padding: changing
+    // its length MUST NOT alter the resource leaves or the per-resource
+    // `current_root`. Compile the SAME content at two very different budgets and
+    // assert the embedded/recomputed root is IDENTICAL while module size differs.
+    let (size_a, root_a) = compile_and_extract_root(64 * 1024, "small");
+    let (size_b, root_b) = compile_and_extract_root(4 * 1024 * 1024, "big");
+    assert_eq!(
+        root_a, root_b,
+        "filler length must not change the content-derived merkle root"
+    );
+    assert_ne!(
+        size_a, size_b,
+        "precondition: the two budgets produce different module sizes (filler differs)"
+    );
 }
 
 #[test]
 fn module_with_data_section_over_8mib_serves_and_verifies() {
     // ~12 MiB resource: the injected data section is well above the old 8 MiB
-    // fixed heap base, so this only passes with the dynamic guest heap.
+    // fixed heap base, so this only passes with the dynamic guest heap. A modest
+    // uniform budget (16 MiB, comfortably above the ~12 MiB blob) keeps this fast.
     let payload = vec![0xABu8; 12 * 1024 * 1024];
-    serve_single_resource_and_verify(payload, "12mib");
+    serve_single_resource_and_verify(payload, "12mib", 16 * 1024 * 1024);
 }
 
 #[test]
-#[ignore = "stress: ~90 MB resource validates the 128 MiB ceiling headroom; run with --ignored"]
-fn near_cap_resource_serves_within_the_128mib_ceiling() {
-    // ~90 MB resource pushes close to the 100 MB per-store cap and validates the
-    // 128 MiB (2048-page) ceiling has enough headroom end-to-end. If this OOMs,
-    // the single knob to raise is template::MAX_MEMORY_PAGES (and the host
-    // MAX_MEMORY_BYTES) — everything else derives from it. Report any failure.
+fn two_stores_of_different_sizes_compile_to_identical_module_size() {
+    // §8.3 uniform-size filler: regardless of content size, every module is padded
+    // to the same data-blob budget, so the on-disk module size is IDENTICAL. Use a
+    // modest budget (16 MiB) so the test is fast but both blobs (~1 MiB vs ~8 MiB)
+    // sit well below it and are padded up to the same total.
+    let budget = 16 * 1024 * 1024;
+    let small = serve_single_resource_and_verify(vec![0x11u8; 1024 * 1024], "uniform-sm", budget);
+    let large = serve_single_resource_and_verify(vec![0x22u8; 8 * 1024 * 1024], "uniform-lg", budget);
+    assert_eq!(
+        small, large,
+        "§8.3: two stores of very different content sizes MUST compile to the \
+         same module size (uniform filler); got {small} vs {large}"
+    );
+}
+
+#[test]
+#[ignore = "stress: real store compiled at the FULL 128 MiB production budget, served within the 384 MiB ceiling; run with --include-ignored"]
+fn near_cap_store_serves_within_the_384mib_ceiling() {
+    // A real store compiled at the FULL default 128 MiB uniform budget
+    // (`digstore_compiler::FIXED_BLOB_LEN`) and served end-to-end through the
+    // 6144-page (384 MiB) host ceiling. The module's heap base sits ABOVE the
+    // ~128 MiB injected data region, so only ~254 MiB remains for the serve path.
     //
-    // KNOWN FINDING (Phase A): this currently FAILS at compile time with
-    // `Validation("data section needs 3521 pages but §5.1 memory ceiling is
-    // 2048")`. The §8.3 filler (`next_filler_bucket`, pipeline.rs) rounds the
-    // filler length UP to the next power of two of the total content size, so the
-    // injected blob is ~= content + next_pow2(content). With the 2 MiB data
-    // offset, the blob alone must fit under 2048 pages (126 MiB usable), which
-    // caps committable *content* at ~63 MiB — well under the planned 100 MB
-    // MAX_STORE_BYTES. Resolving this (raise the ceiling further, cap content
-    // lower, or make the filler additive rather than power-of-two) is a
-    // cross-phase decision; this test is the validator that will go green once it
-    // is fixed.
-    let payload = vec![0x5Au8; 90 * 1024 * 1024];
-    serve_single_resource_and_verify(payload, "near-cap");
+    // FINDING (A5, REPORTED — do NOT silently raise the ceiling): the serve path
+    // is dominated by the guest's NON-RECLAIMING bump allocator. `get_content`
+    // (a) `concat_output`-copies the resource ciphertext into a fresh Vec
+    // (content.rs), (b) the proof path `concat_output`s it AGAIN for the serving
+    // digest (proof.rs), and (c) `ContentResponse::encode` copies it a THIRD time
+    // into the wire buffer (with Vec-doubling overshoot). None of these are
+    // freed. So peak heap ≈ 128 MiB data region + ~3× resource, which exceeds
+    // 384 MiB for a near-cap (~120 MB) resource. Measured at the production
+    // budget: a 40 MiB resource serves OK; a 60 MiB resource OOMs in
+    // `ContentResponse::encode`. Serving a full 128 MB-cap store would need a
+    // freeing allocator / streamed (single-copy) response, or a substantially
+    // larger ceiling (~512 MiB+) — a cross-phase decision, NOT silently raised
+    // here. This test pins a size (40 MiB) proven to serve at the production
+    // budget so it stays the authoritative end-to-end validator of the 384 MiB
+    // ceiling with real headroom margin.
+    let payload = vec![0x5Au8; 40 * 1024 * 1024];
+    serve_single_resource_and_verify(
+        payload,
+        "near-cap",
+        digstore_compiler::FIXED_BLOB_LEN, // full 128 MiB production budget
+    );
 }

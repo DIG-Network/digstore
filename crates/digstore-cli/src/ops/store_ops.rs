@@ -742,6 +742,10 @@ fn compile_module(
         // `HostRuntime::serve_content` (NOT the stub template). The CLI embeds the
         // guest wasm at build time (see `build.rs` / `serve::embedded_guest_wasm`).
         template_override: Some(crate::ops::serve::embedded_guest_wasm().to_vec()),
+        // §8.3 uniform-size filler budget: production pads to the 128 MiB default
+        // (or the DIGSTORE_UNIFORM_BLOB_LEN override) so every store is the same
+        // module size.
+        ..CompilerConfig::default()
     };
     let outcome = Compiler::compile(
         &ccfg,

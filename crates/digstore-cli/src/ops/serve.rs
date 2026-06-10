@@ -288,7 +288,7 @@ pub fn serve_proof(
         })
         .unwrap_or_default();
     let chain = digstore_prover::MockChainSource::new(vec![block.clone()], 1_700_000_000);
-    MockVerifier::default()
+    MockVerifier
         .verify_node_attested(&proof, program_hash, &[root], &trusted_node_keys, &chain)
         .map_err(|e| CliError::VerificationFailed(format!("node-attested verify: {e:?}")))?;
 

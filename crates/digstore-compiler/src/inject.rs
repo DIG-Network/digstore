@@ -59,8 +59,8 @@ pub fn inject_data_section(template: &[u8], blob: &[u8], mem_offset: u32) -> Res
                 for m in reader {
                     let m = m.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
                     let min = m.initial.max(needed_pages);
-                    // §5.1: the emitted module always declares the 128 MiB ceiling
-                    // (`maximum: Some(2048)`) regardless of the template's declared
+                    // §5.1: the emitted module always declares the 384 MiB ceiling
+                    // (`maximum: Some(6144)`) regardless of the template's declared
                     // maximum — never passed through as `None` or a smaller cap.
                     if needed_pages > crate::template::MAX_MEMORY_PAGES {
                         return Err(CompilerError::Validation(format!(
@@ -237,7 +237,7 @@ mod tests {
     }
 
     /// §5.1: a template that declares NO memory maximum must still produce an
-    /// emitted module declaring `maximum: Some(2048)` — the inner ceiling is
+    /// emitted module declaring `maximum: Some(6144)` — the inner ceiling is
     /// guaranteed, never passed through as `None`.
     #[test]
     fn inject_normalizes_unbounded_memory_to_ceiling() {
@@ -251,19 +251,19 @@ mod tests {
         let (_, max) = memory_limits(&out);
         assert_eq!(
             max,
-            Some(2048),
-            "§5.1 emitted module must declare maximum 2048"
+            Some(6144),
+            "§5.1 emitted module must declare maximum 6144"
         );
     }
 
-    /// A template already declaring the ceiling stays at 2048.
+    /// A template already declaring the ceiling stays at 6144.
     #[test]
     fn inject_preserves_ceiling_memory_max() {
-        let watsrc = r#"(module (memory (export "memory") 4 2048))"#;
+        let watsrc = r#"(module (memory (export "memory") 4 6144))"#;
         let template = wat::parse_str(watsrc).unwrap();
         let blob = b"DIGS";
         let out = inject_data_section(&template, blob, 0x10).expect("inject ok");
         let (_, max) = memory_limits(&out);
-        assert_eq!(max, Some(2048));
+        assert_eq!(max, Some(6144));
     }
 }
