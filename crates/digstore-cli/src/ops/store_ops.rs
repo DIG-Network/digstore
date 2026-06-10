@@ -254,6 +254,8 @@ pub struct AddOutcome {
     pub staged: Vec<(String, u64)>, // (key, size) newly staged
     pub unchanged: usize,
     pub dry_run: bool,
+    pub staged_bytes: u64, // total staged after this add (or projected, for dry-run)
+    pub limit_bytes: u64,
 }
 
 /// Resolve `paths`/`all` and stage each file under its store-root-relative key.
@@ -272,14 +274,17 @@ pub fn add_files(
     // `<workspace>/stores/<name>`). Keys are relative to op_dir.
     let root = ctx.op_dir.clone();
 
+    let skip = ctx.workspace_dir.clone();
+
     // Resolve the file set.
     let mut resolved: Vec<Resolved> = Vec::new();
     if all {
-        resolved = walk::resolve_all(&root);
+        resolved = walk::resolve_all(&root, &skip);
     } else {
         for p in paths {
             let arg = p.to_string_lossy();
-            walk::resolve_arg(&root, &arg, &mut resolved).map_err(CliError::InvalidArgument)?;
+            walk::resolve_arg(&root, &skip, &arg, &mut resolved)
+                .map_err(CliError::InvalidArgument)?;
         }
     }
     resolved.sort_by(|a, b| a.key.cmp(&b.key));
@@ -300,12 +305,15 @@ pub fn add_files(
         .into_iter()
         .map(|r| (r.resource_key, r.content))
         .collect();
+    let already_bytes: u64 = already.values().map(|c| c.len() as u64).sum();
 
-    let mut outcome = AddOutcome {
-        staged: Vec::new(),
-        unchanged: 0,
-        dry_run,
-    };
+    // Read all incoming, decide new vs unchanged, and pre-sum — ATOMIC cap check.
+    struct Incoming {
+        key: String,
+        data: Vec<u8>,
+    }
+    let mut incoming: Vec<Incoming> = Vec::new();
+    let mut unchanged = 0usize;
     for r in resolved {
         let data = fs::read(&r.path).map_err(|e| CliError::Other(e.into()))?;
         let effective_key = key.clone().unwrap_or_else(|| r.key.clone());
@@ -314,18 +322,56 @@ pub fn add_files(
             .map(|c| c == &data)
             .unwrap_or(false)
         {
-            outcome.unchanged += 1;
+            unchanged += 1;
             continue;
         }
-        let size = data.len() as u64;
-        if !dry_run {
+        incoming.push(Incoming {
+            key: effective_key,
+            data,
+        });
+    }
+    let incoming_bytes: u64 = incoming.iter().map(|i| i.data.len() as u64).sum();
+    let cap = if cfg.max_size == 0 {
+        MAX_STORE_BYTES
+    } else {
+        cfg.max_size
+    };
+    let projected = already_bytes + incoming_bytes;
+    if projected > cap {
+        let store = ctx.store_name.clone().unwrap_or_else(|| "this".into());
+        return Err(CliError::InvalidArgument(format!(
+            "staging would reach {} MB, over the {} store's {} MB limit ({} MB free); stage fewer files or create another store (digstore init <name2>)",
+            mb(projected), store, mb(cap), mb(cap.saturating_sub(already_bytes))
+        )));
+    }
+
+    let mut outcome = AddOutcome {
+        staged: Vec::new(),
+        unchanged,
+        dry_run,
+        staged_bytes: projected,
+        limit_bytes: cap,
+    };
+    if !dry_run {
+        for i in incoming {
+            let size = i.data.len() as u64;
             staging
-                .append(&effective_key, &data)
+                .append(&i.key, &i.data)
                 .map_err(|e| CliError::Other(anyhow::anyhow!("stage: {e}")))?;
-            outcome.staged.push((effective_key, size));
+            outcome.staged.push((i.key, size));
         }
+    } else {
+        for i in incoming {
+            outcome.staged.push((i.key.clone(), i.data.len() as u64));
+        }
+        // dry-run: staged_bytes is the projected total if these were applied.
     }
     Ok(outcome)
+}
+
+/// Decimal MB, one decimal place.
+fn mb(bytes: u64) -> String {
+    format!("{:.1}", bytes as f64 / 1_000_000.0)
 }
 
 /// §8.5 social conventions: stage the `/.well-known/dig/manifest.json` discovery
@@ -417,18 +463,24 @@ pub fn status(ctx: &CliContext) -> Result<StatusView, CliError> {
     let cfg = ctx.load_config()?;
     let staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
         .map_err(|e| CliError::Other(anyhow::anyhow!("load staging: {e}")))?;
-    let staged = staging
+    let records = staging
         .records()
-        .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?
-        .into_iter()
-        .map(|r| r.resource_key)
-        .collect();
+        .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?;
+    let staged_bytes: u64 = records.iter().map(|r| r.content.len() as u64).sum();
+    let staged = records.into_iter().map(|r| r.resource_key).collect();
     let root = current_root(ctx)?.map(|r| r.to_hex());
+    let limit_bytes = if cfg.max_size == 0 {
+        MAX_STORE_BYTES
+    } else {
+        cfg.max_size
+    };
     Ok(StatusView {
         root,
         staged,
         modified: Vec::new(),
         untracked: Vec::new(),
+        staged_bytes,
+        limit_bytes,
     })
 }
 
@@ -441,7 +493,7 @@ pub fn compute_status(ctx: &CliContext) -> Result<StatusView, CliError> {
 
     // Working set: key -> file content.
     let working: std::collections::BTreeMap<String, Vec<u8>> =
-        crate::ops::walk::resolve_all(&root_dir)
+        crate::ops::walk::resolve_all(&root_dir, &ctx.workspace_dir)
             .into_iter()
             .filter_map(|r| fs::read(&r.path).ok().map(|c| (r.key, c)))
             .collect();
@@ -460,6 +512,7 @@ pub fn compute_status(ctx: &CliContext) -> Result<StatusView, CliError> {
 
     let mut staged_keys: Vec<String> = staged_map.keys().cloned().collect();
     staged_keys.sort();
+    let staged_bytes: u64 = staged_map.values().map(|c| c.len() as u64).sum();
 
     let mut modified = Vec::new();
     let mut untracked = Vec::new();
@@ -479,11 +532,18 @@ pub fn compute_status(ctx: &CliContext) -> Result<StatusView, CliError> {
     modified.sort();
     untracked.sort();
 
+    let limit_bytes = if cfg.max_size == 0 {
+        MAX_STORE_BYTES
+    } else {
+        cfg.max_size
+    };
     Ok(StatusView {
         root: current.map(|r| r.to_hex()),
         staged: staged_keys,
         modified,
         untracked,
+        staged_bytes,
+        limit_bytes,
     })
 }
 
@@ -531,6 +591,23 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
         .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?;
     if records.is_empty() {
         return Err(CliError::InvalidArgument("nothing staged to commit".into()));
+    }
+
+    // Defensive cap check (§3): the stage cap is enforced atomically at `add`,
+    // but a legacy/migrated staging file could already exceed it. Refuse to
+    // commit content over the store's limit.
+    let cap = if cfg.max_size == 0 {
+        MAX_STORE_BYTES
+    } else {
+        cfg.max_size
+    };
+    let staged_total: u64 = records.iter().map(|r| r.content.len() as u64).sum();
+    if staged_total > cap {
+        return Err(CliError::InvalidArgument(format!(
+            "staged content is {:.1} MB, over the {:.1} MB limit; unstage some files (digstore unstage) before committing",
+            staged_total as f64 / 1_000_000.0,
+            cap as f64 / 1_000_000.0
+        )));
     }
 
     // Build the encrypted chunk pool + key table. Each resource's chunks are
@@ -1115,6 +1192,20 @@ mod tests {
         (td, ctx)
     }
 
+    /// Build a single-store context whose `op_dir` is a `work/` subdir of the
+    /// temp dir (the operating directory scanned by `add_files`/`compute_status`),
+    /// kept distinct from the `.dig` workspace dir so the skip logic is exercised.
+    fn test_store_ctx() -> (CliContext, tempfile::TempDir) {
+        let td = tempdir().unwrap();
+        let dig = td.path().join(".dig");
+        let work = td.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let mut ctx = CliContext::workspace_only(dig.clone(), false, false);
+        ctx.op_dir = work;
+        init_store(&ctx, false, None).unwrap();
+        (ctx, td)
+    }
+
     #[test]
     fn init_creates_layout_and_config() {
         let td = tempdir().unwrap();
@@ -1217,6 +1308,37 @@ mod tests {
         let res = commit(&ctx, None).unwrap();
         let keys = list_generation_resources(&ctx, &res.roothash).unwrap();
         assert!(keys.iter().any(|k| k == "a"));
+    }
+
+    #[test]
+    fn add_over_cap_stages_nothing_and_errors() {
+        let (ctx, _td) = test_store_ctx();
+        // Lower the persisted cap to a tiny value so the atomic cap arithmetic is
+        // exercised without writing a 128 MB fixture. `add_files` reads the cap
+        // from the store's StoreConfig.max_size.
+        let mut cfg = ctx.load_config().unwrap();
+        cfg.max_size = 4;
+        digstore_store::save_config(ctx.config_path(), &cfg).unwrap();
+
+        std::fs::write(ctx.op_dir.join("big.txt"), b"way over four bytes").unwrap();
+        let err = add_files(&ctx, &[], true, false, None);
+        assert!(err.is_err(), "over-cap add must error");
+
+        // Nothing was staged.
+        let staging = StagingArea::open(ctx.staging_path(&cfg.store_id)).unwrap();
+        assert!(
+            staging.records().unwrap().is_empty(),
+            "stage nothing on cap"
+        );
+    }
+
+    #[test]
+    fn add_outcome_reports_staged_total_and_limit() {
+        let (ctx, _td) = test_store_ctx();
+        std::fs::write(ctx.op_dir.join("a.txt"), b"hello").unwrap();
+        let out = add_files(&ctx, &[], true, false, None).unwrap();
+        assert_eq!(out.limit_bytes, MAX_STORE_BYTES);
+        assert_eq!(out.staged_bytes, 5);
     }
 
     #[test]
