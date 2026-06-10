@@ -1,16 +1,35 @@
-# digstore
+<p align="center">
+  <img src="installer/assets/brand/logos/Wordmark-Stacked-Glow.svg" alt="DigStore — by DIG Network" width="320">
+</p>
 
-**Content-addressable, encrypted store format where the store is a self-serving, provider-blind WebAssembly module.**
+<h1 align="center">digstore</h1>
 
-`digstore` gives you Git-style commands — `init`, `add`, `commit`, `log`,
-`clone`, `push`, `pull` — for a store that is **encrypted at rest** and compiles
-into a **single `.wasm` file**. That one file is both your data and the server
-that gates access to it. A host that stores or relays it sees only ciphertext
-addressed by hashes; it cannot read what it carries.
+<p align="center">
+  <strong>A Git-shaped, encrypted, content-addressable store that compiles to a single self-defending WebAssembly module.</strong>
+</p>
 
-You address content with a URN, and the URN is the key: it both locates and
+<p align="center">
+  <a href="https://github.com/DIG-Network/digstore/actions/workflows/ci.yml"><img src="https://github.com/DIG-Network/digstore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/DIG-Network/digstore/releases"><img src="https://img.shields.io/github/v/release/DIG-Network/digstore?sort=semver" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0-blue.svg" alt="License: GPL-2.0"></a>
+  <img src="https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-555" alt="Platforms">
+  <img src="https://img.shields.io/badge/rust-1.94.1-orange.svg" alt="Rust 1.94.1">
+</p>
+
+---
+
+`digstore` gives you Git-style commands — `init`, `add`, `commit`, `log`, `clone`,
+`push`, `pull` — for a store that is **encrypted at rest** and compiles into a
+**single `.wasm` file**. That one file is both your data and the server that gates
+access to it. A host that stores or relays it sees only ciphertext addressed by
+hashes; it cannot read what it carries.
+
+You address content with a URN, and the URN *is* the key: it both locates and
 decrypts. Hand someone a URN and they can read that resource; without it they
 can't, and there's no separate password or access list to manage.
+
+Unlike Git, digstore is built for **build output**, not repo source — you point a
+store at a directory like `dist/` and it captures what's there.
 
 > New here? The full design is in the whitepaper:
 > [`docs/whitepaper/digstore-whitepaper.pdf`](docs/whitepaper/digstore-whitepaper.pdf).
@@ -21,8 +40,8 @@ can't, and there's no separate password or access list to manage.
 
 ### Windows (installer)
 
-1. Download `digstore-<version>-setup.exe` from the
-   [Releases](../../releases) page.
+1. Download `DigStore *-setup.exe` (or the `.msi`) from the
+   [Releases](https://github.com/DIG-Network/digstore/releases) page.
 2. Run it. It installs per-user (no admin prompt) and adds `digstore` to your
    `PATH`.
 3. Open a **new** terminal and check it works:
@@ -33,8 +52,8 @@ can't, and there's no separate password or access list to manage.
 
 ### Build from source (any platform)
 
-You need [Rust](https://rustup.rs). The CLI embeds a WebAssembly guest, so build
-that first:
+You need [Rust](https://rustup.rs) (pinned to 1.94.1 via `rust-toolchain.toml`).
+The CLI embeds a WebAssembly guest, so build that first:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -49,33 +68,62 @@ somewhere on your `PATH`.
 
 ## Quick start
 
-`digstore` works on the directory you run it in — like `git`. `init` creates a
-`.dig` store in the current folder; other commands find it by walking up from
-wherever you are.
-
 ```sh
-mkdir my-store && cd my-store
-digstore init                      # create a store here (.dig/)
+mkdir my-project && cd my-project
+digstore init                      # create a .dig workspace + a "default" store
 
 echo "hello" > readme.txt
 digstore add readme.txt --key readme
 digstore commit -m "first generation"
 
 digstore log                       # list generations (each root hash = a commit)
+digstore urn readme.txt            # preview the URN a file will have — no guessing
 
-# read a resource back. Get <storeID> and <rootHash> from `digstore log --json`:
+# read a resource back (store id + root come from `digstore log --json`):
 digstore cat urn:dig:chia:<storeID>:<rootHash>/readme
 ```
 
-Get your store ID and the latest root hash any time with `digstore log --json`
-(the store ID is also in `.dig/config.toml`).
+Commands discover the `.dig/` workspace by walking up from wherever you are (like
+Git). `add`/`urn` operate on the store's **content root** (the current directory
+by default; commonly a build dir — see below), and resource keys are always
+relative to that root, so URNs are stable no matter which subdirectory you run
+from.
+
+---
+
+## Multiple stores per project
+
+A project can hold many stores ("capsules") in one `.dig/` workspace, each with
+its own content, keys, and history.
+
+```sh
+digstore init site --dir dist      # a store named "site" that captures ./dist
+digstore init docs --dir build/docs
+digstore stores                    # list stores; * marks the active one + capacity
+digstore use site                  # switch the active store
+
+digstore --store site add -A       # stage everything under dist/ into "site"
+digstore staged                    # what's staged + size + remaining headroom
+digstore unstage                   # clear staging
+digstore commit -m "v1"            # seal a generation; writes a local urns.json index
+```
+
+- **Store selection:** `--store <name>` > the active store (`use`) > the single
+  store if there's only one.
+- **Content root:** each store captures a build directory (default: the current
+  dir; set with `--dir` at `init` or `digstore dir <path>`). `-C/--cwd <path>`
+  overrides it for one command.
+- **Per-store cap:** each store is capped at **128 MB** of staged content,
+  enforced at `add` (and defensively at `commit`); remaining capacity is shown by
+  `add`, `status`, `staged`, and `stores`.
+- **URN manifest:** `commit` writes a local `urns.json` / `urns.txt` — the
+  publisher's index of every shareable URN for that generation.
 
 ---
 
 ## How content is addressed: URNs
 
-Every resource is named by a URN. The URN alone is what locates **and** decrypts
-it:
+Every resource is named by a URN. The URN alone locates **and** decrypts it:
 
 ```
 urn:dig:<chain>:<storeID>[:<rootHash>][/<resourceKey>]
@@ -86,10 +134,11 @@ urn:dig:<chain>:<storeID>[:<rootHash>][/<resourceKey>]
 | `<chain>` | Chain identifier, e.g. `chia` |
 | `<storeID>` | Your 64-hex store id (required) |
 | `<rootHash>` | Optional: pin a specific generation; omit for the current one |
-| `<resourceKey>` | Optional: which resource (the `--key` you gave on `add`) |
+| `<resourceKey>` | Optional: which resource (content-root-relative path) |
 
-Example: `urn:dig:chia:ab12…ef/readme` reads the `readme` resource at the current
-root. Share that string and the holder can read that resource — nothing else.
+`digstore urn [PATHS]` previews the exact URN (and retrieval key) a file *will*
+have against the active store — so you can check before you commit instead of
+guessing.
 
 ---
 
@@ -100,11 +149,9 @@ digstore init             # public:  anyone with the URN can read
 digstore init --private   # private: URN locates, but reading also needs a secret salt
 ```
 
-- **Public** — the URN is sufficient to decrypt. Good for content you want any
-  URN-holder to read.
+- **Public** — the URN is sufficient to decrypt.
 - **Private** — decryption also requires a secret salt the publisher holds and
-  shares out-of-band. A URN-holder without the salt can locate a resource but
-  not read it. Pass it with `--salt <hex>` on `cat`/`checkout`.
+  shares out-of-band. Pass it with `--salt <hex>` on `cat`/`checkout`.
 
 ---
 
@@ -113,21 +160,21 @@ digstore init --private   # private: URN locates, but reading also needs a secre
 A remote is an HTTPS endpoint that stores and serves your `.wasm` module.
 
 ```sh
-# publisher side
+# publisher
 digstore remote add origin https://example.com/stores/<storeID>
 digstore push origin
 
-# consumer side (fresh directory)
+# consumer (fresh directory)
 digstore clone https://example.com/stores/<storeID>
 digstore cat   urn:dig:chia:<storeID>:<rootHash>/readme
 digstore pull  origin          # later: fetch the publisher's newer generation
 ```
 
-`clone` and `pull` **verify** what they download before installing it: the module
-must match the store id you asked for, and the served root must carry the
-publisher's signature. A malicious or broken server cannot feed you fabricated
-content — the command fails instead. Remotes must be `https://` (plain `http://`
-is allowed only for `localhost`).
+`clone`/`pull` **verify** what they download before installing it: the module must
+match the store id you asked for, and the served root must carry the publisher's
+signature. A malicious or broken server cannot feed you fabricated content — the
+command fails instead. Remotes must be `https://` (plain `http://` is allowed only
+for `localhost`).
 
 ---
 
@@ -135,45 +182,53 @@ is allowed only for `localhost`).
 
 | Command | What it does |
 |---|---|
-| `digstore init [--private]` | Create a store in the current directory |
-| `digstore add <path> [--key <name>]` | Stage and chunk a file (key defaults to the file name) |
-| `digstore add --discovery` | Stage a `/.well-known/dig/manifest.json` listing the resources you choose to expose |
-| `digstore commit [-m <msg>]` | Seal a new generation and compile the module |
-| `digstore status` | Show staged changes |
-| `digstore log [--limit N]` | List generations (root hash = commit id) |
-| `digstore diff <a> <b>` | Compare two generations |
+| `digstore init [name] [--dir <path>] [--private]` | Create a store (default name `default`); `--dir` sets its content root |
+| `digstore stores` | List stores with active marker, root, content root, capacity |
+| `digstore use <name>` | Set the active store |
+| `digstore dir [<path>]` | Show or set the active store's content root |
+| `digstore add <path…> [-A] [--key <name>]` | Stage files (`-A` = the whole content root) |
+| `digstore staged` / `digstore unstage` | List the staging area / clear it |
+| `digstore commit [-m <msg>]` | Seal a new generation, compile the module, write the URN manifest |
+| `digstore status` | Show staged/modified/untracked + capacity |
+| `digstore log [--limit N]` / `digstore diff <a> <b>` | List / compare generations |
+| `digstore urn [PATHS…] [--root <hex>]` | Preview the URN(s) files will have |
 | `digstore cat <urn> [--salt <hex>] [--verify-proof]` | Read a resource by URN |
-| `digstore checkout <root> --out <dir> [--salt <hex>]` | Write a whole generation's contents to a directory |
+| `digstore checkout <root> --out <dir> [--salt <hex>]` | Write a whole generation to a directory |
 | `digstore remote add\|list\|remove …` | Manage remotes |
-| `digstore clone <url>` | Download and verify a store from a remote |
-| `digstore push [remote]` | Publish your latest generation (default remote: `origin`) |
-| `digstore pull [remote]` | Fetch and verify the remote's newer generation |
+| `digstore clone <url>` / `push [remote]` / `pull [remote]` | Sync with a remote (verified) |
 
-Global flags: `--dig-dir <path>` (use a specific store dir instead of
-discovering one), `--json` (machine-readable output), `--verbose`.
+Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`
+(operating directory for this command), `--dig-dir <path>` (workspace location),
+`--json` (machine-readable), `--quiet`, `--verbose`, `--color <auto\|always\|never>`.
 
 ---
 
 ## What this gives you
 
 - **Encrypted at rest.** Content is encrypted with a key derived from its URN.
-  Lose the URN, lose the read — there is no key stored anywhere to recover.
-- **Provider-blind hosting.** Whoever hosts your store holds only ciphertext
-  keyed by hashes. They can't scan it or read requests.
+  There is no key stored anywhere to recover — lose the URN, lose the read.
+- **Provider-blind hosting.** Whoever hosts your store holds only ciphertext keyed
+  by hashes; they can't scan it or read requests.
 - **Verified downloads.** `clone`/`pull` reject content that isn't the genuine,
   publisher-signed store.
-- **One portable file.** A store is a single `.wasm`. Copy it to back it up; run
-  it to serve it.
+- **Uniform, self-contained.** A store is a single `.wasm`, padded to a uniform
+  size so its bytes reveal nothing about how much content it holds. Copy it to
+  back it up; run it to serve it.
 
 ---
 
 ## Security
 
-Security posture, the hardening that has been applied, and known residual risks
-are documented in [`SECURITY.md`](SECURITY.md). Report vulnerabilities privately
-to the maintainer rather than opening a public issue.
+Security posture, the hardening applied, and known residual risks are documented
+in [`SECURITY.md`](SECURITY.md). Please report vulnerabilities privately to the
+maintainer rather than opening a public issue.
+
+## Contributing
+
+Build, test, and contribution guidelines are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 
-MIT.
-# digstore
+Licensed under the [GNU General Public License v2.0](LICENSE) — the same license
+as Git.
