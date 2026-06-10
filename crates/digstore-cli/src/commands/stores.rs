@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use digstore_core::MAX_STORE_BYTES;
 use digstore_store::{RootHistory, StagingArea};
 
 use crate::context::CliContext;
@@ -35,7 +36,7 @@ pub fn run(
             content_root: entry.content_root.clone(),
             current_root,
             staged_bytes,
-            limit_bytes: crate::ops::store_ops::MAX_STORE_BYTES,
+            limit_bytes: limit_for_dir(&store_dir),
         });
     }
     if ui.json() {
@@ -76,6 +77,17 @@ fn staged_total_for_dir(store_dir: &Path, id_hex: &str) -> u64 {
     match StagingArea::open(&staging_path).and_then(|s| s.records()) {
         Ok(records) => records.iter().map(|r| r.content.len() as u64).sum(),
         Err(_) => 0,
+    }
+}
+
+/// The per-store stage cap (`StoreConfig.max_size`) for the store rooted at
+/// `store_dir`, read from its persisted `config.toml` so legacy/migrated/cloned
+/// stores show their real limit. Falls back to the `MAX_STORE_BYTES` default if
+/// the config cannot be loaded or records an unset (`0`) cap.
+fn limit_for_dir(store_dir: &Path) -> u64 {
+    match digstore_store::load_config(store_dir.join("config.toml")) {
+        Ok(cfg) if cfg.max_size != 0 => cfg.max_size,
+        _ => MAX_STORE_BYTES,
     }
 }
 

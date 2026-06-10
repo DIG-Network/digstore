@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use digstore_chunker::{chunk_slice, Chunk};
 use digstore_core::{
     AuthenticationInfo, Bytes32, Bytes48, ChunkerConfig, GenerationState, MerkleTree, SecretSalt,
-    StoreConfig, TrustedHostKey, Urn, Visibility,
+    StoreConfig, TrustedHostKey, Urn, Visibility, MAX_STORE_BYTES,
 };
 use digstore_store::{
     ChunkRef, GenerationManifest, KeyTableRecord, RootHistory, StagingArea, Store, SystemClock,
@@ -63,9 +63,6 @@ use digstore_store::{
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::output::{DiffEntry, LogEntry, StatusView};
-
-/// Per-store hard cap on staged content (§3). 100 MB, decimal.
-pub const MAX_STORE_BYTES: u64 = 100_000_000;
 
 /// Canonical chunker config (matches `digstore-store`'s commit defaults).
 fn chunker() -> ChunkerConfig {

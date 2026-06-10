@@ -5,7 +5,9 @@
 
 use std::fs;
 
-use digstore_core::{Bytes32, Bytes48, Bytes96, GenerationState, StoreConfig, Visibility};
+use digstore_core::{
+    Bytes32, Bytes48, Bytes96, GenerationState, StoreConfig, Visibility, MAX_STORE_BYTES,
+};
 use digstore_remote::{verify_push_signature, ClientError, DigClient, PullResult, PushResult};
 
 use crate::context::CliContext;
@@ -193,7 +195,7 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     let cfg = StoreConfig {
         store_id,
         data_dir: ctx.dig_dir.display().to_string(),
-        max_size: crate::ops::store_ops::MAX_STORE_BYTES,
+        max_size: MAX_STORE_BYTES,
         visibility: Visibility::Public,
     };
     digstore_store::save_config(ctx.config_path(), &cfg)
