@@ -48,7 +48,7 @@ pub enum Command {
     Diff(DiffArgs),
     /// Materialize a generation root's content into an output directory.
     Checkout(CheckoutArgs),
-    /// Read a single resource by URN (optionally verifying its proof).
+    /// Stream a resource out by URN (decrypted) or retrieval key (encrypted).
     Cat(CatArgs),
     /// Manage remote endpoints for this store (add, list, remove).
     Remote(RemoteArgs),
@@ -72,6 +72,8 @@ pub enum Command {
     Staged(StagedArgs),
     /// Print the URN(s) for staged or committed resources.
     Urn(UrnArgs),
+    /// List the retrieval key (and URN) for every committed resource.
+    Keys(KeysArgs),
     /// Update DigStore to the latest release.
     Update(UpdateArgs),
 }
@@ -147,11 +149,20 @@ pub struct CheckoutArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore cat urn:dig:chia:<storeID>:<root>/readme")]
+#[command(
+    after_help = "EXAMPLES:\n  digstore cat urn:dig:chia:<storeID>:<root>/readme\n  digstore cat urn:dig:chia:<storeID>/logo.png --out logo.png\n  digstore cat <64-hex-retrieval-key> --out blob.enc"
+)]
 pub struct CatArgs {
+    /// A `urn:dig:…` (streamed out DECRYPTED) or a 64-char hex retrieval key
+    /// (streamed out as RAW ENCRYPTED bytes, resolved within the active store).
     pub urn: String,
+    /// Write output to this file instead of stdout.
+    #[arg(long, short)]
+    pub out: Option<PathBuf>,
+    /// Decryption salt (32-byte hex) for a private store.
     #[arg(long)]
     pub salt: Option<String>,
+    /// Verify the resource's merkle proof against the trusted root before output.
     #[arg(long)]
     pub verify_proof: bool,
 }
@@ -241,6 +252,14 @@ pub struct UrnArgs {
     pub paths: Vec<PathBuf>,
     #[arg(short = 'A', long)]
     pub all: bool,
+    #[arg(long)]
+    pub root: Option<String>,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore keys\n  digstore keys --root <hex>\n  digstore keys --json")]
+pub struct KeysArgs {
+    /// Generation root to list (hex); defaults to the current root.
     #[arg(long)]
     pub root: Option<String>,
 }
