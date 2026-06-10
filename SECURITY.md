@@ -75,6 +75,28 @@ Host / WASM sandbox
   returned on a retrieval miss are not distinguishable from real content.
   (`serve_blind.rs`)
 
+Multi-store workspaces and resource limits
+- **Per-store 128 MB content cap.** Each store enforces a hard cap of
+  `MAX_STORE_BYTES = 128_000_000` (decimal) on staged plaintext content. It is
+  enforced **atomically at `add`** (staging that would exceed the cap stages
+  nothing and errors with the remaining headroom) and **defensively at `commit`**.
+  The cap bounds the worst-case data-section blob, so a store can never produce a
+  module that exceeds the module memory ceiling. (`digstore-core` is the single
+  source of truth for the constant; the CLI enforces it.)
+- **Module memory ceiling raised to a configurable 384 MiB.** The module-declared
+  linear-memory cap is 6144 pages (384 MiB), sized to hold the embedded data
+  section (up to the 128 MB cap plus overhead) and a single-copy serve of a
+  worst-case ~122 MB resource. The host's outer limit defaults to the same 384 MiB
+  and is operator-configurable via `ExecutionLimits.memory_bytes_max` — the real
+  DoS bound for an untrusted module. The guest heap base is placed dynamically
+  above the data section, so heap growth can never corrupt the embedded chunk pool
+  for any blob size. (`digstore-compiler`, `digstore-host`, `digstore-guest`)
+- **Uniform module size.** Size-obfuscation filler pads every module's data blob
+  to one fixed budget, so every store compiles to the same module size regardless
+  of content. A full-cap store carries ~no filler; smaller stores carry
+  deterministic filler up to the budget. The module size therefore reveals nothing
+  about how much content a store holds. (`digstore-compiler`)
+
 CLI / filesystem
 - **Key material uses the OS CSPRNG** (`getrandom`); the previous time/pid/pointer
   "RNG" produced predictable BLS signing keys and private salts. The weak fallback
