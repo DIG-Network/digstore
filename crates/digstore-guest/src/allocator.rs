@@ -18,7 +18,8 @@
 //! injected blob: on wasm32 the first allocation reads the `DIGS` header at
 //! [`digstore_core::datasection::DIGS_DATA_OFFSET`] and places the heap at
 //! `align_up(DIGS_DATA_OFFSET + total_blob_len, 64 KiB)`, so a store of ANY size
-//! (up to the §5.1 128 MiB ceiling) gets a heap clear of its own data section.
+//! (the blob is padded to a uniform ~128 MiB budget; the §5.1 module ceiling is
+//! 384 MiB) gets a heap clear of its own data section.
 //! When no `DIGS` header is present (native test builds, or an absent blob) the
 //! heap falls back to a fixed [`FALLBACK_HEAP_BASE`] (8 MiB), still above the
 //! data-section window. There is no hard upper cap inside the allocator: OOM is

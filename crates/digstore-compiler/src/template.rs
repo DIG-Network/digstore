@@ -83,7 +83,8 @@ pub fn baked_template_bytes() -> &'static [u8] {
 }
 
 /// Parse + validate the template (§5.1): collect export names, assert the full
-/// required ABI surface, and assert memory bounds (a memory exists, max <= 256).
+/// required ABI surface, and assert memory bounds (a memory exists, declared
+/// `max <= MAX_MEMORY_PAGES` = 6144 pages / 384 MiB).
 pub fn load_template(bytes: &[u8]) -> Result<Template> {
     let mut exports = Vec::new();
     let mut imports: Vec<(String, String)> = Vec::new();
