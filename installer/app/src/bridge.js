@@ -39,6 +39,22 @@ export async function getMeta() {
   }
 }
 
+/* bundledDigstoreVersion — the semver of the bundled `digstore` CLI this
+ * installer will install (from `digstore --version` in the app resources).
+ * This is the version the badge shows, not the installer app's own version.
+ * In a plain browser (no bundled binary) we fall back to the current ship
+ * version so the badge never blanks out. */
+export async function bundledDigstoreVersion() {
+  const a = await api();
+  if (!a) return "0.3.0";
+  try {
+    const v = await a.invoke("bundled_digstore_version");
+    return typeof v === "string" && v.trim() ? v.trim() : "0.3.0";
+  } catch {
+    return "0.3.0";
+  }
+}
+
 export async function defaultInstallPath() {
   const a = await api();
   if (!a) return "/usr/local/digstore";

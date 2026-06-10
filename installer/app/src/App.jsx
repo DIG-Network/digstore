@@ -18,9 +18,13 @@ import {
   openDocs,
   copyText,
   getMeta,
+  bundledDigstoreVersion,
 } from "./bridge.js";
 
 const DEFAULT_META = { version: "1.0.0", compiler: "1.0.0" };
+// Fallback for the bundled digstore CLI version until the backend answers
+// (matches bridge.js' browser-sim fallback and the current ship version).
+const DEFAULT_DIGSTORE_VERSION = "0.3.0";
 
 export function App() {
   // chrome: pick the OS-appropriate window controls. Windows → "win",
@@ -33,6 +37,10 @@ export function App() {
   });
 
   const [meta, setMeta] = useState(DEFAULT_META);
+  // The bundled digstore CLI version this installer will install — shown on the
+  // badge and the Welcome/Finish "version" chips (distinct from the installer
+  // app's own version in `meta.version`).
+  const [digstoreVersion, setDigstoreVersion] = useState(DEFAULT_DIGSTORE_VERSION);
   const [step, setStep] = useState(() => {
     const s = parseInt(localStorage.getItem("dig_step") || "0", 10);
     return s === 3 ? 2 : isNaN(s) ? 0 : s; // never resume mid-install
@@ -60,6 +68,9 @@ export function App() {
       if (alive && p) setInstallPath(p);
       const m = await getMeta();
       if (alive && m) setMeta(m);
+      // The badge/chips show the bundled digstore CLI version, not the app's.
+      const dv = await bundledDigstoreVersion();
+      if (alive && dv) setDigstoreVersion(dv);
     })();
     return () => {
       alive = false;
@@ -135,6 +146,10 @@ export function App() {
   const installDone = step === 3 && pct >= 100 && !error;
   const canContinue = step === 1 ? agreed : step === 3 ? installDone : true;
 
+  // Welcome/Finish "version" chips should show the bundled digstore CLI version
+  // being installed, not the installer app's own version.
+  const digstoreMeta = { ...meta, version: digstoreVersion };
+
   const primaryLabel =
     step === 0
       ? "Install DigStore"
@@ -164,8 +179,12 @@ export function App() {
     <div className="win">
       <TitleBar chrome={chrome} />
       <div className="body">
-        {/* rail */}
-        <div className="rail">
+        {/* rail — gains `installing` while the pipeline runs so the brand glow
+            intensifies with progress (--rail-pct drives the glow strength). */}
+        <div
+          className={"rail" + (step === 3 && !error ? " installing" : "")}
+          style={{ "--rail-pct": step === 3 ? pct / 100 : 0 }}
+        >
           <div className="nebula" style={{ backgroundImage: `url(${nebula})` }}></div>
           <div className="rail-top">
             <div className="bigD">
@@ -174,7 +193,7 @@ export function App() {
             <h1>DigStore</h1>
             <div className="tagline">The content-addressable WASM store format, by DIG Network.</div>
             <div className="ver-pill">
-              <span className="dot"></span>v{meta.version} · compiler {meta.compiler}
+              <span className="dot"></span>DigStore v{digstoreVersion}
             </div>
           </div>
           <div className="steps">
@@ -208,11 +227,11 @@ export function App() {
         {/* content */}
         <div className="content">
           <div className="pane" key={step}>
-            {step === 0 && <Welcome meta={meta} />}
+            {step === 0 && <Welcome meta={digstoreMeta} />}
             {step === 1 && <License agreed={agreed} setAgreed={setAgreed} />}
             {step === 2 && <Components sel={sel} toggle={toggle} path={installPath} onChange={onChangeFolder} />}
             {step === 3 && <Installing pct={pct} lines={lines} nowFile={nowFile} error={error} />}
-            {step === 4 && <Finish path={installPath} onCopy={copyCmds} copied={copied} meta={meta} />}
+            {step === 4 && <Finish path={installPath} onCopy={copyCmds} copied={copied} meta={digstoreMeta} />}
           </div>
           <div className="footer">
             <div className="dots">
