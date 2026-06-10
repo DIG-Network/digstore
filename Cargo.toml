@@ -5,8 +5,8 @@ exclude = ["crates/digstore-prover/guest"]
 
 [workspace.package]
 edition = "2021"
-version = "0.2.0"
-license = "MIT"
+version = "0.3.0"
+license = "GPL-2.0-only"
 
 [workspace.dependencies]
 sha2 = "0.10"
