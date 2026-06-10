@@ -1524,12 +1524,40 @@ mod tests {
         std::fs::write(ctx.op_dir.join("readme.md"), b"hi").unwrap();
         add_files(&ctx, &[], true, false, None).unwrap();
         let res = commit(&ctx, None).unwrap();
+        let store_id = ctx.load_config().unwrap().store_id;
         let json = std::fs::read_to_string(ctx.dig_dir.join("urns.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["resources"][0]["key"], "readme.md");
         let urn = v["resources"][0]["urn"].as_str().unwrap();
         assert!(urn.contains(&res.roothash.to_hex()));
         assert!(urn.starts_with("urn:dig:chia:"));
+
+        // Headline invariant: the manifest's retrieval_key is the ROOTLESS
+        // canonical key (derived from the root-INDEPENDENT URN), NOT a hash of
+        // the root-pinned URN string. This is what a discoverer reconstructs.
+        let manifest_key = v["resources"][0]["retrieval_key"].as_str().unwrap();
+        let rootless_key = canonical_resource_urn(store_id, "readme.md")
+            .retrieval_key()
+            .to_hex();
+        assert_eq!(
+            manifest_key, rootless_key,
+            "manifest retrieval_key must be the rootless canonical key"
+        );
+        // And it must differ from sha256(root-pinned URN string): the root must
+        // NOT participate in the retrieval key.
+        let root_pinned_urn = Urn {
+            chain: "chia".to_string(),
+            store_id,
+            root_hash: Some(res.roothash),
+            resource_key: Some("readme.md".to_string()),
+        }
+        .canonical();
+        let root_pinned_hash = digstore_crypto::sha256(root_pinned_urn.as_bytes()).to_hex();
+        assert_ne!(
+            manifest_key, root_pinned_hash,
+            "retrieval_key must be rootless, not a hash of the root-pinned URN"
+        );
+
         let txt = std::fs::read_to_string(ctx.dig_dir.join("urns.txt")).unwrap();
         assert!(txt.contains("readme.md\turn:dig:chia:"));
     }
