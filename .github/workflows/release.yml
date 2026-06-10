@@ -147,9 +147,13 @@ jobs:
       - name: Publish to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          # The publish job does not checkout the repo, so gh has no local git
+          # context — pass --repo explicitly (else `gh release create` errors
+          # with "not a git repository").
+          GH_REPO: ${{ github.repository }}
         run: |
           mkdir -p dist-all
           find dist -type f -exec cp {} dist-all/ \;
           ls -la dist-all
-          gh release create "${GITHUB_REF_NAME}" --title "digstore ${GITHUB_REF_NAME}" --generate-notes || echo "release already exists"
-          gh release upload "${GITHUB_REF_NAME}" dist-all/* --clobber
+          gh release create "${GITHUB_REF_NAME}" --repo "$GH_REPO" --title "digstore ${GITHUB_REF_NAME}" --generate-notes || echo "release already exists"
+          gh release upload "${GITHUB_REF_NAME}" --repo "$GH_REPO" dist-all/* --clobber
