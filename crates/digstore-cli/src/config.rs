@@ -64,7 +64,7 @@ mod tests {
 
     fn ctx() -> (tempfile::TempDir, CliContext) {
         let td = tempdir().unwrap();
-        let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
         std::fs::create_dir_all(&ctx.dig_dir).unwrap();
         (td, ctx)
     }

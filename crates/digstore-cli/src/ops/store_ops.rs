@@ -1103,7 +1103,7 @@ mod tests {
 
     fn ctx(private: bool) -> (tempfile::TempDir, CliContext) {
         let td = tempdir().unwrap();
-        let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
         init_store(&ctx, private, None).unwrap();
         (td, ctx)
     }
@@ -1111,7 +1111,7 @@ mod tests {
     #[test]
     fn init_creates_layout_and_config() {
         let td = tempdir().unwrap();
-        let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
         let res = init_store(&ctx, false, None).unwrap();
         assert!(ctx.config_path().exists());
         assert!(ctx.modules_dir().exists());
@@ -1124,7 +1124,7 @@ mod tests {
     #[test]
     fn init_store_id_is_sha256_of_pubkey() {
         let td = tempdir().unwrap();
-        let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
         let res = init_store(&ctx, false, None).unwrap();
         let expected = digstore_crypto::sha256(&res.host_public_key.0);
         assert_eq!(res.store_id, expected);
