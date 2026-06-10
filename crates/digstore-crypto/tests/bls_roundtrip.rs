@@ -397,6 +397,98 @@ fn role_tags_domain_separate_identical_payloads() {
     assert!(!bls_verify(&pk, &push_over_same, &attest_sig));
 }
 
+#[test]
+fn sign_tombstone_then_verify_round_trip_and_binding() {
+    use digstore_core::tombstone::{RevocationReason, Tombstone};
+    use digstore_core::Bytes32;
+    use digstore_crypto::{sha256, sign_tombstone, tombstone_signing_message, verify_tombstone};
+
+    let sk = bls::SecretKey::from_seed(&[0x90u8; 32]);
+    let pk = sk.public_key();
+    let store_id = Bytes32([0xA1u8; 32]);
+    let root = Bytes32([0xB2u8; 32]);
+    let t = Tombstone::root(store_id, root, 1_700_000_000, RevocationReason::Compromise);
+
+    let sig = sign_tombstone(&sk, &t);
+    assert!(
+        verify_tombstone(&pk, &t, &sig),
+        "tombstone sig must verify with verify_tombstone"
+    );
+
+    // The signed message is SHA-256(TOMB_DST || canonical(t)) (32 bytes).
+    let mut concat = Vec::new();
+    concat.extend_from_slice(digstore_crypto::bls::TOMB_DST);
+    concat.extend_from_slice(&t.canonical());
+    let expected = sha256(&concat).0;
+    assert_eq!(tombstone_signing_message(&t), expected);
+    assert_eq!(tombstone_signing_message(&t).len(), 32);
+
+    // Tamper: any altered field changes the message and the sig must not verify.
+    let tampered_root =
+        Tombstone::root(store_id, Bytes32([0xC3u8; 32]), 1_700_000_000, RevocationReason::Compromise);
+    assert!(!verify_tombstone(&pk, &tampered_root, &sig));
+    let tampered_reason =
+        Tombstone::root(store_id, root, 1_700_000_000, RevocationReason::Takedown);
+    assert!(!verify_tombstone(&pk, &tampered_reason, &sig));
+    let tampered_store =
+        Tombstone::root(Bytes32([0xFFu8; 32]), root, 1_700_000_000, RevocationReason::Compromise);
+    assert!(!verify_tombstone(&pk, &tampered_store, &sig));
+
+    // Wrong key must not verify.
+    let other = bls::SecretKey::from_seed(&[0x91u8; 32]).public_key();
+    assert!(!verify_tombstone(&other, &t, &sig));
+
+    // Malformed signature bytes fail closed.
+    let bogus = digstore_core::Bytes96([0xFFu8; 96]);
+    assert!(!verify_tombstone(&pk, &t, &bogus));
+}
+
+#[test]
+fn tombstone_message_domain_separated_from_other_roles() {
+    // SECURITY.md residual #1 Layer 1: the tombstone tag is distinct from the
+    // push/node/attestation tags, so a tombstone signature can never be replayed
+    // as (nor forged from) one of those, even over coinciding payload bytes.
+    use digstore_core::tombstone::{RevocationReason, Tombstone};
+    use digstore_core::Bytes32;
+    use digstore_crypto::{
+        attestation_signing_message, bls_verify, node_signing_message, push_signing_message,
+        sign_tombstone, tombstone_signing_message,
+    };
+
+    // The tombstone tag is pairwise distinct from every other role tag.
+    let tomb = digstore_crypto::bls::TOMB_DST;
+    assert_ne!(tomb, digstore_crypto::bls::PUSH_DST);
+    assert_ne!(tomb, digstore_crypto::bls::NODE_DST);
+    assert_ne!(tomb, digstore_core::ATTEST_DST);
+
+    let store_id = Bytes32([0x22u8; 32]);
+    let root = Bytes32([0x11u8; 32]);
+    let t = Tombstone::root(store_id, root, 0, RevocationReason::Unspecified);
+
+    // Build push/node/attestation messages over the SAME (root, store_id) bytes
+    // and confirm none equals the tombstone message: the role tag separates them.
+    let tomb_msg = tombstone_signing_message(&t);
+    let push_msg = push_signing_message(&root, &store_id);
+    let node_msg = node_signing_message(&root, &store_id, &Bytes32([0u8; 32]), 0, &[]);
+    let attest_msg = attestation_signing_message(&root.0, &store_id.0, 0);
+    assert_ne!(tomb_msg.as_slice(), push_msg.as_slice());
+    assert_ne!(tomb_msg.as_slice(), node_msg.as_slice());
+    assert_ne!(tomb_msg.as_slice(), attest_msg.as_slice());
+
+    // End-to-end: a tombstone signature must NOT verify as a push/node/attestation
+    // signature over the aligned inputs, and vice versa.
+    let sk = bls::SecretKey::from_seed(&[0x92u8; 32]);
+    let pk = sk.public_key().to_bytes();
+    let tomb_sig = sign_tombstone(&sk, &t);
+    assert!(!bls_verify(&pk, &push_msg, &tomb_sig));
+    assert!(!bls_verify(&pk, &node_msg, &tomb_sig));
+    assert!(!bls_verify(&pk, &attest_msg, &tomb_sig));
+
+    // A push signature must not verify against the tombstone message either.
+    let push_sig = digstore_crypto::sign_push(&sk, &root, &store_id);
+    assert!(!bls_verify(&pk, &tomb_msg, &push_sig));
+}
+
 // Local helper: verify a push signature via the canonical message.
 fn verify_push_ok(
     sk: &bls::SecretKey,

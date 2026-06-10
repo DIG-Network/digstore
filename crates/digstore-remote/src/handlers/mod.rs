@@ -3,3 +3,4 @@ pub mod delta;
 pub mod descriptor;
 pub mod module;
 pub mod proof;
+pub mod tombstone;

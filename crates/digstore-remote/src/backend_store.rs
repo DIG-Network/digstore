@@ -13,9 +13,13 @@
 //!   a 404 (§14.2). The `serve_content`/`serve_proof` signatures match the
 //!   trait so the production host can be slotted in without changing callers.
 
-use crate::backend::{DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord};
+use crate::backend::{
+    DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord, StoredTombstone,
+};
 use crate::error::RemoteError;
-use digstore_core::{Bytes32, Bytes48, Bytes96, GenerationState, StoreConfig};
+use digstore_core::codec::Decode;
+use digstore_core::tombstone::TombstoneScope;
+use digstore_core::{Bytes32, Bytes48, Bytes96, GenerationState, StoreConfig, Tombstone};
 use digstore_store::{RootHistory, Store, StorePaths, SystemClock};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -134,6 +138,58 @@ impl StoreBackend {
         let bytes = std::fs::read(self.sig_file(root)).ok()?;
         let arr: [u8; 96] = bytes.try_into().ok()?;
         Some(Bytes96(arr))
+    }
+
+    /// Directory holding persisted revocation tombstones (one file per scope,
+    /// `<data_dir>/tombstones/{scope}.tomb`). A sidecar dir avoids a
+    /// backward-incompatible `roots.log`/config format change (SECURITY.md
+    /// residual #1 Layer 1).
+    fn tombstones_dir(&self) -> PathBuf {
+        PathBuf::from(&self.data_dir).join("tombstones")
+    }
+
+    /// Deterministic filename for a scope so re-storing the same scope replaces
+    /// the prior entry: `store.tomb` for a whole-store revocation, or
+    /// `root-{root_hex}.tomb` for a single root.
+    fn tombstone_file(&self, scope: &TombstoneScope) -> PathBuf {
+        let name = match scope {
+            TombstoneScope::Store => "store.tomb".to_string(),
+            TombstoneScope::Root(r) => format!("root-{}.tomb", r.to_hex()),
+        };
+        self.tombstones_dir().join(name)
+    }
+
+    fn read_tombstones(&self) -> Vec<StoredTombstone> {
+        let mut out = Vec::new();
+        let dir = self.tombstones_dir();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return out,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("tomb") {
+                continue;
+            }
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            // Layout: signature(96) || canonical(Tombstone). The signature is a
+            // fixed 96-byte prefix so the variable-length canonical record follows.
+            if bytes.len() < 96 {
+                continue;
+            }
+            let mut sig = [0u8; 96];
+            sig.copy_from_slice(&bytes[..96]);
+            if let Ok(tombstone) = Tombstone::from_bytes(&bytes[96..]) {
+                out.push(StoredTombstone {
+                    tombstone,
+                    signature: Bytes96(sig),
+                });
+            }
+        }
+        out
     }
 
     fn history(&self) -> Result<Vec<GenerationState>, RemoteError> {
@@ -346,6 +402,28 @@ impl RemoteBackend for StoreBackend {
             new_chunks,
             key_table_changes: Vec::new(),
         })
+    }
+
+    fn store_tombstone(
+        &self,
+        store_id: &Bytes32,
+        tombstone: &StoredTombstone,
+    ) -> Result<(), RemoteError> {
+        self.ensure_store(store_id)?;
+        std::fs::create_dir_all(self.tombstones_dir())
+            .map_err(|e| RemoteError::Internal(format!("tombstones dir: {e}")))?;
+        let path = self.tombstone_file(&tombstone.tombstone.scope);
+        // signature(96) || canonical(Tombstone) — see `read_tombstones`.
+        let mut bytes = Vec::with_capacity(96 + 74);
+        bytes.extend_from_slice(&tombstone.signature.0);
+        bytes.extend_from_slice(&tombstone.tombstone.canonical());
+        std::fs::write(&path, &bytes)
+            .map_err(|e| RemoteError::Internal(format!("tombstone write: {e}")))
+    }
+
+    fn tombstones(&self, store_id: &Bytes32) -> Result<Vec<StoredTombstone>, RemoteError> {
+        self.ensure_store(store_id)?;
+        Ok(self.read_tombstones())
     }
 
     fn max_module_size(&self) -> u64 {

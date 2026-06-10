@@ -5,9 +5,12 @@
 
 use std::fs;
 
+use digstore_core::tombstone::TombstoneScope;
 use digstore_core::{
-    Bytes32, Bytes48, Bytes96, GenerationState, StoreConfig, Visibility, MAX_STORE_BYTES,
+    Bytes32, Bytes48, Bytes96, Decode, GenerationState, StoreConfig, Tombstone, Visibility,
+    MAX_STORE_BYTES,
 };
+use digstore_remote::wire::TombstoneEntry;
 use digstore_remote::{verify_push_signature, ClientError, DigClient, PullResult, PushResult};
 
 use crate::context::CliContext;
@@ -68,6 +71,76 @@ fn verify_head_signature(
         return Err(CliError::VerificationFailed(
             "served-root signature does not verify against the store key".into(),
         ));
+    }
+    Ok(())
+}
+
+/// Fail-closed revocation check (SECURITY.md residual #1 Layer 1). After fetching
+/// the descriptor, verify each served tombstone's signature against the
+/// store-id-bound module key (`pubkey`, already proven by `verify_module_root` to
+/// hash to `store_id`), and REFUSE to install/advance to `served_root` if:
+///   - any VALID `Store`-scoped tombstone is present (the whole store is revoked), or
+///   - a VALID `Root`-scoped tombstone names exactly `served_root`.
+///
+/// An unsigned / wrong-key / malformed tombstone is IGNORED (it does not revoke):
+/// a malicious origin cannot fabricate a revocation it has no key to sign, and a
+/// stray bad entry must not deny service. Returns `Ok(())` when the served root
+/// is not revoked.
+fn check_not_revoked(
+    pubkey: &Bytes48,
+    served_root: &Bytes32,
+    store_id: &Bytes32,
+    tombstones: &[TombstoneEntry],
+) -> Result<(), CliError> {
+    let pk = match digstore_crypto::bls::PublicKey::from_bytes(pubkey) {
+        Ok(p) => p,
+        // No valid module key to verify against: ignore all tombstones (the head
+        // signature check is the authoritative gate; a key that cannot even be
+        // parsed cannot have signed a revocation).
+        Err(_) => return Ok(()),
+    };
+    for entry in tombstones {
+        // Decode the canonical record + signature; skip malformed entries.
+        let record = match hex::decode(&entry.record) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let tombstone = match Tombstone::from_bytes(&record) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let sig = match hex::decode(&entry.signature)
+            .ok()
+            .and_then(|b| <[u8; 96]>::try_from(b).ok())
+        {
+            Some(arr) => Bytes96(arr),
+            None => continue,
+        };
+        // A tombstone for a DIFFERENT store does not apply here.
+        if tombstone.store_id != *store_id {
+            continue;
+        }
+        // Unsigned / wrong-key tombstone is ignored (does not revoke).
+        if !digstore_crypto::verify_tombstone(&pk, &tombstone, &sig) {
+            continue;
+        }
+        match tombstone.scope {
+            TombstoneScope::Store => {
+                return Err(CliError::VerificationFailed(format!(
+                    "store {} has been revoked by a signed tombstone (reason {})",
+                    store_id.to_hex(),
+                    tombstone.reason
+                )));
+            }
+            TombstoneScope::Root(r) if r == *served_root => {
+                return Err(CliError::VerificationFailed(format!(
+                    "served root {} has been revoked by a signed tombstone (reason {})",
+                    served_root.to_hex(),
+                    tombstone.reason
+                )));
+            }
+            TombstoneScope::Root(_) => {}
+        }
     }
     Ok(())
 }
@@ -179,6 +252,16 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
         &info.descriptor.push_sig,
     )?;
 
+    // Fail-closed revocation (§ residual #1 Layer 1): refuse to install a served
+    // root that a signed tombstone retracts (or to clone a Store-revoked store),
+    // verifying each tombstone against the same store-id-bound module key.
+    check_not_revoked(
+        &identity.public_key,
+        &remote_root,
+        &store_id,
+        &info.descriptor.tombstones,
+    )?;
+
     // Real generation id/timestamp from /roots.
     let gen = info
         .roots
@@ -279,12 +362,101 @@ pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliEr
     }
 }
 
+/// The store's BLS public key as embedded in (and proven self-certifying by) the
+/// LOCAL module for `root`, if that module is present on disk. Used to verify
+/// served tombstones on a pull/up-to-date path where no fresh module is
+/// downloaded. Returns `None` (caller falls back to the served-module key) if the
+/// local module is absent or fails verification.
+fn local_module_pubkey(ctx: &CliContext, store_id: &Bytes32, root: &Bytes32) -> Option<Bytes48> {
+    let path = store_ops::module_path_for(ctx, store_id, Some(*root)).ok()?;
+    let bytes = fs::read(&path).ok()?;
+    let id = digstore_compiler::verify_module_root(&bytes, store_id).ok()?;
+    Some(id.public_key)
+}
+
+/// The result of a `revoke`: the scope that was revoked.
+#[derive(Debug)]
+pub enum RevokeScope {
+    Root(Bytes32),
+    Store,
+}
+
+/// Build, sign, and publish a revocation tombstone (SECURITY.md residual #1
+/// Layer 1). `root` is `Some` for a single-root revocation or `None` for a
+/// whole-store revocation. The tombstone is signed with the store's own signing
+/// key (`signing_key.bin`) and POSTed to the configured remote, which re-verifies
+/// the signature against the store's published key before persisting it.
+pub async fn revoke_to(
+    ctx: &CliContext,
+    store_url: &str,
+    root: Option<Bytes32>,
+    reason: digstore_core::RevocationReason,
+) -> Result<RevokeScope, CliError> {
+    let cfg = ctx.load_config()?;
+    let (base, _id) = parse_store_url(store_url)?;
+    let client = DigClient::new(base);
+
+    let not_after = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let tombstone = match root {
+        Some(r) => Tombstone::root(cfg.store_id, r, not_after, reason),
+        None => Tombstone::store(cfg.store_id, not_after, reason),
+    };
+
+    let sk = store_ops::load_signing_key(ctx)?;
+    client
+        .post_tombstone(&cfg.store_id, &tombstone, |msg: &[u8; 32]| -> Bytes96 {
+            debug_assert_eq!(*msg, digstore_crypto::tombstone_signing_message(&tombstone));
+            digstore_crypto::bls::bls_sign(&sk, msg)
+        })
+        .await
+        .map_err(map_remote_err)?;
+
+    Ok(match root {
+        Some(r) => RevokeScope::Root(r),
+        None => RevokeScope::Store,
+    })
+}
+
 pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliError> {
     let cfg = ctx.load_config()?;
     let (base, _id) = parse_store_url(store_url)?;
     let client = DigClient::new(base);
 
     let local_root = store_ops::current_root(ctx)?;
+
+    // Fail-closed revocation gate up front (SECURITY.md residual #1 Layer 1):
+    // fetch the descriptor and, using the LOCAL module's store-id-bound key,
+    // refuse a Store-revoked store (or a remote-root-revoked head) BEFORE any
+    // advance — including the up-to-date case where no module is downloaded. The
+    // Module branch below re-checks against the freshly downloaded module key too.
+    let pre = client.fetch(&cfg.store_id).await.map_err(map_remote_err)?;
+    if !pre.descriptor.tombstones.is_empty() {
+        if let Some(local_root) = local_root {
+            if let Some(pubkey) = local_module_pubkey(ctx, &cfg.store_id, &local_root) {
+                let remote_root = Bytes32::from_hex(&pre.descriptor.current_root)
+                    .map_err(|_| CliError::VerificationFailed("bad descriptor root".into()))?;
+                // Check both the remote head we might advance to and our own local
+                // root (a Store tombstone refuses the store regardless of root).
+                check_not_revoked(
+                    &pubkey,
+                    &remote_root,
+                    &cfg.store_id,
+                    &pre.descriptor.tombstones,
+                )?;
+                check_not_revoked(
+                    &pubkey,
+                    &local_root,
+                    &cfg.store_id,
+                    &pre.descriptor.tombstones,
+                )?;
+            }
+        }
+    }
+
     let result = client
         .pull(&cfg.store_id, local_root, false)
         .await
@@ -313,6 +485,14 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
                 &root,
                 &cfg.store_id,
                 &info.descriptor.push_sig,
+            )?;
+            // Fail-closed revocation (§ residual #1 Layer 1): refuse to advance to
+            // a revoked root (or a Store-revoked store).
+            check_not_revoked(
+                &id.public_key,
+                &root,
+                &cfg.store_id,
+                &info.descriptor.tombstones,
             )?;
             let gen = info
                 .roots

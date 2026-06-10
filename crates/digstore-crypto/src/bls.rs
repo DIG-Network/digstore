@@ -15,7 +15,7 @@ use chia_bls::{
     sign as aug_sign, verify as aug_verify, PublicKey as ChiaPublicKey, SecretKey as ChiaSecretKey,
     Signature as ChiaSignature,
 };
-use digstore_core::{AttestationChallenge, Bytes32, Bytes48, Bytes96};
+use digstore_core::{AttestationChallenge, Bytes32, Bytes48, Bytes96, Tombstone};
 
 /// Host-side BLS signing key (wraps `chia_bls::SecretKey`, blst backend).
 pub struct SecretKey(ChiaSecretKey);
@@ -152,6 +152,12 @@ pub fn validate_public_key(pk: &Bytes48) -> Result<(), BlsError> {
 pub const PUSH_DST: &[u8] = b"digstore:push:v1";
 /// Role tag for node execution-proof signatures (`sign_node`).
 pub const NODE_DST: &[u8] = b"digstore:node:v1";
+/// Role tag for root-revocation tombstone signatures (`sign_tombstone` /
+/// `verify_tombstone`, SECURITY.md residual #1 Layer 1). Distinct from the
+/// push/node/attestation tags so a tombstone signature can never be replayed as
+/// (nor forged from) a push, node-proof, or attestation signature, even if the
+/// underlying payload bytes happened to coincide.
+pub const TOMB_DST: &[u8] = b"digstore:tomb:v1";
 /// Role tag for host attestation signatures (`sign_attestation`). Re-exported
 /// from `digstore_core` so the producer here and the guest's `build_challenge`
 /// verifier share ONE definition and stay byte-identical.
@@ -215,6 +221,19 @@ pub fn attestation_signing_message(
     msg
 }
 
+/// Canonical tombstone signing message (SECURITY.md residual #1 Layer 1):
+/// `SHA-256(TOMB_DST || canonical(Tombstone))` (32 bytes). The role tag is folded
+/// into the hashed preimage so the signed message stays a fixed 32 bytes, exactly
+/// like [`push_signing_message`]. Both `sign_tombstone` and `verify_tombstone` go
+/// through this single builder so producer and verifier stay byte-identical.
+pub fn tombstone_signing_message(t: &Tombstone) -> [u8; 32] {
+    let canonical = t.canonical();
+    let mut buf = Vec::with_capacity(TOMB_DST.len() + canonical.len());
+    buf.extend_from_slice(TOMB_DST);
+    buf.extend_from_slice(&canonical);
+    crate::hash::sha256(&buf).0
+}
+
 // --- High-level signing/verification over canonical messages ---------------
 
 /// Push-authorization signature (CONVENTIONS C7, paper §21.6): sign
@@ -261,4 +280,22 @@ pub fn sign_attestation(host_sk: &SecretKey, challenge: &AttestationChallenge) -
     let msg =
         attestation_signing_message(&challenge.nonce, &challenge.store_id, challenge.timestamp);
     bls_sign(host_sk, &msg)
+}
+
+/// Root-revocation tombstone signature (SECURITY.md residual #1 Layer 1). Signs
+/// the canonical [`tombstone_signing_message`] over `TOMB_DST || canonical(t)`
+/// with the store's BLS key. Mirrors [`sign_push`].
+pub fn sign_tombstone(sk: &SecretKey, t: &Tombstone) -> Bytes96 {
+    bls_sign(sk, &tombstone_signing_message(t))
+}
+
+/// Verify a tombstone signature against the store public key, using the
+/// byte-identical canonical message. Mirrors [`verify_push`]: returns `false` on
+/// any malformed signature or verification failure (fail-closed at the caller).
+pub fn verify_tombstone(pk: &PublicKey, t: &Tombstone, sig: &Bytes96) -> bool {
+    let sig = match Signature::from_bytes(sig) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    pk.verify(&tombstone_signing_message(t), &sig)
 }

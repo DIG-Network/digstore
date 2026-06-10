@@ -1,10 +1,11 @@
 use crate::server::{parse_store_id, run_blocking, AppState};
-use crate::wire::{RootEntry, RootHistory, StoreDescriptor};
+use crate::wire::{RootEntry, RootHistory, StoreDescriptor, TombstoneEntry};
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
     Json,
 };
+use digstore_core::Encode;
 
 pub async fn get_descriptor(State(s): State<AppState>, Path(id): Path<String>) -> Response {
     let store_id = match parse_store_id(&id) {
@@ -12,14 +13,31 @@ pub async fn get_descriptor(State(s): State<AppState>, Path(id): Path<String>) -
         Err(e) => return e.into_response(),
     };
     let backend = s.backend.clone();
-    let res = run_blocking(move || backend.head_state(&store_id)).await;
+    let res = run_blocking(move || {
+        let hs = backend.head_state(&store_id)?;
+        let tombstones = backend.tombstones(&store_id)?;
+        Ok::<_, crate::error::RemoteError>((hs, tombstones))
+    })
+    .await;
     match res {
-        Ok(hs) => {
+        Ok((hs, tombstones)) => {
+            // Serve the active tombstone set alongside the authenticated head
+            // (SECURITY.md residual #1 Layer 1). Each entry carries the canonical
+            // record hex + its 96-byte signature; the client re-verifies before
+            // honoring the revocation.
+            let tombstones = tombstones
+                .into_iter()
+                .map(|st| TombstoneEntry {
+                    record: hex::encode(st.tombstone.to_bytes()),
+                    signature: hex::encode(st.signature.0),
+                })
+                .collect();
             let body = StoreDescriptor {
                 current_root: hs.served_root.to_hex(),
                 size: hs.served_size,
                 public_key: hs.public_key.to_hex(),
                 push_sig: hs.served_sig.map(|s| hex::encode(s.0)).unwrap_or_default(),
+                tombstones,
             };
             Json(body).into_response()
         }

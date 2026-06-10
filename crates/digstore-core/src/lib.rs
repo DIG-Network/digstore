@@ -12,6 +12,7 @@ pub mod hash;
 pub mod keytable;
 pub mod manifest;
 pub mod merkle;
+pub mod tombstone;
 pub mod urn;
 pub mod wire;
 
@@ -53,6 +54,7 @@ pub use config::{
 pub use keytable::{KeyTableEntry, PathWalk};
 pub use manifest::{Author, MetadataManifest};
 pub use merkle::{MerkleProof, MerkleTree, ProofStep};
+pub use tombstone::{RevocationReason, Tombstone, TombstoneScope};
 pub use urn::Urn;
 pub use wire::{
     AttestationChallenge, AttestationResponse, AuthenticationInfo, ChiaBlockRef, ContentResponse,

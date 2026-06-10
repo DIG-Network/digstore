@@ -1,5 +1,5 @@
 use crate::error::RemoteError;
-use digstore_core::{Bytes32, Bytes48, Bytes96};
+use digstore_core::{Bytes32, Bytes48, Bytes96, Tombstone};
 
 /// The current head state of a store on the remote (§21.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +26,18 @@ pub struct RootRecord {
     pub generation: u64,
     pub root: Bytes32,
     pub timestamp: u64,
+}
+
+/// A signed root-revocation tombstone as persisted by the remote and served in
+/// the store descriptor (SECURITY.md residual #1 Layer 1). The signature is the
+/// publisher's BLS signature over `digstore_crypto::tombstone_signing_message`;
+/// the remote verifies it against the store's published key before storing, and
+/// the client re-verifies it against the store-id-bound module key before
+/// honoring the revocation (an unsigned/wrong-key tombstone does not revoke).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredTombstone {
+    pub tombstone: Tombstone,
+    pub signature: Bytes96,
 }
 
 /// Whether a push advances the served head or stays pending (§21.4).
@@ -126,6 +138,21 @@ pub trait RemoteBackend: Send + Sync + 'static {
         to: &Bytes32,
         have: &[Bytes32],
     ) -> Result<DeltaSet, RemoteError>;
+
+    /// Persist a signed revocation tombstone for a store (SECURITY.md residual #1
+    /// Layer 1). The caller (the tombstone handler) has ALREADY verified the BLS
+    /// signature against the store's published key; this only persists the record
+    /// so it can be served in the descriptor. Idempotent on (scope, store):
+    /// re-storing the same scope replaces the prior entry.
+    fn store_tombstone(
+        &self,
+        store_id: &Bytes32,
+        tombstone: &StoredTombstone,
+    ) -> Result<(), RemoteError>;
+
+    /// The active tombstone set for a store, or UnknownStore. Empty when nothing
+    /// has been revoked.
+    fn tombstones(&self, store_id: &Bytes32) -> Result<Vec<StoredTombstone>, RemoteError>;
 
     /// Maximum accepted module size in bytes (§21.8 413).
     fn max_module_size(&self) -> u64;
