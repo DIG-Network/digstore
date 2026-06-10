@@ -84,7 +84,7 @@ fn memory_ceiling_blocks_oversized_grow() {
 #[test]
 fn memory_ceiling_allows_within_limit() {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/grow.wat")).unwrap();
-    let limits = ExecutionLimits::default(); // 256 pages, room for +200
+    let limits = ExecutionLimits::default(); // 2048 pages, room for +200
     let mut rt = HostRuntime::new(
         &module_bytes,
         cfg(),
