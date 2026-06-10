@@ -1435,6 +1435,7 @@ dependencies = [
  "hex",
  "ignore",
  "predicates",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
