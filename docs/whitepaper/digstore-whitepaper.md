@@ -5,7 +5,7 @@
 ### The Content-Addressable WASM Store Format
 
 <div class="subtitle">Michael Taylor</div>
-<div class="meta">Version 2.0 · June 2026</div>
+<div class="meta">Version 2.1 · June 2026</div>
 
 </div>
 
@@ -20,6 +20,14 @@
 > overstated in v1.0 (execution proofs, JWT authorization) are now stated with
 > their true, current scope. See [§24, Changes from v1.0](#24-changes-from-v10)
 > and [§22, Security Considerations and Residual Risks](#22-security-considerations-and-residual-risks).
+>
+> **What's new in v2.1.** The `.dig` directory is now a multi-store **workspace**
+> (named stores under `stores/<name>/`, §4.4); each store carries a per-store
+> **128 MB content cap** and an explicit **content root** for build output;
+> size-obfuscation filler is now **uniform** so every module compiles to one fixed
+> size regardless of content (§8.3); and the module memory ceiling is raised to a
+> configurable **384 MiB** with the guest heap placed dynamically above the data
+> section (§5.1, §18.2).
 
 ## Abstract
 
@@ -289,28 +297,74 @@ store at that generation.
 
 ### 4.4 On-Disk Layout
 
-A store lives in a `.dig` directory in the project, the way a Git repository
-lives in `.git`. `digstore init` creates `.dig` in the current working
-directory; every other command discovers the store by walking up from the
-current directory to the nearest `.dig` (an explicit `--dig-dir` overrides this).
-So the CLI operates on the store that contains the directory you run it from.
+A project lives in a `.dig` directory, the way a Git repository lives in `.git`.
+`.dig` is a **workspace** that holds one or more named stores under
+`stores/<name>/`. `digstore init [name]` creates `.dig` in the current working
+directory (defaulting the store name to `default`); every other command discovers
+the workspace by walking up from the current directory to the nearest `.dig` (an
+explicit `--dig-dir` overrides this). So the CLI operates on the workspace that
+contains the directory you run it from.
 
 ```text
 <project>/.dig/
-  {store_id}.staging.bin            # binary staging area (build time)
-  generations/
-    {roothash_hex}/
-      manifest.json                 # generation metadata
-      chunks/{chunk_hash_hex}       # one file per unique chunk
-  modules/
-    {store_id}-{roothash}.dig       # compiled module (WASM binary), one per generation
-  config.toml                       # store configuration (0600 if private)
-  signing_key.bin                   # BLS signing-key seed (0600; never embedded)
-  trusted_keys.json                 # trusted host keys (public)
+  workspace.toml                    # active store + name -> store_id registry + per-store content root
+  stores/
+    <name>/                         # one full store per name
+      {store_id}.staging.bin        # binary staging area (build time)
+      generations/
+        {roothash_hex}/
+          manifest.json             # generation metadata
+          chunks/{chunk_hash_hex}   # one file per unique chunk
+      modules/
+        {store_id}-{roothash}.dig   # compiled module (WASM binary), one per generation
+      config.toml                   # store configuration (0600 if private)
+      signing_key.bin               # BLS signing-key seed (0600; never embedded)
+      trusted_keys.json             # trusted host keys (public)
 ```
 
 The compiled module is the distribution unit. Backups copy the module;
-verification opens it; serving instantiates it.
+verification opens it; serving instantiates it. Each store under `stores/<name>/`
+keeps its own staging area, generations, compiled modules, and keys, so stores in
+one workspace are fully isolated.
+
+#### Multiple stores per project
+
+A workspace tracks any number of named stores. `workspace.toml` records the
+**active** store, a name → store-id registry, and each store's optional content
+root:
+
+```toml
+active = "default"
+
+[stores.default]
+id = "ab12…64hex…"
+
+[stores.site]
+id = "cd34…64hex…"
+content_root = "dist"
+```
+
+Store names are local, human-friendly aliases (letters, digits, `.`, `_`, `-`);
+the 64-hex store ID (§4.2) remains the cryptographic identity that URNs use. The
+target store for a command is resolved by precedence: an explicit `--store <name>`
+flag wins; otherwise the workspace's active store; otherwise, if exactly one store
+exists, that single store; otherwise the command errors and asks you to select
+one. `digstore stores` lists the stores, `digstore use <name>` sets the active
+store, and `digstore init <name>` adds a new one. `clone` materializes its store
+as `default`.
+
+#### Content root — what `add`/`urn` capture
+
+Unlike Git, digstore captures **build output**, not repository files, so the
+directory a store captures is a first-class, configurable notion distinct from
+where `.dig` lives. Each store has a **content root**: the directory that `add`
+and `urn` scan, and the root that resource keys are relative to. It defaults to
+the working directory and is commonly set to a build directory (e.g. `dist/`) via
+`digstore init <name> --dir dist` or `digstore dir <path>`. Because keys are
+content-root-relative, a file at `<project>/dist/css/app.css` always gets the key
+`css/app.css` and a stable URN, regardless of which subdirectory a command runs
+from. The global `-C/--cwd <path>` flag overrides the content root for a single
+command.
 
 ## 5. The Store Module
 
@@ -325,23 +379,32 @@ The store module is a WebAssembly binary produced by the compiler
 | Type | Function signatures (`[] -> [i64]`, `[i32,i32] -> [i64]`, etc.) |
 | Import | Host functions in the `dig_host` module (§6.3) |
 | Function | Type indices for each defined function |
-| Memory | One linear memory: min 1 page (64 KiB), max 256 pages (16 MiB) |
+| Memory | One linear memory: min 1 page (64 KiB), max 6144 pages (384 MiB) |
 | Export | The store ABI (§6.2) plus `memory`, `alloc`, `dealloc`, `init` |
 | Code | Function bodies, obfuscated if enabled (§17) |
 | Data | Embedded content: chunks, key table, metadata, trusted keys (no secret) |
 
 ```rust
 MemoryType {
-    minimum: 1,          // 64 KiB
-    maximum: Some(256),  // 16 MiB module-declared cap
+    minimum: 1,           // 64 KiB
+    maximum: Some(6144),  // 384 MiB module-declared cap
     memory64: false,
     shared: false,
 }
 ```
 
-The module-declared memory cap (16 MiB) is the inner bound. The host runtime
-additionally enforces an outer memory limit, table and instance limits, a fuel
-budget, and a wall-clock timeout (§18.2).
+The module-declared memory cap (384 MiB) is the inner bound. It is sized to hold
+the embedded data section — up to the per-store **128 MB content cap** plus
+AEAD/merkle/filler overhead — together with the working heap a serve needs.
+Crucially, the guest heap is **not** at a fixed offset: the bump allocator places
+its base **dynamically above** the data section at
+`align_up(DIGS_DATA_OFFSET + blob_len, 64 KiB)`, computed from the embedded
+`DIGS` header on the first allocation. So heap growth can never overlap the
+embedded chunk pool for **any** blob size — contract D2 holds whether the data
+section is a few kilobytes or the full cap. Serving is **single-copy**: a worst-
+case single resource of ~122 MB materializes once and serves comfortably within
+the 384 MiB ceiling. The host runtime additionally enforces an outer memory limit,
+table and instance limits, a fuel budget, and a wall-clock timeout (§18.2).
 
 ### 5.2 What Gets Embedded
 
@@ -626,6 +689,17 @@ Because the pool carries filler and no boundaries, the data section reveals
 neither how many resources a store holds nor where one ends and the next begins.
 Reassembly requires the key-table entry, which requires the resource key, which
 requires the URN.
+
+**Uniform module size.** The filler does more than hide boundaries: every
+module's injected data blob is padded to **one fixed size** (a budget covering a
+full 128 MB store's ciphertext, key table, merkle nodes, and headers), so every
+store compiles to the **same module size** regardless of how much content it
+holds. A store at 100% of the cap carries ~no filler; a smaller store is padded
+with deterministic filler up to the fixed budget. As a result the module size
+reveals nothing about content size — there is no coarse size bucket to read off,
+and two stores with very different amounts of content are byte-for-byte the same
+length. The filler is the deterministic keystream of §19.3, so the padded module
+stays reproducible.
 
 ### 8.4 The Metadata Manifest
 
@@ -1057,7 +1131,7 @@ URN and no decryption key.
 
 | The provider can observe | The provider cannot learn |
 |---|---|
-| Module size and chunk count | The plaintext of any content |
+| That a module is a store (its fixed size, uniform across stores, §8.3) | The plaintext of any content, or how much content the store holds |
 | Retrieval keys requested (hashes) | The URN behind a retrieval key |
 | That a request occurred and its timing | Which resource a request concerned, or whether it hit |
 | The public metadata manifest (§8.4) | Anything the publisher did not place in the manifest |
@@ -1134,8 +1208,10 @@ keeps all guest memory inside the runtime's accounting.
 - **Wall-clock timeout.** Each export call is bounded in time via epoch
   interruption; an overrun traps.
 - **Fuel metering.** A fuel budget bounds work per call.
-- **Memory ceiling.** The runtime enforces an outer linear-memory limit above the
-  module's declared 16 MiB cap.
+- **Memory ceiling.** The runtime enforces an outer linear-memory limit that
+  defaults to **384 MiB** — matching the module's declared cap (§5.1) — and is
+  operator-configurable via `ExecutionLimits.memory_bytes_max`. This outer bound
+  is the real DoS limit for an untrusted module.
 - **Table and instance limits.** Table element count, table count, memory count,
   and instance count are all bounded, so a guest cannot exhaust host memory via
   `table.grow` or excess instantiation.
@@ -1445,6 +1521,14 @@ DIG Network specifications.
 This edition reconciles the specification with the audited, hardened
 implementation. Substantive changes:
 
+- **v2.1 — multi-store workspaces and limits (§4.4, §5.1, §8.3, §18.2).** `.dig`
+  is now a workspace of named stores (`stores/<name>/`, `workspace.toml` registry +
+  active selection + per-store content root); each store has a per-store **128 MB
+  content cap**; size-obfuscation filler is now **uniform** so every module is one
+  fixed size (the module size reveals nothing about content size, replacing the
+  earlier coarse-bucket framing); and the module memory ceiling is raised to a
+  configurable **384 MiB** with the guest heap placed dynamically above the data
+  section so contract D2 holds for any blob size.
 - **Chunk cipher (§11.2).** v1.0 specified AES-256-GCM with a fixed nonce and
   argued it was safe "because the key is unique per URN." That rationale is
   unsound — a rootless URN reuses its key across generations, recreating the
