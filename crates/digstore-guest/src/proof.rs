@@ -16,21 +16,12 @@ use crate::host::DigHost;
 use crate::oblivious::build_access_plan;
 use crate::request::ProofRequest;
 use alloc::vec::Vec;
-use digstore_core::serving::concat_output;
 use digstore_core::{Bytes32, ProofPrelude};
 use sha2::{Digest, Sha256};
 
 pub enum ProofOutcome {
     Real(ProofPrelude),
     Decoy(ProofPrelude),
-}
-
-fn sha256(bytes: &[u8]) -> Bytes32 {
-    let mut h = Sha256::new();
-    h.update(bytes);
-    let mut o = [0u8; 32];
-    o.copy_from_slice(&h.finalize());
-    Bytes32(o)
 }
 
 /// Read chunk ciphertext at `index` from the ChunkPool section.
@@ -111,13 +102,20 @@ pub fn serve_proof<H: DigHost + ?Sized>(
     for idx in &plan.order {
         gathered.push(read_chunk(ds, *idx).unwrap_or_default());
     }
-    let real_slices: Vec<&[u8]> = plan
-        .real_positions
-        .iter()
-        .map(|pos| gathered[*pos].as_slice())
-        .collect();
-    let output = concat_output(&real_slices);
-    let output_commitment = sha256(&output);
+    // output_commitment = SHA-256 of the served output bytes in C9 `concat_output`
+    // order. Feed each real slice into the hasher directly instead of
+    // materializing the (up to ~122 MiB) concatenation — the digest is
+    // byte-identical to `sha256(concat_output(&real_slices))`, but the proof path
+    // no longer allocates a resource-sized buffer (the OOM finding's copy C).
+    let output_commitment = {
+        let mut h = Sha256::new();
+        for pos in &plan.real_positions {
+            h.update(gathered[*pos].as_slice());
+        }
+        let mut o = [0u8; 32];
+        o.copy_from_slice(&h.finalize());
+        Bytes32(o)
+    };
 
     // serving_digest = SHA-256(retrieval_key || ordered chunk indices (BE) ||
     // client_nonce). Binds the request nonce (§13.5 analog) and the served slice

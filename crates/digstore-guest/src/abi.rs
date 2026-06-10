@@ -5,7 +5,7 @@
 //! `get_proof` returns a serialized `ProofPrelude` (NOT an `ExecutionProof` — the
 //! guest cannot produce ZK proofs in wasm; the host wraps the prelude later).
 
-use crate::content::{serve_content, ContentOutcome, GateConfig};
+use crate::content::{serve_content_wire, GateConfig};
 use crate::datasection::embedded;
 use crate::host::WasmHost;
 use crate::metadata;
@@ -105,10 +105,10 @@ pub extern "C" fn get_content(req_ptr: i32, req_len: i32) -> i64 {
         expected_iss: None,
         expected_aud: None,
     };
-    let resp = match serve_content(&WasmHost, &embedded(), &req, &cfg) {
-        ContentOutcome::Real(r) | ContentOutcome::Decoy(r) => r,
-    };
-    ret(encode_to_vec(&resp))
+    // Single-copy serve: frame the wire response (ciphertext || merkle || root)
+    // directly into one pre-sized buffer (§7), so a near-cap (~122 MiB) resource
+    // serves within the module memory ceiling. Byte-identical wire output.
+    ret(serve_content_wire(&WasmHost, &embedded(), &req, &cfg))
 }
 
 #[no_mangle]

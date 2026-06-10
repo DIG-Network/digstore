@@ -39,9 +39,32 @@ impl Encoder {
     pub fn new() -> Self {
         Encoder { buf: Vec::new() }
     }
+    /// Pre-size the backing buffer to `cap` bytes. Lets a caller that knows the
+    /// exact framed size (e.g. `4 + ciphertext.len() + merkle_len + 32` for a
+    /// `ContentResponse`) write the whole response with a single allocation and
+    /// no growth-doubling overshoot — the difference between fitting a near-cap
+    /// resource in the module memory ceiling and OOMing on the Vec-growth slack.
+    pub fn with_capacity(cap: usize) -> Self {
+        Encoder {
+            buf: Vec::with_capacity(cap),
+        }
+    }
     /// Write raw bytes with no length prefix.
     pub fn write_bytes(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
+    }
+    /// Append an owned byte vector. When the backing buffer is still empty this
+    /// **moves** `bytes` in (taking ownership of its allocation, zero copy);
+    /// otherwise it falls back to `extend_from_slice`. The emitted bytes are
+    /// identical to `write_bytes(&bytes)` either way — this is purely an
+    /// allocation/copy optimization for large payloads such as the served
+    /// ciphertext, never a wire-format change.
+    pub fn write_owned(&mut self, bytes: Vec<u8>) {
+        if self.buf.is_empty() {
+            self.buf = bytes;
+        } else {
+            self.buf.extend_from_slice(&bytes);
+        }
     }
     /// Consume the encoder and return the accumulated bytes.
     pub fn finish(self) -> Vec<u8> {
