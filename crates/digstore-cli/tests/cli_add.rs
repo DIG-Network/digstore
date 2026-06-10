@@ -75,22 +75,45 @@ fn add_dot_and_glob_and_multiple() {
 }
 
 #[test]
-fn add_dry_run_stages_nothing() {
+fn add_dry_run_reports_would_stage_but_stages_nothing() {
     let d = tmp_dig();
     std::fs::write(d.path().join("a.txt"), b"a").unwrap();
     init(d.path());
+    // --dry-run previews what WOULD be staged (C2/C4): the `staged` array lists the
+    // would-be entries and `dry_run` is true, but nothing is actually committed to
+    // the staging area.
     let out = dig_in(d.path())
         .args(["--json", "add", "-A", "--dry-run"])
         .output()
         .unwrap();
     assert!(out.status.success(), "add --dry-run failed: {:?}", out);
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let staged: Vec<String> = v["staged"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap().to_string())
+        .collect();
     assert!(
-        v["staged"].as_array().unwrap().is_empty(),
-        "dry-run staged array should be empty; got {:?}",
+        staged.contains(&"a.txt".to_string()),
+        "dry-run should preview a.txt; got {:?}",
         v
     );
     assert_eq!(v["dry_run"], true, "dry_run field should be true");
+
+    // The dry run must not have actually staged anything: a real status shows
+    // a.txt as untracked, not staged.
+    let st = dig_in(d.path())
+        .args(["--json", "status"])
+        .output()
+        .unwrap();
+    assert!(st.status.success(), "status failed: {:?}", st);
+    let sv: serde_json::Value = serde_json::from_slice(&st.stdout).unwrap();
+    assert!(
+        sv["staged"].as_array().unwrap().is_empty(),
+        "dry-run must not stage; status.staged = {:?}",
+        sv["staged"]
+    );
 }
 
 #[test]
