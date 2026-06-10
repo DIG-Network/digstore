@@ -18,8 +18,8 @@
   --dig-pink-glow:     #FF3DF5;  /* brightest neon glow */
 
   /* The signature gradient: deep purple -> hot magenta. */
-  --grad-brand:  linear-gradient(115deg, #5800D6 0%, #FF00DE 100%);
-  --grad-logo:   linear-gradient(150deg, #5800D6 0%, #FF00DE 100%);
+  --grad-brand:  linear-gradient(115deg, #5800D6 0%, #FF00DE 100%); /* @kind color */
+  --grad-logo:   linear-gradient(150deg, #5800D6 0%, #FF00DE 100%); /* @kind color */
   --grad-text:   linear-gradient(100deg, #B98CFF 0%, #FF6BEE 100%);
 
   /* Neon glow shadows (apply to logos, key icons, primary CTAs) */
@@ -85,9 +85,9 @@
   --t-eyebrow: 13px;   /* uppercase tracked label */
 
   /* line-heights */
-  --lh-tight: 1.05;
-  --lh-snug: 1.2;
-  --lh-body: 1.6;
+  --lh-tight: 1.05; /* @kind font */
+  --lh-snug: 1.2; /* @kind font */
+  --lh-body: 1.6; /* @kind font */
 
   /* tracking */
   --track-eyebrow: .18em;
