@@ -16,13 +16,31 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
+// `Manager` is only needed for `app.path()` in the resource-dir fallback.
+#[cfg(not(embed_digstore))]
+use tauri::Manager;
+
+// ---- Embedded payload (single-file install) ----------------------------------
+// When the release build staged a `digstore` binary, build.rs embedded it (and
+// its SHA-256) so the installer is a single self-contained executable with no
+// sidecar resource folder. Dev/`cargo check` builds without a staged binary do
+// not set `embed_digstore` and fall back to the Tauri resource dir.
+#[cfg(embed_digstore)]
+const EMBEDDED_DIGSTORE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/digstore.bin"));
+#[cfg(embed_digstore)]
+const EMBEDDED_SHA256: &str = include_str!(concat!(env!("OUT_DIR"), "/digstore.sha256"));
+
+// The DIG brand icon, embedded so the .dig file-type association has an icon to
+// point at regardless of where the user runs the (single-file) installer.
+const DIG_ICON_ICO: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/icon.ico"));
+#[cfg(all(unix, not(target_os = "macos")))]
+const DIG_ICON_PNG: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/icon.png"));
 
 #[derive(Debug, Deserialize)]
 pub struct InstallOpts {
@@ -67,7 +85,9 @@ pub fn default_install_path() -> String {
     }
 }
 
-/// Locate the bundled artifact inside the app resource dir.
+/// Locate the bundled artifact inside the app resource dir (dev fallback only;
+/// release builds embed the binary — see `digstore_payload`).
+#[cfg(not(embed_digstore))]
 fn bundled_bin(app: &AppHandle) -> Result<PathBuf, String> {
     let res_dir = app
         .path()
@@ -102,18 +122,34 @@ fn emit_pct(app: &AppHandle, pct: f64, now_file: Option<&str>) {
     );
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut f = fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+fn sha256_bytes(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = f.read(&mut buf).map_err(|e| format!("read {}: {e}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
+/// Resolve the `digstore` bytes to install plus the expected SHA-256 (when
+/// known). Prefers the binary embedded at build time (single-file install);
+/// falls back to the Tauri resource dir + `.sha256` sidecar for dev runs.
+fn digstore_payload(app: &AppHandle) -> Result<(Vec<u8>, Option<String>), String> {
+    #[cfg(embed_digstore)]
+    {
+        let _ = app; // resource dir unused when embedded
+        Ok((
+            EMBEDDED_DIGSTORE.to_vec(),
+            Some(EMBEDDED_SHA256.trim().to_lowercase()),
+        ))
     }
-    Ok(hex::encode(hasher.finalize()))
+    #[cfg(not(embed_digstore))]
+    {
+        let src = bundled_bin(app)?;
+        let bytes = fs::read(&src).map_err(|e| format!("read {}: {e}", src.display()))?;
+        let manifest = src.with_file_name(format!("{}.sha256", bin_name()));
+        let expected = fs::read_to_string(&manifest)
+            .ok()
+            .and_then(|s| s.split_whitespace().next().map(|x| x.to_lowercase()));
+        Ok((bytes, expected))
+    }
 }
 
 /// Run the whole pipeline. Returns Ok on full success; on the first failure it
@@ -130,42 +166,38 @@ pub fn run(app: &AppHandle, opts: InstallOpts) -> Result<(), String> {
     emit_line(app, format!(r#"<span class="dim">$</span> digstore-setup --target {}"#, opts.install_path));
     emit_line(app, format!(r#"Resolving release <span class="ac">v1.0.0</span> · compiler 1.0.0 · module format 1 <span class="dim">({os}/{arch})</span>"#));
 
-    let source = bundled_bin(app)?;
+    let (payload, expected_sha) = digstore_payload(app)?;
 
-    // ---- Phase 2: verify bundled package checksum [gated] ----
-    // Offline integrity gate: recompute SHA-256 over the bundled artifact and
-    // compare to the sidecar manifest staged alongside it. This is a checksum,
-    // not cryptographic provenance — the manifest travels next to the binary,
-    // so it proves integrity (no corruption/truncation), not authorship. A real
+    // ---- Phase 2: verify the package checksum [gated] ----
+    // Offline integrity gate: recompute SHA-256 over the bytes we are about to
+    // write and compare to the digest captured at build time (or the sidecar in
+    // dev). This is a checksum, not cryptographic provenance — it proves the
+    // payload is intact (no corruption/truncation), not authorship. A real
     // release additionally verifies a BLS detached signature over this digest
     // (the remaining TODO); the checksum check is the genuine, blocking gate
     // wired here and still aborts the install before any unpack/exec.
     emit_pct(app, 10.0, Some(bin_name()));
-    let digest = sha256_file(&source)?;
-    let manifest = source.with_file_name(format!("{}.sha256", bin_name()));
-    if manifest.exists() {
-        let expected = fs::read_to_string(&manifest)
-            .map_err(|e| format!("read checksum manifest: {e}"))?
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
-        if expected != digest {
+    let digest = sha256_bytes(&payload);
+    match &expected_sha {
+        Some(expected) if expected != &digest => {
             let msg = format!("package checksum mismatch: expected {expected}, got {digest}");
             let _ = app.emit("install://error", InstallError { message: msg.clone() });
             return Err(msg);
         }
-        emit_line(app, format!(r#"<span class="ok">✓</span> Verified package checksum (SHA-256) <span class="dim">({}…)</span>"#, &digest[..12]));
-    } else {
-        // No manifest staged — surface honestly rather than faking a pass.
-        emit_line(app, format!(r#"<span class="warn">!</span> No checksum manifest; recorded digest <span class="dim">{}…</span>"#, &digest[..12]));
+        Some(_) => {
+            emit_line(app, format!(r#"<span class="ok">✓</span> Verified package checksum (SHA-256) <span class="dim">({}…)</span>"#, &digest[..12]));
+        }
+        None => {
+            // No expected digest available — surface honestly rather than faking a pass.
+            emit_line(app, format!(r#"<span class="warn">!</span> No checksum manifest; recorded digest <span class="dim">{}…</span>"#, &digest[..12]));
+        }
     }
 
     // ---- Phase 3: unpack the CLI (+ host runtime) ----
     emit_pct(app, 24.0, Some("bin/digstore"));
     fs::create_dir_all(&bin_dir).map_err(|e| format!("create {}: {e}", bin_dir.display()))?;
     let dest_bin = bin_dir.join(bin_name());
-    fs::copy(&source, &dest_bin).map_err(|e| format!("unpack CLI: {e}"))?;
+    fs::write(&dest_bin, &payload).map_err(|e| format!("unpack CLI: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -221,6 +253,19 @@ pub fn run(app: &AppHandle, opts: InstallOpts) -> Result<(), String> {
                 emit_line(app, format!(r#"<span class="warn">!</span> Could not update PATH automatically <span class="dim">({e})</span>"#));
             }
         }
+    }
+
+    // ---- Phase 5.5: register the .dig file-type icon ----
+    emit_pct(app, 88.0, Some(".dig association"));
+    match register_dig_association(&install_dir) {
+        Ok(note) => emit_line(
+            app,
+            format!(r#"Registering <span class="ac">.dig</span> file icon <span class="dim">({note})</span>"#),
+        ),
+        Err(e) => emit_line(
+            app,
+            format!(r#"<span class="warn">!</span> Skipped .dig icon <span class="dim">({e})</span>"#),
+        ),
     }
 
     // ---- Phase 6: verify ----
@@ -326,6 +371,113 @@ fn add_to_path(bin_dir: &Path) -> Result<String, String> {
         let _ = fs::remove_file(&link);
         unixfs::symlink(&target, &link).map_err(|e| format!("symlink {} → {}: {e}", link.display(), target.display()))?;
         Ok(format!("{}", link.display()))
+    }
+}
+
+/// Register the DIG brand icon as the icon for `.dig` files. Best-effort and
+/// per-user on every platform — never elevates.
+///   Windows: write the embedded `.ico` into the install dir, register a ProgID
+///            under `HKCU\Software\Classes`, and notify the shell.
+///   Linux:   install a shared-mime-info package + a hicolor mimetype icon for
+///            `application/x-dig` under `~/.local/share`, then refresh caches.
+///   macOS:   unsupported for a CLI-only install (a document type needs a
+///            persistent `.app` to declare it); reported as skipped.
+fn register_dig_association(install_dir: &Path) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
+        use winreg::RegKey;
+
+        // Drop the icon next to the install so the ProgID points at a stable path.
+        let icon_path = install_dir.join("digstore.ico");
+        fs::write(&icon_path, DIG_ICON_ICO).map_err(|e| format!("write icon: {e}"))?;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let classes = "Software\\Classes";
+        let prog_id = "DigStore.Store";
+
+        // .dig -> ProgID
+        let (ext, _) = hkcu
+            .create_subkey_with_flags(format!("{classes}\\.dig"), KEY_WRITE)
+            .map_err(|e| format!("create .dig key: {e}"))?;
+        ext.set_value("", &prog_id)
+            .map_err(|e| format!("set .dig default: {e}"))?;
+
+        // ProgID description + DefaultIcon
+        let (pid, _) = hkcu
+            .create_subkey_with_flags(format!("{classes}\\{prog_id}"), KEY_WRITE)
+            .map_err(|e| format!("create ProgID: {e}"))?;
+        pid.set_value("", &"DigStore content-addressable store")
+            .map_err(|e| format!("set ProgID default: {e}"))?;
+        let (icon_key, _) = hkcu
+            .create_subkey_with_flags(format!("{classes}\\{prog_id}\\DefaultIcon"), KEY_WRITE)
+            .map_err(|e| format!("create DefaultIcon: {e}"))?;
+        icon_key
+            .set_value("", &format!("{},0", icon_path.display()))
+            .map_err(|e| format!("set DefaultIcon: {e}"))?;
+
+        notify_assoc_changed();
+        Ok(format!("HKCU .dig → {prog_id}"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = install_dir; // not needed on Linux (per-user XDG dirs)
+        let home = dirs::home_dir().ok_or("no home directory")?;
+        let share = home.join(".local").join("share");
+
+        // shared-mime-info package describing application/x-dig with *.dig.
+        let mime_pkg_dir = share.join("mime").join("packages");
+        fs::create_dir_all(&mime_pkg_dir).map_err(|e| format!("create mime dir: {e}"))?;
+        let mime_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-dig">
+    <comment>DigStore content-addressable store</comment>
+    <glob pattern="*.dig"/>
+  </mime-type>
+</mime-info>
+"#;
+        fs::write(mime_pkg_dir.join("digstore.xml"), mime_xml)
+            .map_err(|e| format!("write mime xml: {e}"))?;
+
+        // hicolor mimetype icon: application-x-dig.png (freedesktop naming).
+        let icon_dir = share
+            .join("icons")
+            .join("hicolor")
+            .join("128x128")
+            .join("mimetypes");
+        fs::create_dir_all(&icon_dir).map_err(|e| format!("create icon dir: {e}"))?;
+        fs::write(icon_dir.join("application-x-dig.png"), DIG_ICON_PNG)
+            .map_err(|e| format!("write icon: {e}"))?;
+
+        // Refresh caches (best-effort; ignore failures / missing tools).
+        let _ = Command::new("update-mime-database")
+            .arg(share.join("mime"))
+            .status();
+        let _ = Command::new("gtk-update-icon-cache")
+            .arg("-f")
+            .arg(share.join("icons").join("hicolor"))
+            .status();
+        Ok("~/.local/share MIME + icon".to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = install_dir;
+        Err("not supported for a CLI-only install".to_string())
+    }
+}
+
+/// Tell the Windows shell that file associations changed so Explorer repaints
+/// `.dig` icons without a logout.
+#[cfg(windows)]
+fn notify_assoc_changed() {
+    use windows_sys::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
+    unsafe {
+        SHChangeNotify(
+            SHCNE_ASSOCCHANGED as i32,
+            SHCNF_IDLIST,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
     }
 }
 
