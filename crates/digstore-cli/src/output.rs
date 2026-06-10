@@ -8,6 +8,8 @@ pub struct StatusView {
     pub staged: Vec<String>,
     pub modified: Vec<String>,
     pub untracked: Vec<String>,
+    pub staged_bytes: u64,
+    pub limit_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -32,6 +34,7 @@ pub fn render_status(s: &StatusView, ui: &crate::ui::Ui) {
         Some(r) => ui.line(format!("● generation root {}", &r[..r.len().min(12)])),
         None => ui.line("No commits yet"),
     }
+    ui.capacity(s.staged_bytes, s.limit_bytes);
     use crate::ui::theme::Marker;
     let group = |ui: &crate::ui::Ui, label: &str, m: Marker, items: &[String]| {
         if items.is_empty() {
@@ -94,6 +97,8 @@ mod tests {
             staged: vec!["readme".into()],
             modified: vec![],
             untracked: vec!["new_file.txt".into()],
+            staged_bytes: 0,
+            limit_bytes: 100_000_000,
         };
         // Serialize directly to verify the JSON shape contains "untracked".
         let json = serde_json::to_string_pretty(&s).expect("serialize");
@@ -110,6 +115,8 @@ mod tests {
             staged: vec!["a".into()],
             modified: vec!["b".into()],
             untracked: vec!["c".into()],
+            staged_bytes: 0,
+            limit_bytes: 100_000_000,
         };
         let json = serde_json::to_string_pretty(&s).expect("serialize");
         assert!(json.contains("\"root\""));
