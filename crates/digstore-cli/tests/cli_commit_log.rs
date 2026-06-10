@@ -19,7 +19,7 @@ fn commit_creates_module_and_log_lists_it() {
         .assert()
         .success()
         .stdout(predicate::str::contains("committed root"));
-    let modules: Vec<_> = std::fs::read_dir(dir.path().join("modules"))
+    let modules: Vec<_> = std::fs::read_dir(common::store_dir(&dir).join("modules"))
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().map(|x| x == "dig").unwrap_or(false))

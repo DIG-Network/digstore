@@ -105,8 +105,10 @@ fn outside_temporal_window_returns_decoy_even_on_hit() {
     let pool = fixtures::pack_pool(&[b"alpha"]);
     let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
     let ds = DataSection::parse(&blob).unwrap();
-    let mut host = MockHost::default();
-    host.time = 50; // before window
+    let host = MockHost {
+        time: 50, // before window
+        ..MockHost::default()
+    };
     let req = ContentRequest {
         retrieval_key: key,
         root_hash: None,
@@ -338,8 +340,10 @@ fn failed_attestation_returns_decoy() {
     let pool = fixtures::pack_pool(&[b"alpha"]);
     let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
     let ds = DataSection::parse(&blob).unwrap();
-    let mut host = MockHost::default();
-    host.attestation = Err(digstore_core::ErrorCode::AttestationFailed);
+    let host = MockHost {
+        attestation: Err(digstore_core::ErrorCode::AttestationFailed),
+        ..MockHost::default()
+    };
     let mut gc = gate_config();
     gc.require_attestation = true;
     let req = ContentRequest {
@@ -532,8 +536,10 @@ fn require_jwt_without_active_session_returns_decoy_even_with_valid_jwt() {
     // be responsible for the Decoy.
     let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":9999999999,"nbf":0}"#);
 
-    let mut host = MockHost::default();
-    host.session_ok = false; // §12.4: no active session
+    let host = MockHost {
+        session_ok: false, // §12.4: no active session
+        ..MockHost::default()
+    };
 
     let mut gc = gate_config();
     gc.require_jwt = true;
@@ -571,8 +577,10 @@ fn require_jwt_with_active_session_and_valid_jwt_returns_real() {
 
     let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":9999999999,"nbf":0}"#);
 
-    let mut host = MockHost::default();
-    host.session_ok = true; // active session
+    let host = MockHost {
+        session_ok: true, // active session
+        ..MockHost::default()
+    };
 
     let mut gc = gate_config();
     gc.require_jwt = true;

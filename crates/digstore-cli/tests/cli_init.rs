@@ -22,10 +22,12 @@ fn init_creates_store_and_trusted_key() {
         .arg("init")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Initialized digstore"));
-    assert!(dir.path().join("config.toml").exists());
-    assert!(dir.path().join("trusted_keys.json").exists());
-    assert!(dir.path().join("modules").exists());
+        .stdout(predicate::str::contains("Initialized store"));
+    // Multi-store layout: the default store's files live under stores/default/.
+    let store = dir.path().join("stores").join("default");
+    assert!(store.join("config.toml").exists());
+    assert!(store.join("trusted_keys.json").exists());
+    assert!(store.join("modules").exists());
 }
 
 #[test]

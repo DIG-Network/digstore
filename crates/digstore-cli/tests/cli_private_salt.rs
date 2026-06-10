@@ -24,7 +24,7 @@ fn private_cat_without_salt_fails_with_salt_succeeds() {
     dig(&dir).args(["cat", &urn]).assert().failure().code(5);
 
     // WITH salt (read from the deterministic secret_salt.hex file) -> plaintext.
-    let salt = std::fs::read_to_string(dir.path().join("secret_salt.hex")).unwrap();
+    let salt = std::fs::read_to_string(common::store_dir(&dir).join("secret_salt.hex")).unwrap();
     let salt = salt.trim();
     let out = dig(&dir)
         .args(["cat", &urn, "--salt", salt])

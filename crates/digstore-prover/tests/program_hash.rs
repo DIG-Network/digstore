@@ -26,7 +26,7 @@ fn program_hash_mismatch_is_rejected() {
         .prove(proven, &public_input, &serving)
         .unwrap();
     let chain = MockChainSource::new(vec![block], 1_000_100);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify(&proof, Bytes32([0xCCu8; 32]), &[root], &chain)
         .unwrap_err();
     assert!(matches!(err, ProverError::ProgramHashMismatch { .. }));

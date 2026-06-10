@@ -70,7 +70,9 @@ fn mock_random_differs_across_calls() {
 
 #[test]
 fn mock_attestation_can_be_scripted_as_error() {
-    let mut h = MockHost::default();
-    h.attestation = Err(ErrorCode::AttestationFailed);
+    let h = MockHost {
+        attestation: Err(ErrorCode::AttestationFailed),
+        ..MockHost::default()
+    };
     assert!(h.create_attestation(b"x").is_err());
 }

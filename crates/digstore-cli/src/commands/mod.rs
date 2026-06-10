@@ -27,18 +27,25 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
     let ui = crate::ui::Ui::from_flags(cli.color, cli.json, cli.quiet, cli.verbose);
     let cwd = std::env::current_dir().map_err(|e| CliError::Other(e.into()))?;
 
-    // `init` anchors to CWD; everything else discovers the workspace by walking up.
-    let workspace_dir = if matches!(cli.command, Command::Init(_)) {
+    // `init` and `clone` CREATE a store, so they anchor to CWD/.dig (no walk-up,
+    // like `git init`/`git clone`); everything else discovers an existing
+    // workspace by walking up.
+    let workspace_dir = if matches!(cli.command, Command::Init(_) | Command::Clone(_)) {
         CliContext::init_workspace(cli.dig_dir.clone())
     } else {
         CliContext::discover_workspace(cli.dig_dir.clone())
     };
 
-    // init creates the workspace itself; all other commands load (and migrate) it.
+    // init/clone create the workspace+store themselves; all other commands load
+    // (and migrate) the workspace first.
     match cli.command {
         Command::Init(a) => {
             let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
             return init::run(&ctx, &ui, a);
+        }
+        Command::Clone(a) => {
+            let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
+            return clone::run(&ctx, &ui, a);
         }
         Command::Stores(a) => {
             let ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
@@ -80,9 +87,10 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Staged(a) => staged::run(&ctx, &ui, a),
         Command::Urn(a) => urn::run(&ctx, &ui, a),
         Command::Remote(a) => remote::run(&ctx, &ui, a),
-        Command::Clone(a) => clone::run(&ctx, &ui, a),
         Command::Push(a) => push::run(&ctx, &ui, a),
         Command::Pull(a) => pull::run(&ctx, &ui, a),
-        Command::Init(_) | Command::Stores(_) | Command::Use(_) => unreachable!("handled above"),
+        Command::Init(_) | Command::Clone(_) | Command::Stores(_) | Command::Use(_) => {
+            unreachable!("handled above")
+        }
     }
 }

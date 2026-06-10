@@ -31,7 +31,7 @@ fn block_inside_freshness_window_accepted() {
     };
     let (proof, ph, root) = proof_bound_to(&block);
     let chain = MockChainSource::new(vec![block], 1_000_300); // 300s < 600s window
-    MockVerifier::default()
+    MockVerifier
         .verify(&proof, ph, &[root], &chain)
         .expect("fresh block accepted");
 }
@@ -45,7 +45,7 @@ fn block_outside_freshness_window_rejected() {
     };
     let (proof, ph, root) = proof_bound_to(&block);
     let chain = MockChainSource::new(vec![block], 1_000_700); // 700s > 600s window
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify(&proof, ph, &[root], &chain)
         .unwrap_err();
     assert!(matches!(err, ProverError::BlockTooOld { .. }));
@@ -65,7 +65,7 @@ fn block_unknown_to_chain_rejected() {
         timestamp: 1_000_010,
     };
     let chain = MockChainSource::new(vec![other], 1_000_300);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify(&proof, ph, &[root], &chain)
         .unwrap_err();
     assert!(matches!(err, ProverError::BlockNotOnChain(_)));

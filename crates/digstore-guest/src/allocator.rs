@@ -76,7 +76,9 @@ impl BumpAllocator {
                 return FALLBACK_HEAP_BASE;
             }
             let count = u32::from_be_bytes([header[5], header[6], header[7], header[8]]) as usize;
-            let table_len = match count.checked_mul(ROW_LEN).and_then(|t| t.checked_add(HEADER_LEN))
+            let table_len = match count
+                .checked_mul(ROW_LEN)
+                .and_then(|t| t.checked_add(HEADER_LEN))
             {
                 Some(n) => n,
                 None => return FALLBACK_HEAP_BASE,
@@ -86,9 +88,10 @@ impl BumpAllocator {
             for i in 0..count {
                 let p = HEADER_LEN + i * ROW_LEN;
                 let offset =
-                    u32::from_be_bytes([rows[p + 2], rows[p + 3], rows[p + 4], rows[p + 5]]) as usize;
-                let len =
-                    u32::from_be_bytes([rows[p + 6], rows[p + 7], rows[p + 8], rows[p + 9]]) as usize;
+                    u32::from_be_bytes([rows[p + 2], rows[p + 3], rows[p + 4], rows[p + 5]])
+                        as usize;
+                let len = u32::from_be_bytes([rows[p + 6], rows[p + 7], rows[p + 8], rows[p + 9]])
+                    as usize;
                 match offset.checked_add(len) {
                     Some(end) if end > total_len => total_len = end,
                     Some(_) => {}

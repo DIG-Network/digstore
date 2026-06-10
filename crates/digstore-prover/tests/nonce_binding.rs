@@ -31,7 +31,7 @@ fn make_proof(nonce: [u8; 32]) -> (ExecutionProof, Bytes32, Bytes32, ChiaBlockRe
 fn proof_for_nonce_a_rejected_against_request_nonce_b() {
     let (proof, ph, root, block) = make_proof([0xA1u8; 32]);
     let chain = MockChainSource::new(vec![block], 1_000_030);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify_with_nonce(&proof, &[0xB2u8; 32], ph, &[root], &chain)
         .unwrap_err();
     assert!(matches!(err, ProverError::NonceMismatch));
@@ -42,7 +42,7 @@ fn proof_for_nonce_a_accepted_against_request_nonce_a() {
     let nonce_a = [0xA1u8; 32];
     let (proof, ph, root, block) = make_proof(nonce_a);
     let chain = MockChainSource::new(vec![block], 1_000_030);
-    MockVerifier::default()
+    MockVerifier
         .verify_with_nonce(&proof, &nonce_a, ph, &[root], &chain)
         .expect("matching nonce must verify");
 }

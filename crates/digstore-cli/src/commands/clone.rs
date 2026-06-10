@@ -6,7 +6,28 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::remote_ops;
 
-pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(), CliError> {
+pub fn run(ws_ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(), CliError> {
+    // `clone` CREATES a store, like `init`: install it as the workspace's
+    // `default` store under `<workspace>/stores/default/` and register it in
+    // workspace.toml. The incoming context is workspace-only.
+    let name = "default";
+    let mut workspace = crate::workspace::Workspace::load_or_migrate(&ws_ctx.workspace_dir)?;
+    if workspace.stores.contains_key(name) {
+        return Err(CliError::InvalidArgument(format!(
+            "store '{name}' already exists in this workspace"
+        )));
+    }
+    let store_dir = workspace.store_dir(name);
+    std::fs::create_dir_all(&store_dir).map_err(|e| CliError::Other(e.into()))?;
+    let ctx = &CliContext {
+        dig_dir: store_dir,
+        workspace_dir: ws_ctx.workspace_dir.clone(),
+        op_dir: ws_ctx.op_dir.clone(),
+        store_name: Some(name.to_string()),
+        json: ws_ctx.json,
+        verbose: ws_ctx.verbose,
+    };
+
     let store_url = if args.source.starts_with("urn:dig:") {
         let urn = Urn::parse(&args.source)
             .map_err(|e| CliError::InvalidArgument(format!("bad urn: {e}")))?;
@@ -29,6 +50,14 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(), 
         .build()
         .map_err(|e| CliError::Other(e.into()))?;
     let summary = rt.block_on(remote_ops::clone_from(ctx, &store_url))?;
+
+    // Register the cloned store and make it active if it is the first one.
+    let first = workspace.stores.is_empty();
+    workspace.register(name, &summary.store_id_hex, None)?;
+    if first {
+        workspace.set_active(name)?;
+    }
+    workspace.save()?;
 
     if ui.json() {
         ui.emit_json(&serde_json::json!({
