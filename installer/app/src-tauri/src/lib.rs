@@ -48,6 +48,12 @@ fn bundled_digstore_version(app: AppHandle) -> String {
 }
 
 fn bundled_version(app: &AppHandle) -> Option<String> {
+    // Embedded single-file build: the version was captured at build time from
+    // the binary that was compiled into this installer.
+    if let Some(v) = option_env!("DIGSTORE_BUNDLED_VERSION") {
+        return Some(v.to_string());
+    }
+    // Dev fallback: query the staged resource binary directly.
     let res = app.path().resource_dir().ok()?;
     let bin = res.join("bin").join(install::bin_name());
     let bin = if bin.exists() {

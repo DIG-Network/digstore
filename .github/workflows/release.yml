@@ -1,14 +1,13 @@
 name: Release
 
-# On a version tag (v*), build the digstore CLI in release mode and package it
-# into desktop installers, then attach them to the GitHub Release for the tag.
+# On a version tag (v*), build the digstore CLI in release mode and produce ONE
+# run-once installer artifact per OS. The digstore binary is embedded directly
+# into the installer (build.rs), so each download is a single self-contained
+# file that, when run, installs digstore — no installer-installs-the-installer:
 #
-# Two packaging paths are produced:
-#   * tauri-installer  — the cross-platform Tauri wizard (installer/app). It
-#     bundles the freshly-built `digstore` binary as a resource and ships an
-#     NSIS .exe + MSI on Windows (and is one matrix entry away from macOS/Linux).
-#   * windows-inno     — the lightweight Inno Setup .exe (installer/digstore.iss),
-#     kept as a minimal silent/PATH-only alternative.
+#   * Windows → DigStore-Setup-<ver>-windows-x64.exe   (raw Tauri exe, no NSIS/MSI)
+#   * macOS   → DigStore-Setup-<ver>-macos.dmg          (one mountable run-once .app)
+#   * Linux   → DigStore-Setup-<ver>-linux-x86_64.AppImage (single executable)
 on:
   push:
     tags:
@@ -23,27 +22,28 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Tauri wizard installer — builds digstore.exe, stages it as a bundled
-  # resource, then builds + bundles the installer (NSIS + MSI).
-  # ---------------------------------------------------------------------------
-  tauri-installer:
-    name: Tauri installer (${{ matrix.os }})
+  installer:
+    name: Installer (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             bin: digstore.exe
-            bundles: nsis,msi
-          # macOS / Linux are a config away — uncomment to also ship .dmg/.app
-          # and .deb/.AppImage. The same staging + bundle steps apply.
-          # - os: macos-latest
-          #   bin: digstore
-          #   bundles: app,dmg
-          # - os: ubuntu-22.04
-          #   bin: digstore
-          #   bundles: deb,appimage
+            # Windows ships the raw, self-contained exe (no NSIS/MSI wrapper).
+            build_args: "--no-bundle"
+            artifact_glob: "src-tauri/target/release/*.exe"
+            out_name: "windows-x64.exe"
+          - os: macos-latest
+            bin: digstore
+            build_args: "--bundles dmg"
+            artifact_glob: "src-tauri/target/release/bundle/dmg/*.dmg"
+            out_name: "macos.dmg"
+          - os: ubuntu-22.04
+            bin: digstore
+            build_args: "--bundles appimage"
+            artifact_glob: "src-tauri/target/release/bundle/appimage/*.AppImage"
+            out_name: "linux-x86_64.AppImage"
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -95,24 +95,30 @@ jobs:
         working-directory: installer/app
         run: npm ci || npm install
 
-      # Stage the just-built digstore binary as a bundled resource + write its
-      # SHA-256 sidecar (the installer's gated verify step checks this digest).
+      # Stage the just-built digstore binary so the installer's build.rs embeds
+      # it (single-file install) + records its SHA-256 for the verify gate.
       - name: Stage bundled digstore binary
         working-directory: installer/app
         run: node scripts/stage-binary.mjs --src ../../target/release/${{ matrix.bin }}
 
-      - name: Build + bundle the Tauri installer
+      - name: Build the installer
         working-directory: installer/app
-        run: npx tauri build --bundles ${{ matrix.bundles }}
+        run: npx tauri build ${{ matrix.build_args }}
 
-      - name: Collect installer artifacts
+      - name: Collect single installer artifact
         id: collect
         shell: bash
+        working-directory: installer/app
         run: |
-          out="installer/app/src-tauri/target/release/bundle"
-          mkdir -p dist-installers
-          find "$out" \( -name '*-setup.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' \) -exec cp {} dist-installers/ \;
-          ls -la dist-installers
+          mkdir -p ../../dist-installers
+          artifact="$(ls -1 ${{ matrix.artifact_glob }} | head -n1)"
+          if [ -z "$artifact" ]; then
+            echo "no artifact matched ${{ matrix.artifact_glob }}"; exit 1
+          fi
+          dest="../../dist-installers/DigStore-Setup-${VERSION}-${{ matrix.out_name }}"
+          cp "$artifact" "$dest"
+          echo "staged $dest"
+          ls -la ../../dist-installers
 
       - name: Upload installer as workflow artifact
         uses: actions/upload-artifact@v4
@@ -128,70 +134,3 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" --title "digstore ${GITHUB_REF_NAME}" --generate-notes || echo "release already exists"
           gh release upload "${GITHUB_REF_NAME}" dist-installers/* --clobber
-
-  # ---------------------------------------------------------------------------
-  # Lightweight Inno Setup installer (Windows only) — kept as a minimal PATH-only
-  # alternative to the full wizard.
-  # ---------------------------------------------------------------------------
-  windows-inno:
-    name: Windows Inno Setup installer
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Install pinned Rust toolchain
-        run: |
-          rustup show
-          rustc --version
-
-      - name: Cache cargo + target
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-release-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-release-cargo-
-
-      - name: Build guest wasm
-        run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
-
-      - name: Build digstore CLI (release)
-        run: cargo build -p digstore-cli --release --locked
-
-      - name: Derive version from tag
-        run: |
-          $v = "${{ github.ref_name }}" -replace '^v',''
-          "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Installer version: $v"
-
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
-
-      - name: Build Windows installer
-        run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & "$iscc" "/DAppVersion=$env:VERSION" "installer\digstore.iss"
-          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
-          Get-ChildItem installer\Output
-
-      - name: Upload installer as workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: digstore-windows-inno-installer
-          path: installer/Output/*.exe
-          if-no-files-found: error
-
-      - name: Publish to GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $asset = (Get-ChildItem installer\Output\*setup.exe | Select-Object -First 1).FullName
-          gh release create "${{ github.ref_name }}" --title "digstore ${{ github.ref_name }}" --generate-notes 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host "release already exists; uploading asset" }
-          gh release upload "${{ github.ref_name }}" "$asset" --clobber

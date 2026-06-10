@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "app", "dmg", "deb", "rpm", "appimage"],
+    "targets": ["app", "dmg", "appimage"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -46,11 +46,6 @@
     "publisher": "DIG Network",
     "category": "DeveloperTool",
     "shortDescription": "Installer for the DigStore CLI + host runtime.",
-    "longDescription": "DigStore is the content-addressable WASM store format by DIG Network. This installer unpacks the digstore CLI and host runtime, adds digstore to PATH, and verifies the install.",
-    "windows": {
-      "nsis": {
-        "installMode": "currentUser"
-      }
-    }
+    "longDescription": "DigStore is the content-addressable WASM store format by DIG Network. This installer unpacks the digstore CLI and host runtime, adds digstore to PATH, and verifies the install."
   }
 }
