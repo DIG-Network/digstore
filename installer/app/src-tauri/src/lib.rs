@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Serialize)]
 struct Meta {
@@ -84,7 +84,12 @@ fn run_install(app: AppHandle, state: State<'_, InstallState>, opts: install::In
         if cancelled.load(Ordering::SeqCst) {
             return;
         }
-        let _ = install::run(&app, opts);
+        // ALWAYS surface a failure: an early `?` in the pipeline (e.g. a missing
+        // payload, a write/permission error) returns before its own error emit,
+        // which would otherwise leave the UI hung with no message.
+        if let Err(e) = install::run(&app, opts) {
+            let _ = app.emit("install://error", install::InstallError { message: e });
+        }
     });
     Ok(())
 }

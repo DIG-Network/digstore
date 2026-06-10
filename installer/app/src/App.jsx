@@ -56,6 +56,18 @@ export function App() {
 
   const installToken = useRef(0); // bump to cancel/ignore stale install streams
 
+  // Latest install inputs, read at call time so `startInstall` can stay stable
+  // (deps: []). Without this, the async default-path resolve recreates
+  // startInstall mid-install, re-running the effect → token bump → frozen UI.
+  const installPathRef = useRef(installPath);
+  const selRef = useRef(sel);
+  useEffect(() => {
+    installPathRef.current = installPath;
+  }, [installPath]);
+  useEffect(() => {
+    selRef.current = sel;
+  }, [sel]);
+
   useEffect(() => {
     localStorage.setItem("dig_step", String(step));
   }, [step]);
@@ -86,7 +98,7 @@ export function App() {
     setNowFile(NOW_FILES[0]);
 
     await runInstall(
-      { installPath, selected: { cli: true, ...sel } },
+      { installPath: installPathRef.current, selected: { cli: true, ...selRef.current } },
       {
         onProgress: (p) => {
           if (token !== installToken.current) return;
@@ -109,7 +121,7 @@ export function App() {
         },
       }
     );
-  }, [installPath, sel]);
+  }, []);
 
   useEffect(() => {
     if (step === 3) startInstall();
