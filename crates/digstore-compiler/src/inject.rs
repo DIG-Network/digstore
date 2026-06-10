@@ -59,17 +59,18 @@ pub fn inject_data_section(template: &[u8], blob: &[u8], mem_offset: u32) -> Res
                 for m in reader {
                     let m = m.map_err(|e| CompilerError::InvalidTemplate(e.to_string()))?;
                     let min = m.initial.max(needed_pages);
-                    // §5.1: the emitted module always declares the 16 MiB ceiling
-                    // (`maximum: Some(256)`) regardless of the template's declared
+                    // §5.1: the emitted module always declares the 128 MiB ceiling
+                    // (`maximum: Some(2048)`) regardless of the template's declared
                     // maximum — never passed through as `None` or a smaller cap.
-                    if needed_pages > CEILING_PAGES {
+                    if needed_pages > crate::template::MAX_MEMORY_PAGES {
                         return Err(CompilerError::Validation(format!(
-                            "data section needs {needed_pages} pages but §5.1 memory ceiling is {CEILING_PAGES}"
+                            "data section needs {needed_pages} pages but §5.1 memory ceiling is {}",
+                            crate::template::MAX_MEMORY_PAGES
                         )));
                     }
                     mem.memory(MemoryType {
                         minimum: min,
-                        maximum: Some(CEILING_PAGES),
+                        maximum: Some(crate::template::MAX_MEMORY_PAGES),
                         memory64: m.memory64,
                         shared: m.shared,
                         page_size_log2: None,
@@ -204,11 +205,6 @@ pub fn extract_data_section(module: &[u8], mem_offset: u32) -> Result<Vec<u8>> {
     Ok(raw[..view.total_len()].to_vec())
 }
 
-/// §5.1 module-declared memory ceiling (16 MiB = 256 pages). The emitted module
-/// MUST declare `maximum: Some(256)` regardless of the input template's declared
-/// maximum, so the inner bound is guaranteed (the host enforces the outer bound).
-const CEILING_PAGES: u64 = 256;
-
 /// Read a `i32.const N` (the only offset form Rust/LLVM emits for active wasm32
 /// data segments) from an offset const-expression.
 fn const_i32_offset(offset_expr: &wasmparser::ConstExpr) -> Result<i32> {
@@ -241,7 +237,7 @@ mod tests {
     }
 
     /// §5.1: a template that declares NO memory maximum must still produce an
-    /// emitted module declaring `maximum: Some(256)` — the inner ceiling is
+    /// emitted module declaring `maximum: Some(2048)` — the inner ceiling is
     /// guaranteed, never passed through as `None`.
     #[test]
     fn inject_normalizes_unbounded_memory_to_ceiling() {
@@ -255,19 +251,19 @@ mod tests {
         let (_, max) = memory_limits(&out);
         assert_eq!(
             max,
-            Some(256),
-            "§5.1 emitted module must declare maximum 256"
+            Some(2048),
+            "§5.1 emitted module must declare maximum 2048"
         );
     }
 
-    /// A template already declaring the ceiling stays at 256.
+    /// A template already declaring the ceiling stays at 2048.
     #[test]
     fn inject_preserves_ceiling_memory_max() {
-        let watsrc = r#"(module (memory (export "memory") 4 256))"#;
+        let watsrc = r#"(module (memory (export "memory") 4 2048))"#;
         let template = wat::parse_str(watsrc).unwrap();
         let blob = b"DIGS";
         let out = inject_data_section(&template, blob, 0x10).expect("inject ok");
         let (_, max) = memory_limits(&out);
-        assert_eq!(max, Some(256));
+        assert_eq!(max, Some(2048));
     }
 }
