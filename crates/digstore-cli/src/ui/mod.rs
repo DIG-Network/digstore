@@ -26,6 +26,13 @@ pub struct Ui {
     verbose: bool,
 }
 
+/// Plain capacity string: "47.2 MB staged · 52.8 MB free of 100.0 MB".
+pub fn human_capacity(staged: u64, limit: u64) -> String {
+    let mb = |b: u64| format!("{:.1} MB", b as f64 / 1_000_000.0);
+    let free = limit.saturating_sub(staged);
+    format!("{} staged · {} free of {}", mb(staged), mb(free), mb(limit))
+}
+
 impl Ui {
     /// Resolve color from the explicit choice, environment, json mode, and whether
     /// stdout is a terminal. `env_no_color`/`env_clicolor_force` are passed in so
