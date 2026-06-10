@@ -155,7 +155,7 @@ export async function cancelInstall() {
 const SIM_LOG = [
   { t: 240, html: '<span class="dim">$</span> digstore-setup --target {PATH}' },
   { t: 520, html: 'Resolving release <span class="ac">v1.0.0</span> · compiler 1.0.0 · module format 1' },
-  { t: 900, html: '<span class="ok">✓</span> Verified package signature <span class="dim">(SHA-256 manifest)</span>' },
+  { t: 900, html: '<span class="ok">✓</span> Verified package checksum <span class="dim">(SHA-256 manifest)</span>' },
   { t: 1300, html: 'Unpacking <span class="ac">DigStore CLI</span> → {PATH}/bin' },
   { t: 1750, html: 'Unpacking <span class="ac">Host Runtime</span> <span class="dim">(64 KiB → 16 MiB memory bounds)</span>' },
   { t: 2200, html: 'Embedding trusted host keys <span class="dim">dig-host-key-v1:…</span>' },

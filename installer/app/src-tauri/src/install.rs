@@ -7,7 +7,7 @@
 //!
 //! Phases (mirrors README → "Real install pipeline"):
 //!   1. Resolve target for OS/arch.
-//!   2. Verify bundled package signature  [gated, offline]  → SHA-256 manifest.
+//!   2. Verify bundled package checksum  [gated, offline]  → SHA-256 manifest.
 //!   3. Unpack the digstore CLI (+ host runtime) into the install dir.
 //!   4. Install selected components (shell completions, example store).
 //!   5. Add digstore to PATH (user PATH on Windows; symlink in /usr/local/bin
@@ -132,30 +132,33 @@ pub fn run(app: &AppHandle, opts: InstallOpts) -> Result<(), String> {
 
     let source = bundled_bin(app)?;
 
-    // ---- Phase 2: verify bundled package signature [gated] ----
+    // ---- Phase 2: verify bundled package checksum [gated] ----
     // Offline integrity gate: recompute SHA-256 over the bundled artifact and
-    // compare to the sidecar manifest staged alongside it. A real release would
-    // additionally verify a BLS detached signature over this digest; the digest
-    // check is the genuine, blocking gate wired here.
+    // compare to the sidecar manifest staged alongside it. This is a checksum,
+    // not cryptographic provenance — the manifest travels next to the binary,
+    // so it proves integrity (no corruption/truncation), not authorship. A real
+    // release additionally verifies a BLS detached signature over this digest
+    // (the remaining TODO); the checksum check is the genuine, blocking gate
+    // wired here and still aborts the install before any unpack/exec.
     emit_pct(app, 10.0, Some(bin_name()));
     let digest = sha256_file(&source)?;
     let manifest = source.with_file_name(format!("{}.sha256", bin_name()));
     if manifest.exists() {
         let expected = fs::read_to_string(&manifest)
-            .map_err(|e| format!("read signature manifest: {e}"))?
+            .map_err(|e| format!("read checksum manifest: {e}"))?
             .split_whitespace()
             .next()
             .unwrap_or("")
             .to_lowercase();
         if expected != digest {
-            let msg = format!("package signature mismatch: expected {expected}, got {digest}");
+            let msg = format!("package checksum mismatch: expected {expected}, got {digest}");
             let _ = app.emit("install://error", InstallError { message: msg.clone() });
             return Err(msg);
         }
-        emit_line(app, format!(r#"<span class="ok">✓</span> Verified package signature <span class="dim">(SHA-256 {}…)</span>"#, &digest[..12]));
+        emit_line(app, format!(r#"<span class="ok">✓</span> Verified package checksum (SHA-256) <span class="dim">({}…)</span>"#, &digest[..12]));
     } else {
         // No manifest staged — surface honestly rather than faking a pass.
-        emit_line(app, format!(r#"<span class="warn">!</span> No signature manifest; recorded digest <span class="dim">{}…</span>"#, &digest[..12]));
+        emit_line(app, format!(r#"<span class="warn">!</span> No checksum manifest; recorded digest <span class="dim">{}…</span>"#, &digest[..12]));
     }
 
     // ---- Phase 3: unpack the CLI (+ host runtime) ----
@@ -247,28 +250,72 @@ pub fn run(app: &AppHandle, opts: InstallOpts) -> Result<(), String> {
     Ok(())
 }
 
+/// Compute the new user-PATH string after appending `dir`.
+///
+/// Pure helper (no I/O, no env access) so the append logic is unit-testable
+/// without touching the real machine PATH. Idempotent and case-insensitive on
+/// Windows: if `dir` is already present (ignoring case and trailing
+/// separators), the current PATH is returned unchanged so we never
+/// double-append.
+///
+/// Returns `None` if no change is needed, `Some(new_path)` otherwise.
+#[cfg(windows)]
+fn user_path_append(current: &str, dir: &str) -> Option<String> {
+    let dir_trimmed = dir.trim_end_matches('\\');
+    let already = current
+        .split(';')
+        .map(|p| p.trim().trim_end_matches('\\'))
+        .any(|p| p.eq_ignore_ascii_case(dir_trimmed));
+    if already {
+        return None;
+    }
+    if current.is_empty() {
+        Some(dir.to_string())
+    } else if current.ends_with(';') {
+        Some(format!("{current}{dir}"))
+    } else {
+        Some(format!("{current};{dir}"))
+    }
+}
+
 /// Add the install bin dir to PATH.
-///   Windows: append to the user PATH (HKCU\Environment) via `setx`.
+///   Windows: append to the USER PATH only (HKCU\Environment\Path), written as
+///            REG_EXPAND_SZ with no truncation, then broadcast
+///            WM_SETTINGCHANGE. No elevation, no machine-PATH involvement.
 ///   macOS/Linux: symlink the binary into /usr/local/bin (best-effort).
 fn add_to_path(bin_dir: &Path) -> Result<String, String> {
     #[cfg(windows)]
     {
-        // Read current user PATH, append if missing, write back via setx.
-        let current = std::env::var("PATH").unwrap_or_default();
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_EXPAND_SZ};
+        use winreg::{RegKey, RegValue};
+
         let dir = bin_dir.to_string_lossy().to_string();
-        if current.split(';').any(|p| p.eq_ignore_ascii_case(&dir)) {
-            return Ok(format!("user PATH (already present): {dir}"));
-        }
-        // `setx` updates the persistent user PATH (no elevation needed for HKCU).
-        let new_path = if current.is_empty() { dir.clone() } else { format!("{current};{dir}") };
-        let status = Command::new("setx")
-            .arg("PATH")
-            .arg(&new_path)
-            .status()
-            .map_err(|e| format!("setx: {e}"))?;
-        if !status.success() {
-            return Err("setx returned non-zero".into());
-        }
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        // Open the per-user environment key for read+write. It always exists,
+        // but create_subkey is idempotent (opens if present) and returns the key.
+        let (env, _disp) = hkcu
+            .create_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
+            .map_err(|e| format!("open HKCU\\Environment: {e}"))?;
+
+        // Read ONLY the user PATH (not the merged process PATH). Missing value
+        // is treated as empty so we create it below.
+        let current: String = env.get_value("Path").unwrap_or_default();
+
+        let new_path = match user_path_append(&current, &dir) {
+            None => return Ok(format!("user PATH (already present): {dir}")),
+            Some(p) => p,
+        };
+
+        // Write back as REG_EXPAND_SZ (so embedded %VARS% keep expanding) with
+        // no length limit — unlike `setx`, which truncates at 1024 chars.
+        let bytes = string_to_reg_expand_sz_bytes(&new_path);
+        env.set_raw_value(
+            "Path",
+            &RegValue { vtype: REG_EXPAND_SZ, bytes },
+        )
+        .map_err(|e| format!("write HKCU\\Environment\\Path: {e}"))?;
+
+        broadcast_environment_change();
         Ok(format!("user PATH: {dir}"))
     }
     #[cfg(unix)]
@@ -279,5 +326,101 @@ fn add_to_path(bin_dir: &Path) -> Result<String, String> {
         let _ = fs::remove_file(&link);
         unixfs::symlink(&target, &link).map_err(|e| format!("symlink {} → {}: {e}", link.display(), target.display()))?;
         Ok(format!("{}", link.display()))
+    }
+}
+
+/// Encode a string as the UTF-16LE, NUL-terminated byte buffer the registry
+/// expects for REG_EXPAND_SZ.
+#[cfg(windows)]
+fn string_to_reg_expand_sz_bytes(s: &str) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = std::ffi::OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut bytes = Vec::with_capacity(wide.len() * 2);
+    for w in wide {
+        bytes.extend_from_slice(&w.to_le_bytes());
+    }
+    bytes
+}
+
+/// Tell already-running processes that the environment changed, so new shells
+/// (and Explorer) pick up the updated PATH without a reboot/logout.
+#[cfg(windows)]
+fn broadcast_environment_change() {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+    };
+
+    // "Environment" as a NUL-terminated UTF-16 string, passed as lParam.
+    let param: Vec<u16> = "Environment".encode_utf16().chain(std::iter::once(0)).collect();
+    let mut result: usize = 0;
+    unsafe {
+        SendMessageTimeoutW(
+            HWND_BROADCAST as HWND,
+            WM_SETTINGCHANGE,
+            0 as WPARAM,
+            param.as_ptr() as LPARAM,
+            SMTO_ABORTIFHUNG,
+            5000,
+            &mut result,
+        );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::user_path_append;
+
+    #[test]
+    fn appends_when_absent() {
+        assert_eq!(
+            user_path_append(r"C:\Windows;C:\Tools", r"C:\Apps\DigStore\bin"),
+            Some(r"C:\Windows;C:\Tools;C:\Apps\DigStore\bin".to_string())
+        );
+    }
+
+    #[test]
+    fn no_change_when_already_present() {
+        assert_eq!(
+            user_path_append(r"C:\Windows;C:\Apps\DigStore\bin", r"C:\Apps\DigStore\bin"),
+            None
+        );
+    }
+
+    #[test]
+    fn idempotent_case_insensitive() {
+        // Different case must NOT double-append.
+        assert_eq!(
+            user_path_append(r"C:\windows;c:\apps\digstore\BIN", r"C:\Apps\DigStore\bin"),
+            None
+        );
+    }
+
+    #[test]
+    fn idempotent_ignores_trailing_backslash() {
+        assert_eq!(
+            user_path_append(r"C:\Apps\DigStore\bin\", r"C:\Apps\DigStore\bin"),
+            None
+        );
+    }
+
+    #[test]
+    fn creates_value_when_empty() {
+        assert_eq!(
+            user_path_append("", r"C:\Apps\DigStore\bin"),
+            Some(r"C:\Apps\DigStore\bin".to_string())
+        );
+    }
+
+    #[test]
+    fn handles_trailing_separator_without_blank_entry() {
+        // A PATH that ends in ';' should not produce an empty segment.
+        assert_eq!(
+            user_path_append(r"C:\Windows;", r"C:\Apps\DigStore\bin"),
+            Some(r"C:\Windows;C:\Apps\DigStore\bin".to_string())
+        );
     }
 }

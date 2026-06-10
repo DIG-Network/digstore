@@ -9,7 +9,7 @@ prototype in `installer/assets/design/`.
   fidelity using only the DIG brand tokens (`installer/assets/brand/`).
 - **Delivery:** bundle binaries. The installer ships the prebuilt `digstore`
   binary inside the package (`src-tauri/resources/bin/`). Install =
-  verify-signature (gated, offline SHA-256) → unpack → install components →
+  verify-checksum (gated, offline SHA-256) → unpack → install components →
   add to PATH → verify `digstore --version`. No network download on first install.
 
 ## Layout
@@ -84,7 +84,7 @@ from the existing tokens (`--error`).
 | Phase | Status |
 |---|---|
 | Resolve OS/arch target | wired (`std::env::consts`) |
-| **Signature verify (gated, offline)** | wired as a real SHA-256 manifest check against the bundled binary. **TODO:** add the BLS detached-signature check over that digest for full parity with the spec's "BLS · 96 bytes". |
+| **Checksum verify (gated, offline)** | wired as a real SHA-256 manifest check against the bundled binary — a checksum (integrity), not cryptographic provenance, since the manifest ships next to the binary. **TODO:** add the BLS detached-signature check over that digest for real provenance / full parity with the spec's "BLS · 96 bytes". |
 | Unpack CLI | wired — copies the real bundled `digstore[.exe]` into `<dir>/bin` (chmod 755 on unix). |
 | Host runtime | partial — the host runtime ships inside the CLI today; the installer writes a marker into `<dir>/lib`. **TODO:** copy a standalone `dig_host` artifact when one exists. |
 | Shell completions | partial — writes placeholder scripts. **TODO:** `digstore completions <shell>` once the CLI emits them. |
