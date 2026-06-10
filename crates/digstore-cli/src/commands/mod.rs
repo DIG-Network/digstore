@@ -12,6 +12,7 @@ pub mod commit;
 pub mod diff;
 pub mod dir;
 pub mod init;
+pub mod keys;
 pub mod log;
 pub mod pull;
 pub mod push;
@@ -90,6 +91,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Diff(a) => diff::run(&ctx, &ui, a),
         Command::Checkout(a) => checkout::run(&ctx, &ui, a),
         Command::Cat(a) => cat::run(&ctx, &ui, a),
+        Command::Keys(a) => keys::run(&ctx, &ui, a),
         Command::Dir(a) => dir::run(&ctx, &ui, a),
         Command::Unstage(a) => unstage::run(&ctx, &ui, a),
         Command::Staged(a) => staged::run(&ctx, &ui, a),

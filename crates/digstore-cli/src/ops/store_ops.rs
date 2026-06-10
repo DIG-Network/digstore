@@ -1098,6 +1098,56 @@ pub fn list_generation_resources(
         .collect())
 }
 
+/// One committed resource with its canonical (store-rooted) URN and retrieval
+/// key. The retrieval key is root-independent (= SHA-256 of the rootless URN).
+pub struct ResourceKeyEntry {
+    pub resource_key: String,
+    pub urn: String,
+    pub retrieval_key: String,
+}
+
+/// List every resource committed in `root` with its canonical store-rooted URN
+/// and retrieval key, sorted by resource key.
+pub fn list_resource_keys(
+    ctx: &CliContext,
+    store_id: Bytes32,
+    root: &Bytes32,
+) -> Result<Vec<ResourceKeyEntry>, CliError> {
+    let manifest = load_generation_manifest(ctx, root)?;
+    let mut out: Vec<ResourceKeyEntry> = manifest
+        .key_table
+        .iter()
+        .map(|k| ResourceKeyEntry {
+            resource_key: k.resource_key.clone(),
+            urn: canonical_resource_urn(store_id, &k.resource_key).canonical(),
+            retrieval_key: k.static_key.to_hex(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.resource_key.cmp(&b.resource_key));
+    Ok(out)
+}
+
+/// Resolve the resource key whose retrieval (static) key equals `retrieval_key`
+/// within `root`. Used to stream raw encrypted bytes by retrieval key alone.
+pub fn resource_key_for_retrieval_key(
+    ctx: &CliContext,
+    root: &Bytes32,
+    retrieval_key: &Bytes32,
+) -> Result<String, CliError> {
+    let manifest = load_generation_manifest(ctx, root)?;
+    manifest
+        .key_table
+        .iter()
+        .find(|k| k.static_key == *retrieval_key)
+        .map(|k| k.resource_key.clone())
+        .ok_or_else(|| {
+            CliError::NotFound(format!(
+                "no resource with retrieval key {} in this generation",
+                retrieval_key.to_hex()
+            ))
+        })
+}
+
 /// Per-chunk CIPHERTEXT byte lengths for `resource_key` in `root`, in chunk
 /// order. The client uses these to split the module's PLAIN-concatenated served
 /// ciphertext (D5/C9) back into individual GCM chunks. Returns an empty vec if
