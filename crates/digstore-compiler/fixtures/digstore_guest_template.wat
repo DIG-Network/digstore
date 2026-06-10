@@ -10,7 +10,7 @@
   (import "dig_host" "host_get_current_time" (func (result i64)))
   (import "dig_host" "host_random_bytes" (func (param i32) (result i32)))
   (import "dig_host" "host_read_return_buffer" (func (param i32) (result i32)))
-  (memory (export "memory") 1 256)
+  (memory (export "memory") 1 2048)
   (func (export "get_store_id") (result i64) (i64.const 0))
   (func (export "get_current_roothash") (result i64) (i64.const 0))
   (func (export "get_roothash_history") (result i64) (i64.const 0))

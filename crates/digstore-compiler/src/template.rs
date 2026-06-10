@@ -2,8 +2,8 @@ use wasmparser::{Parser, Payload};
 
 use crate::error::{CompilerError, Result};
 
-/// Maximum linear-memory pages the served module may declare (§5.1: 16 MiB ceiling).
-pub const MAX_MEMORY_PAGES: u64 = 256;
+/// Maximum linear-memory pages the served module may declare (§5.1: 128 MiB ceiling).
+pub const MAX_MEMORY_PAGES: u64 = 2048;
 
 /// Nominal linear-memory minimum the guest template declares (§5.1: `minimum: 1`,
 /// i.e. one 64 KiB page). Injection raises the EMITTED module's `min` to cover
@@ -144,9 +144,9 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
             "memory declares shared but §5.1 requires an unshared memory (shared: false)".into(),
         ));
     }
-    // §5.1: a DECLARED maximum must not exceed the 16 MiB ceiling. A raw guest
+    // §5.1: a DECLARED maximum must not exceed the 128 MiB ceiling. A raw guest
     // template (rustc/LLVM output) may legitimately declare NO maximum; the
-    // compiler normalizes the EMITTED module to `Some(256)` during injection
+    // compiler normalizes the EMITTED module to `Some(2048)` during injection
     // (see `inject_data_section`) and the strict ceiling is enforced on that
     // emitted module via `assert_memory_ceiling`.
     if let Some(max) = memory_max_pages {
@@ -169,7 +169,7 @@ pub fn load_template(bytes: &[u8]) -> Result<Template> {
 }
 
 /// Enforce the §5.1 module-declared memory ceiling on an EMITTED module: memory 0
-/// MUST declare `maximum: Some(256)` exactly (16 MiB). Unlike [`load_template`]
+/// MUST declare `maximum: Some(2048)` exactly (128 MiB). Unlike [`load_template`]
 /// (which tolerates a raw guest template that declares no maximum), this is the
 /// strict post-injection invariant — the served `.wasm` always carries the cap.
 pub fn assert_memory_ceiling(module: &[u8]) -> Result<()> {
@@ -177,10 +177,10 @@ pub fn assert_memory_ceiling(module: &[u8]) -> Result<()> {
     match t.memory_max_pages {
         Some(max) if max == MAX_MEMORY_PAGES => Ok(()),
         Some(max) => Err(CompilerError::Validation(format!(
-            "emitted module memory max {max} pages must equal §5.1 ceiling {MAX_MEMORY_PAGES} (16 MiB)"
+            "emitted module memory max {max} pages must equal §5.1 ceiling {MAX_MEMORY_PAGES} (128 MiB)"
         ))),
         None => Err(CompilerError::Validation(format!(
-            "emitted module must declare memory maximum {MAX_MEMORY_PAGES} pages (§5.1 16 MiB ceiling)"
+            "emitted module must declare memory maximum {MAX_MEMORY_PAGES} pages (§5.1 128 MiB ceiling)"
         ))),
     }
 }
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn emitted_module_with_memory_max_under_ceiling_fails_ceiling_check() {
-        // §5.1: the module-declared cap is EXACTLY 256 pages (16 MiB).
+        // §5.1: the module-declared cap is EXACTLY 2048 pages (128 MiB).
         let bytes = full_abi_module(r#"(memory (export "memory") 1 128)"#);
         let err = assert_memory_ceiling(&bytes).unwrap_err();
         assert!(
@@ -289,8 +289,8 @@ mod tests {
 
     #[test]
     fn emitted_module_with_memory_max_exactly_ceiling_passes() {
-        let bytes = full_abi_module(r#"(memory (export "memory") 1 256)"#);
-        assert_memory_ceiling(&bytes).expect("256 is the ceiling");
+        let bytes = full_abi_module(r#"(memory (export "memory") 1 2048)"#);
+        assert_memory_ceiling(&bytes).expect("2048 is the ceiling");
         // The baked template is committed with the exact ceiling too.
         let t = load_template(baked_template_bytes()).expect("baked template valid");
         assert_eq!(t.memory_max_pages, Some(MAX_MEMORY_PAGES));
@@ -339,9 +339,9 @@ mod tests {
 
     #[test]
     fn template_with_memory_max_over_ceiling_is_rejected() {
-        // Full ABI but max pages 257 (> 256) -> rejected.
+        // Full ABI but max pages 2049 (> 2048) -> rejected.
         let watsrc = r#"(module
-          (memory (export "memory") 1 257)
+          (memory (export "memory") 1 2049)
           (func (export "get_store_id") (result i64) (i64.const 0))
           (func (export "get_current_roothash") (result i64) (i64.const 0))
           (func (export "get_roothash_history") (result i64) (i64.const 0))
