@@ -55,18 +55,17 @@ pub fn resolve_arg(
     out: &mut Vec<Resolved>,
 ) -> Result<(), String> {
     let as_path = root.join(arg);
-    // Reject RELATIVE paths that escape the operating directory (§2.8). An
-    // explicitly absolute argument names an exact file the user chose (like
-    // `git add /abs/file`), so it is accepted verbatim — the escape guard only
-    // defends against `../x`-style traversal in relative args.
+    // Reject any path that escapes the operating directory (§2.8) — both `../x`
+    // traversal in relative args AND absolute args pointing OUTSIDE the content
+    // root. A resource key (and thus a well-formed URN) must be content-root-
+    // relative, which cannot be derived from an out-of-root path. An absolute
+    // path that resolves INSIDE the content root is accepted.
     let within = |p: &Path| -> bool {
-        if Path::new(arg).is_absolute() {
-            return true;
-        }
         match (p.canonicalize(), root.canonicalize()) {
             (Ok(pc), Ok(rc)) => pc.starts_with(&rc),
-            // Not-yet-existing path: fall back to lexical containment.
-            _ => !arg.split(['/', '\\']).any(|seg| seg == ".."),
+            // Not-yet-existing path: lexical fallback — reject absolute args and
+            // any `..` segment that would escape the operating directory.
+            _ => !Path::new(arg).is_absolute() && !arg.split(['/', '\\']).any(|seg| seg == ".."),
         }
     };
     if as_path.is_file() {
@@ -195,5 +194,47 @@ mod tests {
         let mut out = Vec::new();
         let err = resolve_arg(&root, &root.join(".dig"), "../secret.txt", &mut out);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn resolve_arg_rejects_absolute_path_outside_the_operating_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().join("dist");
+        std::fs::create_dir_all(&root).unwrap();
+        // A real file outside the content root, named by its absolute path, must
+        // be rejected — its key cannot be content-root-relative (well-formed URN).
+        let outside = dir.path().join("secret.txt");
+        std::fs::write(&outside, b"x").unwrap();
+        let mut out = Vec::new();
+        let err = resolve_arg(
+            &root,
+            &root.join(".dig"),
+            &outside.to_string_lossy(),
+            &mut out,
+        );
+        assert!(
+            err.is_err(),
+            "absolute path outside the content root must be rejected"
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn resolve_arg_accepts_absolute_path_inside_the_operating_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().join("dist");
+        std::fs::create_dir_all(&root).unwrap();
+        let inside = root.join("app.css");
+        std::fs::write(&inside, b"x").unwrap();
+        let mut out = Vec::new();
+        resolve_arg(
+            &root,
+            &root.join(".dig"),
+            &inside.to_string_lossy(),
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].key, "app.css");
     }
 }
