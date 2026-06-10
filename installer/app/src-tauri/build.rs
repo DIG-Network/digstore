@@ -21,6 +21,7 @@ fn main() {
     // Let rustc know `embed_digstore` is an expected cfg (no warning when unset).
     println!("cargo:rustc-check-cfg=cfg(embed_digstore)");
 
+
     let bin_name = if cfg!(windows) {
         "digstore.exe"
     } else {
@@ -78,7 +79,39 @@ fn main() {
         println!("cargo:rustc-cfg=embed_digstore");
     }
 
-    tauri_build::build();
+    // Build with an explicit asInvoker manifest. Tauri embeds a manifest by
+    // default but does NOT set a requestedExecutionLevel, so Windows Installer
+    // Detection heuristically auto-elevates this exe (it sees "installer" in the
+    // file/version info) and forces a UAC prompt. This install is per-user
+    // (%LOCALAPPDATA% + HKCU only) and needs no elevation, so pin asInvoker.
+    let manifest = r#"<?xml version="1.0" encoding="utf-8"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+    </dependentAssembly>
+  </dependency>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}" />
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" />
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" />
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>"#;
+    let attributes = tauri_build::Attributes::new().windows_attributes(
+        tauri_build::WindowsAttributes::new().app_manifest(manifest),
+    );
+    tauri_build::try_build(attributes).expect("failed to run tauri-build");
 }
 
 /// Minimal SHA-256 (avoid a build-dep; build scripts compile separately from the
