@@ -508,6 +508,35 @@ git commit -m "feat: uniform-size module filler + 384 MiB ceiling; MAX_STORE_BYT
 
 > **Phase E note:** the whitepaper §8.3 must be rewritten from "coarse power-of-two size bucket" to "every module is padded to one fixed size (uniform), revealing nothing about content size"; §5.1/§18.2 memory numbers → 384 MiB. Folded into Task E1.
 
+### Task A6: Single-copy serve — a full ~122 MB resource serves within 384 MiB
+
+> Closes the A5 finding (a single resource >~40 MB OOMs because the serve path materializes the resource ~3× and the bump allocator never frees). Product-owner choice: the **proper fix**. Design verdict (verified by reading the code): swapping the allocator is determinism-safe, but the minimal-risk fix that actually fits is **single-copy serve** (Option B) — no allocator swap, no new dependency. `program_hash = SHA-256(embedded_guest_wasm())` is recomputed at runtime by both prover and verifier (`serve.rs:252`, `cat.rs:47`); there is no committed/golden `.wasm`; RISC0 re-exec never runs the WASM allocator; heap addresses are never hashed — so changing guest source only rebakes the program_hash constant (prover+verifier move together), which is safe.
+
+**Files (guest + core serve path only — do NOT touch the CLI):**
+- Modify: `crates/digstore-guest/src/content.rs` (frame the response without a 2nd/3rd full copy)
+- Modify: `crates/digstore-guest/src/proof.rs:114-120` (stream the proof-leaf hash)
+- Modify: `crates/digstore-guest/src/abi.rs` (get_content: pre-size + move the ciphertext)
+- Modify: `crates/digstore-core/src/codec/mod.rs` (add `Encoder::with_capacity` + a move-not-copy `write_owned`); `src/wire.rs` if needed — **wire bytes MUST stay byte-identical**
+- Modify: `crates/digstore-compiler/tests/large_data_section.rs` (near-cap validator → ~122 MiB, un-pin from 40 MiB)
+
+- [ ] **Step 1 — stream the proof hash.** In `proof.rs:114-120` replace `let output = concat_output(real_slices); sha256(&output)` with a streaming `Sha256` fed each real slice (no R-sized materialization). Removes copy C. Add/keep a test asserting the proof leaf/commitment value is **unchanged** (`content_proof.rs` `output_commitment` already guards this).
+
+- [ ] **Step 2 — move-not-copy encode.** In `crates/digstore-core/src/codec/mod.rs` add `Encoder::with_capacity(n)` and `Encoder::write_owned(Vec<u8>)` that, when the buffer is empty, takes ownership (moves) instead of `extend_from_slice`. Output bytes must be identical to the current encoder (a `concat_output`-ordering / wire round-trip test must stay green: `core/tests/serving.rs`, `conventions_paths.rs`). 
+
+- [ ] **Step 3 — single-copy `get_content`/`ContentResponse`.** In `content.rs` (~`:222-227`) and `abi.rs` (~`:19-32,96-112`): build the ciphertext buffer B once via `concat_output`, then frame the `ContentResponse` by **pre-sizing** the encoder to `4 + B.len() + merkle_len + 32` and **moving** B in (so the ciphertext is consumed, never re-copied or doubled). The leaked return buffer is the only surviving R-sized allocation. Leave `read_chunk`'s per-chunk `.to_vec()` (the oblivious cover/real gather) as-is.
+
+- [ ] **Step 4 — rebuild guest wasm + run the validator.** `cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked`, then raise the `#[ignore]` near-cap test in `large_data_section.rs` to a ~122 MiB resource (≤ `MAX_STORE_BYTES`), remove the 40-MiB FINDING pin, and run `cargo test -p digstore-compiler --test large_data_section -- --include-ignored`. Expected: PASS within the 384 MiB `ExecutionLimits::default()`. If it still OOMs, report (do not raise the ceiling) — it would mean another full copy remains.
+
+- [ ] **Step 5 — prove served bytes / proofs / program_hash unchanged.** Run and keep green: `digstore-guest --test content_proof`, `digstore-host --test serve_flow`, `--test dighost_serve`, `digstore-compiler --test self_serving`, the non-ignored `large_data_section` cases, `determinism`, `digstore-core --test serving`/`conventions_paths`, `digstore-prover --test program_hash`/`roothash_binding`, and CLI `adv_self_serve`/`cli_cat_roundtrip`/`cli_tamper`. (Run the CLI/wasm ones with the guest wasm rebuilt.)
+
+- [ ] **Step 6 — commit.**
+```bash
+git add crates/digstore-guest crates/digstore-core crates/digstore-compiler/tests/large_data_section.rs
+git commit -m "perf(guest): single-copy serve — a full ~122 MB resource serves within the 384 MiB ceiling"
+```
+
+> Out of scope here: swapping the bump allocator (Option A) — revisit only if concurrent multi-large-resource serves are later required. `cargo deny`: Option B adds no dependency.
+
 ---
 
 ## Phase B — CLI workspace + multi-store core
