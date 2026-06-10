@@ -11,7 +11,15 @@ yanked = "deny"
 # Known, accepted advisories with no available upstream fix (see SECURITY.md).
 # Re-evaluate on every audit; remove an entry once the dependency is upgraded.
 ignore = [
-    "RUSTSEC-2023-0071", # rsa: Marvin timing side-channel (transitive, JWT/RSA path)
+    # rsa: Marvin timing side-channel. `rsa` v0.9 is a DIRECT dependency of
+    # digstore-guest, used VERIFY-ONLY — JWT RS256 signature verification
+    # (RSASSA-PKCS1-v1_5 over SHA-256) reconstructs an RsaPublicKey from a JWKS
+    # (n, e) and only calls `verify`; the guest performs no RSA decryption or
+    # private-key operations. The Marvin attack is a timing oracle against RSA
+    # *decryption* (PKCS#1 v1.5 unpadding), so it does not apply to public-key
+    # signature verification. Accepted; RE-EVALUATE if `rsa` is ever used to
+    # decrypt (e.g. RSA-OAEP/PKCS#1 v1.5 decryption) in any crate.
+    "RUSTSEC-2023-0071",
     "RUSTSEC-2024-0388", # derivative: unmaintained (arkworks/risc0 proof stack)
     "RUSTSEC-2024-0436", # paste: no longer maintained (transitive)
     "RUSTSEC-2025-0052", # async-std: discontinued (httpmock dev-dependency, tests only)

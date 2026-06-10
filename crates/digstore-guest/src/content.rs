@@ -36,6 +36,27 @@ pub struct GateConfig {
     pub expected_aud: Option<alloc::string::String>,
 }
 
+impl GateConfig {
+    /// Build the gate config the wasm ABI uses: attestation is always required
+    /// (§12.2), and the JWT gate is driven by the store's embedded AuthInfo
+    /// (`requires_jwt`, §6.2) rather than being hardcoded. When AuthInfo requests
+    /// a JWT, the gate enforces both claims and the JWKS signature (§6.3); the
+    /// expected issuer is taken from AuthInfo's `jwks_url` host when present (left
+    /// `None` here so the issuer/audience claim filters stay opt-in until a store
+    /// advertises them explicitly).
+    pub fn from_embedded(ds: &DataSection) -> GateConfig {
+        let require_jwt = embedded_auth_info(ds)
+            .map(|i| i.requires_jwt)
+            .unwrap_or(false);
+        GateConfig {
+            require_attestation: true,
+            require_jwt,
+            expected_iss: None,
+            expected_aud: None,
+        }
+    }
+}
+
 pub enum ContentOutcome {
     Real(ContentResponse),
     Decoy(ContentResponse),
@@ -158,7 +179,10 @@ fn gate<H: DigHost + ?Sized>(
         )
         .map_err(|_| ())?;
     }
-    // JWT gate (verification wired in Task 19).
+    // JWT gate (§6.3, §12.4). When a JWT gate is configured, the guest enforces
+    // BOTH the claim checks AND the token's cryptographic signature against the
+    // store's trusted JWKS. Any failure fails closed -> the caller returns a
+    // Decoy (never real content, never a 404).
     if cfg.require_jwt {
         // §12.4: "The session is the precondition for any JWT-authorization logic
         // the module chooses to enforce before releasing real content." Require an
@@ -174,7 +198,12 @@ fn gate<H: DigHost + ?Sized>(
             expected_iss: cfg.expected_iss.as_deref(),
             expected_aud: cfg.expected_aud.as_deref(),
         };
-        if verify_request_jwt(jwt, &policy).is_err() {
+        // The JWKS endpoint is advertised by the store's embedded AuthInfo
+        // section (§6.2 get_authentication_info); the host fetches it over the
+        // session-gated `jwks_fetch` import. A missing JWKS URL / fetch failure /
+        // unverifiable signature all fail closed.
+        let jwks_url = embedded_jwks_url(ds).ok_or(())?;
+        if verify_request_jwt(host, jwks_url.as_bytes(), jwt, &policy).is_err() {
             return Err(());
         }
     }
@@ -406,13 +435,64 @@ fn resource_leaf_index(ds: &DataSection, served_key: &Bytes32) -> usize {
     rank
 }
 
-/// Decode + claim-check a request JWT. Signature verification against a fetched
-/// JWKS is performed by the caller via `jwt::verify_signature` once `jwks_fetch`
-/// returns keys; this function enforces structural + temporal/audience claims.
-pub fn verify_request_jwt(
+/// Decode the embedded AuthInfo section (§6.2 get_authentication_info) into the
+/// canonical [`digstore_core::AuthenticationInfo`]. Returns `None` if the section
+/// is absent or malformed (the gate then treats JWT as not-required / no JWKS).
+fn embedded_auth_info(ds: &DataSection) -> Option<digstore_core::AuthenticationInfo> {
+    use digstore_core::codec::Decoder;
+    let body = ds.section(SectionId::AuthInfo)?;
+    let mut dec = Decoder::new(body);
+    digstore_core::AuthenticationInfo::decode(&mut dec).ok()
+}
+
+/// Read the store's advertised JWKS endpoint from the embedded AuthInfo section.
+/// Returns `None` if absent/malformed or it carries no `jwks_url`, in which case
+/// a JWT gate fails closed (no key source -> Decoy).
+fn embedded_jwks_url(ds: &DataSection) -> Option<alloc::string::String> {
+    embedded_auth_info(ds).and_then(|i| i.jwks_url)
+}
+
+/// Decode, claim-check, AND cryptographically verify a request JWT (§6.3).
+///
+/// 1. Decode the three base64url segments and enforce the temporal/issuer/
+///    audience claims (`exp`/`nbf`/`iss`/`aud`).
+/// 2. Fetch the store's JWKS over the session-gated `jwks_fetch` host import
+///    (the gate has already confirmed an active session), parse it, and select
+///    the verifying key by the token's `kid` (or the sole key if no `kid`).
+/// 3. Verify the signature over `header_b64.payload_b64` with the matching
+///    algorithm (RS256 via `rsa` PKCS#1 v1.5 over SHA-256, ES256 via `p256`).
+///
+/// Any failure — bad claims, no/unparseable JWKS, unknown `kid`, unsupported
+/// `alg`, or a signature that does not verify — returns `Err`. The caller turns
+/// that into a Decoy, so a token whose claims look valid but whose signature is
+/// absent/tampered/from the wrong key still fails closed.
+pub fn verify_request_jwt<H: DigHost + ?Sized>(
+    host: &H,
+    jwks_url: &[u8],
     jwt: &[u8],
     policy: &crate::jwt::ClaimPolicy,
 ) -> Result<(), crate::jwt::JwtError> {
     let parts = crate::jwt::decode_unverified(jwt)?;
-    crate::jwt::check_claims(&parts.claims, policy)
+    crate::jwt::check_claims(&parts.claims, policy)?;
+
+    // Fetch + parse the trusted JWKS (session-gated at the host boundary, and we
+    // re-check the session here so the guest also fails closed on a buggy host).
+    let jwks_bytes = crate::session::gated_jwks_fetch(host, jwks_url)
+        .map_err(|_| crate::jwt::JwtError::UnknownKey)?;
+    let jwks = crate::jwt::parse_jwks(&jwks_bytes)?;
+
+    // Select the key by kid; if the token has no kid, fall back to the single key
+    // when the JWKS contains exactly one (a JWKS with no usable key -> UnknownKey).
+    let jwk = match parts.kid.as_deref() {
+        Some(kid) => jwks
+            .iter()
+            .find(|k| k.kid == kid)
+            .ok_or(crate::jwt::JwtError::UnknownKey)?,
+        None => match jwks.as_slice() {
+            [only] => only,
+            _ => return Err(crate::jwt::JwtError::UnknownKey),
+        },
+    };
+
+    crate::jwt::verify_signature(&parts.alg, jwk, &parts.signing_input, &parts.signature)
 }
