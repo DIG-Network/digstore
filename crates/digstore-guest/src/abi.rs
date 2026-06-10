@@ -99,16 +99,15 @@ pub extern "C" fn get_content(req_ptr: i32, req_len: i32) -> i64 {
         Ok((r, _)) => r,
         Err(_) => return guest_pack(0xFFFF_FFFF, 0), // error sentinel
     };
-    let cfg = GateConfig {
-        require_attestation: true,
-        require_jwt: false,
-        expected_iss: None,
-        expected_aud: None,
-    };
+    let ds = embedded();
+    // Attestation is always required (§12.2); the JWT gate is driven by the
+    // store's embedded AuthInfo (§6.2). When AuthInfo requests a JWT, the gate
+    // enforces both claims and the JWKS signature (§6.3).
+    let cfg = GateConfig::from_embedded(&ds);
     // Single-copy serve: frame the wire response (ciphertext || merkle || root)
     // directly into one pre-sized buffer (§7), so a near-cap (~122 MiB) resource
     // serves within the module memory ceiling. Byte-identical wire output.
-    ret(serve_content_wire(&WasmHost, &embedded(), &req, &cfg))
+    ret(serve_content_wire(&WasmHost, &ds, &req, &cfg))
 }
 
 #[no_mangle]
@@ -118,14 +117,10 @@ pub extern "C" fn get_proof(req_ptr: i32, req_len: i32) -> i64 {
         Ok((r, _)) => r,
         Err(_) => return guest_pack(0xFFFF_FFFF, 0),
     };
-    let cfg = GateConfig {
-        require_attestation: true,
-        require_jwt: false,
-        expected_iss: None,
-        expected_aud: None,
-    };
+    let ds = embedded();
+    let cfg = GateConfig::from_embedded(&ds);
     // CONVENTIONS C3: serialize a ProofPrelude, not an ExecutionProof.
-    let prelude = match serve_proof(&WasmHost, &embedded(), &req, &cfg) {
+    let prelude = match serve_proof(&WasmHost, &ds, &req, &cfg) {
         ProofOutcome::Real(p) | ProofOutcome::Decoy(p) => p,
     };
     ret(encode_to_vec(&prelude))

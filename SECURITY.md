@@ -132,12 +132,27 @@ not mistaken for closed.
    a `FixedClock` and `MockChainSource`. The RISC0 backend must be wired and a
    real chain/clock supplied before execution proofs are trustworthy.
    (`digstore-host/src/serve_blind.rs`)
-4. **JWT gate validates claims but does not verify token signatures**
-   (`digstore-guest/src/content.rs`); the gate is also hardcoded off. Do not rely
-   on JWT authorization until signature verification is implemented.
+4. **JWT signature verification — implemented (closes the former residual #4).**
+   The guest JWT gate (`digstore-guest/src/content.rs`) now verifies the token's
+   cryptographic signature, not just its claims. RS256 (`rsa` PKCS#1 v1.5 over
+   SHA-256) and ES256 (`p256`) are supported; the verifying key is reconstructed
+   from the store's trusted JWKS, which the guest fetches over the session-gated
+   `jwks_fetch` host import using the `jwks_url` advertised in the embedded
+   AuthInfo section (§6.2). The gate is no longer hardcoded off: `get_content`/
+   `get_proof` derive `require_jwt` from `AuthInfo.requires_jwt`. A token with a
+   valid signature from a trusted key **and** valid claims releases real content;
+   a tampered/absent signature, a key not in the JWKS, an unknown `kid`, a missing
+   JWKS URL, or any claim failure fails closed -> Decoy (never real content,
+   never a 404).
 5. **Dependency advisories** currently accepted (see `deny.toml`): `rsa`
-   (RUSTSEC-2023-0071, Marvin timing side channel, transitive) and `bincode 1.x`
-   (RUSTSEC-2025-0141, unmaintained, RISC0 proof path). Re-evaluate each audit.
+   (RUSTSEC-2023-0071, Marvin timing side channel). `rsa` v0.9 is a **direct,
+   verify-only** dependency of `digstore-guest` — it is used solely for JWT RS256
+   signature verification (public-key `verify`, no decryption or private-key
+   operations). The Marvin attack is a timing oracle against RSA *decryption*, so
+   it does not apply to signature verification; the ignore is retained with that
+   rationale and must be re-evaluated if `rsa` is ever used to decrypt. The former
+   `bincode 1.x` advisory (RUSTSEC-2025-0141) ignore has been **removed**: `bincode`
+   is no longer in the dependency tree. Re-evaluate each audit.
 
 ## Running the checks
 

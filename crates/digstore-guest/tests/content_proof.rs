@@ -444,47 +444,132 @@ fn b64url(b: &[u8]) -> String {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     URL_SAFE_NO_PAD.encode(b)
 }
-fn make_jwt(header: &str, payload: &str) -> Vec<u8> {
-    let mut s = b64url(header.as_bytes());
-    s.push('.');
-    s.push_str(&b64url(payload.as_bytes()));
-    s.push('.');
-    s.push_str(&b64url(b"sig"));
-    s.into_bytes()
+
+// --- D-JWT-VERIFY (Residual #4): the JWT gate must verify the token's RS256
+// signature against the store's trusted JWKS, not just its claims. A token with
+// a valid signature from a trusted key + valid claims releases real content; a
+// tampered signature, a signature from a non-trusted key, or an absent token all
+// fail closed -> Decoy. The private RSA key lives ONLY in the test (signing); the
+// guest verifies with the public JWK reconstructed from (n, e). ---------------
+
+const JWKS_URL: &str = "https://issuer.example/jwks.json";
+
+/// Deterministic RSA keygen for test speed (seeded; never used in production).
+fn rsa_keypair(seed: u8) -> rsa::RsaPrivateKey {
+    use rsa::rand_core::SeedableRng;
+    let mut rng = rand_chacha::ChaCha8Rng::from_seed([seed; 32]);
+    rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap()
 }
 
-#[test]
-fn expired_jwt_fails_claim_check() {
-    // Claim check alone (signature skipped here) must reject an expired token,
-    // which serve_content turns into a decoy.
-    let jwt = make_jwt(
-        r#"{"alg":"ES256"}"#,
-        r#"{"exp":1000,"iss":"acme","aud":"dig"}"#,
-    );
-    let policy = ClaimPolicy {
-        now: 5000,
-        expected_iss: Some("acme"),
-        expected_aud: Some("dig"),
+/// Build a single-key JWKS JSON document for an RSA public key under `kid`.
+fn jwks_json(priv_key: &rsa::RsaPrivateKey, kid: &str) -> Vec<u8> {
+    use rsa::traits::PublicKeyParts;
+    let pk = priv_key.to_public_key();
+    let n = b64url(&pk.n().to_bytes_be());
+    let e = b64url(&pk.e().to_bytes_be());
+    format!(
+        r#"{{"keys":[{{"kty":"RSA","kid":"{kid}","alg":"RS256","n":"{n}","e":"{e}"}}]}}"#
+    )
+    .into_bytes()
+}
+
+/// Build a real RS256 JWT (header.payload.signature) signed with `priv_key`.
+fn signed_rs256_jwt(priv_key: &rsa::RsaPrivateKey, kid: &str, payload: &str) -> Vec<u8> {
+    use rsa::pkcs1v15::SigningKey;
+    use rsa::signature::{SignatureEncoding, Signer};
+    use sha2::Sha256;
+
+    let header = format!(r#"{{"alg":"RS256","kid":"{kid}"}}"#);
+    let mut signing_input = b64url(header.as_bytes());
+    signing_input.push('.');
+    signing_input.push_str(&b64url(payload.as_bytes()));
+
+    let signing_key = SigningKey::<Sha256>::new(priv_key.clone());
+    let sig = signing_key.sign(signing_input.as_bytes()).to_bytes();
+
+    let mut jwt = signing_input.into_bytes();
+    jwt.push(b'.');
+    jwt.extend_from_slice(b64url(&sig).as_bytes());
+    jwt
+}
+
+/// Data-section blob carrying KeyTable + ChunkPool + an AuthInfo section that
+/// advertises `requires_jwt` and the JWKS URL the gate fetches from.
+fn section_with_authinfo(
+    store_id: [u8; 32],
+    root: [u8; 32],
+    table: &[u8],
+    pool: &[u8],
+    jwks_url: Option<&str>,
+) -> Vec<u8> {
+    use digstore_core::AuthenticationInfo;
+    let info = AuthenticationInfo {
+        requires_session: true,
+        requires_jwt: true,
+        jwks_url: jwks_url.map(String::from),
+        accepted_algorithms: vec![String::from("RS256")],
     };
-    assert!(verify_request_jwt(&jwt, &policy).is_err());
+    let mut enc = Encoder::new();
+    info.encode(&mut enc);
+    let auth_body = enc.finish();
+    encode_blob(&[
+        (SectionId::StoreId as u16, store_id.to_vec()),
+        (SectionId::CurrentRoot as u16, root.to_vec()),
+        (SectionId::KeyTable as u16, table.to_vec()),
+        (SectionId::ChunkPool as u16, pool.to_vec()),
+        (SectionId::AuthInfo as u16, auth_body),
+    ])
 }
 
-#[test]
-fn valid_jwt_passes_claim_check() {
-    let jwt = make_jwt(
-        r#"{"alg":"ES256"}"#,
-        r#"{"exp":9999,"iss":"acme","aud":"dig"}"#,
-    );
-    let policy = ClaimPolicy {
-        now: 5000,
-        expected_iss: Some("acme"),
-        expected_aud: Some("dig"),
-    };
-    assert!(verify_request_jwt(&jwt, &policy).is_ok());
+/// A host double that serves a scripted JWKS document and has an active session.
+struct JwksHost {
+    jwks: Vec<u8>,
+    session_ok: bool,
+    time: u64,
+    rand: std::cell::Cell<u32>,
 }
 
-#[test]
-fn require_jwt_without_token_returns_decoy() {
+impl JwksHost {
+    fn new(jwks: Vec<u8>) -> Self {
+        JwksHost {
+            jwks,
+            session_ok: true,
+            time: 1_700_000_000,
+            rand: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl digstore_guest::host::DigHost for JwksHost {
+    fn get_public_key(&self) -> digstore_guest::host::HostResult {
+        Ok(vec![0xAB; 48])
+    }
+    fn create_attestation(&self, _c: &[u8]) -> digstore_guest::host::HostResult {
+        Ok(vec![0u8; 176])
+    }
+    fn establish_session(&self, _c: &[u8]) -> digstore_guest::host::HostResult {
+        Ok(vec![1u8; 16])
+    }
+    fn verify_session(&self) -> bool {
+        self.session_ok
+    }
+    fn jwks_fetch(&self, _u: &[u8]) -> digstore_guest::host::HostResult {
+        Ok(self.jwks.clone())
+    }
+    fn current_time(&self) -> u64 {
+        self.time
+    }
+    fn random_bytes(&self, count: u32) -> digstore_guest::host::HostResult {
+        let n = self.rand.get();
+        self.rand.set(n + 1);
+        Ok((0..count)
+            .map(|i| (n.wrapping_mul(31).wrapping_add(i)) as u8)
+            .collect())
+    }
+}
+
+/// Build the standard one-resource fixture and run the JWT-gated content path.
+fn jwt_gate_outcome(host: &JwksHost, jwt: Option<Vec<u8>>, jwks_url: Option<&str>) -> ContentOutcome {
     let key = Bytes32([0x11; 32]);
     let entry = KeyTableEntry {
         static_key: key,
@@ -494,20 +579,138 @@ fn require_jwt_without_token_returns_decoy() {
     };
     let table = encode_key_table(&[entry]);
     let pool = fixtures::pack_pool(&[b"alpha"]);
-    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let blob = section_with_authinfo([0xAA; 32], [0xBB; 32], &table, &pool, jwks_url);
     let ds = DataSection::parse(&blob).unwrap();
-    let host = MockHost::default();
     let mut gc = gate_config();
     gc.require_jwt = true;
     let req = ContentRequest {
         retrieval_key: key,
         root_hash: None,
         range: None,
-        jwt: None, // required but absent
+        jwt,
         window: None,
     };
+    serve_content(host, &ds, &req, &gc)
+}
+
+#[test]
+fn valid_signature_and_claims_returns_real() {
+    let priv_key = rsa_keypair(21);
+    let jwt = signed_rs256_jwt(&priv_key, "k1", r#"{"exp":9999999999,"nbf":0}"#);
+    let host = JwksHost::new(jwks_json(&priv_key, "k1"));
+    assert!(
+        matches!(
+            jwt_gate_outcome(&host, Some(jwt), Some(JWKS_URL)),
+            ContentOutcome::Real(_)
+        ),
+        "valid RS256 signature from a trusted JWKS key + valid claims must release real content"
+    );
+}
+
+#[test]
+fn tampered_signature_returns_decoy() {
+    let priv_key = rsa_keypair(21);
+    let mut jwt = signed_rs256_jwt(&priv_key, "k1", r#"{"exp":9999999999,"nbf":0}"#);
+    // Flip a byte in the trailing signature segment.
+    let last = jwt.len() - 1;
+    jwt[last] ^= 0x01;
+    let host = JwksHost::new(jwks_json(&priv_key, "k1"));
+    assert!(
+        matches!(
+            jwt_gate_outcome(&host, Some(jwt), Some(JWKS_URL)),
+            ContentOutcome::Decoy(_)
+        ),
+        "a tampered RS256 signature MUST yield a Decoy even with valid-looking claims"
+    );
+}
+
+#[test]
+fn signature_from_wrong_key_returns_decoy() {
+    // Token signed by key A, but the JWKS advertises key B under the same kid.
+    let signer = rsa_keypair(21);
+    let other = rsa_keypair(99);
+    let jwt = signed_rs256_jwt(&signer, "k1", r#"{"exp":9999999999,"nbf":0}"#);
+    let host = JwksHost::new(jwks_json(&other, "k1"));
+    assert!(
+        matches!(
+            jwt_gate_outcome(&host, Some(jwt), Some(JWKS_URL)),
+            ContentOutcome::Decoy(_)
+        ),
+        "a signature that does not verify under the trusted JWKS key MUST yield a Decoy"
+    );
+}
+
+#[test]
+fn unknown_kid_returns_decoy() {
+    // Token's kid is not present in the JWKS -> no verifying key -> Decoy.
+    let priv_key = rsa_keypair(21);
+    let jwt = signed_rs256_jwt(&priv_key, "missing", r#"{"exp":9999999999,"nbf":0}"#);
+    let host = JwksHost::new(jwks_json(&priv_key, "k1"));
     assert!(matches!(
-        serve_content(&host, &ds, &req, &gc),
+        jwt_gate_outcome(&host, Some(jwt), Some(JWKS_URL)),
+        ContentOutcome::Decoy(_)
+    ));
+}
+
+#[test]
+fn absent_jwks_url_returns_decoy() {
+    // AuthInfo requests a JWT but advertises no JWKS endpoint -> no key source ->
+    // the gate fails closed even with a perfectly valid signature.
+    let priv_key = rsa_keypair(21);
+    let jwt = signed_rs256_jwt(&priv_key, "k1", r#"{"exp":9999999999,"nbf":0}"#);
+    let host = JwksHost::new(jwks_json(&priv_key, "k1"));
+    assert!(matches!(
+        jwt_gate_outcome(&host, Some(jwt), None),
+        ContentOutcome::Decoy(_)
+    ));
+}
+
+#[test]
+fn expired_jwt_returns_decoy_despite_valid_signature() {
+    // Correct signature, but the claim check rejects the expired token first.
+    let priv_key = rsa_keypair(21);
+    let jwt = signed_rs256_jwt(&priv_key, "k1", r#"{"exp":1000,"nbf":0}"#);
+    let host = JwksHost::new(jwks_json(&priv_key, "k1")); // host clock = 1_700_000_000
+    assert!(matches!(
+        jwt_gate_outcome(&host, Some(jwt), Some(JWKS_URL)),
+        ContentOutcome::Decoy(_)
+    ));
+}
+
+#[test]
+fn expired_jwt_fails_verify_request_jwt() {
+    // verify_request_jwt: claim check rejects an expired token before any fetch.
+    let priv_key = rsa_keypair(21);
+    let jwt = signed_rs256_jwt(&priv_key, "k1", r#"{"exp":1000,"iss":"acme","aud":"dig"}"#);
+    let host = JwksHost::new(jwks_json(&priv_key, "k1"));
+    let policy = ClaimPolicy {
+        now: 5000,
+        expected_iss: Some("acme"),
+        expected_aud: Some("dig"),
+    };
+    assert!(verify_request_jwt(&host, JWKS_URL.as_bytes(), &jwt, &policy).is_err());
+}
+
+#[test]
+fn valid_jwt_passes_verify_request_jwt() {
+    // verify_request_jwt: valid claims AND a verifiable signature pass.
+    let priv_key = rsa_keypair(21);
+    let jwt = signed_rs256_jwt(&priv_key, "k1", r#"{"exp":9999,"iss":"acme","aud":"dig"}"#);
+    let host = JwksHost::new(jwks_json(&priv_key, "k1"));
+    let policy = ClaimPolicy {
+        now: 5000,
+        expected_iss: Some("acme"),
+        expected_aud: Some("dig"),
+    };
+    assert!(verify_request_jwt(&host, JWKS_URL.as_bytes(), &jwt, &policy).is_ok());
+}
+
+#[test]
+fn require_jwt_without_token_returns_decoy() {
+    let priv_key = rsa_keypair(21);
+    let host = JwksHost::new(jwks_json(&priv_key, "k1"));
+    assert!(matches!(
+        jwt_gate_outcome(&host, None, Some(JWKS_URL)), // required but absent
         ContentOutcome::Decoy(_)
     ));
 }
@@ -519,40 +722,15 @@ fn require_jwt_without_token_returns_decoy() {
 // Decoy when host.verify_session() is false. --------------------------------
 #[test]
 fn require_jwt_without_active_session_returns_decoy_even_with_valid_jwt() {
-    let key = Bytes32([0x11; 32]);
-    let entry = KeyTableEntry {
-        static_key: key,
-        generation: Bytes32([0xBB; 32]),
-        chunk_indices: vec![0],
-        total_size: 5,
-    };
-    let table = encode_key_table(&[entry]);
-    let pool = fixtures::pack_pool(&[b"alpha"]);
-    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
-    let ds = DataSection::parse(&blob).unwrap();
-
-    // A JWT whose claims pass under the gate's policy (no iss/aud required,
-    // not expired at the mock host's clock) — so only the missing session can
-    // be responsible for the Decoy.
-    let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":9999999999,"nbf":0}"#);
-
-    let host = MockHost {
-        session_ok: false, // §12.4: no active session
-        ..MockHost::default()
-    };
-
-    let mut gc = gate_config();
-    gc.require_jwt = true;
-    let req = ContentRequest {
-        retrieval_key: key,
-        root_hash: None,
-        range: None,
-        jwt: Some(jwt),
-        window: None,
-    };
+    let priv_key = rsa_keypair(21);
+    // A JWT whose claims AND signature both validate — so only the missing
+    // session can be responsible for the Decoy.
+    let jwt = signed_rs256_jwt(&priv_key, "k1", r#"{"exp":9999999999,"nbf":0}"#);
+    let mut host = JwksHost::new(jwks_json(&priv_key, "k1"));
+    host.session_ok = false; // §12.4: no active session
     assert!(
         matches!(
-            serve_content(&host, &ds, &req, &gc),
+            jwt_gate_outcome(&host, Some(jwt), Some(JWKS_URL)),
             ContentOutcome::Decoy(_)
         ),
         "JWT-gated content with no active session MUST be a Decoy (§12.4)"
@@ -563,37 +741,12 @@ fn require_jwt_without_active_session_returns_decoy_even_with_valid_jwt() {
 // proving the Decoy above is attributable to the missing session, not the JWT.
 #[test]
 fn require_jwt_with_active_session_and_valid_jwt_returns_real() {
-    let key = Bytes32([0x11; 32]);
-    let entry = KeyTableEntry {
-        static_key: key,
-        generation: Bytes32([0xBB; 32]),
-        chunk_indices: vec![0],
-        total_size: 5,
-    };
-    let table = encode_key_table(&[entry]);
-    let pool = fixtures::pack_pool(&[b"alpha"]);
-    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
-    let ds = DataSection::parse(&blob).unwrap();
-
-    let jwt = make_jwt(r#"{"alg":"ES256"}"#, r#"{"exp":9999999999,"nbf":0}"#);
-
-    let host = MockHost {
-        session_ok: true, // active session
-        ..MockHost::default()
-    };
-
-    let mut gc = gate_config();
-    gc.require_jwt = true;
-    let req = ContentRequest {
-        retrieval_key: key,
-        root_hash: None,
-        range: None,
-        jwt: Some(jwt),
-        window: None,
-    };
+    let priv_key = rsa_keypair(21);
+    let jwt = signed_rs256_jwt(&priv_key, "k1", r#"{"exp":9999999999,"nbf":0}"#);
+    let host = JwksHost::new(jwks_json(&priv_key, "k1")); // active session
     assert!(
         matches!(
-            serve_content(&host, &ds, &req, &gc),
+            jwt_gate_outcome(&host, Some(jwt), Some(JWKS_URL)),
             ContentOutcome::Real(_)
         ),
         "valid JWT with an active session must release real content"
