@@ -21,6 +21,8 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: AddArgs) -> Result<(), CliError> {
             "staged": outcome.staged.iter().map(|(k, _)| k).collect::<Vec<_>>(),
             "unchanged": outcome.unchanged,
             "dry_run": outcome.dry_run,
+            "staged_bytes": outcome.staged_bytes,
+            "limit_bytes": outcome.limit_bytes,
         }));
         return Ok(());
     }
@@ -36,6 +38,7 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: AddArgs) -> Result<(), CliError> {
     if outcome.unchanged > 0 {
         ui.line(format!("  {} unchanged", outcome.unchanged));
     }
+    ui.capacity(outcome.staged_bytes, outcome.limit_bytes);
     if !outcome.dry_run && !outcome.staged.is_empty() {
         ui.hint("digstore commit -m \"...\"");
     }
