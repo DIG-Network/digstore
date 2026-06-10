@@ -27,7 +27,7 @@ fn tampered_public_output_is_rejected() {
         .unwrap();
     proof.public_output = Bytes32([0xEEu8; 32]); // tamper the committed output
     let chain = MockChainSource::new(vec![block], 1_000_100);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify(&proof, ph, &[root], &chain)
         .unwrap_err();
     // In the mock, public_output feeds the commitment chain, so tampering it breaks

@@ -38,7 +38,7 @@ fn mock_prove_verify_round_trip() {
     assert_eq!(proof.public_output, serving.compute_public_output());
 
     let chain = MockChainSource::new(vec![block.clone()], 1_000_030);
-    MockVerifier::default()
+    MockVerifier
         .verify(&proof, program_hash, &[roothash], &chain)
         .expect("genuine mock proof must verify");
 }

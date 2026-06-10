@@ -108,8 +108,8 @@ impl Workspace {
             .map_err(|e| CliError::Other(anyhow::anyhow!("migrate mkdir: {e}")))?;
         // Move every entry currently directly under .dig/ (except the new stores/ dir)
         // into stores/default/.
-        for entry in
-            std::fs::read_dir(dir).map_err(|e| CliError::Other(anyhow::anyhow!("migrate scan: {e}")))?
+        for entry in std::fs::read_dir(dir)
+            .map_err(|e| CliError::Other(anyhow::anyhow!("migrate scan: {e}")))?
         {
             let entry =
                 entry.map_err(|e| CliError::Other(anyhow::anyhow!("migrate entry: {e}")))?;
@@ -219,6 +219,11 @@ impl Workspace {
         }
         if self.stores.len() == 1 {
             return Ok(self.stores.keys().next().unwrap().clone());
+        }
+        // No store at all: this is the "not initialized" case (exit 3), distinct
+        // from an ambiguous selection among several stores (invalid argument).
+        if self.stores.is_empty() {
+            return Err(CliError::NoStore(self.dir.display().to_string()));
         }
         Err(CliError::InvalidArgument(
             "no store selected: use --store <name>, set one with `digstore use <name>`, or create one with `digstore init <name>`".into(),

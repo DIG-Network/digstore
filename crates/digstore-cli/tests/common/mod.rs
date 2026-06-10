@@ -14,12 +14,20 @@ pub fn tmp_dig() -> TempDir {
     TempDir::new().unwrap()
 }
 
+/// The per-store directory inside the workspace tempdir. In the multi-store
+/// layout, `--dig-dir <tempdir>` makes `<tempdir>` the WORKSPACE and the default
+/// store's files (config.toml, signing_key.bin, modules/, ...) live under
+/// `<tempdir>/stores/default/`.
+pub fn store_dir(dir: &TempDir) -> std::path::PathBuf {
+    dir.path().join("stores").join("default")
+}
+
 /// Scrape store_id (hex) from config.toml and newest root (hex) from `log --json`.
 pub fn store_id_and_root(dir: &TempDir) -> (String, String) {
     let out = dig(dir).args(["log", "--json"]).output().unwrap();
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let root = v[0]["root"].as_str().unwrap().to_string();
-    let cfg = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    let cfg = std::fs::read_to_string(store_dir(dir).join("config.toml")).unwrap();
     let line = cfg.lines().find(|l| l.contains("store_id")).unwrap();
     let store_id = line.split('"').nth(1).unwrap().to_string();
     (store_id, root)
@@ -31,7 +39,7 @@ pub fn store_id_and_root(dir: &TempDir) -> (String, String) {
 /// test seeds it so a clone of the genesis head passes the §21.6 authenticated-
 /// head check.
 pub fn genesis_push_sig(dir: &TempDir, store_id_hex: &str, root_hex: &str) -> [u8; 96] {
-    let seed = std::fs::read(dir.path().join("signing_key.bin")).unwrap();
+    let seed = std::fs::read(store_dir(dir).join("signing_key.bin")).unwrap();
     let sk = digstore_crypto::bls::SecretKey::from_seed(&seed);
     let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
     let root = digstore_core::Bytes32::from_hex(root_hex).unwrap();

@@ -4,7 +4,7 @@ use predicates::prelude::*;
 
 /// Read the source store's host public key (48 bytes) from trusted_keys.json.
 fn host_pubkey(dir: &tempfile::TempDir) -> [u8; 48] {
-    let text = std::fs::read_to_string(dir.path().join("trusted_keys.json")).unwrap();
+    let text = std::fs::read_to_string(common::store_dir(dir).join("trusted_keys.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     let hex = v[0]["public_key"].as_str().unwrap();
     let bytes = hex::decode(hex).unwrap();
@@ -43,7 +43,7 @@ fn clone_then_cat_round_trips_from_remote() {
 
     let (store_id, root) = store_id_and_root(&src);
     let module = std::fs::read(
-        src.path()
+        common::store_dir(&src)
             .join("modules")
             .join(format!("{store_id}-{root}.dig")),
     )
@@ -91,7 +91,7 @@ fn clone_rejects_unauthenticated_or_forged_head() {
 
     let (store_id, root) = store_id_and_root(&src);
     let module = std::fs::read(
-        src.path()
+        common::store_dir(&src)
             .join("modules")
             .join(format!("{store_id}-{root}.dig")),
     )

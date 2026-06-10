@@ -270,7 +270,10 @@ pub fn add_files(
     use crate::ops::walk::{self, Resolved};
 
     let cfg = ctx.load_config()?;
-    let root = ctx.dig_dir.parent().unwrap_or(&ctx.dig_dir).to_path_buf();
+    // §2.8: add scans the resolved operating directory (op_dir), NOT a path
+    // derived from the per-store dig_dir (which now lives at
+    // `<workspace>/stores/<name>`). Keys are relative to op_dir.
+    let root = ctx.op_dir.clone();
 
     // Resolve the file set.
     let mut resolved: Vec<Resolved> = Vec::new();
@@ -435,7 +438,8 @@ pub fn status(ctx: &CliContext) -> Result<StatusView, CliError> {
 /// Classify working-directory files vs. staging and the current generation.
 pub fn compute_status(ctx: &CliContext) -> Result<StatusView, CliError> {
     let cfg = ctx.load_config()?;
-    let root_dir = ctx.dig_dir.parent().unwrap_or(&ctx.dig_dir).to_path_buf();
+    // §2.8: status classifies files under the resolved operating directory.
+    let root_dir = ctx.op_dir.clone();
     let current = current_root(ctx)?;
 
     // Working set: key -> file content.

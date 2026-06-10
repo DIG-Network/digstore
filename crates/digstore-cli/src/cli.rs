@@ -52,7 +52,9 @@ pub enum Command {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private")]
+#[command(
+    after_help = "EXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
+)]
 pub struct InitArgs {
     /// Store name (default: "default").
     pub name: Option<String>,
@@ -188,7 +190,9 @@ pub struct UnstageArgs {}
 pub struct StagedArgs {}
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore urn -A\n  digstore urn css/app.css\n  digstore urn file --root <hex>")]
+#[command(
+    after_help = "EXAMPLES:\n  digstore urn -A\n  digstore urn css/app.css\n  digstore urn file --root <hex>"
+)]
 pub struct UrnArgs {
     pub paths: Vec<PathBuf>,
     #[arg(short = 'A', long)]

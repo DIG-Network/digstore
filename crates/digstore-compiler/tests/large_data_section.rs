@@ -335,7 +335,8 @@ fn two_stores_of_different_sizes_compile_to_identical_module_size() {
     // sit well below it and are padded up to the same total.
     let budget = 16 * 1024 * 1024;
     let small = serve_single_resource_and_verify(vec![0x11u8; 1024 * 1024], "uniform-sm", budget);
-    let large = serve_single_resource_and_verify(vec![0x22u8; 8 * 1024 * 1024], "uniform-lg", budget);
+    let large =
+        serve_single_resource_and_verify(vec![0x22u8; 8 * 1024 * 1024], "uniform-lg", budget);
     assert_eq!(
         small, large,
         "§8.3: two stores of very different content sizes MUST compile to the \

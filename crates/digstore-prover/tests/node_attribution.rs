@@ -31,9 +31,7 @@ fn fresh_proof() -> (ExecutionProof, Bytes32, Bytes32, ChiaBlockRef) {
 fn genuine_signature_attributes_to_node() {
     let (proof, ph, root, block) = fresh_proof();
     let chain = MockChainSource::new(vec![block], 1_000_100);
-    MockVerifier::default()
-        .verify(&proof, ph, &[root], &chain)
-        .unwrap();
+    MockVerifier.verify(&proof, ph, &[root], &chain).unwrap();
 }
 
 #[test]
@@ -41,7 +39,7 @@ fn tampered_signature_is_rejected() {
     let (mut proof, ph, root, block) = fresh_proof();
     proof.node_signature.0[0] ^= 0xFF;
     let chain = MockChainSource::new(vec![block], 1_000_100);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify(&proof, ph, &[root], &chain)
         .unwrap_err();
     assert!(matches!(err, ProverError::NodeSignatureInvalid));
@@ -53,7 +51,7 @@ fn wrong_pubkey_is_rejected() {
     let other_pk = bls::SecretKey::from_seed(&[99u8; 32]).public_key();
     proof.node_pubkey = other_pk.to_bytes();
     let chain = MockChainSource::new(vec![block], 1_000_100);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify(&proof, ph, &[root], &chain)
         .unwrap_err();
     assert!(matches!(err, ProverError::NodeSignatureInvalid));
@@ -73,7 +71,7 @@ fn node_pubkey_in_attestation_trusted_set_is_accepted() {
     // the trusted attestation key embedded in the module.
     let node_pk = bls::SecretKey::from_seed(&[7u8; 32]).public_key();
     let trusted_node_keys = [node_pk.to_bytes()];
-    MockVerifier::default()
+    MockVerifier
         .verify_node_attested(&proof, ph, &[root], &trusted_node_keys, &chain)
         .expect("a proof signed by an attestation-trusted node key must verify");
 }
@@ -87,7 +85,7 @@ fn node_pubkey_not_in_attestation_trusted_set_is_rejected() {
     // but the node key is not bound to the §12 attestation set: reject.
     let other_pk = bls::SecretKey::from_seed(&[0xABu8; 32]).public_key();
     let trusted_node_keys: [Bytes48; 1] = [other_pk.to_bytes()];
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify_node_attested(&proof, ph, &[root], &trusted_node_keys, &chain)
         .unwrap_err();
     assert!(
@@ -100,7 +98,7 @@ fn node_pubkey_not_in_attestation_trusted_set_is_rejected() {
 fn empty_attestation_trusted_set_is_rejected() {
     let (proof, ph, root, block) = fresh_proof();
     let chain = MockChainSource::new(vec![block], 1_000_100);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify_node_attested(&proof, ph, &[root], &[], &chain)
         .unwrap_err();
     assert!(

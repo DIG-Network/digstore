@@ -15,7 +15,7 @@ fn prover_and_verifier_are_object_safe() {
         timestamp: 1_000_000,
     };
     let prover: Box<dyn Prover> = Box::new(MockProver::new(sk, pk, block.clone()));
-    let verifier: Box<dyn Verifier> = Box::new(MockVerifier::default());
+    let verifier: Box<dyn Verifier> = Box::new(MockVerifier);
     let chain: Box<dyn ChainSource> =
         Box::new(MockChainSource::new(vec![block.clone()], 1_000_100));
 

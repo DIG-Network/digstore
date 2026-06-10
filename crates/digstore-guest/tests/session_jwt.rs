@@ -5,8 +5,10 @@ use mock_host::MockHost;
 
 #[test]
 fn jwks_fetch_blocked_without_session() {
-    let mut h = MockHost::default();
-    h.session_ok = false; // no valid session yet
+    let h = MockHost {
+        session_ok: false, // no valid session yet
+        ..MockHost::default()
+    };
     let res = gated_jwks_fetch(&h, b"https://issuer/jwks.json");
     assert_eq!(
         res,
@@ -17,9 +19,11 @@ fn jwks_fetch_blocked_without_session() {
 
 #[test]
 fn jwks_fetch_allowed_after_session() {
-    let mut h = MockHost::default();
-    h.session_ok = true;
-    h.jwks = Ok(br#"{"keys":[]}"#.to_vec());
+    let h = MockHost {
+        session_ok: true,
+        jwks: Ok(br#"{"keys":[]}"#.to_vec()),
+        ..MockHost::default()
+    };
     let res = gated_jwks_fetch(&h, b"https://issuer/jwks.json");
     assert_eq!(res, Ok(br#"{"keys":[]}"#.to_vec()));
 }

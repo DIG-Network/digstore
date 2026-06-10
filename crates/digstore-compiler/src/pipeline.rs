@@ -121,7 +121,9 @@ impl Compiler {
                 "content exceeds the uniform-size budget".into(),
             ));
         }
-        let filler_len = config.uniform_blob_len.saturating_sub(blob_len_without_filler);
+        let filler_len = config
+            .uniform_blob_len
+            .saturating_sub(blob_len_without_filler);
         inputs.filler = deterministic_filler(&store_id, &store_roothash, filler_len);
 
         // Stage 6: data-section encode in the canonical contract format (D1).
@@ -217,4 +219,3 @@ fn current_generation_leaves<G: GenerationView>(current: &G) -> Vec<Bytes32> {
     keyed.sort_by(|a, b| a.0.cmp(&b.0));
     keyed.into_iter().map(|(_, leaf)| leaf).collect()
 }
-

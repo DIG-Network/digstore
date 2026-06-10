@@ -23,8 +23,7 @@ fn tampered_module_data_section_fails_client_verification_exit_5() {
     dig(&dir).args(["commit"]).assert().success();
 
     let (store_id, root) = store_id_and_root(&dir);
-    let module = dir
-        .path()
+    let module = common::store_dir(&dir)
         .join("modules")
         .join(format!("{store_id}-{root}.dig"));
     corrupt_data_section(&module);

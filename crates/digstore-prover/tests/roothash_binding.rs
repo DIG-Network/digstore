@@ -37,7 +37,7 @@ fn bound_roothash_is_accepted() {
     let root = Bytes32([0xBBu8; 32]);
     let (resp, ph, block, returned) = make_response(root);
     let chain = MockChainSource::new(vec![block], 1_000_030);
-    MockVerifier::default()
+    MockVerifier
         .verify_response(&resp, ph, &[root], &returned, &chain)
         .expect("a proof bound to the asserted trusted root must verify");
 }
@@ -48,7 +48,7 @@ fn untrusted_roothash_is_rejected() {
     let (resp, ph, block, returned) = make_response(root);
     let chain = MockChainSource::new(vec![block], 1_000_030);
     let other = Bytes32([0xCCu8; 32]);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify_response(&resp, ph, &[other], &returned, &chain)
         .unwrap_err();
     assert!(matches!(err, ProverError::UntrustedRoot(_)));
@@ -64,7 +64,7 @@ fn proof_bound_to_root_b_rejected_when_response_asserts_different_trusted_root_c
     let (mut resp, ph, block, returned) = make_response(root_b);
     resp.roothash = root_c; // forge the asserted root
     let chain = MockChainSource::new(vec![block], 1_000_030);
-    let err = MockVerifier::default()
+    let err = MockVerifier
         .verify_response(&resp, ph, &[root_b, root_c], &returned, &chain)
         .unwrap_err();
     assert!(matches!(err, ProverError::RootBindingMismatch { .. }));

@@ -54,7 +54,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         if first {
             ui.line("  set as active store");
         }
-        ui.line(format!("  trusted host key: {}", res.host_public_key.to_hex()));
+        ui.line(format!(
+            "  trusted host key: {}",
+            res.host_public_key.to_hex()
+        ));
         ui.hint("digstore add -A");
     }
     Ok(())
