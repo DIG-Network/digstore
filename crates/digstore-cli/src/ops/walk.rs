@@ -23,19 +23,18 @@ fn key_for(root: &Path, path: &Path) -> String {
         .join("/")
 }
 
-/// Walk `dir` (under `root`) collecting non-ignored files (skips `.dig/`).
-fn walk_dir(root: &Path, dir: &Path, out: &mut Vec<Resolved>) {
+/// Walk `dir` (under `root`) collecting non-ignored files, skipping anything
+/// under `skip` (the `.dig/` workspace dir).
+fn walk_dir(root: &Path, skip: &Path, dir: &Path, out: &mut Vec<Resolved>) {
     let mut wb = WalkBuilder::new(dir);
     wb.hidden(false) // include dotfiles (Git stages them unless ignored)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
         .add_custom_ignore_filename(".digignore");
-    // Always skip the store directory.
-    let store_dir = root.join(".dig");
     for entry in wb.build().flatten() {
         let p = entry.path();
-        if p.starts_with(&store_dir) {
+        if p.starts_with(skip) {
             continue;
         }
         if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
@@ -47,10 +46,33 @@ fn walk_dir(root: &Path, dir: &Path, out: &mut Vec<Resolved>) {
     }
 }
 
-/// Resolve one argument (file, directory, or glob) relative to `root`.
-pub fn resolve_arg(root: &Path, arg: &str, out: &mut Vec<Resolved>) -> Result<(), String> {
+/// Resolve one argument (file, directory, or glob) relative to `root`, skipping
+/// anything under `skip`. Rejects paths that escape the operating dir (§2.8).
+pub fn resolve_arg(
+    root: &Path,
+    skip: &Path,
+    arg: &str,
+    out: &mut Vec<Resolved>,
+) -> Result<(), String> {
     let as_path = root.join(arg);
+    // Reject RELATIVE paths that escape the operating directory (§2.8). An
+    // explicitly absolute argument names an exact file the user chose (like
+    // `git add /abs/file`), so it is accepted verbatim — the escape guard only
+    // defends against `../x`-style traversal in relative args.
+    let within = |p: &Path| -> bool {
+        if Path::new(arg).is_absolute() {
+            return true;
+        }
+        match (p.canonicalize(), root.canonicalize()) {
+            (Ok(pc), Ok(rc)) => pc.starts_with(&rc),
+            // Not-yet-existing path: fall back to lexical containment.
+            _ => !arg.split(['/', '\\']).any(|seg| seg == ".."),
+        }
+    };
     if as_path.is_file() {
+        if !within(&as_path) {
+            return Err(format!("'{arg}' is outside the operating directory"));
+        }
         out.push(Resolved {
             path: as_path.clone(),
             key: key_for(root, &as_path),
@@ -58,7 +80,10 @@ pub fn resolve_arg(root: &Path, arg: &str, out: &mut Vec<Resolved>) -> Result<()
         return Ok(());
     }
     if as_path.is_dir() {
-        walk_dir(root, &as_path, out);
+        if !within(&as_path) {
+            return Err(format!("'{arg}' is outside the operating directory"));
+        }
+        walk_dir(root, skip, &as_path, out);
         return Ok(());
     }
     // Treat as a glob relative to root.
@@ -66,7 +91,7 @@ pub fn resolve_arg(root: &Path, arg: &str, out: &mut Vec<Resolved>) -> Result<()
         .map_err(|e| format!("bad pattern '{arg}': {e}"))?
         .compile_matcher();
     let mut all = Vec::new();
-    walk_dir(root, root, &mut all);
+    walk_dir(root, skip, root, &mut all);
     let before = out.len();
     for r in all {
         if glob.is_match(&r.key) {
@@ -79,10 +104,10 @@ pub fn resolve_arg(root: &Path, arg: &str, out: &mut Vec<Resolved>) -> Result<()
     Ok(())
 }
 
-/// Resolve `--all`: every non-ignored file under the store root.
-pub fn resolve_all(root: &Path) -> Vec<Resolved> {
+/// Resolve `--all`: every non-ignored file under `root`, skipping `skip`.
+pub fn resolve_all(root: &Path, skip: &Path) -> Vec<Resolved> {
     let mut out = Vec::new();
-    walk_dir(root, root, &mut out);
+    walk_dir(root, skip, root, &mut out);
     out
 }
 
@@ -105,7 +130,11 @@ mod tests {
     #[test]
     fn resolve_all_skips_store_and_ignored() {
         let d = scratch();
-        let keys: Vec<String> = resolve_all(d.path()).into_iter().map(|r| r.key).collect();
+        let skip = d.path().join(".dig");
+        let keys: Vec<String> = resolve_all(d.path(), &skip)
+            .into_iter()
+            .map(|r| r.key)
+            .collect();
         assert!(keys.contains(&"a.txt".to_string()));
         assert!(keys.contains(&"sub/b.md".to_string()));
         assert!(
@@ -120,8 +149,9 @@ mod tests {
     #[test]
     fn resolve_glob_matches_relative_keys() {
         let d = scratch();
+        let skip = d.path().join(".dig");
         let mut out = Vec::new();
-        resolve_arg(d.path(), "sub/*.md", &mut out).unwrap();
+        resolve_arg(d.path(), &skip, "sub/*.md", &mut out).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].key, "sub/b.md");
     }
@@ -129,8 +159,9 @@ mod tests {
     #[test]
     fn resolve_single_file() {
         let d = scratch();
+        let skip = d.path().join(".dig");
         let mut out = Vec::new();
-        resolve_arg(d.path(), "a.txt", &mut out).unwrap();
+        resolve_arg(d.path(), &skip, "a.txt", &mut out).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].key, "a.txt");
     }
@@ -138,7 +169,31 @@ mod tests {
     #[test]
     fn glob_with_no_match_errors() {
         let d = scratch();
+        let skip = d.path().join(".dig");
         let mut out = Vec::new();
-        assert!(resolve_arg(d.path(), "*.nope", &mut out).is_err());
+        assert!(resolve_arg(d.path(), &skip, "*.nope", &mut out).is_err());
+    }
+
+    #[test]
+    fn resolve_all_skips_the_workspace_dir_even_when_op_dir_is_project_root() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".dig/stores/default")).unwrap();
+        std::fs::write(root.join(".dig/workspace.toml"), b"").unwrap();
+        std::fs::write(root.join("a.txt"), b"hi").unwrap();
+        let out = resolve_all(root, &root.join(".dig"));
+        let keys: Vec<_> = out.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"a.txt"));
+        assert!(!keys.iter().any(|k| k.starts_with(".dig")));
+    }
+
+    #[test]
+    fn resolve_arg_rejects_paths_escaping_the_operating_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().join("dist");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut out = Vec::new();
+        let err = resolve_arg(&root, &root.join(".dig"), "../secret.txt", &mut out);
+        assert!(err.is_err());
     }
 }
