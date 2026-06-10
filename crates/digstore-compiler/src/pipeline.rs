@@ -21,7 +21,7 @@ use crate::template::{
 
 /// Fixed linear-memory offset where the data-section blob is injected and the
 /// guest reads it (BINDING contract D2). SINGLE SOURCE OF TRUTH:
-/// [`digstore_core::datasection::DIGS_DATA_OFFSET`] (1 MiB). The compiler injects
+/// [`digstore_core::datasection::DIGS_DATA_OFFSET`] (2 MiB). The compiler injects
 /// an ACTIVE data segment at `i32.const DATA_SECTION_MEM_OFFSET` and the guest's
 /// `embedded()` reads from this same pointer.
 pub const DATA_SECTION_MEM_OFFSET: u32 = DIGS_DATA_OFFSET;
