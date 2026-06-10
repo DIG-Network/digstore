@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability (private)
+    url: https://github.com/DIG-Network/digstore/security/policy
+    about: Please report security issues privately — see SECURITY.md. Do NOT open a public issue. A URN is a credential; never paste real URNs, store ids, or salts.
+  - name: 💬 Questions & discussion
+    url: https://github.com/DIG-Network/digstore/discussions
+    about: For usage questions and ideas, start a discussion instead of an issue.
