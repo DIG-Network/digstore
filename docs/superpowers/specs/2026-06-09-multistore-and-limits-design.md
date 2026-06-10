@@ -1,7 +1,16 @@
 # Design: Multi-Store Workspaces, Per-Store Size Cap, and Staging Management
 
 - **Date:** 2026-06-09
-- **Status:** Approved (brainstorm) — pending spec review
+- **Status:** Approved; in implementation.
+- **Revision (2026-06-09, during impl):** two numbers changed after a build finding — the
+  per-store cap is **128 MB** (not 100 MB), and the module memory ceiling is **384 MiB /
+  6144 pages** (not 128 MiB / 2048). Reason: the §8.3 size-obfuscation filler is now
+  **uniform** (every module padded to one fixed size ≈ the cap; a 100%-full store needs no
+  filler) instead of the old power-of-two *append* (which doubled the module), and the
+  ceiling must also hold a serve-time heap copy of a worst-case single ~122 MiB resource
+  (`concat_output`). `MAX_STORE_BYTES` moves to `digstore-core` as the shared cap/filler
+  budget. The implementation source of truth for these numbers is
+  `docs/superpowers/plans/2026-06-09-multistore-and-limits.md` (Task A5 + Shared design).
 - **Builds on:** the shipped CLI UX Phase 1 (`2026-06-09-cli-ux-phase1.md`) and the
   `.dig` store-module extension. Reshapes the on-disk layout and makes every
   command store-aware.

@@ -43,9 +43,10 @@
   ```
   All existing helpers (`config_path`, `load_config`, `staging_path`, `modules_dir`, `generations_dir`, `history_path`, `salt_path`, `find_store_id`) keep operating on `dig_dir` unchanged.
 - **Operating-directory precedence (§2.8):** `-C/--cwd` flag → store `content_root` (joined to project root) → CWD. `project_root = workspace_dir.parent()`.
-- **`MAX_STORE_BYTES`**: `pub const MAX_STORE_BYTES: u64 = 100_000_000;` defined at the top of `crates/digstore-cli/src/ops/store_ops.rs`; reused by `init_store`, the `add` cap check, the `commit` defensive check, and `remote_ops::clone`.
-- **Memory ceiling:** `MAX_MEMORY_PAGES = 2048` (128 MiB) is the single source of truth in `digstore-compiler/src/template.rs`. `inject.rs` imports it (delete its private `CEILING_PAGES`). Host `MAX_MEMORY_BYTES = 2048 * WASM_PAGE_SIZE`.
-- **The golden fixture `golden_data_section.hex` is NOT regenerated** — it encodes the data-section blob, which this plan does not change. (The spec's mention of updating it was inaccurate; only the memory-ceiling tests change.)
+- **`MAX_STORE_BYTES = 128_000_000`** (128 MB, decimal) — the plaintext stage cap. **Lives in `digstore-core`** (e.g. `digstore-core/src/config.rs`) as the single source of truth, because the compiler needs it as the **filler budget** and the host/CLI need it for limits. The CLI references `digstore_core::MAX_STORE_BYTES` (reused by `init_store`, the `add` cap check, the `commit` defensive check, `remote_ops::clone`). This supersedes the original plan's "no core edits / CLI-local 100 MB" decision — the uniform-filler model (below) ties the cap to the compiler, so a shared constant is required.
+- **Uniform module size (filler model):** the compiler pads every module's injected data blob to a **fixed budget** so all stores compile to the **same module size** regardless of content; a store at 100% of the cap needs ~no filler. This replaces the old `next_pow2(content)`-**append** logic in `pipeline.rs::next_filler_bucket` (which roughly doubled the module). Filler = `max(0, FIXED_BLOB_LEN − actual_blob_len_without_filler)`. `FIXED_BLOB_LEN` covers a max-cap store's ciphertext + key-table + merkle + headers (≈ 128 MiB; choose a page-aligned value ≥ the worst case at the cap).
+- **Memory ceiling:** `MAX_MEMORY_PAGES = 6144` (**384 MiB**) — sized to hold the fixed ~128 MiB data region **plus** a serve-time heap allocation for a worst-case single max-size resource (`digstore_core::serving::concat_output` copies the resource's chunk ciphertexts into a fresh `Vec`, up to ~122 MiB) **plus** response framing headroom. Derived from `MAX_STORE_BYTES` in `digstore-core` and consumed by compiler `template::MAX_MEMORY_PAGES` (+ `inject.rs`, which imports it — delete its private `CEILING_PAGES`) and host `MAX_MEMORY_BYTES = MAX_MEMORY_PAGES * WASM_PAGE_SIZE`. Validated end-to-end by a near-cap full-store serve stress test (A5); trim toward 4096 only if the test shows the headroom is unused.
+- **The golden fixture `golden_data_section.hex` IS regenerated in Task A5** (the filler bytes/length change with the uniform-filler model). It is NOT touched by A1–A4 (the ceiling raise alone does not change the data-section blob).
 - **Guest WASM rebuild:** after any `digstore-guest` change, rebuild `target/wasm32-unknown-unknown/release/digstore_guest.wasm` (`cargo build -p digstore-guest --target wasm32-unknown-unknown --release`) before running `digstore-compiler`/`digstore-cli` tests that embed it.
 - **Commit discipline:** every task ends with a commit. Branch is `feat/digstore-multistore` (already created). End commit messages with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
 - **Disk note:** this machine hits disk-full LNK errors when `target/` balloons. If a build fails with LNK1318/os error 112, it is disk, not code — clear `target/debug/incremental`.
@@ -457,6 +458,55 @@ fn near_cap_resource_serves_within_the_128mib_ceiling() {
 git add crates/digstore-compiler/tests/large_data_section.rs
 git commit -m "test(compiler): serve a >8 MiB data section + near-cap ceiling-headroom stress test"
 ```
+
+### Task A5: Uniform-size filler + final 384 MiB ceiling + shared cap constant
+
+> Supersedes the interim ceiling (2048) committed in A1–A3. Resolves the headroom finding: the old `next_pow2`-**append** filler made a module ≈ 2–3× its content; a store could not reach the cap within a sane ceiling. New model: **every module is one fixed size** (filler pads small stores up to the budget), and the ceiling is sized to also serve a worst-case single max resource.
+
+**Files:**
+- Modify: `crates/digstore-core/src/config.rs` (add `MAX_STORE_BYTES`; optionally `MAX_MODULE_MEMORY_PAGES`)
+- Modify: `crates/digstore-compiler/src/pipeline.rs` (`next_filler_bucket` → pad-to-fixed-budget), `src/template.rs` (`MAX_MEMORY_PAGES = 6144`), `src/inject.rs` (uses `template::MAX_MEMORY_PAGES`)
+- Modify: `crates/digstore-compiler/fixtures/digstore_guest_template.wat:13` (`1 6144`)
+- Modify: `crates/digstore-host/src/config.rs` (`MAX_MEMORY_BYTES = 6144 * WASM_PAGE_SIZE`) + its tests
+- Regenerate: `crates/digstore-compiler/tests/fixtures/golden_data_section.hex`
+- Modify: ceiling/filler unit + integration tests (`template.rs`, `tests/inject.rs`, `self_serving.rs`, host `config.rs`/`bounds.rs`) to the new constants
+- Modify: `crates/digstore-compiler/tests/large_data_section.rs` (near-cap test → a real ~120 MB full store served end-to-end)
+
+- [ ] **Step 1: Add the shared cap constant** in `digstore-core/src/config.rs`:
+```rust
+/// Per-store hard cap on staged plaintext content (§3). 128 MB, decimal.
+/// Single source of truth: the CLI enforces it at stage/commit, the compiler
+/// uses it as the uniform-filler budget, the host derives its memory bound.
+pub const MAX_STORE_BYTES: u64 = 128_000_000;
+```
+Re-export from the crate root if the crate uses a prelude/`pub use` pattern (match existing conventions). No other field/struct changes.
+
+- [ ] **Step 2: Replace the filler with pad-to-fixed-budget** in `pipeline.rs`. Delete `next_filler_bucket` (the power-of-two stepper). Compute the blob length WITHOUT filler (headers + key table + chunk pool + merkle), then set `filler_len = FIXED_BLOB_LEN.saturating_sub(blob_len_without_filler)`, where `FIXED_BLOB_LEN` is a page-aligned constant ≥ the worst-case blob for a `MAX_STORE_BYTES` store. Define it explicitly and document the derivation:
+```rust
+/// Every module's injected data blob is padded to exactly this length so all
+/// stores are byte-for-byte the same size (§8.3 size obfuscation: the module
+/// size reveals nothing about content size). Must be >= the largest blob a
+/// MAX_STORE_BYTES store can produce (ciphertext + key table + merkle + header).
+/// 128 MiB comfortably covers a 128 MB (=122.07 MiB) store + metadata headroom.
+const FIXED_BLOB_LEN: usize = 128 * 1024 * 1024;
+```
+If `blob_len_without_filler > FIXED_BLOB_LEN` (should be impossible under the cap), return `CompilerError::Validation("content exceeds the uniform-size budget")` rather than truncating. Filler bytes remain the deterministic ChaCha20 stream (`deterministic_filler`), just a computed length.
+
+- [ ] **Step 3: Raise the ceiling constants.** `template.rs`: `pub const MAX_MEMORY_PAGES: u64 = 6144;` (128 MiB human labels → 384 MiB). `inject.rs`: already uses `template::MAX_MEMORY_PAGES` after A2 — no change beyond the value flowing through. `host/src/config.rs`: `MAX_MEMORY_BYTES = 6144 * WASM_PAGE_SIZE` (and its `defaults_match_spec`/`pages_helper_matches_bytes`/`consts_match_spec` tests → 384 MiB / 6144). Baked template `fixtures/digstore_guest_template.wat:13` → `(memory (export "memory") 1 6144)`. Update every compiler/host test literal that A1–A3 set to 2048 → 6144, and the over-ceiling rejection test → `6145`.
+
+- [ ] **Step 4: Regenerate the golden fixture.** Run the data-section golden test, capture the new hex (the filler length changed), and update `tests/fixtures/golden_data_section.hex`. Confirm `data_section_golden.rs` passes. (Document in the commit that the regen is due to the uniform-filler length, not a format change.)
+
+- [ ] **Step 5: Rewrite the near-cap test** in `large_data_section.rs` to build a real ~120 MB store (just under the 128 MB cap), compile, instantiate `HostRuntime` (default 384 MiB), serve the largest resource, and assert the proof verifies + client GCM-decrypt recovers the bytes. Keep it `#[ignore]` (heavy) but make it the authoritative ceiling validator. Also add/keep a small uniform-size assertion: two stores with very different content sizes compile to **identical module size**.
+
+- [ ] **Step 6: Rebuild guest wasm + run the full compiler/host/guest suites + the self-serve D6 suites.** Run: `cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked`; `cargo test -p digstore-host`; `cargo test -p digstore-compiler`; `cargo test -p digstore-compiler --test self_serving`; `cargo test -p digstore-cli --test adv_self_serve`; `cargo test -p digstore-compiler --test large_data_section -- --include-ignored`. Expected: PASS. If the ~120 MB serve OOMs at 384 MiB, report it (do not silently raise further — it would indicate `concat_output` double-copies and the ceiling needs ~512 MiB; flag as a finding).
+
+- [ ] **Step 7: Commit.**
+```bash
+git add crates/digstore-core crates/digstore-compiler crates/digstore-host
+git commit -m "feat: uniform-size module filler + 384 MiB ceiling; MAX_STORE_BYTES=128MB in digstore-core"
+```
+
+> **Phase E note:** the whitepaper §8.3 must be rewritten from "coarse power-of-two size bucket" to "every module is padded to one fixed size (uniform), revealing nothing about content size"; §5.1/§18.2 memory numbers → 384 MiB. Folded into Task E1.
 
 ---
 
