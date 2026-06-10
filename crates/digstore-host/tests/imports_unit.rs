@@ -68,14 +68,18 @@ fn host_random_over_cap_errors() {
     assert!(n < 0);
 }
 
-const CHALLENGE_LEN: usize = 32 + 32 + 8;
+// The guest's challenge now carries the per-role attestation tag
+// (SECURITY.md residual #2): ATTEST_DST || nonce(32) || store_id(32) || time_be(8).
+const TAG_LEN: usize = digstore_core::ATTEST_DST.len();
+const CHALLENGE_LEN: usize = TAG_LEN + 32 + 32 + 8;
 const ATTESTATION_LEN: usize = 48 + 32 + 96;
 
 fn write_challenge(rt: &mut HostRuntime, ptr: u32) {
     let mut challenge = vec![0u8; CHALLENGE_LEN];
-    challenge[0..32].fill(0x01);
-    challenge[32..64].fill(0x02);
-    challenge[64..72].copy_from_slice(&1_700_000_000u64.to_be_bytes());
+    challenge[..TAG_LEN].copy_from_slice(digstore_core::ATTEST_DST);
+    challenge[TAG_LEN..TAG_LEN + 32].fill(0x01);
+    challenge[TAG_LEN + 32..TAG_LEN + 64].fill(0x02);
+    challenge[TAG_LEN + 64..TAG_LEN + 72].copy_from_slice(&1_700_000_000u64.to_be_bytes());
     rt.write_guest(ptr, &challenge).unwrap();
 }
 

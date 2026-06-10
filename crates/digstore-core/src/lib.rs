@@ -56,5 +56,5 @@ pub use merkle::{MerkleProof, MerkleTree, ProofStep};
 pub use urn::Urn;
 pub use wire::{
     AttestationChallenge, AttestationResponse, AuthenticationInfo, ChiaBlockRef, ContentResponse,
-    ExecutionProof, ProofPrelude, ProofResponse,
+    ExecutionProof, ProofPrelude, ProofResponse, ATTEST_DST,
 };

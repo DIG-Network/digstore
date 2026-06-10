@@ -191,13 +191,21 @@ fn sign_push_then_verify_push_round_trip_and_binding() {
         "push sig must verify with verify_push"
     );
 
-    // CONVENTIONS C7: the signed message is SHA-256(root || store_id) (32 bytes).
+    // CONVENTIONS C7 + SECURITY.md residual #2: the signed message is now
+    // SHA-256(PUSH_DST || root || store_id) (still 32 bytes; the per-role tag is
+    // folded into the hashed preimage).
     let mut concat = Vec::new();
+    concat.extend_from_slice(digstore_crypto::bls::PUSH_DST);
     concat.extend_from_slice(&root.0);
     concat.extend_from_slice(&store_id.0);
     let expected = sha256(&concat).0;
     assert_eq!(push_signing_message(&root, &store_id), expected);
     assert_eq!(push_signing_message(&root, &store_id).len(), 32);
+    // The role tag actually changes the message vs the untagged preimage.
+    let mut untagged = Vec::new();
+    untagged.extend_from_slice(&root.0);
+    untagged.extend_from_slice(&store_id.0);
+    assert_ne!(push_signing_message(&root, &store_id), sha256(&untagged).0);
 
     // Wrong store_id must not verify (binding to store).
     let other_store = Bytes32([0xCCu8; 32]);
@@ -284,13 +292,16 @@ fn node_signing_message_layout_is_exact() {
     let height: u32 = 0x01020304;
     let pi = vec![0xEE, 0xFF];
     let msg = node_signing_message(&pg, &out, &hdr, height, &pi);
-    // 32 + 32 + 32 + 4 + 2 = 102 bytes.
-    assert_eq!(msg.len(), 102);
-    assert_eq!(&msg[0..32], &[0x01u8; 32]);
-    assert_eq!(&msg[32..64], &[0x02u8; 32]);
-    assert_eq!(&msg[64..96], &[0x03u8; 32]);
-    assert_eq!(&msg[96..100], &[0x01, 0x02, 0x03, 0x04]); // big-endian height
-    assert_eq!(&msg[100..102], &[0xEE, 0xFF]);
+    // SECURITY.md residual #2: NODE_DST || 32 + 32 + 32 + 4 + 2.
+    let t = digstore_crypto::bls::NODE_DST;
+    let tl = t.len();
+    assert_eq!(msg.len(), tl + 102);
+    assert_eq!(&msg[0..tl], t);
+    assert_eq!(&msg[tl..tl + 32], &[0x01u8; 32]);
+    assert_eq!(&msg[tl + 32..tl + 64], &[0x02u8; 32]);
+    assert_eq!(&msg[tl + 64..tl + 96], &[0x03u8; 32]);
+    assert_eq!(&msg[tl + 96..tl + 100], &[0x01, 0x02, 0x03, 0x04]); // big-endian height
+    assert_eq!(&msg[tl + 100..tl + 102], &[0xEE, 0xFF]);
 }
 
 #[test]
@@ -312,16 +323,86 @@ fn sign_attestation_binds_nonce_store_and_timestamp() {
         attestation_signing_message(&challenge.nonce, &challenge.store_id, challenge.timestamp);
     assert!(bls_verify(&pk, &msg, &sig));
 
-    // Layout: 32 + 32 + 8 = 72 bytes, timestamp big-endian.
-    assert_eq!(msg.len(), 72);
-    assert_eq!(&msg[0..32], &[0x5Au8; 32]);
-    assert_eq!(&msg[32..64], &[0x6Bu8; 32]);
+    // Layout (SECURITY.md residual #2): ATTEST_DST || 32 + 32 + 8, timestamp big-endian.
+    let t = digstore_core::ATTEST_DST;
+    let tl = t.len();
+    assert_eq!(msg.len(), tl + 72);
+    assert_eq!(&msg[0..tl], t);
+    assert_eq!(&msg[tl..tl + 32], &[0x5Au8; 32]);
+    assert_eq!(&msg[tl + 32..tl + 64], &[0x6Bu8; 32]);
     assert_eq!(
-        &msg[64..72],
+        &msg[tl + 64..tl + 72],
         &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
     );
 
     // A different nonce must not verify.
     let wrong = attestation_signing_message(&[0x00; 32], &challenge.store_id, challenge.timestamp);
     assert!(!bls_verify(&pk, &wrong, &sig));
+}
+
+#[test]
+fn role_tags_domain_separate_identical_payloads() {
+    // SECURITY.md residual #2: the three canonical builders carry DISTINCT
+    // per-role tags, so a signature minted for one role cannot be replayed as a
+    // signature for another even when the underlying payload bytes coincide.
+    use digstore_core::Bytes32;
+    use digstore_crypto::{
+        attestation_signing_message, bls_verify, node_signing_message, push_signing_message,
+        sign_attestation, sign_node, sign_push,
+    };
+
+    // The three role tags are pairwise distinct constants.
+    assert_ne!(digstore_crypto::bls::PUSH_DST, digstore_crypto::bls::NODE_DST);
+    assert_ne!(digstore_crypto::bls::PUSH_DST, digstore_core::ATTEST_DST);
+    assert_ne!(digstore_crypto::bls::NODE_DST, digstore_core::ATTEST_DST);
+
+    // Construct a push message and an attestation message over the SAME 64 payload
+    // bytes (nonce||store_id vs root||store_id), then confirm the produced messages
+    // differ purely because of the role tags.
+    let a = Bytes32([0x5Au8; 32]);
+    let b = Bytes32([0x6Bu8; 32]);
+    let push_msg = push_signing_message(&a, &b); // SHA-256(PUSH_DST || a || b)
+    let attest_msg = attestation_signing_message(&[0x5A; 32], &[0x6B; 32], 0);
+    // The attestation message embeds ATTEST_DST as its literal prefix; the push
+    // message hashes PUSH_DST in. They can never be byte-equal (different lengths
+    // and different leading bytes), so cross-role reuse is structurally impossible.
+    assert_ne!(&attest_msg[..push_msg.len().min(attest_msg.len())], &push_msg[..]);
+    assert_eq!(&attest_msg[..digstore_core::ATTEST_DST.len()], digstore_core::ATTEST_DST);
+
+    // End-to-end: a push signature must NOT verify as a node-proof or attestation
+    // signature, and vice versa — even with deliberately aligned inputs.
+    let sk = bls::SecretKey::from_seed(&[0x80u8; 32]);
+    let pk = sk.public_key().to_bytes();
+
+    let root = Bytes32([0x11u8; 32]);
+    let store = Bytes32([0x22u8; 32]);
+    let push_sig = sign_push(&sk, &root, &store);
+    // verifies only against the push message
+    assert!(verify_push_ok(&sk, &root, &store, &push_sig));
+    // does NOT verify against a node message built from the same 32-byte halves
+    let node_msg = node_signing_message(&root, &store, &Bytes32([0u8; 32]), 0, &[]);
+    assert!(!bls_verify(&pk, &node_msg, &push_sig));
+
+    let node_sig = sign_node(&sk, &root, &store, &Bytes32([0u8; 32]), 0, &[]);
+    let attest_over_same = attestation_signing_message(&root.0, &store.0, 0);
+    assert!(!bls_verify(&pk, &attest_over_same, &node_sig));
+
+    let challenge = digstore_core::AttestationChallenge {
+        nonce: [0x11u8; 32],
+        store_id: [0x22u8; 32],
+        timestamp: 0,
+    };
+    let attest_sig = sign_attestation(&sk, &challenge);
+    let push_over_same = push_signing_message(&root, &store);
+    assert!(!bls_verify(&pk, &push_over_same, &attest_sig));
+}
+
+// Local helper: verify a push signature via the canonical message.
+fn verify_push_ok(
+    sk: &bls::SecretKey,
+    root: &digstore_core::Bytes32,
+    store: &digstore_core::Bytes32,
+    sig: &digstore_core::Bytes96,
+) -> bool {
+    digstore_crypto::verify_push(&sk.public_key(), root, store, sig)
 }

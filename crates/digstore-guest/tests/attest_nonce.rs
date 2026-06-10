@@ -173,25 +173,33 @@ fn gate_signs_real_challenge_built_from_nonce_store_id_time() {
         captured, expected,
         "gate must sign build_challenge(nonce, store_id, time), not a literal"
     );
-    // Sanity: it is the 72-byte challenge wire, not the 9-byte literal b\"challenge\".
+    // Sanity: it is the tagged challenge wire (SECURITY.md residual #2):
+    // ATTEST_DST || nonce(32)+store_id(32)+time(8), not the 9-byte literal.
+    let tl = digstore_core::ATTEST_DST.len();
     assert_eq!(
         captured.len(),
-        72,
-        "challenge must be nonce(32)+store_id(32)+time(8)"
+        tl + 72,
+        "challenge must be ATTEST_DST || nonce(32)+store_id(32)+time(8)"
+    );
+    assert_eq!(
+        &captured[..tl],
+        digstore_core::ATTEST_DST,
+        "challenge must carry the per-role attestation domain tag"
     );
     assert_ne!(
         captured.as_slice(),
         b"challenge",
         "the signed message must NOT be the hardcoded literal"
     );
-    // The store_id and timestamp must actually come from the data section / host.
+    // The store_id and timestamp must actually come from the data section / host
+    // (after the leading role tag).
     assert_eq!(
-        &captured[32..64],
+        &captured[tl + 32..tl + 64],
         &STORE_ID,
         "challenge embeds the store_id"
     );
     assert_eq!(
-        &captured[64..72],
+        &captured[tl + 64..tl + 72],
         &HOST_TIME.to_be_bytes(),
         "challenge embeds the current timestamp"
     );

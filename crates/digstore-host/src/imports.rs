@@ -129,7 +129,13 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
         )
         .map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
-    const CHALLENGE_LEN: usize = 32 + 32 + 8;
+    // The guest's `build_challenge` prepends the per-role attestation tag
+    // (SECURITY.md residual #2): `ATTEST_DST || nonce(32) || store_id(32) ||
+    // time_be(8)`. The host signs the WHOLE tagged buffer (so its signature
+    // covers the role tag the guest will verify) and, for session establish,
+    // skips the leading tag to recover nonce/store_id.
+    const TAG_LEN: usize = digstore_core::ATTEST_DST.len();
+    const CHALLENGE_LEN: usize = TAG_LEN + 32 + 32 + 8;
     const SESSION_TTL_SECS: u64 = 300;
 
     // host_create_attestation(challenge_ptr) -> i32 length of AttestationResponse (§12, §13.6).
@@ -185,10 +191,11 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
                     _ => return ErrorCode::InvalidParameter as i32,
                 };
                 let challenge = &data[start..end];
+                // Skip the leading per-role tag, then read nonce(32) || store_id(32).
                 let mut nonce = [0u8; 32];
                 let mut store_id = [0u8; 32];
-                nonce.copy_from_slice(&challenge[..32]);
-                store_id.copy_from_slice(&challenge[32..64]);
+                nonce.copy_from_slice(&challenge[TAG_LEN..TAG_LEN + 32]);
+                store_id.copy_from_slice(&challenge[TAG_LEN + 32..TAG_LEN + 64]);
                 let now = caller.data().host.clock.now_unix_secs();
                 caller
                     .data_mut()

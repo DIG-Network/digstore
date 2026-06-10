@@ -76,9 +76,10 @@ mod tests {
         assert!(!verify_push_signature(&pk, &root, &b32(0x12), &sig));
     }
 
-    /// CONVENTIONS C7: re-check the shared push-signing vector here. The message
-    /// is byte-identical to `digstore_crypto::push_signing_message(root, store_id)`
-    /// and `sign_push` produces a signature `verify_push` (and thus this crate's
+    /// CONVENTIONS C7 + SECURITY.md residual #2: re-check the shared push-signing
+    /// vector here. The message is byte-identical to
+    /// `digstore_crypto::push_signing_message(root, store_id)` and `sign_push`
+    /// produces a signature `verify_push` (and thus this crate's
     /// `verify_push_signature`) accepts.
     #[test]
     fn c7_shared_vector_parity_with_crypto() {
@@ -86,11 +87,12 @@ mod tests {
         let root = Bytes32([0xAB; 32]);
         let store_id = Bytes32([0xCD; 32]);
 
-        // message parity: SHA-256(root || store_id), built once in crypto.
+        // message parity: SHA-256(PUSH_DST || root || store_id), built once in crypto.
         let expected = {
-            let mut buf = [0u8; 64];
-            buf[..32].copy_from_slice(&root.0);
-            buf[32..].copy_from_slice(&store_id.0);
+            let mut buf = Vec::with_capacity(digstore_crypto::bls::PUSH_DST.len() + 64);
+            buf.extend_from_slice(digstore_crypto::bls::PUSH_DST);
+            buf.extend_from_slice(&root.0);
+            buf.extend_from_slice(&store_id.0);
             digstore_crypto::sha256(&buf).0
         };
         assert_eq!(push_signing_message(&root, &store_id), expected);
