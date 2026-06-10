@@ -1,8 +1,14 @@
 name: Release
 
-# On a version tag (v*), build the digstore CLI in release mode, package it into
-# a Windows installer (Inno Setup) that registers digstore on PATH, and attach
-# the installer to the GitHub Release for that tag.
+# On a version tag (v*), build the digstore CLI in release mode and package it
+# into desktop installers, then attach them to the GitHub Release for the tag.
+#
+# Two packaging paths are produced:
+#   * tauri-installer  — the cross-platform Tauri wizard (installer/app). It
+#     bundles the freshly-built `digstore` binary as a resource and ships an
+#     NSIS .exe + MSI on Windows (and is one matrix entry away from macOS/Linux).
+#   * windows-inno     — the lightweight Inno Setup .exe (installer/digstore.iss),
+#     kept as a minimal silent/PATH-only alternative.
 on:
   push:
     tags:
@@ -17,9 +23,28 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  windows-installer:
-    name: Windows installer
-    runs-on: windows-latest
+  # ---------------------------------------------------------------------------
+  # Tauri wizard installer — builds digstore.exe, stages it as a bundled
+  # resource, then builds + bundles the installer (NSIS + MSI).
+  # ---------------------------------------------------------------------------
+  tauri-installer:
+    name: Tauri installer (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bin: digstore.exe
+            bundles: nsis,msi
+          # macOS / Linux are a config away — uncomment to also ship .dmg/.app
+          # and .deb/.AppImage. The same staging + bundle steps apply.
+          # - os: macos-latest
+          #   bin: digstore
+          #   bundles: app,dmg
+          # - os: ubuntu-22.04
+          #   bin: digstore
+          #   bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,6 +54,97 @@ jobs:
       - name: Install pinned Rust toolchain
         run: |
           rustup show   # installs the toolchain pinned in rust-toolchain.toml (incl. wasm32 target)
+          rustc --version
+
+      # Linux needs the webkit2gtk stack for Tauri.
+      - name: Install Linux Tauri deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache cargo + targets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            installer/app/src-tauri/target
+          key: ${{ runner.os }}-tauri-release-${{ hashFiles('**/Cargo.lock', 'installer/app/src-tauri/Cargo.toml', 'installer/app/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-tauri-release-
+
+      # digstore-cli's build.rs embeds the real guest wasm (BINDING contract D6).
+      - name: Build guest wasm
+        run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
+
+      - name: Build digstore CLI (release)
+        run: cargo build -p digstore-cli --release --locked
+
+      - name: Derive version from tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Install frontend deps
+        working-directory: installer/app
+        run: npm ci || npm install
+
+      # Stage the just-built digstore binary as a bundled resource + write its
+      # SHA-256 sidecar (the installer's gated verify step checks this digest).
+      - name: Stage bundled digstore binary
+        working-directory: installer/app
+        run: node scripts/stage-binary.mjs --src ../../target/release/${{ matrix.bin }}
+
+      - name: Build + bundle the Tauri installer
+        working-directory: installer/app
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Collect installer artifacts
+        id: collect
+        shell: bash
+        run: |
+          out="installer/app/src-tauri/target/release/bundle"
+          mkdir -p dist-installers
+          find "$out" \( -name '*-setup.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' \) -exec cp {} dist-installers/ \;
+          ls -la dist-installers
+
+      - name: Upload installer as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digstore-installer-${{ matrix.os }}
+          path: dist-installers/*
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --title "digstore ${GITHUB_REF_NAME}" --generate-notes || echo "release already exists"
+          gh release upload "${GITHUB_REF_NAME}" dist-installers/* --clobber
+
+  # ---------------------------------------------------------------------------
+  # Lightweight Inno Setup installer (Windows only) — kept as a minimal PATH-only
+  # alternative to the full wizard.
+  # ---------------------------------------------------------------------------
+  windows-inno:
+    name: Windows Inno Setup installer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup show
           rustc --version
 
       - name: Cache cargo + target
@@ -42,7 +158,6 @@ jobs:
           key: ${{ runner.os }}-release-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-release-cargo-
 
-      # digstore-cli's build.rs embeds the real guest wasm (BINDING contract D6).
       - name: Build guest wasm
         run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
 
@@ -68,7 +183,7 @@ jobs:
       - name: Upload installer as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: digstore-windows-installer
+          name: digstore-windows-inno-installer
           path: installer/Output/*.exe
           if-no-files-found: error
 
