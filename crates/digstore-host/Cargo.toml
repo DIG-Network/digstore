@@ -29,6 +29,13 @@ default = ["dighost"]
 # `cargo build -p digstore-host` produces the binary, but gated so the lib can be
 # built dep-light with `--no-default-features`.
 dighost = ["clap", "tokio", "object_store", "anyhow", "hex", "url", "futures"]
+# Real RISC0 execution-proof backend (residual #3). Forwards to digstore-prover's
+# `risc0` feature, which pulls `risc0-build` (`embed_methods`) — that compiles the
+# zkVM guest ELF and REQUIRES the RISC0 toolchain (`r0vm`/`rzup`). NOT in default
+# build/CI here; flip this + install the toolchain to produce real proofs. Gates
+# `BlindServeDeps::with_risc0_prover` (the backend SELECTION compiles in both modes:
+# off => MockProver, on => Risc0Prover).
+risc0 = ["digstore-prover/risc0"]
 
 [[bin]]
 name = "dighost"

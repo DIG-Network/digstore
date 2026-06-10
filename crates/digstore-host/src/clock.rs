@@ -11,6 +11,11 @@ pub trait Clock: Send + Sync + 'static {
 }
 
 /// Production clock backed by the OS wall clock.
+///
+/// This is the REAL clock for residual #3 (`SECURITY.md`): the blind serve path
+/// injects it via [`crate::serve_blind::BlindServeDeps::with_real_chain_clock`]
+/// (replacing the deterministic `FixedClock`) whenever a real chain source is
+/// wired, so temporal-key / freshness checks (§16) run against actual time.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemClock;
 

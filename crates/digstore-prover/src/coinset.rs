@@ -1,3 +1,21 @@
+//! Live [`ChainSource`] backed by the coinset.org Chia full-node RPC mirror
+//! (`https://api.coinset.org`).
+//!
+//! This is the REAL chain source for residual #3 (`SECURITY.md`): it supplies
+//! the current block header hash + height + timestamp used to anchor the
+//! attestation freshness gate (§13.7/§16) to wall-clock time. It calls the
+//! standard Chia RPC endpoints `POST /get_blockchain_state` (current peak) and
+//! `POST /get_block_record_by_height` (on-chain confirmation + timestamp walk).
+//!
+//! It is best-effort with short, clear errors ([`ProverError::ChainRpc`]). The
+//! mocked parsing tests live in `tests/coinset_parse.rs`; an HTTP-mocked and an
+//! `#[ignore]`d live test live in `tests/coinset_live.rs`.
+//!
+//! NOTE: a real chain source alone does NOT make execution proofs unforgeable —
+//! the proof backend is still the forgeable [`crate::mock::MockProver`] unless
+//! the `risc0` feature is enabled (which needs the RISC0 toolchain). See
+//! `SECURITY.md` residual #3.
+
 use crate::chain::ChainSource;
 use crate::error::{ProverError, Result};
 use digstore_core::{Bytes32, ChiaBlockRef};
