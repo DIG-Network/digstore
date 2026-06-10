@@ -1,21 +1,22 @@
 import { Ic } from "../icons.jsx";
 
-// EULA text lifted verbatim from the prototype's `License` component
-// (design/installer/installer-app.jsx) — Apache-2.0-style clauses reflecting
-// the DigStore product (module-is-the-artifact, URN-as-credential, etc.).
+// License summary with the DigStore-specific notes (module-is-the-artifact,
+// URN-as-credential, provider-blindness). DigStore is free software under the
+// GNU General Public License v2.0 — the same license as Git.
 export function License({ agreed, setAgreed }) {
   return (
     <div className="fade-key">
       <div className="eyebrow">Step 02 — Terms</div>
       <h2>License Agreement</h2>
-      <p className="lead">Review the terms below. DigStore is open source under the Apache License 2.0.</p>
+      <p className="lead">Review the terms below. DigStore is free software under the GNU General Public License v2.0 — the same license as Git.</p>
       <div className="license">
-        <h5>DigStore — End User License &amp; Apache License 2.0</h5>
-        <p className="muted">Version 1.0 · The Content-Addressable WASM Store Format · © 2026 DIG Network</p>
+        <h5>DigStore — GNU General Public License v2.0</h5>
+        <p className="muted">The Content-Addressable WASM Store Format · © 2026 DIG Network</p>
         <p>
-          1. GRANT. Subject to the terms of the Apache License, Version 2.0 (the "License"), you are granted a perpetual,
-          worldwide, non-exclusive, royalty-free license to use, reproduce and distribute the DigStore command-line
-          interface and host runtime (the "Software").
+          1. GRANT. DigStore is free software: under the GNU General Public License, version 2 (the "License"), you may
+          use, study, share and modify the DigStore command-line interface and host runtime (the "Software"). When you
+          distribute the Software or derivative works, you must pass on the same freedoms under the GPLv2 and make the
+          corresponding source available.
         </p>
         <p>
           2. THE MODULE IS THE ARTIFACT. A DigStore store compiles to a single WebAssembly module that embeds its own
@@ -41,7 +42,7 @@ export function License({ agreed, setAgreed }) {
           6. LIMITATION OF LIABILITY. In no event shall the authors or copyright holders be liable for any claim, damages
           or other liability arising from, out of or in connection with the Software or its use.
         </p>
-        <p className="muted">Full text: apache.org/licenses/LICENSE-2.0 — scroll reviewed.</p>
+        <p className="muted">Full text: gnu.org/licenses/old-licenses/gpl-2.0.html — scroll reviewed.</p>
       </div>
       <div className="agree" onClick={() => setAgreed(!agreed)}>
         <div className={"check" + (agreed ? " on" : "")}>{Ic.check}</div>

@@ -35,7 +35,7 @@ export function Welcome({ meta }) {
           <span className="k">platforms</span>macOS · Linux · Windows
         </span>
         <span className="chip">
-          <span className="k">license</span>Apache-2.0
+          <span className="k">license</span>GPL-2.0
         </span>
       </div>
     </div>
