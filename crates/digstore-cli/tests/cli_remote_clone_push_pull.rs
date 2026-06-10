@@ -55,8 +55,8 @@ fn clone_then_cat_round_trips_from_remote() {
     let base = server.base_url();
 
     let dst = tmp_dig();
-    // clone into an empty dir.
-    std::fs::remove_dir_all(dst.path()).ok();
+    // Clone into an empty project dir: the dir exists (so `current_dir` is valid)
+    // but carries no workspace yet — `clone` creates `<dst>/.dig`.
     let url = format!("{base}/stores/{store_id}");
     dig(&dst).args(["clone", &url]).assert().success();
 
@@ -103,7 +103,6 @@ fn clone_rejects_unauthenticated_or_forged_head() {
     let base = server.base_url();
 
     let dst = tmp_dig();
-    std::fs::remove_dir_all(dst.path()).ok();
     let url = format!("{base}/stores/{store_id}");
     dig(&dst)
         .args(["clone", &url])
@@ -140,9 +139,8 @@ fn push_fast_forward_then_pull_advances() {
         .success();
     dig(&src).args(["push", "origin"]).assert().success();
 
-    // Clone into a fresh dir.
+    // Clone into a fresh project dir (empty, but present for `current_dir`).
     let dst = tmp_dig();
-    std::fs::remove_dir_all(dst.path()).ok();
     dig(&dst).args(["clone", &store_url]).assert().success();
 
     // Second commit on the source, then push.

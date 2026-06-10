@@ -23,8 +23,9 @@ fn init_creates_store_and_trusted_key() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Initialized store"));
-    // Multi-store layout: the default store's files live under stores/default/.
-    let store = dir.path().join("stores").join("default");
+    // Multi-store layout: with the workspace at <dir>/.dig, the default store's
+    // files live under <dir>/.dig/stores/default/.
+    let store = common::store_dir(&dir);
     assert!(store.join("config.toml").exists());
     assert!(store.join("trusted_keys.json").exists());
     assert!(store.join("modules").exists());

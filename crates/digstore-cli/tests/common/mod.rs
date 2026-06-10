@@ -4,9 +4,17 @@ use std::sync::Arc;
 use assert_cmd::Command;
 use tempfile::TempDir;
 
+/// A `digstore` invocation against the temp project `dir`. The workspace lives at
+/// `<dir>/.dig` (a SUBDIR of the build/content dir) and the command runs WITH
+/// `current_dir(dir)`, so `op_dir` defaults to `<dir>` — exactly like a real user
+/// running `digstore` from inside their project. Content files written under
+/// `<dir>` therefore key RELATIVE to `<dir>` (never as absolute paths), and the
+/// `.dig` skip only excludes `<dir>/.dig` (a proper subdir of op_dir = `<dir>`).
 pub fn dig(dir: &TempDir) -> Command {
     let mut cmd = Command::cargo_bin("digstore").unwrap();
-    cmd.arg("--dig-dir").arg(dir.path());
+    cmd.arg("--dig-dir")
+        .arg(dir.path().join(".dig"))
+        .current_dir(dir.path());
     cmd
 }
 
@@ -14,12 +22,11 @@ pub fn tmp_dig() -> TempDir {
     TempDir::new().unwrap()
 }
 
-/// The per-store directory inside the workspace tempdir. In the multi-store
-/// layout, `--dig-dir <tempdir>` makes `<tempdir>` the WORKSPACE and the default
-/// store's files (config.toml, signing_key.bin, modules/, ...) live under
-/// `<tempdir>/stores/default/`.
+/// The per-store directory for the default store. With the workspace at
+/// `<dir>/.dig`, the default store's files (config.toml, signing_key.bin,
+/// modules/, ...) live under `<dir>/.dig/stores/default/`.
 pub fn store_dir(dir: &TempDir) -> std::path::PathBuf {
-    dir.path().join("stores").join("default")
+    dir.path().join(".dig").join("stores").join("default")
 }
 
 /// Scrape store_id (hex) from config.toml and newest root (hex) from `log --json`.
