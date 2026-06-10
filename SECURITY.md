@@ -128,10 +128,40 @@ not mistaken for closed.
    second-preimage / cross-protocol signature reuse. Deferred because the change
    alters every root/signature and must be made in lockstep across the host and
    the guest verifier plus all fixtures.
-3. **Proof backend is `MockProver` (forgeable) on the default serve path**, with
-   a `FixedClock` and `MockChainSource`. The RISC0 backend must be wired and a
-   real chain/clock supplied before execution proofs are trustworthy.
-   (`digstore-host/src/serve_blind.rs`)
+3. **Proof backend is `MockProver` (forgeable) on the default serve path — but
+   the chain source, clock, and backend selection are now real and injectable.**
+   - **Real chain source.** `digstore_prover::CoinsetChainSource` fetches the
+     current Chia peak + on-chain block records from `https://api.coinset.org`
+     (`POST /get_blockchain_state`, `POST /get_block_record_by_height`),
+     supplying the real block header hash / height / timestamp the attestation
+     freshness gate anchors to (§13.7/§16). Best-effort, short timeout, clear
+     `ChainRpc` errors; parsing + HTTP-mocked tests run in CI and an
+     `#[ignore]`d live test hits the real mirror.
+     (`digstore-prover/src/coinset.rs`, `tests/coinset_parse.rs`,
+     `tests/coinset_live.rs`)
+   - **Real clock.** `digstore_host::SystemClock` (OS wall clock) replaces the
+     `FixedClock` whenever a real chain is wired. (`digstore-host/src/clock.rs`)
+   - **Injectable serve path.** `serve_blind` no longer hardcodes the trio.
+     `BlindServeDeps` makes the prover, chain source, and clock injectable; it
+     **defaults** to the mock/fixed trio (so existing tests + the toolchain-free
+     default build stay green) and a caller can swap in
+     `CoinsetChainSource` + `SystemClock` (`with_real_chain_clock`) and a real
+     `Risc0Prover` (`with_risc0_prover`). `serve_blind_with` is the injection
+     entry point. (`digstore-host/src/serve_blind.rs`)
+   - **The backend SELECTION compiles in both modes.** With the `risc0` feature
+     OFF (the default) the backend is `MockProver`; with it ON, a real
+     `Risc0Prover` is available — guarded by `#[cfg(feature = "risc0")]` so the
+     default build never pulls the toolchain.
+
+   **Still required for trustworthy proofs (the toolchain boundary):** real
+   RISC0 proving needs the **RISC0 toolchain (`r0vm`/`rzup`)** and is enabled via
+   the **`risc0` cargo feature** (`digstore-host/risc0` -> `digstore-prover/risc0`),
+   which triggers `risc0-build`'s `embed_methods` to compile the zkVM guest ELF.
+   It is NOT built or tested in CI here because the toolchain is not installed in
+   this environment. The wiring is done: **flip the `risc0` feature, install the
+   toolchain, and supply `CoinsetChainSource` + `SystemClock` + `Risc0Prover`**
+   to `serve_blind_with` to produce real execution proofs. Until then the default
+   serve path's proofs remain forgeable (mock backend).
 4. **JWT signature verification — implemented (closes the former residual #4).**
    The guest JWT gate (`digstore-guest/src/content.rs`) now verifies the token's
    cryptographic signature, not just its claims. RS256 (`rsa` PKCS#1 v1.5 over

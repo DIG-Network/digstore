@@ -1553,6 +1553,7 @@ dependencies = [
  "digstore-core",
  "digstore-crypto",
  "digstore-guest-risc0",
+ "httpmock",
  "reqwest",
  "risc0-build",
  "risc0-zkvm",
