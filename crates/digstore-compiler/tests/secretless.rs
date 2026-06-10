@@ -28,6 +28,9 @@ fn cfg(dir: &std::path::Path) -> CompilerConfig {
         obfuscate: false,
         optimize: false,
         template_override: None,
+        // Small uniform budget keeps the emitted module tiny/fast (the 128 MiB
+        // default would make every test module ~128 MiB).
+        uniform_blob_len: 64 * 1024,
     }
 }
 

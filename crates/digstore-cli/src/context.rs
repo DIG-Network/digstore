@@ -91,6 +91,40 @@ impl CliContext {
         }
     }
 
+    /// Backward-compatible single-store resolver (pre-multistore API). Treats the
+    /// explicit path (or the discovered/CWD `.dig`) as BOTH the workspace dir and
+    /// the store `dig_dir`, with an implicit `"default"` store. Retained so the
+    /// standalone D6 integration tests (`dighost_serve`, `adv_self_serve`) and any
+    /// other single-store driver keep working while the multi-store dispatch
+    /// (which uses `discover_workspace`/`for_store`) is wired up.
+    pub fn resolve(explicit: Option<PathBuf>, json: bool, verbose: bool) -> Self {
+        let dir = explicit
+            .or_else(Self::discover_dig_dir)
+            .unwrap_or_else(Self::cwd_dig_dir);
+        Self::single_store(dir, json, verbose)
+    }
+
+    /// Backward-compatible single-store resolver for `init`: anchored to the
+    /// explicit path (or `<cwd>/.dig`), no walk-up. Companion to [`resolve`].
+    pub fn resolve_init(explicit: Option<PathBuf>, json: bool, verbose: bool) -> Self {
+        let dir = explicit.unwrap_or_else(Self::cwd_dig_dir);
+        Self::single_store(dir, json, verbose)
+    }
+
+    /// Build a self-contained single-store context where the store lives directly
+    /// at `dir` (`dig_dir == workspace_dir == op_dir`), with an implicit
+    /// `"default"` store name. Matches the pre-multistore on-disk layout.
+    fn single_store(dir: PathBuf, json: bool, verbose: bool) -> Self {
+        CliContext {
+            dig_dir: dir.clone(),
+            workspace_dir: dir.clone(),
+            op_dir: dir,
+            store_name: Some("default".to_string()),
+            json,
+            verbose,
+        }
+    }
+
     /// `<current working directory>/.dig` (absolute, since `current_dir` is).
     fn cwd_dig_dir() -> PathBuf {
         std::env::current_dir()

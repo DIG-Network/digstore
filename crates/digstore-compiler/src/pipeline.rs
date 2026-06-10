@@ -85,13 +85,20 @@ impl Compiler {
         let total_content_bytes: u64 = chunk_pool_bodies.iter().map(|b| b.len() as u64).sum();
 
         // §8.3 filler (deviation #2): deterministic ChaCha20 keyed by
-        // SHA-256(store_id || roothash || domain). Length is a bucket over the
-        // content size so module size leaks only a coarse bucket.
-        let filler_len = next_filler_bucket(total_content_bytes as usize);
-        let filler = deterministic_filler(&store_id, &store_roothash, filler_len);
-
-        // Stage 6: data-section encode in the canonical contract format (D1).
-        let inputs = DataSectionInputs {
+        // SHA-256(store_id || roothash || domain). UNIFORM-SIZE model: every
+        // module's blob is padded to EXACTLY `config.uniform_blob_len` so all
+        // stores compile to the same module size, revealing nothing about
+        // content size. The filler (id 11, unreferenced) is the ONLY variable
+        // section; it does not touch resource leaves or `current_root`, so the
+        // filler length never changes what the module serves or proves.
+        //
+        // `blob_len_without_filler` = the encoded blob length with an EMPTY
+        // filler (header + offset table + every other section). Because the
+        // Filler section is always present (an empty body here) and adding N
+        // filler bytes grows the blob by exactly N, the final blob length is
+        // `blob_len_without_filler + filler_len`. Hitting the budget exactly is
+        // therefore `filler_len = budget - blob_len_without_filler`.
+        let mut inputs = DataSectionInputs {
             store_id,
             current_root,
             root_history,
@@ -104,8 +111,20 @@ impl Compiler {
             key_table: key_table.entries().to_vec(),
             chunk_pool_bodies,
             merkle_leaves,
-            filler,
+            filler: Vec::new(),
         };
+        let blob_len_without_filler = encode_data_section(&inputs).len();
+        if blob_len_without_filler > config.uniform_blob_len {
+            // Cannot happen under `digstore_core::MAX_STORE_BYTES` with the
+            // production `FIXED_BLOB_LEN` budget; never truncate to fit.
+            return Err(CompilerError::Validation(
+                "content exceeds the uniform-size budget".into(),
+            ));
+        }
+        let filler_len = config.uniform_blob_len.saturating_sub(blob_len_without_filler);
+        inputs.filler = deterministic_filler(&store_id, &store_roothash, filler_len);
+
+        // Stage 6: data-section encode in the canonical contract format (D1).
         let data_blob = encode_data_section(&inputs);
 
         // Stage 5: load prebuilt template (or override) and validate (§5.1).
@@ -128,7 +147,7 @@ impl Compiler {
         // Stage 8 (wasm-opt) intentionally skipped for determinism portability.
         // Stage 9: final validate (re-parse exports + memory bounds), then assert
         // the §5.1 module-declared memory ceiling on the EMITTED module: it MUST
-        // declare `maximum: Some(256)` (16 MiB). Injection normalizes the raw
+        // declare `maximum: Some(6144)` (384 MiB). Injection normalizes the raw
         // guest template (which may declare no max) to this exact cap.
         load_template(&module)?;
         assert_memory_ceiling(&module)?;
@@ -199,13 +218,3 @@ fn current_generation_leaves<G: GenerationView>(current: &G) -> Vec<Bytes32> {
     keyed.into_iter().map(|(_, leaf)| leaf).collect()
 }
 
-/// Smallest filler length >= `n`, stepping in powers of two from a 64-byte floor.
-/// Hides the exact content byte count so module size leaks only a coarse bucket
-/// (§8.3); the filler section carries this many deterministic ChaCha20 bytes.
-fn next_filler_bucket(n: usize) -> usize {
-    let mut b = 64usize;
-    while b < n {
-        b <<= 1;
-    }
-    b
-}

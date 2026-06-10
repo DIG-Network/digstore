@@ -42,7 +42,10 @@ mod template;
 
 pub use atomic_write::{atomic_write_module, output_filename};
 pub use chunk_index::ChunkIndex;
-pub use config::{CompilerConfig, CompilerStats, COMPILER_VERSION};
+pub use config::{
+    default_uniform_blob_len, CompilerConfig, CompilerStats, COMPILER_VERSION, FIXED_BLOB_LEN,
+    UNIFORM_BLOB_LEN_ENV,
+};
 pub use data_section::{
     encode_data_section, rekey_module_trusted, verify_module_root, DataSectionInputs,
     ModuleIdentity,

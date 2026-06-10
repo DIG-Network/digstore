@@ -10,6 +10,8 @@ fn compile(dir: &std::path::Path, obfuscate: bool) -> Vec<u8> {
         obfuscate,
         optimize: false,
         template_override: None,
+        // Small uniform budget keeps the emitted module tiny/fast.
+        uniform_blob_len: 64 * 1024,
     };
     let gens = sample_generations();
     let outcome = Compiler::compile(
