@@ -189,6 +189,32 @@ impl Ui {
             serde_json::to_string_pretty(value).expect("serialize")
         );
     }
+
+    /// Render staged/free/limit capacity: numbers always (unless `--json`), with a
+    /// `[####····]` bar only when color is on and not quiet.
+    pub fn capacity(&self, staged: u64, limit: u64) {
+        if self.json {
+            return;
+        }
+        let nums = human_capacity(staged, limit);
+        if self.color && !self.quiet {
+            let width = 18usize;
+            let filled = if limit == 0 {
+                0
+            } else {
+                ((staged as u128 * width as u128) / limit as u128) as usize
+            };
+            let filled = filled.min(width);
+            let bar: String = core::iter::repeat_n('#', filled)
+                .chain(core::iter::repeat_n('·', width - filled))
+                .collect();
+            let mut o = self.out();
+            let _ = writeln!(o, "  {nums}  [{bar}]");
+        } else {
+            let mut o = self.out();
+            let _ = writeln!(o, "  {nums}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -224,5 +250,13 @@ mod tests {
     fn clicolor_force_enables_without_tty() {
         let ui = Ui::resolve(ColorChoice::Auto, false, false, false, false, false, true);
         assert!(ui.color());
+    }
+
+    #[test]
+    fn human_capacity_is_plain_when_no_color() {
+        let s = human_capacity(47_200_000, 100_000_000);
+        assert!(s.contains("47.2 MB"));
+        assert!(s.contains("52.8 MB free"));
+        assert!(s.contains("100.0 MB"));
     }
 }
