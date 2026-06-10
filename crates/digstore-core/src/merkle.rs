@@ -1,9 +1,21 @@
 //! Merkle tree build + inclusion proof verify (paper 7.1, 7.2, 7.3).
 //!
-//! - `leaf = SHA-256(chunk)`
-//! - `node = SHA-256(left || right)`
-//! - an odd node is carried up unchanged
+//! Domain separation (SECURITY.md residual #2): leaf hashing and internal-node
+//! hashing use DISTINCT, named prefix tags so a 32-byte internal node can never
+//! be reinterpreted as a leaf (and vice versa). This closes the classic merkle
+//! second-preimage / type-confusion class.
+//!
+//! - `leaf = SHA-256(LEAF_TAG || chunk)`   (raw chunk -> leaf, in `build`)
+//! - `node = SHA-256(NODE_TAG || left || right)` (internal node, in `hash_pair`)
+//! - an odd node is carried up unchanged (no re-hash, so no extra tag)
 //! - `root = generation root`
+//!
+//! The node tag is applied on BOTH the produce path (`build` / `from_leaves`
+//! root computation) and the verify path (`MerkleProof::verify`), so a proof
+//! still folds up to the (now domain-separated) root. `from_leaves` receives
+//! already-computed leaf digests (the D5 per-resource leaves, which are
+//! `SHA-256(ciphertext)`); those are the leaf layer itself and are NOT re-tagged
+//! — the leaf/node separation there is provided entirely by the node tag.
 //!
 //! Proof size (§9.5): a carried-up leaf skips a level, so its inclusion path is
 //! `<= ceil(log2 n)` siblings; the bound is attained by the full-spine leaf
@@ -16,6 +28,15 @@ use crate::bytes::Bytes32;
 use crate::codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use crate::hash::sha256;
 use alloc::vec::Vec;
+
+/// Domain-separation prefix for a merkle LEAF (`leaf = SHA-256(LEAF_TAG || chunk)`).
+/// Distinct from [`NODE_TAG`] so a leaf and an internal node can never collide.
+pub const LEAF_TAG: &[u8] = b"digstore:leaf:v1";
+
+/// Domain-separation prefix for an internal merkle NODE
+/// (`node = SHA-256(NODE_TAG || left || right)`). Applied on both the build and
+/// the verify paths so a proof folds up to the same domain-separated root.
+pub const NODE_TAG: &[u8] = b"digstore:node:v1";
 
 /// One step on a bottom-up inclusion path: the sibling hash and whether that
 /// sibling sits on the LEFT of the current node.
@@ -86,10 +107,24 @@ impl Decode for MerkleProof {
     }
 }
 
+/// Internal-node hash with the NODE domain tag: `SHA-256(NODE_TAG || left || right)`.
+/// Used identically on the produce side (`build` / `from_leaves`) and the verify
+/// side (`MerkleProof::verify`).
 fn hash_pair(left: &Bytes32, right: &Bytes32) -> Bytes32 {
-    let mut buf = [0u8; 64];
-    buf[..32].copy_from_slice(&left.0);
-    buf[32..].copy_from_slice(&right.0);
+    let mut buf = Vec::with_capacity(NODE_TAG.len() + 64);
+    buf.extend_from_slice(NODE_TAG);
+    buf.extend_from_slice(&left.0);
+    buf.extend_from_slice(&right.0);
+    sha256(&buf)
+}
+
+/// Leaf hash with the LEAF domain tag: `SHA-256(LEAF_TAG || chunk)`. Applied only
+/// where a raw chunk becomes a leaf (`MerkleTree::build`); `from_leaves` receives
+/// already-hashed leaf digests and does not re-tag them.
+fn hash_leaf(chunk: &[u8]) -> Bytes32 {
+    let mut buf = Vec::with_capacity(LEAF_TAG.len() + chunk.len());
+    buf.extend_from_slice(LEAF_TAG);
+    buf.extend_from_slice(chunk);
     sha256(&buf)
 }
 
@@ -101,9 +136,9 @@ pub struct MerkleTree {
 }
 
 impl MerkleTree {
-    /// Build a tree from raw chunk byte-slices (`leaf = SHA-256(chunk)`).
+    /// Build a tree from raw chunk byte-slices (`leaf = SHA-256(LEAF_TAG || chunk)`).
     pub fn build(chunks: &[Vec<u8>]) -> MerkleTree {
-        let leaves: Vec<Bytes32> = chunks.iter().map(|c| sha256(c)).collect();
+        let leaves: Vec<Bytes32> = chunks.iter().map(|c| hash_leaf(c)).collect();
         Self::from_leaves(leaves)
     }
 
@@ -179,5 +214,35 @@ impl MerkleTree {
             path,
             root: self.root(),
         })
+    }
+}
+
+#[cfg(test)]
+mod domain_separation_tests {
+    use super::*;
+    use alloc::vec;
+
+    /// Leaf and node hashing are domain-separated: a single-chunk `build` root
+    /// (a tagged leaf) must differ from `hash_pair` over the same bytes (a node),
+    /// and a leaf must never equal a bare untagged SHA-256 of the chunk.
+    #[test]
+    fn leaf_and_node_tags_are_distinct() {
+        let chunk = vec![0xABu8; 13];
+        let leaf = hash_leaf(&chunk);
+
+        // A leaf is tagged, so it differs from the untagged SHA-256 of the chunk.
+        assert_ne!(leaf, sha256(&chunk), "leaf must carry the LEAF domain tag");
+
+        // A node over (leaf, leaf) must differ from a leaf computed over the
+        // 64-byte concatenation — i.e. an internal node can't be reread as a leaf.
+        let node = hash_pair(&leaf, &leaf);
+        let mut cat = Vec::new();
+        cat.extend_from_slice(&leaf.0);
+        cat.extend_from_slice(&leaf.0);
+        assert_ne!(node, hash_leaf(&cat), "node tag must differ from leaf tag");
+        assert_ne!(node, sha256(&cat), "node must carry the NODE domain tag");
+
+        // The tags themselves are distinct constants.
+        assert_ne!(LEAF_TAG, NODE_TAG);
     }
 }

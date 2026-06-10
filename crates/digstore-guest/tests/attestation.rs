@@ -60,11 +60,15 @@ fn build_challenge_uses_random_nonce_store_id_time() {
     let nonce = [0x5Au8; 32];
     let time = 1_700_000_000u64;
     let bytes = build_challenge(nonce, store_id, time);
-    // AttestationChallenge wire = nonce(32) || store_id(32) || time(u64 BE) = 72 bytes.
-    assert_eq!(bytes.len(), 72);
-    assert_eq!(&bytes[0..32], &nonce);
-    assert_eq!(&bytes[32..64], &store_id);
-    assert_eq!(&bytes[64..72], &time.to_be_bytes());
+    // SECURITY.md residual #2: signed message =
+    // ATTEST_DST || nonce(32) || store_id(32) || time(u64 BE).
+    let t = digstore_core::ATTEST_DST;
+    let tl = t.len();
+    assert_eq!(bytes.len(), tl + 72);
+    assert_eq!(&bytes[0..tl], t);
+    assert_eq!(&bytes[tl..tl + 32], &nonce);
+    assert_eq!(&bytes[tl + 32..tl + 64], &store_id);
+    assert_eq!(&bytes[tl + 64..tl + 72], &time.to_be_bytes());
 }
 
 #[test]

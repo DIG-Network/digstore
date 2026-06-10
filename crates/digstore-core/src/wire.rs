@@ -150,6 +150,17 @@ impl Decode for ContentResponse {
     }
 }
 
+/// Per-role BLS domain-separation tag for host attestation signatures
+/// (SECURITY.md residual #2). Prepended to the signed attestation message so an
+/// attestation signature cannot be replayed as a push or node-proof signature.
+///
+/// This is the SINGLE SOURCE OF TRUTH shared by the producer
+/// (`digstore_crypto::bls::attestation_signing_message`, via the re-export
+/// `digstore_crypto::bls::ATTEST_DST`) and the verifier (the guest's
+/// `build_challenge`), so the bytes the host signs and the bytes the guest
+/// verifies stay byte-identical.
+pub const ATTEST_DST: &[u8] = b"digstore:attest:v1";
+
 /// Challenge issued to a host during attestation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttestationChallenge {

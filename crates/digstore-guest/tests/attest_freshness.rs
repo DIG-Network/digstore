@@ -191,7 +191,11 @@ fn stale_challenge_timestamp_yields_decoy() {
         .borrow()
         .clone()
         .expect("gate must call create_attestation");
-    assert_eq!(captured.len(), 72, "real 72-byte challenge was issued");
+    assert_eq!(
+        captured.len(),
+        digstore_core::ATTEST_DST.len() + 72,
+        "real tagged challenge (ATTEST_DST || nonce||store_id||time) was issued"
+    );
 
     assert!(
         matches!(outcome, ContentOutcome::Decoy(_)),

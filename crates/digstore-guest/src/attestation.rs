@@ -42,9 +42,18 @@ impl TrustedSet {
     }
 }
 
-/// Serialize the AttestationChallenge: nonce(32) || store_id(32) || time(u64 BE).
+/// Build the attestation signing message (SECURITY.md residual #2):
+/// `ATTEST_DST || nonce(32) || store_id(32) || time(u64 BE)`.
+///
+/// The leading role tag domain-separates attestation signatures from push /
+/// node-proof signatures. This MUST stay byte-identical to
+/// `digstore_crypto::bls::attestation_signing_message` (both reference the same
+/// `digstore_core::ATTEST_DST`): the host signs exactly these bytes and the guest
+/// verifies exactly these bytes.
 pub fn build_challenge(nonce: [u8; 32], store_id: [u8; 32], time: u64) -> Vec<u8> {
-    let mut out = Vec::with_capacity(72);
+    use digstore_core::ATTEST_DST;
+    let mut out = Vec::with_capacity(ATTEST_DST.len() + 72);
+    out.extend_from_slice(ATTEST_DST);
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&store_id);
     out.extend_from_slice(&time.to_be_bytes());

@@ -1,4 +1,4 @@
-use digstore_core::merkle::MerkleTree;
+use digstore_core::merkle::{MerkleTree, LEAF_TAG, NODE_TAG};
 use digstore_core::sha256;
 use digstore_core::Bytes32;
 
@@ -6,11 +6,30 @@ fn chunks(n: usize) -> Vec<Vec<u8>> {
     (0..n).map(|i| vec![i as u8; 8]).collect()
 }
 
+/// Independent re-implementation of the domain-separated leaf hash
+/// (SECURITY.md residual #2): `leaf = SHA-256(LEAF_TAG || chunk)`.
+fn leaf(chunk: &[u8]) -> Bytes32 {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(LEAF_TAG);
+    buf.extend_from_slice(chunk);
+    sha256(&buf)
+}
+
+/// Independent re-implementation of the domain-separated node hash:
+/// `node = SHA-256(NODE_TAG || left || right)`.
+fn node(l: &Bytes32, r: &Bytes32) -> Bytes32 {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(NODE_TAG);
+    buf.extend_from_slice(&l.0);
+    buf.extend_from_slice(&r.0);
+    sha256(&buf)
+}
+
 #[test]
 fn single_leaf_root_is_leaf_hash() {
     let data = vec![vec![1u8, 2, 3]];
     let tree = MerkleTree::build(&data);
-    assert_eq!(tree.root(), sha256(&[1u8, 2, 3]));
+    assert_eq!(tree.root(), leaf(&[1u8, 2, 3]));
 }
 
 #[test]
@@ -18,28 +37,18 @@ fn two_leaves_root_is_parent_hash() {
     let a = vec![0xAAu8];
     let b = vec![0xBBu8];
     let tree = MerkleTree::build(&[a.clone(), b.clone()]);
-    let la = sha256(&a);
-    let lb = sha256(&b);
-    let mut cat = Vec::new();
-    cat.extend_from_slice(&la.0);
-    cat.extend_from_slice(&lb.0);
-    assert_eq!(tree.root(), sha256(&cat));
+    assert_eq!(tree.root(), node(&leaf(&a), &leaf(&b)));
 }
 
 #[test]
 fn odd_leaf_is_carried_up() {
-    // 3 leaves: level0 = [l0,l1,l2]; level1 = [h(l0||l1), l2]; root = h(level1_0 || l2).
+    // 3 leaves: level0 = [l0,l1,l2]; level1 = [node(l0,l1), l2]; root = node(level1_0, l2).
     let data = chunks(3);
     let tree = MerkleTree::build(&data);
-    let l: Vec<Bytes32> = data.iter().map(|c| sha256(c)).collect();
-    let mut p01 = Vec::new();
-    p01.extend_from_slice(&l[0].0);
-    p01.extend_from_slice(&l[1].0);
-    let n01 = sha256(&p01);
-    let mut top = Vec::new();
-    top.extend_from_slice(&n01.0);
-    top.extend_from_slice(&l[2].0); // odd carried up unchanged
-    assert_eq!(tree.root(), sha256(&top));
+    let l: Vec<Bytes32> = data.iter().map(|c| leaf(c)).collect();
+    let n01 = node(&l[0], &l[1]);
+    let top = node(&n01, &l[2]); // odd leaf l2 carried up unchanged
+    assert_eq!(tree.root(), top);
 }
 
 #[test]
@@ -48,7 +57,7 @@ fn inclusion_proof_accepts_each_leaf() {
     let tree = MerkleTree::build(&data);
     for (i, c) in data.iter().enumerate() {
         let proof = tree.prove(i).unwrap();
-        assert_eq!(proof.leaf, sha256(c));
+        assert_eq!(proof.leaf, leaf(c));
         assert_eq!(proof.root, tree.root());
         assert!(proof.verify());
     }

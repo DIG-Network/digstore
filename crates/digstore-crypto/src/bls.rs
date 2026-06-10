@@ -137,22 +137,46 @@ pub fn validate_public_key(pk: &Bytes48) -> Result<(), BlsError> {
     }
 }
 
+// --- Per-role BLS domain-separation tags (SECURITY.md residual #2) ----------
+//
+// Each canonical signing-message builder PREPENDS a DISTINCT role tag before the
+// payload, so a signature produced for one role (push / node-proof / attestation)
+// can never be replayed as a signature for another role, even if the underlying
+// payload bytes happened to coincide. This is defense-in-depth ON TOP of the Chia
+// AugScheme (which already prepends the public key + the Chia DST): the AugScheme
+// binds the signer's key, while these tags bind the protocol role. Both the sign
+// and the verify paths go through these builders, so adding the tag here covers
+// both directions.
+
+/// Role tag for push-authorization signatures (`sign_push` / `verify_push`).
+pub const PUSH_DST: &[u8] = b"digstore:push:v1";
+/// Role tag for node execution-proof signatures (`sign_node`).
+pub const NODE_DST: &[u8] = b"digstore:node:v1";
+/// Role tag for host attestation signatures (`sign_attestation`). Re-exported
+/// from `digstore_core` so the producer here and the guest's `build_challenge`
+/// verifier share ONE definition and stay byte-identical.
+pub use digstore_core::ATTEST_DST;
+
 // --- Canonical signing-message builders ------------------------------------
 
 /// Canonical push-authorization signing message (CONVENTIONS C7, paper §21.6):
-/// `SHA-256(root || store_id)` (32 bytes). Argument order is `(root, store_id)`.
-/// `digstore-remote` and `digstore-cli` delegate to this single source of truth.
+/// `SHA-256(PUSH_DST || root || store_id)` (32 bytes). Argument order is
+/// `(root, store_id)`. `digstore-remote` and `digstore-cli` delegate to this
+/// single source of truth. The role tag is folded into the hashed preimage so
+/// the signed message stays a fixed 32 bytes.
 pub fn push_signing_message(root: &Bytes32, store_id: &Bytes32) -> [u8; 32] {
-    let mut buf = [0u8; 64];
-    buf[..32].copy_from_slice(&root.0);
-    buf[32..].copy_from_slice(&store_id.0);
+    let mut buf = Vec::with_capacity(PUSH_DST.len() + 64);
+    buf.extend_from_slice(PUSH_DST);
+    buf.extend_from_slice(&root.0);
+    buf.extend_from_slice(&store_id.0);
     crate::hash::sha256(&buf).0
 }
 
 /// Canonical node execution-proof signing message (paper §13.7, §16).
 ///
-/// Binds the attestation-relevant fields of `ExecutionProof`:
-///   `program_hash(32) || public_output(32) || chia_header_hash(32)
+/// Binds the attestation-relevant fields of `ExecutionProof`, prefixed by the
+/// node role tag:
+///   `NODE_DST || program_hash(32) || public_output(32) || chia_header_hash(32)
 ///    || height_be(4) || public_input(var)`.
 /// `height` is encoded big-endian (Chia-compat rule).
 pub fn node_signing_message(
@@ -162,7 +186,8 @@ pub fn node_signing_message(
     height: u32,
     public_input: &[u8],
 ) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(100 + public_input.len());
+    let mut msg = Vec::with_capacity(NODE_DST.len() + 100 + public_input.len());
+    msg.extend_from_slice(NODE_DST);
     msg.extend_from_slice(&program_hash.0);
     msg.extend_from_slice(&public_output.0);
     msg.extend_from_slice(&chia_header_hash.0);
@@ -172,13 +197,18 @@ pub fn node_signing_message(
 }
 
 /// Canonical attestation signing message (paper §12):
-/// `nonce(32) || store_id(32) || timestamp_be(8)` (72 bytes).
+/// `ATTEST_DST || nonce(32) || store_id(32) || timestamp_be(8)`.
+///
+/// MUST stay byte-identical to the guest's `build_challenge` (which prepends the
+/// same `ATTEST_DST`), because at runtime the host signs the exact challenge
+/// bytes the guest builds and the guest verifies that same buffer.
 pub fn attestation_signing_message(
     nonce: &[u8; 32],
     store_id: &[u8; 32],
     timestamp: u64,
 ) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(72);
+    let mut msg = Vec::with_capacity(ATTEST_DST.len() + 72);
+    msg.extend_from_slice(ATTEST_DST);
     msg.extend_from_slice(nonce);
     msg.extend_from_slice(store_id);
     msg.extend_from_slice(&timestamp.to_be_bytes());
