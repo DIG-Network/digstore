@@ -181,22 +181,39 @@ fn gate<H: DigHost + ?Sized>(
     Ok(())
 }
 
-/// Build a real ContentResponse for a hit: oblivious gather of the real chunk
-/// indices (with cover reads + shuffle), concatenate real ciphertext in order,
-/// attach a merkle proof to the current root.
-pub fn serve_content<H: DigHost + ?Sized>(
+/// Outcome of the gate + lookup + oblivious gather, before the served bytes are
+/// assembled. Lets the `ContentResponse` (struct) and the single-copy wire framer
+/// share one gather pass while assembling the served ciphertext only once each.
+enum GatheredOutcome {
+    /// A hit: the per-slot gathered chunks (cover + real), the indices of the real
+    /// chunks within `gathered` (in C9 order), the inclusion proof, and the root.
+    Real {
+        gathered: Vec<Vec<u8>>,
+        real_positions: Vec<usize>,
+        merkle_proof: MerkleProof,
+        root: Bytes32,
+    },
+    /// A miss / gate failure: a deterministic success-shaped decoy response.
+    Decoy(ContentResponse),
+}
+
+/// Run gate -> key lookup -> oblivious gather. Shared by [`serve_content`] (which
+/// materializes a `ContentResponse`) and [`serve_content_wire`] (which frames the
+/// wire response in a single pre-sized buffer). The gather reads EVERY slot in the
+/// plan (cover + real) so the access pattern is uniform.
+fn gather_content<H: DigHost + ?Sized>(
     host: &H,
     ds: &DataSection,
     req: &ContentRequest,
     cfg: &GateConfig,
-) -> ContentOutcome {
+) -> GatheredOutcome {
     let root = req.root_hash.unwrap_or_else(|| ds.current_root());
     if gate(host, ds, req, cfg).is_err() {
-        return ContentOutcome::Decoy(decoy_content_response(&req.retrieval_key, &root));
+        return GatheredOutcome::Decoy(decoy_content_response(&req.retrieval_key, &root));
     }
     let entry = match ds.lookup_key(&req.retrieval_key) {
         Some(e) => e,
-        None => return ContentOutcome::Decoy(decoy_content_response(&req.retrieval_key, &root)),
+        None => return GatheredOutcome::Decoy(decoy_content_response(&req.retrieval_key, &root)),
     };
 
     // Oblivious gather: pool size from ChunkPool count.
@@ -217,22 +234,102 @@ pub fn serve_content<H: DigHost + ?Sized>(
     for idx in &plan.order {
         gathered.push(read_chunk(ds, *idx).unwrap_or_default());
     }
-    // CONVENTIONS C9: assemble output with the shared `concat_output` ordering so
-    // it matches the prover's `ServingInputs::output_bytes`.
-    let real_slices: Vec<&[u8]> = plan
-        .real_positions
-        .iter()
-        .map(|pos| gathered[*pos].as_slice())
-        .collect();
-    let ciphertext = concat_output(&real_slices);
-
     let merkle_proof = build_real_proof(ds, &entry, &root);
-
-    ContentOutcome::Real(ContentResponse {
-        ciphertext,
+    GatheredOutcome::Real {
+        gathered,
+        real_positions: plan.real_positions,
         merkle_proof,
-        roothash: root,
-    })
+        root,
+    }
+}
+
+/// Build a real ContentResponse for a hit: oblivious gather of the real chunk
+/// indices (with cover reads + shuffle), concatenate real ciphertext in order,
+/// attach a merkle proof to the current root.
+pub fn serve_content<H: DigHost + ?Sized>(
+    host: &H,
+    ds: &DataSection,
+    req: &ContentRequest,
+    cfg: &GateConfig,
+) -> ContentOutcome {
+    match gather_content(host, ds, req, cfg) {
+        GatheredOutcome::Decoy(resp) => ContentOutcome::Decoy(resp),
+        GatheredOutcome::Real {
+            gathered,
+            real_positions,
+            merkle_proof,
+            root,
+        } => {
+            // CONVENTIONS C9: assemble output with the shared `concat_output`
+            // ordering so it matches the prover's `ServingInputs::output_bytes`.
+            let real_slices: Vec<&[u8]> = real_positions
+                .iter()
+                .map(|pos| gathered[*pos].as_slice())
+                .collect();
+            let ciphertext = concat_output(&real_slices);
+            ContentOutcome::Real(ContentResponse {
+                ciphertext,
+                merkle_proof,
+                roothash: root,
+            })
+        }
+    }
+}
+
+/// Single-copy serve (§7 wire framing, byte-identical to
+/// `ContentResponse::encode`): produce the framed wire response —
+/// `Vec<u8>` ciphertext (u32 BE len + bytes) || merkle_proof || roothash — in a
+/// single, EXACTLY pre-sized buffer.
+///
+/// The served ciphertext can be ~122 MiB at the store cap and the guest's bump
+/// allocator never frees, so this assembles the real chunk ciphertext directly
+/// into the final wire buffer (no separate `concat_output` intermediate, no
+/// `ContentResponse.ciphertext` copy, no Vec growth-doubling overshoot). The only
+/// resource-sized live allocations are the per-slot gathered chunks (the oblivious
+/// gather, left intact) and this one wire buffer. The bytes a client decodes are
+/// unchanged — this is purely an allocation/copy optimization.
+pub fn serve_content_wire<H: DigHost + ?Sized>(
+    host: &H,
+    ds: &DataSection,
+    req: &ContentRequest,
+    cfg: &GateConfig,
+) -> Vec<u8> {
+    use digstore_core::codec::{Encode, Encoder};
+
+    match gather_content(host, ds, req, cfg) {
+        // Decoys are tiny; the naive encode is fine.
+        GatheredOutcome::Decoy(resp) => {
+            let mut enc = Encoder::new();
+            resp.encode(&mut enc);
+            enc.finish()
+        }
+        GatheredOutcome::Real {
+            gathered,
+            real_positions,
+            merkle_proof,
+            root,
+        } => {
+            // Frame the small tail (merkle proof + roothash) on its own first; a
+            // proof is at most a few hundred bytes — never resource-sized.
+            let mut tail = Encoder::new();
+            merkle_proof.encode(&mut tail);
+            root.encode(&mut tail);
+            let tail = tail.finish();
+
+            // Served ciphertext length = sum of the real chunk lengths in C9 order
+            // (== `concat_output(&real_slices).len()`).
+            let cipher_len: usize = real_positions.iter().map(|p| gathered[*p].len()).sum();
+
+            // ONE allocation for the entire wire response; no overshoot.
+            let mut enc = Encoder::with_capacity(4 + cipher_len + tail.len());
+            (cipher_len as u32).encode(&mut enc); // Vec<u8> length prefix (4 BE)
+            for pos in &real_positions {
+                enc.write_bytes(gathered[*pos].as_slice()); // single copy into the reserved buffer
+            }
+            enc.write_bytes(&tail);
+            enc.finish()
+        }
+    }
 }
 
 /// Build a genuinely-verifying inclusion proof (contract D5).

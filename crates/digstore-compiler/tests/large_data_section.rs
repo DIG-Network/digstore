@@ -345,29 +345,23 @@ fn two_stores_of_different_sizes_compile_to_identical_module_size() {
 }
 
 #[test]
-#[ignore = "stress: real store compiled at the FULL 128 MiB production budget, served within the 384 MiB ceiling; run with --include-ignored"]
+#[ignore = "stress: a full ~122 MiB resource compiled at the FULL 128 MiB production budget, served within the 384 MiB ceiling; run with --include-ignored"]
 fn near_cap_store_serves_within_the_384mib_ceiling() {
     // A real store compiled at the FULL default 128 MiB uniform budget
     // (`digstore_compiler::FIXED_BLOB_LEN`) and served end-to-end through the
     // 6144-page (384 MiB) host ceiling. The module's heap base sits ABOVE the
     // ~128 MiB injected data region, so only ~254 MiB remains for the serve path.
     //
-    // FINDING (A5, REPORTED — do NOT silently raise the ceiling): the serve path
-    // is dominated by the guest's NON-RECLAIMING bump allocator. `get_content`
-    // (a) `concat_output`-copies the resource ciphertext into a fresh Vec
-    // (content.rs), (b) the proof path `concat_output`s it AGAIN for the serving
-    // digest (proof.rs), and (c) `ContentResponse::encode` copies it a THIRD time
-    // into the wire buffer (with Vec-doubling overshoot). None of these are
-    // freed. So peak heap ≈ 128 MiB data region + ~3× resource, which exceeds
-    // 384 MiB for a near-cap (~120 MB) resource. Measured at the production
-    // budget: a 40 MiB resource serves OK; a 60 MiB resource OOMs in
-    // `ContentResponse::encode`. Serving a full 128 MB-cap store would need a
-    // freeing allocator / streamed (single-copy) response, or a substantially
-    // larger ceiling (~512 MiB+) — a cross-phase decision, NOT silently raised
-    // here. This test pins a size (40 MiB) proven to serve at the production
-    // budget so it stays the authoritative end-to-end validator of the 384 MiB
-    // ceiling with real headroom margin.
-    let payload = vec![0x5Au8; 40 * 1024 * 1024];
+    // A6 (single-copy serve): the serve path no longer materializes the resource
+    // multiple times. `get_content` builds the ciphertext exactly once
+    // (`concat_output`, content.rs), the proof path STREAMS the output-commitment
+    // hash (proof.rs — no resource-sized buffer), and `ContentResponse` is framed
+    // by pre-sizing the wire buffer EXACTLY and moving the ciphertext in (abi.rs —
+    // one copy, no Vec-doubling overshoot). Peak heap ≈ 128 MiB data region +
+    // ciphertext + the (exact-sized) wire buffer, which fits a near-cap (~122 MiB)
+    // resource inside the 384 MiB ceiling. A full ~122 MiB resource (≤
+    // MAX_STORE_BYTES = 128 MB decimal) is the authoritative end-to-end validator.
+    let payload = vec![0x5Au8; 122 * 1024 * 1024];
     serve_single_resource_and_verify(
         payload,
         "near-cap",
