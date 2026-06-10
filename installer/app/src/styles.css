@@ -203,10 +203,10 @@ body {
 .ctrls.mac .c.g {
   background: #28c840;
 }
-.ctrls.win {
+.ctrls.winchrome {
   gap: 0;
 }
-.ctrls.win .c {
+.ctrls.winchrome .c {
   width: 40px;
   height: 46px;
   margin-top: 0;
@@ -217,14 +217,14 @@ body {
   font-size: 13px;
   cursor: pointer;
 }
-.ctrls.win .c:hover {
+.ctrls.winchrome .c:hover {
   background: rgba(255, 255, 255, 0.06);
 }
-.ctrls.win .c.close:hover {
+.ctrls.winchrome .c.close:hover {
   background: #e81123;
   color: #fff;
 }
-.ctrls.win .c svg {
+.ctrls.winchrome .c svg {
   width: 11px;
   height: 11px;
 }
