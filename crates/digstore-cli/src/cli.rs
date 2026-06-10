@@ -49,6 +49,7 @@ pub enum Command {
     Unstage(UnstageArgs),
     Staged(StagedArgs),
     Urn(UrnArgs),
+    Update(UpdateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -201,6 +202,20 @@ pub struct UrnArgs {
     pub root: Option<String>,
 }
 
+#[derive(Debug, Args)]
+#[command(
+    about = "Update DigStore to the latest release",
+    after_help = "EXAMPLES:\n  digstore update\n  digstore update --check\n  digstore update --yes"
+)]
+pub struct UpdateArgs {
+    /// Only report whether an update is available; never download.
+    #[arg(long)]
+    pub check: bool,
+    /// Skip the confirmation prompt before downloading/running the installer.
+    #[arg(short, long)]
+    pub yes: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +259,27 @@ mod tests {
                 _ => panic!("expected remote add"),
             },
             _ => panic!("expected remote"),
+        }
+    }
+
+    #[test]
+    fn parses_update_check_flag() {
+        let cli = Cli::try_parse_from(["digstore", "update", "--check"]).unwrap();
+        match cli.command {
+            Command::Update(u) => {
+                assert!(u.check);
+                assert!(!u.yes);
+            }
+            _ => panic!("expected update"),
+        }
+    }
+
+    #[test]
+    fn parses_update_yes_flag() {
+        let cli = Cli::try_parse_from(["digstore", "update", "--yes"]).unwrap();
+        match cli.command {
+            Command::Update(u) => assert!(u.yes),
+            _ => panic!("expected update"),
         }
     }
 

@@ -20,6 +20,7 @@ pub mod staged;
 pub mod status;
 pub mod stores;
 pub mod unstage;
+pub mod update;
 pub mod urn;
 pub mod use_store;
 
@@ -57,6 +58,12 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
             let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
             return use_store::run(&ctx, &ui, &mut ws, a);
         }
+        // `update` is store-independent (it self-updates the binary), so it does
+        // not load or migrate a workspace.
+        Command::Update(a) => {
+            let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
+            return update::run(&ctx, &ui, a);
+        }
         _ => {}
     }
 
@@ -89,7 +96,11 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Remote(a) => remote::run(&ctx, &ui, a),
         Command::Push(a) => push::run(&ctx, &ui, a),
         Command::Pull(a) => pull::run(&ctx, &ui, a),
-        Command::Init(_) | Command::Clone(_) | Command::Stores(_) | Command::Use(_) => {
+        Command::Init(_)
+        | Command::Clone(_)
+        | Command::Stores(_)
+        | Command::Use(_)
+        | Command::Update(_) => {
             unreachable!("handled above")
         }
     }
