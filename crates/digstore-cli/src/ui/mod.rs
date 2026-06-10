@@ -190,6 +190,61 @@ impl Ui {
         );
     }
 
+    /// True only when we can safely prompt: both stdio ends are a terminal and we
+    /// are neither in `--quiet` nor `--json` mode.
+    fn interactive(&self) -> bool {
+        !self.quiet
+            && !self.json
+            && std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal()
+    }
+
+    /// Prompt for a single line of input. Returns the trimmed answer, or `None`
+    /// when non-interactive (quiet/json/not-a-TTY) or the user accepts the
+    /// default with an empty line — callers then fall back to their default.
+    pub fn prompt_line(&self, prompt: &str, default: &str) -> Option<String> {
+        if !self.interactive() {
+            return None;
+        }
+        let mut o = self.out();
+        if default.is_empty() {
+            let _ = write!(o, "{prompt}: ");
+        } else {
+            let _ = write!(o, "{prompt} [{default}]: ");
+        }
+        let _ = o.flush();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() {
+            return None;
+        }
+        let t = line.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    }
+
+    /// Yes/no prompt. Returns `default` when non-interactive or on empty input.
+    pub fn confirm(&self, prompt: &str, default: bool) -> bool {
+        if !self.interactive() {
+            return default;
+        }
+        let hint = if default { "[Y/n]" } else { "[y/N]" };
+        let mut o = self.out();
+        let _ = write!(o, "{prompt} {hint} ");
+        let _ = o.flush();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() {
+            return default;
+        }
+        match line.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => true,
+            "n" | "no" => false,
+            _ => default,
+        }
+    }
+
     /// Render staged/free/limit capacity: numbers always (unless `--json`), with a
     /// `[####····]` bar only when color is on and not quiet.
     pub fn capacity(&self, staged: u64, limit: u64) {

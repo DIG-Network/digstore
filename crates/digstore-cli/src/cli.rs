@@ -7,10 +7,13 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "digstore", version, about, long_about = None)]
 pub struct Cli {
+    /// Override the .dig metadata directory (default: the workspace's .dig).
     #[arg(long, global = true)]
     pub dig_dir: Option<PathBuf>,
+    /// Emit machine-readable JSON instead of human-formatted output.
     #[arg(long, global = true)]
     pub json: bool,
+    /// Enable verbose (debug-level) logging.
     #[arg(short, long, global = true)]
     pub verbose: bool,
     /// Color output: auto (default), always, or never.
@@ -31,25 +34,45 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Initialize a new store in the current directory.
     Init(InitArgs),
+    /// Stage files, directories, or glob patterns for the next commit.
     Add(AddArgs),
+    /// Commit the staged content as a new generation root.
     Commit(CommitArgs),
+    /// Show the active store, its content root, and pending staged changes.
     Status(StatusArgs),
+    /// Show the store's generation (commit) history.
     Log(LogArgs),
+    /// Show what changed between two generation roots.
     Diff(DiffArgs),
+    /// Materialize a generation root's content into an output directory.
     Checkout(CheckoutArgs),
+    /// Read a single resource by URN (optionally verifying its proof).
     Cat(CatArgs),
+    /// Manage remote endpoints for this store (add, list, remove).
     Remote(RemoteArgs),
+    /// Clone a store from a remote into the current directory.
     Clone(CloneArgs),
+    /// Push the local store's content and signed head to a remote.
     Push(PushArgs),
+    /// Pull the latest content and signed head from a remote.
     Pull(PullArgs),
+    /// Revoke a published root (or the whole store) with a signed tombstone.
     Revoke(RevokeArgs),
+    /// List the stores in this workspace.
     Stores(StoresArgs),
+    /// Switch the active store by name.
     Use(UseArgs),
+    /// Show or set the active store's content root directory.
     Dir(DirArgs),
+    /// Clear the staging area (discard all staged entries).
     Unstage(UnstageArgs),
+    /// List the files currently staged for the next commit.
     Staged(StagedArgs),
+    /// Print the URN(s) for staged or committed resources.
     Urn(UrnArgs),
+    /// Update DigStore to the latest release.
     Update(UpdateArgs),
 }
 
@@ -169,7 +192,6 @@ pub struct PullArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    about = "Revoke a published root (or the whole store) with a signed tombstone",
     after_help = "EXAMPLES:\n  digstore revoke --root <hex> --reason compromise\n  digstore revoke --all --reason takedown\n  digstore revoke --root <hex> --remote origin"
 )]
 pub struct RevokeArgs {
@@ -225,7 +247,6 @@ pub struct UrnArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    about = "Update DigStore to the latest release",
     after_help = "EXAMPLES:\n  digstore update\n  digstore update --check\n  digstore update --yes"
 )]
 pub struct UpdateArgs {
