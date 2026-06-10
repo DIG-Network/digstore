@@ -30,6 +30,16 @@ sha2 = "0.10"
 hex = "0.4"
 dirs = "5"
 
+[target.'cfg(windows)'.dependencies]
+# User-PATH update: read/write HKCU\Environment directly (no setx truncation,
+# no machine-PATH duplication) and broadcast WM_SETTINGCHANGE so running
+# processes pick up the change. Both MIT/Apache-2.0 (see cargo-deny).
+winreg = "0.52"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [features]
 # This feature is used to enable the custom-protocol when bundling.
 custom-protocol = ["tauri/custom-protocol"]
