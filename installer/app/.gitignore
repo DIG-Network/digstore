@@ -1,0 +1,14 @@
+# Node / Vite
+node_modules/
+dist/
+*.log
+
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/gen/
+
+# Bundled binaries are staged at build time (large; not committed).
+# The sha256 sidecars are tiny and reproducible, also regenerated at stage time.
+src-tauri/resources/bin/digstore
+src-tauri/resources/bin/digstore.exe
+src-tauri/resources/bin/*.sha256
