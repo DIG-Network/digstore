@@ -5,8 +5,8 @@ use std::time::Duration;
 /// Page size of WASM linear memory.
 pub const WASM_PAGE_SIZE: usize = 64 * 1024;
 
-/// Hard ceiling matching the guest's declared max (256 pages = 16 MiB, §18.2).
-pub const MAX_MEMORY_BYTES: usize = 256 * WASM_PAGE_SIZE;
+/// Hard ceiling matching the guest's declared max (2048 pages = 128 MiB, §18.2).
+pub const MAX_MEMORY_BYTES: usize = 2048 * WASM_PAGE_SIZE;
 
 #[derive(Debug, Clone)]
 pub struct ExecutionLimits {
@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn defaults_match_spec() {
         let l = ExecutionLimits::default();
-        assert_eq!(l.memory_bytes_max, 16 * 1024 * 1024);
+        assert_eq!(l.memory_bytes_max, 128 * 1024 * 1024);
         assert_eq!(l.timeout, Duration::from_secs(5));
         assert!(l.fuel >= 1_000_000_000);
     }
@@ -50,12 +50,12 @@ mod tests {
     #[test]
     fn pages_helper_matches_bytes() {
         let l = ExecutionLimits::default();
-        assert_eq!(l.memory_pages_max(), 256);
+        assert_eq!(l.memory_pages_max(), 2048);
     }
 
     #[test]
     fn consts_match_spec() {
         assert_eq!(WASM_PAGE_SIZE, 64 * 1024);
-        assert_eq!(MAX_MEMORY_BYTES, 16 * 1024 * 1024);
+        assert_eq!(MAX_MEMORY_BYTES, 128 * 1024 * 1024);
     }
 }
