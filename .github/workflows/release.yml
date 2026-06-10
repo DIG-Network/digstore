@@ -127,10 +127,29 @@ jobs:
           path: dist-installers/*
           if-no-files-found: error
 
+  # ---------------------------------------------------------------------------
+  # Single publish job — runs after ALL matrix builds so there is no race to
+  # create the GitHub Release (the previous per-matrix publish raced: the first
+  # job created the release, the others 401'd / "release not found").
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish release
+    needs: installer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
       - name: Publish to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
+          mkdir -p dist-all
+          find dist -type f -exec cp {} dist-all/ \;
+          ls -la dist-all
           gh release create "${GITHUB_REF_NAME}" --title "digstore ${GITHUB_REF_NAME}" --generate-notes || echo "release already exists"
-          gh release upload "${GITHUB_REF_NAME}" dist-installers/* --clobber
+          gh release upload "${GITHUB_REF_NAME}" dist-all/* --clobber
