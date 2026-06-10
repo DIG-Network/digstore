@@ -137,24 +137,47 @@ export async function runInstall(opts, { onProgress, onError, onDone }) {
   const a = await api();
   if (!a) return simulateInstall(opts, { onProgress, onError, onDone });
 
+  // IMPORTANT: `run_install` spawns a worker thread and returns immediately, so
+  // `invoke` resolves almost instantly — long before the pipeline finishes. The
+  // listeners must therefore stay alive until `install://done` or
+  // `install://error` arrives; tearing them down right after `invoke` (the old
+  // try/finally) dropped every progress event after the first, freezing the UI
+  // at ~2%.
   let unlistenP, unlistenE, unlistenD;
-  try {
-    unlistenP = await a.listen("install://progress", (e) => onProgress(e.payload || {}));
-    unlistenE = await a.listen("install://error", (e) => onError(e.payload || { message: "unknown error" }));
-    unlistenD = await a.listen("install://done", () => onDone());
-    await a.invoke("run_install", {
-      opts: {
-        install_path: opts.installPath,
-        selected: opts.selected,
-      },
-    });
-  } catch (err) {
-    onError({ message: err?.message || String(err) });
-  } finally {
+  const cleanup = () => {
     unlistenP && unlistenP();
     unlistenE && unlistenE();
     unlistenD && unlistenD();
-  }
+    unlistenP = unlistenE = unlistenD = null;
+  };
+  return new Promise((resolve) => {
+    (async () => {
+      try {
+        unlistenP = await a.listen("install://progress", (e) => onProgress(e.payload || {}));
+        unlistenE = await a.listen("install://error", (e) => {
+          onError(e.payload || { message: "unknown error" });
+          cleanup();
+          resolve();
+        });
+        unlistenD = await a.listen("install://done", () => {
+          onDone();
+          cleanup();
+          resolve();
+        });
+        await a.invoke("run_install", {
+          opts: {
+            install_path: opts.installPath,
+            selected: opts.selected,
+          },
+        });
+        // Do NOT clean up here — wait for done/error above.
+      } catch (err) {
+        onError({ message: err?.message || String(err) });
+        cleanup();
+        resolve();
+      }
+    })();
+  });
 }
 
 export async function cancelInstall() {

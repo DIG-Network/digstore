@@ -41,10 +41,8 @@ export function App() {
   // badge and the Welcome/Finish "version" chips (distinct from the installer
   // app's own version in `meta.version`).
   const [digstoreVersion, setDigstoreVersion] = useState(DEFAULT_DIGSTORE_VERSION);
-  const [step, setStep] = useState(() => {
-    const s = parseInt(localStorage.getItem("dig_step") || "0", 10);
-    return s === 3 ? 2 : isNaN(s) ? 0 : s; // never resume mid-install
-  });
+  // Always start at Welcome — the installer never resumes a prior run's step.
+  const [step, setStep] = useState(0);
   const [agreed, setAgreed] = useState(false);
   const [sel, setSel] = useState({ host: true, completions: true, path: true, example: false });
   const [installPath, setInstallPath] = useState("/usr/local/digstore");
@@ -68,9 +66,15 @@ export function App() {
     selRef.current = sel;
   }, [sel]);
 
+  // No step persistence across runs: clear any key written by older builds so a
+  // stale "dig_step" can never reopen the wizard mid-flow / on the Done screen.
   useEffect(() => {
-    localStorage.setItem("dig_step", String(step));
-  }, [step]);
+    try {
+      localStorage.removeItem("dig_step");
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // Resolve the real per-OS default install path + version metadata from the backend.
   useEffect(() => {
