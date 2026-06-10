@@ -33,8 +33,12 @@ fn store_config_path(project: &Path, store: &str) -> std::path::PathBuf {
 }
 
 fn json_stdout(out: &std::process::Output) -> Value {
-    serde_json::from_slice(&out.stdout)
-        .unwrap_or_else(|e| panic!("non-JSON stdout: {e}\nstdout={:?}", String::from_utf8_lossy(&out.stdout)))
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "non-JSON stdout: {e}\nstdout={:?}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    })
 }
 
 #[test]
@@ -51,7 +55,10 @@ fn two_stores_list_with_active_on_first() {
     let v = json_stdout(&out);
     let rows = v.as_array().unwrap();
     let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
-    assert!(names.contains(&"a") && names.contains(&"b"), "names = {names:?}");
+    assert!(
+        names.contains(&"a") && names.contains(&"b"),
+        "names = {names:?}"
+    );
 
     // `a` was created first, so it is the active store.
     let active = rows
@@ -144,12 +151,18 @@ fn add_over_the_per_store_cap_is_rejected_and_stages_nothing() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(new_text.contains("max_size = 10"), "config had no max_size line: {text}");
+    assert!(
+        new_text.contains("max_size = 10"),
+        "config had no max_size line: {text}"
+    );
     std::fs::write(&cfg_path, new_text).unwrap();
 
     // A >10-byte file must be rejected.
     std::fs::write(tmp.path().join("big.txt"), b"this is more than ten bytes").unwrap();
-    let add = dig_at(tmp.path()).args(["add", "big.txt"]).output().unwrap();
+    let add = dig_at(tmp.path())
+        .args(["add", "big.txt"])
+        .output()
+        .unwrap();
     assert!(
         !add.status.success(),
         "add over cap should fail, got success: {add:?}"
@@ -166,7 +179,11 @@ fn add_over_the_per_store_cap_is_rejected_and_stages_nothing() {
         .output()
         .unwrap();
     let v = json_stdout(&staged);
-    assert_eq!(v["total_bytes"].as_u64().unwrap(), 0, "staged total must stay 0");
+    assert_eq!(
+        v["total_bytes"].as_u64().unwrap(),
+        0,
+        "staged total must stay 0"
+    );
     assert!(v["staged"].as_array().unwrap().is_empty());
 }
 
@@ -183,7 +200,10 @@ fn unstage_empties_the_staging_area() {
         .output()
         .unwrap();
     assert!(
-        !json_stdout(&before)["staged"].as_array().unwrap().is_empty(),
+        !json_stdout(&before)["staged"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
         "should have something staged before unstage"
     );
 
@@ -214,8 +234,14 @@ fn staged_json_reports_total_and_limit() {
         .output()
         .unwrap();
     let v = json_stdout(&out);
-    assert!(v.get("total_bytes").is_some(), "staged --json must include total_bytes");
-    assert!(v.get("limit_bytes").is_some(), "staged --json must include limit_bytes");
+    assert!(
+        v.get("total_bytes").is_some(),
+        "staged --json must include total_bytes"
+    );
+    assert!(
+        v.get("limit_bytes").is_some(),
+        "staged --json must include limit_bytes"
+    );
     assert_eq!(v["total_bytes"].as_u64().unwrap(), 5, "5-byte file staged");
     // The default per-store cap is 128 MB (decimal) = MAX_STORE_BYTES.
     assert_eq!(v["limit_bytes"].as_u64().unwrap(), 128_000_000);
@@ -246,7 +272,10 @@ fn content_root_urn_is_stable_regardless_of_operating_dir() {
         .args(["--store", "site", "urn", "css/app.css", "--json"])
         .output()
         .unwrap();
-    assert!(out_root.status.success(), "urn from root failed: {out_root:?}");
+    assert!(
+        out_root.status.success(),
+        "urn from root failed: {out_root:?}"
+    );
     let vr = json_stdout(&out_root);
     let entry_root = &vr.as_array().unwrap()[0];
     assert_eq!(entry_root["key"], "css/app.css");
@@ -257,14 +286,26 @@ fn content_root_urn_is_stable_regardless_of_operating_dir() {
     // byte-identical: the key/URN/retrieval_key depend only on the content-root-
     // relative key, never on where the command runs from.
     let out_c = dig_at(tmp.path())
-        .args(["--store", "site", "-C", "dist", "urn", "css/app.css", "--json"])
+        .args([
+            "--store",
+            "site",
+            "-C",
+            "dist",
+            "urn",
+            "css/app.css",
+            "--json",
+        ])
         .output()
         .unwrap();
     assert!(out_c.status.success(), "urn -C dist failed: {out_c:?}");
     let vc = json_stdout(&out_c);
     let entry_c = &vc.as_array().unwrap()[0];
     assert_eq!(entry_c["key"], "css/app.css");
-    assert_eq!(entry_c["urn"].as_str().unwrap(), urn_root, "URN must be identical");
+    assert_eq!(
+        entry_c["urn"].as_str().unwrap(),
+        urn_root,
+        "URN must be identical"
+    );
     assert_eq!(
         entry_c["retrieval_key"].as_str().unwrap(),
         rkey_root,
@@ -293,7 +334,10 @@ fn legacy_flat_layout_is_migrated_into_default_store() {
         std::fs::remove_file(&ws_toml).unwrap();
     }
     // Sanity: we now have a legacy flat layout.
-    assert!(dig.join("config.toml").exists(), "legacy config.toml at .dig/ root");
+    assert!(
+        dig.join("config.toml").exists(),
+        "legacy config.toml at .dig/ root"
+    );
     assert!(!dig.join("stores").exists());
     assert!(!ws_toml.exists());
 
@@ -302,7 +346,10 @@ fn legacy_flat_layout_is_migrated_into_default_store() {
         .args(["stores", "--json"])
         .output()
         .unwrap();
-    assert!(out.status.success(), "stores after legacy layout failed: {out:?}");
+    assert!(
+        out.status.success(),
+        "stores after legacy layout failed: {out:?}"
+    );
     let v = json_stdout(&out);
     let names: Vec<&str> = v
         .as_array()
@@ -310,12 +357,19 @@ fn legacy_flat_layout_is_migrated_into_default_store() {
         .iter()
         .map(|r| r["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["default"], "migration should yield a single 'default' store");
+    assert_eq!(
+        names,
+        vec!["default"],
+        "migration should yield a single 'default' store"
+    );
 
     // Migration moved the files back into stores/default/ and wrote workspace.toml.
     assert!(
         store_config_path(tmp.path(), "default").exists(),
         "migration must create .dig/stores/default/config.toml"
     );
-    assert!(ws_toml.exists(), "migration must create .dig/workspace.toml");
+    assert!(
+        ws_toml.exists(),
+        "migration must create .dig/workspace.toml"
+    );
 }
