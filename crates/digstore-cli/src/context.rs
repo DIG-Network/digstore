@@ -8,36 +8,84 @@ use crate::error::CliError;
 
 #[derive(Debug, Clone)]
 pub struct CliContext {
+    /// Per-store directory: `.dig/stores/<name>/` (workspace dir for workspace-only cmds).
     pub dig_dir: PathBuf,
+    /// The `.dig/` workspace directory (skip target for walks; home of workspace.toml).
+    pub workspace_dir: PathBuf,
+    /// Resolved operating directory for `add`/`urn`/`status` scans (§2.8).
+    pub op_dir: PathBuf,
+    /// Selected store name, when a store is resolved (None for workspace-only cmds).
+    pub store_name: Option<String>,
     pub json: bool,
     pub verbose: bool,
 }
 
 impl CliContext {
-    /// Resolve the store directory for a normal command (everything except
-    /// `init`). Behaves like Git: an explicit `--dig-dir` wins; otherwise walk up
-    /// from the current working directory looking for an existing `.dig`
-    /// directory and use the nearest one, so the CLI operates on the store that
-    /// contains the directory you ran it from. If none is found, default to
-    /// `<cwd>/.dig`.
-    pub fn resolve(explicit: Option<PathBuf>, json: bool, verbose: bool) -> Self {
-        let dig_dir = explicit
+    /// Discover the `.dig/` workspace by walking up from CWD (or `explicit`).
+    pub fn discover_workspace(explicit: Option<PathBuf>) -> PathBuf {
+        explicit
             .or_else(Self::discover_dig_dir)
-            .unwrap_or_else(Self::cwd_dig_dir);
+            .unwrap_or_else(Self::cwd_dig_dir)
+    }
+
+    /// Workspace for `init`: anchored to CWD/.dig (or `explicit`), no walk-up.
+    pub fn init_workspace(explicit: Option<PathBuf>) -> PathBuf {
+        explicit.unwrap_or_else(Self::cwd_dig_dir)
+    }
+
+    /// Per-store context with op_dir defaulting to CWD (used before content_root is known).
+    pub fn for_store(
+        workspace_dir: PathBuf,
+        name: &str,
+        cwd_flag: Option<PathBuf>,
+        cwd: PathBuf,
+        json: bool,
+        verbose: bool,
+    ) -> Self {
+        Self::for_store_with_op(workspace_dir, name, None, cwd_flag, cwd, json, verbose)
+    }
+
+    /// Per-store context resolving op_dir per §2.8: cwd_flag > content_root(joined to project root) > cwd.
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_store_with_op(
+        workspace_dir: PathBuf,
+        name: &str,
+        content_root: Option<String>,
+        cwd_flag: Option<PathBuf>,
+        cwd: PathBuf,
+        json: bool,
+        verbose: bool,
+    ) -> Self {
+        let dig_dir = workspace_dir.join("stores").join(name);
+        let project_root = workspace_dir
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| cwd.clone());
+        let op_dir = match cwd_flag {
+            Some(p) if p.is_absolute() => p,
+            Some(p) => cwd.join(p),
+            None => match content_root {
+                Some(cr) => project_root.join(cr),
+                None => cwd,
+            },
+        };
         CliContext {
             dig_dir,
+            workspace_dir,
+            op_dir,
+            store_name: Some(name.to_string()),
             json,
             verbose,
         }
     }
 
-    /// Resolve the store directory for `init`. Anchored to the current working
-    /// directory (`<cwd>/.dig`) and does NOT walk up — `digstore init` creates a
-    /// store here, the way `git init` creates a repo in the current directory.
-    pub fn resolve_init(explicit: Option<PathBuf>, json: bool, verbose: bool) -> Self {
-        let dig_dir = explicit.unwrap_or_else(Self::cwd_dig_dir);
+    /// Workspace-only context (stores/use): no store resolved.
+    pub fn workspace_only(workspace_dir: PathBuf, json: bool, verbose: bool) -> Self {
         CliContext {
-            dig_dir,
+            dig_dir: workspace_dir.clone(),
+            workspace_dir,
+            op_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            store_name: None,
             json,
             verbose,
         }
@@ -108,26 +156,66 @@ impl CliContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use tempfile::TempDir;
 
     #[test]
-    fn explicit_dig_dir_is_used_verbatim() {
-        let td = tempdir().unwrap();
-        let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
-        assert_eq!(ctx.dig_dir, td.path());
+    fn for_store_points_dig_dir_at_store_subdir() {
+        let dir = TempDir::new().unwrap();
+        let dig = dir.path().join(".dig");
+        let ctx = CliContext::for_store(
+            dig.clone(),
+            "site",
+            None,
+            dir.path().to_path_buf(),
+            false,
+            false,
+        );
+        assert_eq!(ctx.dig_dir, dig.join("stores").join("site"));
+        assert_eq!(ctx.workspace_dir, dig);
+        assert_eq!(ctx.store_name.as_deref(), Some("site"));
+    }
+
+    #[test]
+    fn op_dir_precedence_cwd_flag_over_content_root() {
+        let dir = TempDir::new().unwrap();
+        let project = dir.path();
+        let dig = project.join(".dig");
+        // content_root = "dist" -> op_dir = project/dist
+        let a = CliContext::for_store_with_op(
+            dig.clone(),
+            "s",
+            Some("dist".into()),
+            None,
+            project.to_path_buf(),
+            false,
+            false,
+        );
+        assert_eq!(a.op_dir, project.join("dist"));
+        // -C override wins (absolute)
+        let abs = project.join("other");
+        let b = CliContext::for_store_with_op(
+            dig.clone(),
+            "s",
+            Some("dist".into()),
+            Some(abs.clone()),
+            project.to_path_buf(),
+            false,
+            false,
+        );
+        assert_eq!(b.op_dir, abs);
     }
 
     #[test]
     fn config_toml_path_is_under_dig_dir() {
-        let td = tempdir().unwrap();
-        let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
+        let td = TempDir::new().unwrap();
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
         assert_eq!(ctx.config_path(), td.path().join("config.toml"));
     }
 
     #[test]
     fn find_store_id_errors_when_no_config() {
-        let td = tempdir().unwrap();
-        let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
+        let td = TempDir::new().unwrap();
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
         assert!(ctx.find_store_id().is_err());
     }
 }
