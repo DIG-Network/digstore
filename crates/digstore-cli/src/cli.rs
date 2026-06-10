@@ -43,6 +43,7 @@ pub enum Command {
     Clone(CloneArgs),
     Push(PushArgs),
     Pull(PullArgs),
+    Revoke(RevokeArgs),
     Stores(StoresArgs),
     Use(UseArgs),
     Dir(DirArgs),
@@ -167,6 +168,26 @@ pub struct PullArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Revoke a published root (or the whole store) with a signed tombstone",
+    after_help = "EXAMPLES:\n  digstore revoke --root <hex> --reason compromise\n  digstore revoke --all --reason takedown\n  digstore revoke --root <hex> --remote origin"
+)]
+pub struct RevokeArgs {
+    /// Revoke a single generation root (hex). Mutually exclusive with `--all`.
+    #[arg(long, conflicts_with = "all")]
+    pub root: Option<String>,
+    /// Revoke the whole store (Store-scoped tombstone). Mutually exclusive with `--root`.
+    #[arg(long)]
+    pub all: bool,
+    /// Why the root/store is revoked: unspecified (default), compromise, superseded, takedown.
+    #[arg(long, default_value = "unspecified")]
+    pub reason: String,
+    /// The configured remote to publish the tombstone to.
+    #[arg(default_value = "origin")]
+    pub remote: String,
+}
+
+#[derive(Debug, Args)]
 #[command(after_help = "EXAMPLES:\n  digstore stores")]
 pub struct StoresArgs {}
 
@@ -272,6 +293,41 @@ mod tests {
             }
             _ => panic!("expected update"),
         }
+    }
+
+    #[test]
+    fn parses_revoke_root_with_reason() {
+        let cli = Cli::try_parse_from([
+            "digstore", "revoke", "--root", "abcd", "--reason", "compromise",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Revoke(r) => {
+                assert_eq!(r.root.as_deref(), Some("abcd"));
+                assert!(!r.all);
+                assert_eq!(r.reason, "compromise");
+                assert_eq!(r.remote, "origin");
+            }
+            _ => panic!("expected revoke"),
+        }
+    }
+
+    #[test]
+    fn parses_revoke_all() {
+        let cli = Cli::try_parse_from(["digstore", "revoke", "--all"]).unwrap();
+        match cli.command {
+            Command::Revoke(r) => {
+                assert!(r.all);
+                assert!(r.root.is_none());
+            }
+            _ => panic!("expected revoke"),
+        }
+    }
+
+    #[test]
+    fn revoke_rejects_root_and_all_together() {
+        let err = Cli::try_parse_from(["digstore", "revoke", "--root", "ab", "--all"]);
+        assert!(err.is_err(), "--root and --all are mutually exclusive");
     }
 
     #[test]

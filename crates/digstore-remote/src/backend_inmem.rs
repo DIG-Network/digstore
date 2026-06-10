@@ -1,5 +1,8 @@
-use crate::backend::{DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord};
+use crate::backend::{
+    DeltaSet, HeadState, PushMode, PushOutcome, RemoteBackend, RootRecord, StoredTombstone,
+};
 use crate::error::RemoteError;
+use digstore_core::tombstone::TombstoneScope;
 use digstore_core::{Bytes32, Bytes48, Bytes96};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -30,6 +33,25 @@ struct StoreState {
     generations: HashMap<Bytes32, Generation>,
     /// served head ordering for root history.
     history_order: Vec<Bytes32>,
+    /// Active revocation tombstones, keyed by scope so re-storing the same scope
+    /// (whole-store, or a given root) replaces the prior entry (SECURITY.md
+    /// residual #1 Layer 1).
+    tombstones: HashMap<ScopeKey, StoredTombstone>,
+}
+
+/// A stable, hashable key for a tombstone's scope (the `Bytes32` root has no
+/// `Ord`/sensible map key beyond its bytes, so the root scope keys on raw bytes).
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ScopeKey {
+    Store,
+    Root([u8; 32]),
+}
+
+fn scope_key(scope: &TombstoneScope) -> ScopeKey {
+    match scope {
+        TombstoneScope::Store => ScopeKey::Store,
+        TombstoneScope::Root(r) => ScopeKey::Root(r.0),
+    }
 }
 
 /// Deterministic in-memory backend for tests and as a reference implementation.
@@ -83,6 +105,7 @@ impl InMemoryBackend {
             bearer_token: None,
             generations: HashMap::new(),
             history_order: vec![genesis_root],
+            tombstones: HashMap::new(),
         };
         state.generations.insert(genesis_root, g);
         self.stores.lock().unwrap().insert(store_id, state);
@@ -351,6 +374,24 @@ impl RemoteBackend for InMemoryBackend {
         })
     }
 
+    fn store_tombstone(
+        &self,
+        store_id: &Bytes32,
+        tombstone: &StoredTombstone,
+    ) -> Result<(), RemoteError> {
+        let mut stores = self.stores.lock().unwrap();
+        let st = stores.get_mut(store_id).ok_or(RemoteError::UnknownStore)?;
+        st.tombstones
+            .insert(scope_key(&tombstone.tombstone.scope), *tombstone);
+        Ok(())
+    }
+
+    fn tombstones(&self, store_id: &Bytes32) -> Result<Vec<StoredTombstone>, RemoteError> {
+        let stores = self.stores.lock().unwrap();
+        let st = stores.get(store_id).ok_or(RemoteError::UnknownStore)?;
+        Ok(st.tombstones.values().copied().collect())
+    }
+
     fn max_module_size(&self) -> u64 {
         self.max_module_size
     }
@@ -491,6 +532,52 @@ mod tests {
         let d = be.delta(&id, &b32(0x10), &b32(0x40)).unwrap();
         assert_eq!(d.new_chunks.len(), 2);
         assert_eq!(d.key_table_changes, vec![vec![7, 7]]);
+    }
+
+    #[test]
+    fn store_and_list_tombstones_dedup_by_scope() {
+        use digstore_core::tombstone::{RevocationReason, Tombstone};
+        let (be, id) = backend_with_one_store();
+        assert!(be.tombstones(&id).unwrap().is_empty());
+
+        let t_root = StoredTombstone {
+            tombstone: Tombstone::root(id, b32(0x10), 100, RevocationReason::Compromise),
+            signature: Bytes96([1u8; 96]),
+        };
+        be.store_tombstone(&id, &t_root).unwrap();
+        assert_eq!(be.tombstones(&id).unwrap().len(), 1);
+
+        // Re-storing the SAME scope (same root) replaces, not appends.
+        let t_root2 = StoredTombstone {
+            tombstone: Tombstone::root(id, b32(0x10), 200, RevocationReason::Takedown),
+            signature: Bytes96([2u8; 96]),
+        };
+        be.store_tombstone(&id, &t_root2).unwrap();
+        let set = be.tombstones(&id).unwrap();
+        assert_eq!(set.len(), 1, "same root scope must dedup");
+        assert_eq!(set[0].tombstone.not_after, 200);
+
+        // A different scope (Store) is a separate entry.
+        let t_store = StoredTombstone {
+            tombstone: Tombstone::store(id, 300, RevocationReason::Compromise),
+            signature: Bytes96([3u8; 96]),
+        };
+        be.store_tombstone(&id, &t_store).unwrap();
+        assert_eq!(be.tombstones(&id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn store_tombstone_unknown_store_errors() {
+        use digstore_core::tombstone::{RevocationReason, Tombstone};
+        let be = InMemoryBackend::new();
+        let t = StoredTombstone {
+            tombstone: Tombstone::store(b32(9), 1, RevocationReason::Unspecified),
+            signature: Bytes96([0u8; 96]),
+        };
+        assert!(matches!(
+            be.store_tombstone(&b32(9), &t),
+            Err(RemoteError::UnknownStore)
+        ));
     }
 
     #[test]

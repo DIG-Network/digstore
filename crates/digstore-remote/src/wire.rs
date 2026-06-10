@@ -16,6 +16,38 @@ pub struct StoreDescriptor {
     /// keeps older servers' descriptors decodable.
     #[serde(default)]
     pub push_sig: String,
+    /// Active signed revocation tombstones for this store (SECURITY.md residual
+    /// #1 Layer 1). A client verifies each entry's signature against the
+    /// store-id-bound module key and refuses to install/advance to a `Root`-revoked
+    /// root (or refuses the whole store on a `Store` tombstone). `#[serde(default)]`
+    /// keeps older servers' descriptors (which omit this field) decodable; an empty
+    /// list means nothing is revoked.
+    #[serde(default)]
+    pub tombstones: Vec<TombstoneEntry>,
+}
+
+/// One signed revocation tombstone on the wire (SECURITY.md residual #1 Layer 1).
+/// `record` is hex of the canonical `Tombstone` bytes
+/// (`digstore_core::Tombstone::canonical`); `signature` is 96-byte hex of the
+/// publisher's BLS signature over `tombstone_signing_message(record)`. Carrying
+/// the canonical record (rather than exploded fields) keeps the signed preimage
+/// unambiguous across client/server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TombstoneEntry {
+    /// Hex of `Tombstone::canonical()`.
+    pub record: String,
+    /// 96-byte hex BLS signature over the canonical tombstone message.
+    pub signature: String,
+}
+
+/// `POST /stores/{id}/tombstone` request body: a signed revocation tombstone the
+/// remote verifies (against the store's published key) before persisting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TombstoneRequest {
+    /// Hex of `Tombstone::canonical()`.
+    pub record: String,
+    /// 96-byte hex BLS signature over the canonical tombstone message.
+    pub signature: String,
 }
 
 /// `GET /stores/{id}/roots` — linear root history, oldest→newest (§21.2).
@@ -116,10 +148,23 @@ mod tests {
             size: 4096,
             public_key: "cd".repeat(48),
             push_sig: "ef".repeat(96),
+            tombstones: vec![TombstoneEntry {
+                record: "11".repeat(74),
+                signature: "22".repeat(96),
+            }],
         };
         let s = serde_json::to_string(&d).unwrap();
         let back: StoreDescriptor = serde_json::from_str(&s).unwrap();
         assert_eq!(d, back);
+    }
+
+    #[test]
+    fn descriptor_without_tombstones_field_decodes_to_empty() {
+        // Older servers omit the `tombstones` key; `#[serde(default)]` must keep
+        // such a descriptor decodable, yielding an empty (no-revocation) set.
+        let json = r#"{"current_root":"00","size":1,"public_key":"aa","push_sig":""}"#;
+        let d: StoreDescriptor = serde_json::from_str(json).unwrap();
+        assert!(d.tombstones.is_empty());
     }
 
     #[test]

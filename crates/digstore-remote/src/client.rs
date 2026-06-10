@@ -1,9 +1,11 @@
 use crate::auth::push_signing_message;
 use crate::error::ClientError;
 use crate::etag::parse_if_none_match;
-use crate::wire::{DeltaNegotiateRequest, DeltaResponse, RootHistory, StoreDescriptor};
+use crate::wire::{
+    DeltaNegotiateRequest, DeltaResponse, RootHistory, StoreDescriptor, TombstoneRequest,
+};
 use base64::Engine;
-use digstore_core::{Bytes32, Bytes96};
+use digstore_core::{Bytes32, Bytes96, Encode, Tombstone};
 
 /// Verify that every chunk in a server-supplied delta actually hashes to the
 /// content address it is advertised under. Chunks are content-addressed by
@@ -268,6 +270,41 @@ impl DigClient {
             202 => Ok(PushResult::Pending),
             401 | 403 => Err(ClientError::Unauthorized(resp.status().as_u16())),
             409 => Err(ClientError::NonFastForward),
+            other => Err(ClientError::Status(other)),
+        }
+    }
+
+    /// SECURITY.md residual #1 Layer 1: publish a signed revocation tombstone.
+    /// `sign` is the caller's BLS signer over the 32-byte tombstone message
+    /// (`digstore_crypto::tombstone_signing_message`). The remote re-verifies the
+    /// signature against the store's published key before persisting (403 on a bad
+    /// signature). Returns Ok(()) on 201.
+    pub async fn post_tombstone<S>(
+        &self,
+        store_id: &Bytes32,
+        tombstone: &Tombstone,
+        sign: S,
+    ) -> Result<(), ClientError>
+    where
+        S: FnOnce(&[u8; 32]) -> Bytes96,
+    {
+        let id = store_id.to_hex();
+        let msg = digstore_crypto::tombstone_signing_message(tombstone);
+        let sig = sign(&msg);
+        let body = TombstoneRequest {
+            record: hex::encode(tombstone.to_bytes()),
+            signature: hex::encode(sig.0),
+        };
+        let resp = self
+            .http
+            .post(self.url(&format!("/stores/{id}/tombstone")))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ClientError::Transport(e.to_string()))?;
+        match resp.status().as_u16() {
+            201 => Ok(()),
+            401 | 403 => Err(ClientError::Unauthorized(resp.status().as_u16())),
             other => Err(ClientError::Status(other)),
         }
     }

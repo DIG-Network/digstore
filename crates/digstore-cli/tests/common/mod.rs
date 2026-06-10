@@ -53,6 +53,71 @@ pub fn genesis_push_sig(dir: &TempDir, store_id_hex: &str, root_hex: &str) -> [u
     digstore_crypto::sign_push(&sk, &root, &store_id).0
 }
 
+/// Sign a `Root`-scoped revocation tombstone over `root` for `store_id`, using
+/// the source store's BLS signing key (SECURITY.md residual #1 Layer 1). Returns
+/// the canonical record bytes + the 96-byte signature so a test can seed a VALID
+/// signed tombstone into the in-memory backend.
+pub fn sign_root_tombstone(
+    dir: &TempDir,
+    store_id_hex: &str,
+    root_hex: &str,
+) -> (digstore_core::Tombstone, [u8; 96]) {
+    let seed = std::fs::read(store_dir(dir).join("signing_key.bin")).unwrap();
+    let sk = digstore_crypto::bls::SecretKey::from_seed(&seed);
+    let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
+    let root = digstore_core::Bytes32::from_hex(root_hex).unwrap();
+    let t = digstore_core::Tombstone::root(
+        store_id,
+        root,
+        1_700_000_000,
+        digstore_core::RevocationReason::Compromise,
+    );
+    let sig = digstore_crypto::sign_tombstone(&sk, &t).0;
+    (t, sig)
+}
+
+/// Sign a `Store`-scoped revocation tombstone for `store_id` with the source
+/// store's signing key.
+pub fn sign_store_tombstone(
+    dir: &TempDir,
+    store_id_hex: &str,
+) -> (digstore_core::Tombstone, [u8; 96]) {
+    let seed = std::fs::read(store_dir(dir).join("signing_key.bin")).unwrap();
+    let sk = digstore_crypto::bls::SecretKey::from_seed(&seed);
+    let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
+    let t = digstore_core::Tombstone::store(
+        store_id,
+        1_700_000_000,
+        digstore_core::RevocationReason::Takedown,
+    );
+    let sig = digstore_crypto::sign_tombstone(&sk, &t).0;
+    (t, sig)
+}
+
+/// Seed a pre-built (record, signature) tombstone directly into a test server's
+/// in-memory backend, bypassing the POST handler's signature check. Used to model
+/// a remote that already holds a tombstone — including a wrong-key/unsigned one,
+/// to prove the CLIENT ignores it.
+pub fn seed_tombstone(
+    server: &TestServer,
+    store_id_hex: &str,
+    tombstone: digstore_core::Tombstone,
+    signature: [u8; 96],
+) {
+    use digstore_remote::RemoteBackend;
+    let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
+    server
+        .backend()
+        .store_tombstone(
+            &store_id,
+            &digstore_remote::StoredTombstone {
+                tombstone,
+                signature: digstore_core::Bytes96(signature),
+            },
+        )
+        .unwrap();
+}
+
 /// Corrupt the injected data section by flipping a byte well past the header.
 /// Lands inside the chunk-ciphertext pool region so the host still instantiates
 /// the module (no code corruption) and the failure is CLIENT-side merkle/GCM.

@@ -71,6 +71,10 @@ impl RemoteServer {
                 "/stores/:id/delta",
                 get(crate::handlers::delta::get_delta).post(crate::handlers::delta::post_delta),
             )
+            .route(
+                "/stores/:id/tombstone",
+                post(crate::handlers::tombstone::post_tombstone),
+            )
             .layer(middleware::from_fn_with_state(
                 self.state.clone(),
                 rate_limit_mw,
