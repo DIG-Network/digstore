@@ -388,6 +388,102 @@ fn cap_of(max_size: u64) -> u64 {
     }
 }
 
+/// Clear the selected store's staging area; returns how many entries were dropped.
+pub fn clear_staging(ctx: &CliContext) -> Result<usize, CliError> {
+    let cfg = ctx.load_config()?;
+    let mut staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
+        .map_err(|e| CliError::Other(anyhow::anyhow!("load staging: {e}")))?;
+    let n = staging
+        .records()
+        .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?
+        .len();
+    staging
+        .clear()
+        .map_err(|e| CliError::Other(anyhow::anyhow!("clear staging: {e}")))?;
+    Ok(n)
+}
+
+/// List staged entries `(key, size)` sorted by key, plus the staged total and
+/// the effective per-store cap.
+#[allow(clippy::type_complexity)]
+pub fn list_staged(ctx: &CliContext) -> Result<(Vec<(String, u64)>, u64, u64), CliError> {
+    let cfg = ctx.load_config()?;
+    let staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
+        .map_err(|e| CliError::Other(anyhow::anyhow!("load staging: {e}")))?;
+    let mut entries: Vec<(String, u64)> = staging
+        .records()
+        .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?
+        .into_iter()
+        .map(|r| (r.resource_key, r.content.len() as u64))
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let total: u64 = entries.iter().map(|(_, s)| *s).sum();
+    let cap = cap_of(cfg.max_size);
+    Ok((entries, total, cap))
+}
+
+/// A previewed URN for a resource that would be staged from `op_dir`.
+#[derive(Debug, Clone)]
+pub struct UrnPreview {
+    pub path: String,
+    pub key: String,
+    pub urn: String,
+    pub retrieval_key: String,
+}
+
+/// Preview the URNs `add` would produce for `paths`/`all`, mirroring `add_files`
+/// resolution (op_dir scope, content-root-relative keys). The display URN is
+/// rootless by default; when `root_hex` is given it is root-pinned. The
+/// `retrieval_key` is ALWAYS derived from the rootless canonical URN.
+pub fn preview_urns(
+    ctx: &CliContext,
+    paths: &[PathBuf],
+    all: bool,
+    root_hex: Option<&str>,
+) -> Result<Vec<UrnPreview>, CliError> {
+    use crate::ops::walk::{self, Resolved};
+    let cfg = ctx.load_config()?;
+    let root = ctx.op_dir.clone();
+    let skip = ctx.workspace_dir.clone();
+    let mut resolved: Vec<Resolved> = Vec::new();
+    if all {
+        resolved = walk::resolve_all(&root, &skip);
+    } else {
+        for p in paths {
+            walk::resolve_arg(&root, &skip, &p.to_string_lossy(), &mut resolved)
+                .map_err(CliError::InvalidArgument)?;
+        }
+    }
+    resolved.sort_by(|a, b| a.key.cmp(&b.key));
+    resolved.dedup_by(|a, b| a.key == b.key);
+
+    let pinned_root = match root_hex {
+        Some(h) => Some(
+            Bytes32::from_hex(h)
+                .map_err(|_| CliError::InvalidArgument(format!("bad root hex: {h}")))?,
+        ),
+        None => None,
+    };
+    let mut out = Vec::new();
+    for r in resolved {
+        // Retrieval key is ALWAYS from the rootless canonical URN.
+        let rootless = canonical_resource_urn(cfg.store_id, &r.key);
+        let display = Urn {
+            chain: "chia".to_string(),
+            store_id: cfg.store_id,
+            root_hash: pinned_root,
+            resource_key: Some(r.key.clone()),
+        };
+        out.push(UrnPreview {
+            path: r.path.display().to_string(),
+            key: r.key,
+            urn: display.canonical(),
+            retrieval_key: rootless.retrieval_key().to_hex(),
+        });
+    }
+    Ok(out)
+}
+
 /// §8.5 social conventions: stage the `/.well-known/dig/manifest.json` discovery
 /// manifest as a NORMAL resource. The publisher elects to expose the resources
 /// currently staged (every staged key except the discovery key itself), each
@@ -721,6 +817,54 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
             timestamp,
         })
         .map_err(|e| CliError::Other(anyhow::anyhow!("history append: {e}")))?;
+
+    // Local URN manifest (§6.1): the publisher's index of shareable URNs. Local
+    // only — not embedded, not pushed. Root-pinned URN, rootless retrieval key.
+    {
+        #[derive(serde::Serialize)]
+        struct UrnEntry {
+            key: String,
+            urn: String,
+            retrieval_key: String,
+            size: u64,
+        }
+        #[derive(serde::Serialize)]
+        struct UrnManifest {
+            store_id: String,
+            store: Option<String>,
+            root: String,
+            generation: u64,
+            resources: Vec<UrnEntry>,
+        }
+        let mut resources = Vec::with_capacity(manifest.key_table.len());
+        let mut txt = String::new();
+        for rec in &manifest.key_table {
+            let pinned = Urn {
+                chain: "chia".to_string(),
+                store_id: cfg.store_id,
+                root_hash: Some(root),
+                resource_key: Some(rec.resource_key.clone()),
+            };
+            let urn = pinned.canonical();
+            txt.push_str(&format!("{}\t{}\n", rec.resource_key, urn));
+            resources.push(UrnEntry {
+                key: rec.resource_key.clone(),
+                urn,
+                retrieval_key: rec.static_key.to_hex(),
+                size: rec.total_size,
+            });
+        }
+        let out = UrnManifest {
+            store_id: cfg.store_id.to_hex(),
+            store: ctx.store_name.clone(),
+            root: root_hex.clone(),
+            generation: next_id,
+            resources,
+        };
+        let json = serde_json::to_string_pretty(&out).map_err(|e| CliError::Other(e.into()))?;
+        fs::write(ctx.dig_dir.join("urns.json"), json).map_err(|e| CliError::Other(e.into()))?;
+        fs::write(ctx.dig_dir.join("urns.txt"), txt).map_err(|e| CliError::Other(e.into()))?;
+    }
 
     // Compile a real module (so a real .wasm exists for host/push/clone).
     let output_path = compile_module(ctx, &cfg, &pool_bodies, &manifest, root)?;
@@ -1372,6 +1516,22 @@ mod tests {
         let recs = staging.records().unwrap();
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].content, b"bbbbbb");
+    }
+
+    #[test]
+    fn commit_writes_urn_manifest() {
+        let (ctx, _td) = test_store_ctx();
+        std::fs::write(ctx.op_dir.join("readme.md"), b"hi").unwrap();
+        add_files(&ctx, &[], true, false, None).unwrap();
+        let res = commit(&ctx, None).unwrap();
+        let json = std::fs::read_to_string(ctx.dig_dir.join("urns.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["resources"][0]["key"], "readme.md");
+        let urn = v["resources"][0]["urn"].as_str().unwrap();
+        assert!(urn.contains(&res.roothash.to_hex()));
+        assert!(urn.starts_with("urn:dig:chia:"));
+        let txt = std::fs::read_to_string(ctx.dig_dir.join("urns.txt")).unwrap();
+        assert!(txt.contains("readme.md\turn:dig:chia:"));
     }
 
     #[test]
