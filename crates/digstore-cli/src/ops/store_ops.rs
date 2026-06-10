@@ -331,17 +331,21 @@ pub fn add_files(
         });
     }
     let incoming_bytes: u64 = incoming.iter().map(|i| i.data.len() as u64).sum();
-    let cap = if cfg.max_size == 0 {
-        MAX_STORE_BYTES
-    } else {
-        cfg.max_size
-    };
-    let projected = already_bytes + incoming_bytes;
+    // Re-staging a key REPLACES its existing staged content (StagingArea is
+    // last-write-wins), so its old bytes must not be double-counted in the cap
+    // arithmetic. Subtract the old size of every incoming key already staged.
+    let replaced_bytes: u64 = incoming
+        .iter()
+        .filter_map(|i| already.get(&i.key).map(|c| c.len() as u64))
+        .sum();
+    let base_bytes = already_bytes.saturating_sub(replaced_bytes);
+    let cap = cap_of(cfg.max_size);
+    let projected = base_bytes + incoming_bytes;
     if projected > cap {
         let store = ctx.store_name.clone().unwrap_or_else(|| "this".into());
         return Err(CliError::InvalidArgument(format!(
             "staging would reach {} MB, over the {} store's {} MB limit ({} MB free); stage fewer files or create another store (digstore init <name2>)",
-            mb(projected), store, mb(cap), mb(cap.saturating_sub(already_bytes))
+            mb(projected), store, mb(cap), mb(cap.saturating_sub(base_bytes))
         )));
     }
 
@@ -372,6 +376,16 @@ pub fn add_files(
 /// Decimal MB, one decimal place.
 fn mb(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / 1_000_000.0)
+}
+
+/// The effective per-store cap: the persisted `max_size`, or the workspace
+/// default ([`MAX_STORE_BYTES`]) when it is unset (`0`).
+fn cap_of(max_size: u64) -> u64 {
+    if max_size == 0 {
+        MAX_STORE_BYTES
+    } else {
+        max_size
+    }
 }
 
 /// §8.5 social conventions: stage the `/.well-known/dig/manifest.json` discovery
@@ -469,11 +483,7 @@ pub fn status(ctx: &CliContext) -> Result<StatusView, CliError> {
     let staged_bytes: u64 = records.iter().map(|r| r.content.len() as u64).sum();
     let staged = records.into_iter().map(|r| r.resource_key).collect();
     let root = current_root(ctx)?.map(|r| r.to_hex());
-    let limit_bytes = if cfg.max_size == 0 {
-        MAX_STORE_BYTES
-    } else {
-        cfg.max_size
-    };
+    let limit_bytes = cap_of(cfg.max_size);
     Ok(StatusView {
         root,
         staged,
@@ -532,11 +542,7 @@ pub fn compute_status(ctx: &CliContext) -> Result<StatusView, CliError> {
     modified.sort();
     untracked.sort();
 
-    let limit_bytes = if cfg.max_size == 0 {
-        MAX_STORE_BYTES
-    } else {
-        cfg.max_size
-    };
+    let limit_bytes = cap_of(cfg.max_size);
     Ok(StatusView {
         root: current.map(|r| r.to_hex()),
         staged: staged_keys,
@@ -596,11 +602,7 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
     // Defensive cap check (§3): the stage cap is enforced atomically at `add`,
     // but a legacy/migrated staging file could already exceed it. Refuse to
     // commit content over the store's limit.
-    let cap = if cfg.max_size == 0 {
-        MAX_STORE_BYTES
-    } else {
-        cfg.max_size
-    };
+    let cap = cap_of(cfg.max_size);
     let staged_total: u64 = records.iter().map(|r| r.content.len() as u64).sum();
     if staged_total > cap {
         return Err(CliError::InvalidArgument(format!(
@@ -1339,6 +1341,37 @@ mod tests {
         let out = add_files(&ctx, &[], true, false, None).unwrap();
         assert_eq!(out.limit_bytes, MAX_STORE_BYTES);
         assert_eq!(out.staged_bytes, 5);
+    }
+
+    #[test]
+    fn re_adding_a_modified_staged_file_replaces_not_accumulates() {
+        // Regression for the cap double-count: StagingArea is last-write-wins, so
+        // re-adding a modified file REPLACES its staged content. With a 10-byte
+        // cap and a 6-byte file, the first add stages 6; re-adding 6 *different*
+        // bytes must stay at 6 (not 12, which would spuriously trip the cap).
+        let (ctx, _td) = test_store_ctx();
+        let mut cfg = ctx.load_config().unwrap();
+        cfg.max_size = 10;
+        digstore_store::save_config(ctx.config_path(), &cfg).unwrap();
+
+        let f = ctx.op_dir.join("a.txt");
+        std::fs::write(&f, b"aaaaaa").unwrap(); // 6 bytes
+        let first = add_files(&ctx, &[], true, false, None).unwrap();
+        assert_eq!(first.staged_bytes, 6);
+
+        std::fs::write(&f, b"bbbbbb").unwrap(); // 6 different bytes
+        let second = add_files(&ctx, &[], true, false, None)
+            .expect("re-staging a modified file must not double-count toward the cap");
+        assert_eq!(
+            second.staged_bytes, 6,
+            "re-stage replaces (6); it must not accumulate (12)"
+        );
+
+        // Staging holds exactly one record carrying the new content.
+        let staging = StagingArea::open(ctx.staging_path(&cfg.store_id)).unwrap();
+        let recs = staging.records().unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].content, b"bbbbbb");
     }
 
     #[test]
