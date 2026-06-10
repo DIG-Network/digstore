@@ -19,6 +19,12 @@ pub struct Cli {
     /// Suppress progress and hints.
     #[arg(short, long, global = true)]
     pub quiet: bool,
+    /// Operate on a specific store by name (overrides the active store).
+    #[arg(long = "store", global = true)]
+    pub store_name: Option<String>,
+    /// Operating directory for add/urn/status (overrides the store's content root).
+    #[arg(short = 'C', long = "cwd", global = true)]
+    pub cwd: Option<PathBuf>,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -37,15 +43,24 @@ pub enum Command {
     Clone(CloneArgs),
     Push(PushArgs),
     Pull(PullArgs),
+    Stores(StoresArgs),
+    Use(UseArgs),
+    Dir(DirArgs),
+    Unstage(UnstageArgs),
+    Staged(StagedArgs),
+    Urn(UrnArgs),
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore init\n  digstore init --private")]
+#[command(after_help = "EXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private")]
 pub struct InitArgs {
+    /// Store name (default: "default").
+    pub name: Option<String>,
     #[arg(long)]
     pub private: bool,
+    /// Content root (the build-output directory this store captures).
     #[arg(long)]
-    pub data_dir: Option<String>,
+    pub dir: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -146,6 +161,40 @@ pub struct PushArgs {
 pub struct PullArgs {
     #[arg(default_value = "origin")]
     pub remote: String,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore stores")]
+pub struct StoresArgs {}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore use site")]
+pub struct UseArgs {
+    pub name: String,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore dir\n  digstore dir dist")]
+pub struct DirArgs {
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore unstage")]
+pub struct UnstageArgs {}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore staged")]
+pub struct StagedArgs {}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore urn -A\n  digstore urn css/app.css\n  digstore urn file --root <hex>")]
+pub struct UrnArgs {
+    pub paths: Vec<PathBuf>,
+    #[arg(short = 'A', long)]
+    pub all: bool,
+    #[arg(long)]
+    pub root: Option<String>,
 }
 
 #[cfg(test)]
