@@ -10,27 +10,64 @@ pub mod checkout;
 pub mod clone;
 pub mod commit;
 pub mod diff;
+pub mod dir;
 pub mod init;
 pub mod log;
 pub mod pull;
 pub mod push;
 pub mod remote;
+pub mod staged;
 pub mod status;
+pub mod stores;
+pub mod unstage;
+pub mod urn;
+pub mod use_store;
 
 pub fn dispatch(cli: Cli) -> Result<(), CliError> {
-    // Build the Ui once from the global flags; pass it by reference into every command.
     let ui = crate::ui::Ui::from_flags(cli.color, cli.json, cli.quiet, cli.verbose);
-    // `init` anchors to the current directory; every other command discovers the
-    // store by walking up from the current directory (Git-style), so the CLI runs
-    // against the working directory it was invoked in.
-    let explicit = cli.dig_dir.clone();
-    let ctx = if matches!(cli.command, Command::Init(_)) {
-        CliContext::resolve_init(explicit, cli.json, cli.verbose)
+    let cwd = std::env::current_dir().map_err(|e| CliError::Other(e.into()))?;
+
+    // `init` anchors to CWD; everything else discovers the workspace by walking up.
+    let workspace_dir = if matches!(cli.command, Command::Init(_)) {
+        CliContext::init_workspace(cli.dig_dir.clone())
     } else {
-        CliContext::resolve(explicit, cli.json, cli.verbose)
+        CliContext::discover_workspace(cli.dig_dir.clone())
     };
+
+    // init creates the workspace itself; all other commands load (and migrate) it.
     match cli.command {
-        Command::Init(a) => init::run(&ctx, &ui, a),
+        Command::Init(a) => {
+            let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
+            return init::run(&ctx, &ui, a);
+        }
+        Command::Stores(a) => {
+            let ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
+            let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
+            return stores::run(&ctx, &ui, &ws, a);
+        }
+        Command::Use(a) => {
+            let mut ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
+            let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
+            return use_store::run(&ctx, &ui, &mut ws, a);
+        }
+        _ => {}
+    }
+
+    // Store-scoped commands: resolve the workspace, the store name, and op_dir.
+    let ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
+    let name = ws.resolve_store_name(cli.store_name.as_deref())?;
+    let content_root = ws.content_root(&name);
+    let ctx = CliContext::for_store_with_op(
+        workspace_dir,
+        &name,
+        content_root,
+        cli.cwd.clone(),
+        cwd,
+        cli.json,
+        cli.verbose,
+    );
+
+    match cli.command {
         Command::Add(a) => add::run(&ctx, &ui, a),
         Command::Commit(a) => commit::run(&ctx, &ui, a),
         Command::Status(a) => status::run(&ctx, &ui, a),
@@ -38,9 +75,14 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Diff(a) => diff::run(&ctx, &ui, a),
         Command::Checkout(a) => checkout::run(&ctx, &ui, a),
         Command::Cat(a) => cat::run(&ctx, &ui, a),
+        Command::Dir(a) => dir::run(&ctx, &ui, a),
+        Command::Unstage(a) => unstage::run(&ctx, &ui, a),
+        Command::Staged(a) => staged::run(&ctx, &ui, a),
+        Command::Urn(a) => urn::run(&ctx, &ui, a),
         Command::Remote(a) => remote::run(&ctx, &ui, a),
         Command::Clone(a) => clone::run(&ctx, &ui, a),
         Command::Push(a) => push::run(&ctx, &ui, a),
         Command::Pull(a) => pull::run(&ctx, &ui, a),
+        Command::Init(_) | Command::Stores(_) | Command::Use(_) => unreachable!("handled above"),
     }
 }

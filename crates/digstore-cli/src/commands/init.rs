@@ -4,7 +4,7 @@ use crate::error::CliError;
 use crate::ops::store_ops;
 
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), CliError> {
-    let res = store_ops::init_store(ctx, args.private, args.data_dir)?;
+    let res = store_ops::init_store(ctx, args.private, args.dir)?;
     if ui.json() {
         ui.emit_json(&serde_json::json!({
             "store_id": res.store_id.to_hex(),
