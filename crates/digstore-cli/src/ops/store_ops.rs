@@ -64,6 +64,9 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::output::{DiffEntry, LogEntry, StatusView};
 
+/// Per-store hard cap on staged content (§3). 100 MB, decimal.
+pub const MAX_STORE_BYTES: u64 = 100_000_000;
+
 /// Canonical chunker config (matches `digstore-store`'s commit defaults).
 fn chunker() -> ChunkerConfig {
     ChunkerConfig {
@@ -128,7 +131,7 @@ pub fn init_store(
     let cfg = StoreConfig {
         store_id,
         data_dir: dd,
-        max_size: 1024 * 1024 * 1024, // 1 GiB ceiling (§20.2)
+        max_size: MAX_STORE_BYTES,
         visibility,
     };
 
@@ -161,9 +164,8 @@ pub fn init_store(
     )
     .map_err(|e| CliError::Other(e.into()))?;
 
-    // Git convenience: ignore the `.dig/` store directory in the project's
-    // `.gitignore` (creating it if absent). Best-effort — never fails `init`.
-    ensure_dig_gitignored(&ctx.dig_dir);
+    // Git convenience: ignore the workspace `.dig/` once.
+    ensure_dig_gitignored(&ctx.workspace_dir);
 
     Ok(InitResult {
         store_id,

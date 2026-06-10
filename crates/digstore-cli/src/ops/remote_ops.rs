@@ -193,7 +193,7 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     let cfg = StoreConfig {
         store_id,
         data_dir: ctx.dig_dir.display().to_string(),
-        max_size: 1024 * 1024 * 1024,
+        max_size: crate::ops::store_ops::MAX_STORE_BYTES,
         visibility: Visibility::Public,
     };
     digstore_store::save_config(ctx.config_path(), &cfg)
