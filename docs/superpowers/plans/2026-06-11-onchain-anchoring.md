@@ -100,6 +100,27 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 > **Gate:** Phases 1+ may only be written/executed after Phase 0 findings are recorded. The concrete code in later tasks that touches `SuccessResponse`/`DataStore`/`DataStoreInnerSpend` MUST be reconciled against the findings before implementation.
 
+## Phase 0 findings (2026-06-11) — recipe PROVEN on mainnet
+
+Source-read + a live mainnet prototype (`examples/anchor_prototype.rs`, throwaway) resolved every unknown. The deps compile; the mint path is **confirmed working end-to-end on Chia mainnet**.
+
+**Mainnet proof (mint):** derived the wallet's owner puzzle hash → coinset returned real unspent coins → `mint_store` built the launcher+singleton spend → `sign_coin_spends` → coinset `push_tx` (`status=SUCCESS`) → launcher coin **confirmed at block 8854632** (~60s). Minted `store_id = cf915cbaac0755db8c79b1b2e3b2eadf14d14f7246bb7e05d951802cd273211c`.
+
+**Pinned types/signatures (all re-exported from `datalayer_driver` unless noted):**
+- `SuccessResponse { coin_spends: Vec<CoinSpend>, new_datastore: DataStore }` — launcher/store id = `success.new_datastore.info.launcher_id`.
+- `mint_store(minter_synthetic_key: PublicKey, selected_coins: Vec<Coin>, root_hash: Bytes32, label, description, bytes, size_proof, owner_puzzle_hash: Bytes32, delegated_puzzles: Vec<DelegatedPuzzle>, fee: u64) -> Result<SuccessResponse>` — pure builder, no Peer. Owner-only store = `delegated_puzzles: vec![]`, empty root = `Bytes32::default()`.
+- `update_store_metadata(store: DataStore, new_root_hash: Bytes32, new_label, new_description, new_bytes, new_size_proof, inner_spend_info: DataStoreInnerSpend) -> Result<SuccessResponse>`; authorize with `DataStoreInnerSpend::Owner(synthetic_pk)`. Returns the single update spend + the new `DataStore`.
+- `add_fee(&synthetic_pk, &selected_coins, &assert_coin_ids, fee) -> Result<Vec<CoinSpend>>` (combine with the update spend for commit).
+- `sign_coin_spends(&coin_spends, &[synthetic_sk], for_testnet=false) -> Signature`; `SpendBundle::new(coin_spends, signature)`.
+- Key derivation (pure): `Mnemonic::parse_normalized(phrase).to_seed("")` → `SecretKey::from_seed(&seed)` (master) → `master_public_key_to_first_puzzle_hash(&master_pk)` (owner ph, where funds live) and `master_secret_key_to_wallet_synthetic_secret_key(&master_sk)` (signing key). `puzzle_hash_to_address(ph, "xch")` for display.
+- Re-exports: `DataStore`, `DataStoreInfo`, `DataStoreMetadata`, `DelegatedPuzzle`, `Proof`/`LineageProof`/`EveProof` are in `datalayer_driver`. `DataStore::from_spend(&mut SpendContext, &CoinSpend, &[DelegatedPuzzle]) -> Result<Option<DataStore>>` and `SpendContext` are in `chia_wallet_sdk::driver` (add `chia-wallet-sdk = "0.30"` for the sync code).
+
+**coinset client (`chia_sdk_coinset 0.30`):** `CoinsetClient::mainnet()`; methods used (via `ChiaRpcClient`): `get_coin_records_by_puzzle_hashes(Vec<Bytes32>, start, end, include_spent) -> GetCoinRecordsResponse { coin_records: Option<Vec<CoinRecord>>, success, error }`; `CoinRecord { coin: Coin, spent: bool, confirmed_block_index: u32, spent_block_index: u32, .. }`; `get_coin_record_by_name(Bytes32) -> GetCoinRecordResponse`; `get_puzzle_and_solution(Bytes32, Option<u32>) -> GetPuzzleAndSolutionResponse { coin_solution: Option<CoinSpend>, .. }`; `push_tx(SpendBundle) -> PushTxResponse { success, status, error }`; `get_blockchain_state()` for peak height.
+
+**Singleton sync over coinset (commit path, not yet run live — built+validated in Task 3.2):** for a launcher id, walk the lineage with `get_coin_record_by_name` + `get_puzzle_and_solution`, feeding each spend to `DataStore::from_spend(&mut ctx, &coin_spend, &delegated_puzzles)` until the unspent singleton is reached. Optimization: `update_store_metadata` returns the new `DataStore`, so digstore persists the current `DataStore` (or its coin+proof+info) in the store's `[anchor]` state after each anchor and only falls back to a full lineage sync for recovery. Owner-only stores use `delegated_puzzles = &[]`.
+
+**Status:** Phase 0.2 (mint) DONE — proven on mainnet. Phase 0.3 (live update/sync) folded into Task 3.2/3.3 (build the sync as production code with tests; first real `commit` validates it) rather than a second throwaway spend. Prototype example kept on the `feature/onchain-anchoring` branch as the reference implementation; delete before the branch merges (Task 0.4 deferred to end of subsystem).
+
 ---
 
 ## Phase 1 — Coinset access (`coinset.rs`) — thin wrapper over `chia_sdk_coinset::CoinsetClient`
