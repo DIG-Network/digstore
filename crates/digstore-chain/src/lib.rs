@@ -4,6 +4,7 @@ pub mod coinset;
 pub mod config;
 pub mod error;
 mod fs_util;
+pub mod keys;
 pub mod seed;
 pub mod unlock;
 
