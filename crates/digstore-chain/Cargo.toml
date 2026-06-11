@@ -1,0 +1,20 @@
+[package]
+name = "digstore-chain"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+bip39 = { version = "2", features = ["rand"] }
+argon2 = "0.5"
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+getrandom = "0.2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+hex = "0.4"
+thiserror = "1"
+dirs = "5"
+
+[dev-dependencies]
+tempfile = "3"

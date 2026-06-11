@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/digstore-core", "crates/digstore-chunker", "crates/digstore-crypto", "crates/digstore-store", "crates/digstore-guest", "crates/digstore-prover", "crates/digstore-host", "crates/digstore-compiler", "crates/digstore-remote", "crates/digstore-cli"]
+members = ["crates/digstore-core", "crates/digstore-chunker", "crates/digstore-crypto", "crates/digstore-store", "crates/digstore-guest", "crates/digstore-prover", "crates/digstore-host", "crates/digstore-compiler", "crates/digstore-remote", "crates/digstore-cli", "crates/digstore-chain"]
 exclude = ["crates/digstore-prover/guest"]
 
 [workspace.package]
