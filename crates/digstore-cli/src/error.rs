@@ -103,6 +103,9 @@ mod tests {
             CliError::Network("x".into()),
             CliError::NonFastForward,
             CliError::Unauthorized("x".into()),
+            CliError::NoSeed,
+            CliError::BadPassphrase,
+            CliError::InvalidMnemonic("x".into()),
         ];
         let mut codes: Vec<i32> = errs.iter().map(|e| e.exit_code()).collect();
         let n = codes.len();
