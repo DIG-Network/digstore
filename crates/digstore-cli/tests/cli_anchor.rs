@@ -144,6 +144,51 @@ fn anchor_status_json_on_pending_store() {
     );
 }
 
+/// `digstore anchor status --json` includes a `module_chain_state` field
+/// reflecting the embedded on-chain pointer in the current module.
+#[test]
+fn anchor_status_shows_module_chain_pointer() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    std::fs::write(dir.path().join("a.txt"), b"hi").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+    dig(&dir).args(["commit", "-m", "x"]).assert().success();
+    let out = dig(&dir)
+        .args(["--json", "anchor", "status"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["module_chain_state"]["network"].as_str(), Some("mainnet"));
+    assert!(v["module_chain_state"]["coin_id"].as_str().is_some());
+}
+
+/// `digstore anchor inspect <module>` decodes and prints the embedded chain
+/// pointer from the compiled module file.
+#[test]
+fn anchor_inspect_dumps_a_module_pointer() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    std::fs::write(dir.path().join("a.txt"), b"hi").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+    dig(&dir).args(["commit", "-m", "x"]).assert().success();
+    let modules = store_dir(&dir).join("modules");
+    let module = std::fs::read_dir(&modules)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.extension().map(|x| x == "dig").unwrap_or(false))
+        .unwrap();
+    let out = dig(&dir)
+        .args(["--json", "anchor", "inspect", module.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["network"].as_str(), Some("mainnet"));
+    assert!(v["launcher_id"].as_str().is_some());
+}
+
 /// `digstore anchor` on a store that is not anchored (no anchor.toml): chain
 /// error (exit 13) pointing at `digstore init`.
 #[test]

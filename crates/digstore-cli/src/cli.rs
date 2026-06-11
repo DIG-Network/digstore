@@ -333,8 +333,13 @@ pub struct AnchorArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AnchorAction {
-    /// Inspect the anchor: persisted state plus a single live on-chain check.
+    /// Query the active store's on-chain anchor state.
     Status,
+    /// Decode and print the embedded chain pointer of a module file.
+    Inspect {
+        /// Path to a compiled `.dig` module.
+        module: std::path::PathBuf,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -487,6 +492,20 @@ mod tests {
         match cli.command {
             Command::Anchor(a) => assert!(matches!(a.action, Some(AnchorAction::Status))),
             _ => panic!("expected anchor status"),
+        }
+    }
+
+    #[test]
+    fn parses_anchor_inspect() {
+        let cli = Cli::try_parse_from(["digstore", "anchor", "inspect", "x.dig"]).unwrap();
+        match cli.command {
+            Command::Anchor(a) => match a.action {
+                Some(AnchorAction::Inspect { module }) => {
+                    assert_eq!(module.to_str().unwrap(), "x.dig")
+                }
+                _ => panic!("expected inspect"),
+            },
+            _ => panic!("expected anchor"),
         }
     }
 
