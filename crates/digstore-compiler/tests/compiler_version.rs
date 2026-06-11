@@ -46,6 +46,7 @@ fn compile_outcome_records_compiler_version() {
         sample_manifest(),
         common::no_auth(),
         &trusted_keys(),
+        None,
     )
     .expect("compiles");
 

@@ -45,6 +45,10 @@ impl Compiler {
     /// Run the full deterministic pipeline. `generations` must be in load order;
     /// the last generation is the current generation whose per-resource merkle
     /// root becomes the module's `CurrentRoot` (D5).
+    // The pipeline genuinely needs each of these distinct inputs (identity, keys,
+    // generations, metadata, auth policy, trusted set, optional chain anchor);
+    // bundling them into a struct would only move the argument list elsewhere.
+    #[allow(clippy::too_many_arguments)]
     pub fn compile<G: GenerationView>(
         config: &CompilerConfig,
         store_id: Bytes32,
@@ -53,6 +57,7 @@ impl Compiler {
         manifest: MetadataManifest,
         auth_info: AuthenticationInfo,
         trusted_keys: &[TrustedHostKey],
+        chain_state: Option<digstore_core::datasection::ChainState>,
     ) -> Result<CompileOutcome> {
         // Stage 1: trusted-key precondition (§5.3, §19.2).
         if trusted_keys.is_empty() {
@@ -112,6 +117,9 @@ impl Compiler {
             chunk_pool_bodies,
             merkle_leaves,
             filler: Vec::new(),
+            // Optional on-chain anchor pointer (id 12), embedded verbatim. It is
+            // a fixed-size addition independent of the filler budget math below.
+            chain_state,
         };
         let blob_len_without_filler = encode_data_section(&inputs).len();
         if blob_len_without_filler > config.uniform_blob_len {

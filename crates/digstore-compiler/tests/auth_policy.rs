@@ -77,6 +77,7 @@ fn compile_and_read_auth(tag: &str, auth: AuthenticationInfo) -> AuthenticationI
         sample_manifest(),
         auth,
         &trusted_keys(),
+        None,
     )
     .expect("real module compiles with the configured auth policy");
     let module = std::fs::read(&outcome.result.output_path).unwrap();

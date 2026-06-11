@@ -188,6 +188,7 @@ fn serve_single_resource_and_verify(payload: Vec<u8>, tag: &str, uniform_blob_le
         common::sample_manifest(),
         common::no_auth(),
         &common::trusted_keys(),
+        None,
     )
     .expect("real module with a large data section compiles");
 
@@ -291,6 +292,7 @@ fn compile_and_extract_root(uniform_blob_len: usize, tag: &str) -> (u64, Bytes32
         common::sample_manifest(),
         common::no_auth(),
         &common::trusted_keys(),
+        None,
     )
     .expect("compiles");
     let module = std::fs::read(&outcome.result.output_path).unwrap();

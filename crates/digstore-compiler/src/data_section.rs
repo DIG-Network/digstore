@@ -51,6 +51,8 @@ pub struct DataSectionInputs {
     pub merkle_leaves: Vec<Bytes32>,
     /// Deterministic ChaCha20 filler bytes (unreferenced; §8.3, deviation #2).
     pub filler: Vec<u8>,
+    /// Optional on-chain anchor pointer embedded as `SectionId::ChainState`.
+    pub chain_state: Option<digstore_core::datasection::ChainState>,
 }
 
 /// Encode `Vec<TrustedHostKey>` using core primitive framing field-by-field.
@@ -87,7 +89,7 @@ pub fn encode_data_section(i: &DataSectionInputs) -> Vec<u8> {
 
     let pool_refs: Vec<&[u8]> = i.chunk_pool_bodies.iter().map(|b| b.as_slice()).collect();
 
-    let sections: Vec<(u16, Vec<u8>)> = vec![
+    let mut sections: Vec<(u16, Vec<u8>)> = vec![
         (SectionId::StoreId as u16, i.store_id.0.to_vec()),
         (SectionId::CurrentRoot as u16, i.current_root.0.to_vec()),
         (
@@ -107,8 +109,17 @@ pub fn encode_data_section(i: &DataSectionInputs) -> Vec<u8> {
             SectionId::MerkleNodes as u16,
             encode_merkle_nodes(&i.merkle_leaves),
         ),
-        (SectionId::Filler as u16, i.filler.clone()),
     ];
+
+    // Optional on-chain anchor (id 12). Pushed BEFORE Filler so the Filler body
+    // stays the trailing section: uniform-size padding grows only the last body.
+    if let Some(cs) = &i.chain_state {
+        sections.push((SectionId::ChainState as u16, cs.encode()));
+    }
+
+    // Filler MUST be the last body (highest start offset) for the uniform-size
+    // padding math in the pipeline to hold.
+    sections.push((SectionId::Filler as u16, i.filler.clone()));
 
     digstore_core::datasection::encode_blob(&sections)
 }
@@ -128,15 +139,31 @@ pub fn rekey_module_trusted(
 ) -> Result<Vec<u8>, crate::error::CompilerError> {
     use crate::inject::{extract_data_section, inject_data_section};
     use crate::pipeline::DATA_SECTION_MEM_OFFSET;
-    use digstore_core::datasection::{encode_blob, DataView, SectionId};
 
     let blob = extract_data_section(module, DATA_SECTION_MEM_OFFSET)?;
-    let view = DataView::parse(&blob).map_err(|e| {
+    let new_blob = rekey_blob_trusted(&blob, new_trusted)?;
+    inject_data_section(module, &new_blob, DATA_SECTION_MEM_OFFSET)
+}
+
+/// Rebuild a DIGS data-section blob with a swapped `TrustedKeys` section,
+/// preserving every other present section byte-for-byte.
+///
+/// `ChainState` (id 12) is an OPTIONAL passthrough: present in the rebuilt blob
+/// iff the source carries it, and always positioned BEFORE the trailing `Filler`
+/// body so the uniform-size padding invariant survives a rekey. Older modules
+/// that carry no `ChainState` rekey unchanged.
+fn rekey_blob_trusted(
+    blob: &[u8],
+    new_trusted: &[TrustedHostKey],
+) -> Result<Vec<u8>, crate::error::CompilerError> {
+    use digstore_core::datasection::{encode_blob, DataView, SectionId};
+
+    let view = DataView::parse(blob).map_err(|e| {
         crate::error::CompilerError::InvalidTemplate(format!("bad DIGS blob: {e:?}"))
     })?;
 
-    // Rebuild every section in ascending id order, swapping TrustedKeys.
-    const IDS: [SectionId; 11] = [
+    // Sections 1..=10, swapping TrustedKeys; each is optional passthrough.
+    const HEAD_IDS: [SectionId; 10] = [
         SectionId::StoreId,
         SectionId::CurrentRoot,
         SectionId::RootHistory,
@@ -147,10 +174,9 @@ pub fn rekey_module_trusted(
         SectionId::KeyTable,
         SectionId::ChunkPool,
         SectionId::MerkleNodes,
-        SectionId::Filler,
     ];
     let mut sections: Vec<(u16, Vec<u8>)> = Vec::new();
-    for id in IDS {
+    for id in HEAD_IDS {
         let body = if id == SectionId::TrustedKeys {
             encode_trusted_keys(new_trusted)
         } else {
@@ -161,8 +187,18 @@ pub fn rekey_module_trusted(
         };
         sections.push((id as u16, body));
     }
-    let new_blob = encode_blob(&sections);
-    inject_data_section(module, &new_blob, DATA_SECTION_MEM_OFFSET)
+
+    // Optional ChainState (id 12) passthrough, BEFORE the trailing Filler body.
+    if let Some(body) = view.section(SectionId::ChainState) {
+        sections.push((SectionId::ChainState as u16, body.to_vec()));
+    }
+
+    // Filler last (if present), preserving the uniform-size padding invariant.
+    if let Some(body) = view.section(SectionId::Filler) {
+        sections.push((SectionId::Filler as u16, body.to_vec()));
+    }
+
+    Ok(encode_blob(&sections))
 }
 
 /// Identity and content root extracted and cryptographically verified from a
@@ -328,6 +364,7 @@ mod tests {
             chunk_pool_bodies: vec![b"abcdef".to_vec()],
             merkle_leaves: leaves,
             filler: vec![0x09u8; 16],
+            chain_state: None,
         }
     }
 
@@ -413,5 +450,90 @@ mod tests {
         let a = encode_data_section(&inputs());
         let b = encode_data_section(&inputs());
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn encode_emits_chain_state_when_present_and_filler_stays_last() {
+        use digstore_core::datasection::{read_chain_state, ChainState, DataView, SectionId};
+        let mut inp = inputs();
+        let cs = ChainState {
+            version: 1,
+            network: "mainnet".into(),
+            launcher_id: inp.store_id,
+            coin_id: digstore_core::Bytes32([9u8; 32]),
+            confirmed_height: 1234,
+            tx_id: String::new(),
+            coinset_url: "https://api.coinset.org".into(),
+        };
+        inp.chain_state = Some(cs.clone());
+        let blob = encode_data_section(&inp);
+        assert_eq!(read_chain_state(&blob).unwrap().unwrap(), cs);
+        // Filler must be encoded AFTER ChainState (highest start offset), so
+        // uniform-size padding still works. Both bodies are slices into `blob`.
+        let view = DataView::parse(&blob).unwrap();
+        let filler_ptr = view.section(SectionId::Filler).expect("filler").as_ptr() as usize;
+        let chain_ptr = view
+            .section(SectionId::ChainState)
+            .expect("chain")
+            .as_ptr() as usize;
+        assert!(
+            filler_ptr > chain_ptr,
+            "Filler must come after ChainState in the blob"
+        );
+    }
+
+    #[test]
+    fn encode_without_chain_state_has_no_section() {
+        use digstore_core::datasection::read_chain_state;
+        let inp = inputs(); // chain_state defaults to None
+        let blob = encode_data_section(&inp);
+        assert!(read_chain_state(&blob).unwrap().is_none());
+    }
+
+    #[test]
+    fn rekey_preserves_chain_state() {
+        use digstore_core::datasection::{read_chain_state, ChainState, SectionId};
+        // Build a blob WITH a ChainState section, then exercise the same
+        // optional-passthrough logic rekey uses by parsing + rebuilding.
+        let mut inp = inputs();
+        let cs = ChainState {
+            version: 1,
+            network: "mainnet".into(),
+            launcher_id: inp.store_id,
+            coin_id: Bytes32([7u8; 32]),
+            confirmed_height: 42,
+            tx_id: "deadbeef".into(),
+            coinset_url: "https://api.coinset.org".into(),
+        };
+        inp.chain_state = Some(cs.clone());
+        let blob = encode_data_section(&inp);
+
+        let new_keys = vec![TrustedHostKey {
+            public_key: [0x99u8; 48],
+            label: "new".into(),
+        }];
+        let rebuilt = rekey_blob_trusted(&blob, &new_keys).expect("rekey");
+
+        // ChainState preserved byte-for-byte through the rekey.
+        assert_eq!(read_chain_state(&rebuilt).unwrap().unwrap(), cs);
+        // TrustedKeys actually swapped (new framing differs from the old).
+        let view = DataView::parse(&rebuilt).unwrap();
+        assert_eq!(
+            view.section(SectionId::TrustedKeys).unwrap(),
+            &encode_trusted_keys(&new_keys)[..]
+        );
+    }
+
+    #[test]
+    fn rekey_without_chain_state_is_fine() {
+        use digstore_core::datasection::read_chain_state;
+        let inp = inputs(); // no chain_state
+        let blob = encode_data_section(&inp);
+        let new_keys = vec![TrustedHostKey {
+            public_key: [0x99u8; 48],
+            label: "new".into(),
+        }];
+        let rebuilt = rekey_blob_trusted(&blob, &new_keys).expect("rekey");
+        assert!(read_chain_state(&rebuilt).unwrap().is_none());
     }
 }
