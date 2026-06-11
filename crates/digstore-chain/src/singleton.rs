@@ -43,7 +43,7 @@ pub fn build_mint(
     )
     .map_err(|e| ChainError::Chain(format!("mint_store: {e}")))?;
     let launcher_id = new_datastore.info.launcher_id;
-    let signature = sign_coin_spends(&coin_spends, &[keys.synthetic_sk.clone()], false)
+    let signature = sign_coin_spends(&coin_spends, std::slice::from_ref(&keys.synthetic_sk), false)
         .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
     let bundle = SpendBundle::new(coin_spends, signature);
     Ok(MintBuild { bundle, launcher_id, datastore: new_datastore })
@@ -82,7 +82,15 @@ pub async fn sync_datastore(
         .ok_or_else(|| ChainError::Chain("launcher spend is not a datastore".into()))?;
 
     // Walk forward until the singleton coin is unspent.
+    const MAX_HOPS: u32 = 100_000;
+    let mut hops = 0u32;
     loop {
+        hops += 1;
+        if hops > MAX_HOPS {
+            return Err(ChainError::Chain(format!(
+                "singleton chain exceeded {MAX_HOPS} hops; possible cycle or corrupt chain data"
+            )));
+        }
         let coin_id = store.coin.coin_id();
         let rec = chain
             .coin_record(coin_id)
