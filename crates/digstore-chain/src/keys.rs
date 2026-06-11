@@ -29,7 +29,11 @@ pub fn derive_wallet_keys(mnemonic: &str) -> Result<WalletKeys> {
     let owner_puzzle_hash = master_public_key_to_first_puzzle_hash(&master_pk);
     let synthetic_sk = master_secret_key_to_wallet_synthetic_secret_key(&master_sk);
     let synthetic_pk = secret_key_to_public_key(&synthetic_sk);
-    Ok(WalletKeys { synthetic_sk, synthetic_pk, owner_puzzle_hash })
+    Ok(WalletKeys {
+        synthetic_sk,
+        synthetic_pk,
+        owner_puzzle_hash,
+    })
 }
 
 /// The owner's mainnet receive address (`xch1…`), bech32m-encoded from the

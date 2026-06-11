@@ -467,10 +467,8 @@ fn jwks_json(priv_key: &rsa::RsaPrivateKey, kid: &str) -> Vec<u8> {
     let pk = priv_key.to_public_key();
     let n = b64url(&pk.n().to_bytes_be());
     let e = b64url(&pk.e().to_bytes_be());
-    format!(
-        r#"{{"keys":[{{"kty":"RSA","kid":"{kid}","alg":"RS256","n":"{n}","e":"{e}"}}]}}"#
-    )
-    .into_bytes()
+    format!(r#"{{"keys":[{{"kty":"RSA","kid":"{kid}","alg":"RS256","n":"{n}","e":"{e}"}}]}}"#)
+        .into_bytes()
 }
 
 /// Build a real RS256 JWT (header.payload.signature) signed with `priv_key`.
@@ -569,7 +567,11 @@ impl digstore_guest::host::DigHost for JwksHost {
 }
 
 /// Build the standard one-resource fixture and run the JWT-gated content path.
-fn jwt_gate_outcome(host: &JwksHost, jwt: Option<Vec<u8>>, jwks_url: Option<&str>) -> ContentOutcome {
+fn jwt_gate_outcome(
+    host: &JwksHost,
+    jwt: Option<Vec<u8>>,
+    jwks_url: Option<&str>,
+) -> ContentOutcome {
     let key = Bytes32([0x11; 32]);
     let entry = KeyTableEntry {
         static_key: key,

@@ -91,7 +91,12 @@ pub struct Tombstone {
 
 impl Tombstone {
     /// Convenience constructor for a single-root revocation.
-    pub fn root(store_id: Bytes32, root: Bytes32, not_after: u64, reason: RevocationReason) -> Self {
+    pub fn root(
+        store_id: Bytes32,
+        root: Bytes32,
+        not_after: u64,
+        reason: RevocationReason,
+    ) -> Self {
         Tombstone {
             store_id,
             scope: TombstoneScope::Root(root),

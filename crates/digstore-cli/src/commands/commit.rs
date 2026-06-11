@@ -28,9 +28,8 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
 
     // 3. Load the store's anchor state. Every store is anchored at init, so a
     //    missing anchor.toml is an error state, not a fresh-store case.
-    let mut state = AnchorState::load(&ctx.dig_dir)?.ok_or_else(|| {
-        CliError::Chain("store is not anchored; run `digstore init`".into())
-    })?;
+    let mut state = AnchorState::load(&ctx.dig_dir)?
+        .ok_or_else(|| CliError::Chain("store is not anchored; run `digstore init`".into()))?;
     let launcher_id = parse_bytes32(&state.store_id, "store_id")?;
     let new_root_b32 = Bytes32::new(prepared.root.0);
 
@@ -56,7 +55,8 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     };
 
     // 5. Block until the update confirms (up to --wait-timeout).
-    let confirmed = anchor_ux::confirm_with_ui(ui, anchor.as_ref(), coin_id, args.wait_timeout, ui.json())?;
+    let confirmed =
+        anchor_ux::confirm_with_ui(ui, anchor.as_ref(), coin_id, args.wait_timeout, ui.json())?;
     match confirmed {
         ConfirmState::Confirmed { .. } => {
             // Record the confirmation BEFORE finalizing local state.

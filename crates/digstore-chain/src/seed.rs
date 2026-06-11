@@ -10,15 +10,15 @@ use zeroize::Zeroizing;
 ///
 /// Accepts 12/15/18/21/24-word English mnemonics with a valid checksum.
 pub fn validate_mnemonic(phrase: &str) -> Result<Zeroizing<String>> {
-    let m = Mnemonic::parse(phrase.trim())
-        .map_err(|e| ChainError::InvalidMnemonic(e.to_string()))?;
+    let m =
+        Mnemonic::parse(phrase.trim()).map_err(|e| ChainError::InvalidMnemonic(e.to_string()))?;
     Ok(Zeroizing::new(m.to_string()))
 }
 
 /// Generates a new BIP-39 mnemonic with the given word count (12/15/18/21/24).
 pub fn generate_mnemonic(word_count: usize) -> Result<Zeroizing<String>> {
-    let m = Mnemonic::generate(word_count)
-        .map_err(|e| ChainError::InvalidMnemonic(e.to_string()))?;
+    let m =
+        Mnemonic::generate(word_count).map_err(|e| ChainError::InvalidMnemonic(e.to_string()))?;
     Ok(Zeroizing::new(m.to_string()))
 }
 
@@ -37,14 +37,20 @@ mod mnemonic_tests {
     #[test]
     fn invalid_word_rejected() {
         let bad = VALID_24.replace("art", "zzzzzz");
-        assert!(matches!(validate_mnemonic(&bad), Err(ChainError::InvalidMnemonic(_))));
+        assert!(matches!(
+            validate_mnemonic(&bad),
+            Err(ChainError::InvalidMnemonic(_))
+        ));
     }
 
     #[test]
     fn bad_checksum_rejected() {
         // 24 valid words but wrong checksum (last word swapped to another valid word).
         let bad = VALID_24.replace("art", "abandon");
-        assert!(matches!(validate_mnemonic(&bad), Err(ChainError::InvalidMnemonic(_))));
+        assert!(matches!(
+            validate_mnemonic(&bad),
+            Err(ChainError::InvalidMnemonic(_))
+        ));
     }
 
     #[test]
@@ -107,7 +113,12 @@ pub fn encrypt_seed(phrase: &str, passphrase: &str) -> Result<EncryptedSeed> {
         .encrypt(Nonce::from_slice(&nonce), phrase.as_bytes())
         .map_err(|_| ChainError::Crypto("AES-GCM encrypt failed".into()))?;
 
-    Ok(EncryptedSeed { version: SEED_FILE_VERSION, salt, nonce, ciphertext })
+    Ok(EncryptedSeed {
+        version: SEED_FILE_VERSION,
+        salt,
+        nonce,
+        ciphertext,
+    })
 }
 
 /// Decrypts an `EncryptedSeed` back to the mnemonic phrase.
@@ -153,7 +164,12 @@ impl EncryptedSeed {
         salt.copy_from_slice(&bytes[1..1 + SALT_LEN]);
         nonce.copy_from_slice(&bytes[1 + SALT_LEN..1 + SALT_LEN + NONCE_LEN]);
         let ciphertext = bytes[1 + SALT_LEN + NONCE_LEN..].to_vec();
-        Ok(EncryptedSeed { version, salt, nonce, ciphertext })
+        Ok(EncryptedSeed {
+            version,
+            salt,
+            nonce,
+            ciphertext,
+        })
     }
 }
 
@@ -173,7 +189,10 @@ mod crypto_tests {
     #[test]
     fn wrong_passphrase_fails() {
         let enc = encrypt_seed(PHRASE, "hunter2").unwrap();
-        assert!(matches!(decrypt_seed(&enc, "wrong"), Err(ChainError::Decrypt)));
+        assert!(matches!(
+            decrypt_seed(&enc, "wrong"),
+            Err(ChainError::Decrypt)
+        ));
     }
 
     #[test]

@@ -57,7 +57,8 @@ mod tests {
     use super::*;
 
     // Public BIP-39 test vector (NOT a real wallet).
-    const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+    const ABANDON: &str =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon \
         abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
         abandon abandon abandon art";
     // GOLDEN owner puzzle hash for the ABANDON vector.

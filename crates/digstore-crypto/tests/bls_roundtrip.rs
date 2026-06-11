@@ -352,7 +352,10 @@ fn role_tags_domain_separate_identical_payloads() {
     };
 
     // The three role tags are pairwise distinct constants.
-    assert_ne!(digstore_crypto::bls::PUSH_DST, digstore_crypto::bls::NODE_DST);
+    assert_ne!(
+        digstore_crypto::bls::PUSH_DST,
+        digstore_crypto::bls::NODE_DST
+    );
     assert_ne!(digstore_crypto::bls::PUSH_DST, digstore_core::ATTEST_DST);
     assert_ne!(digstore_crypto::bls::NODE_DST, digstore_core::ATTEST_DST);
 
@@ -366,8 +369,14 @@ fn role_tags_domain_separate_identical_payloads() {
     // The attestation message embeds ATTEST_DST as its literal prefix; the push
     // message hashes PUSH_DST in. They can never be byte-equal (different lengths
     // and different leading bytes), so cross-role reuse is structurally impossible.
-    assert_ne!(&attest_msg[..push_msg.len().min(attest_msg.len())], &push_msg[..]);
-    assert_eq!(&attest_msg[..digstore_core::ATTEST_DST.len()], digstore_core::ATTEST_DST);
+    assert_ne!(
+        &attest_msg[..push_msg.len().min(attest_msg.len())],
+        &push_msg[..]
+    );
+    assert_eq!(
+        &attest_msg[..digstore_core::ATTEST_DST.len()],
+        digstore_core::ATTEST_DST
+    );
 
     // End-to-end: a push signature must NOT verify as a node-proof or attestation
     // signature, and vice versa — even with deliberately aligned inputs.
@@ -424,14 +433,22 @@ fn sign_tombstone_then_verify_round_trip_and_binding() {
     assert_eq!(tombstone_signing_message(&t).len(), 32);
 
     // Tamper: any altered field changes the message and the sig must not verify.
-    let tampered_root =
-        Tombstone::root(store_id, Bytes32([0xC3u8; 32]), 1_700_000_000, RevocationReason::Compromise);
+    let tampered_root = Tombstone::root(
+        store_id,
+        Bytes32([0xC3u8; 32]),
+        1_700_000_000,
+        RevocationReason::Compromise,
+    );
     assert!(!verify_tombstone(&pk, &tampered_root, &sig));
     let tampered_reason =
         Tombstone::root(store_id, root, 1_700_000_000, RevocationReason::Takedown);
     assert!(!verify_tombstone(&pk, &tampered_reason, &sig));
-    let tampered_store =
-        Tombstone::root(Bytes32([0xFFu8; 32]), root, 1_700_000_000, RevocationReason::Compromise);
+    let tampered_store = Tombstone::root(
+        Bytes32([0xFFu8; 32]),
+        root,
+        1_700_000_000,
+        RevocationReason::Compromise,
+    );
     assert!(!verify_tombstone(&pk, &tampered_store, &sig));
 
     // Wrong key must not verify.

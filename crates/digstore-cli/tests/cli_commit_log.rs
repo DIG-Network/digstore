@@ -42,8 +42,7 @@ fn commit_with_nothing_staged_fails_exit_2() {
 
 /// The anchor.toml status + last_root for the default store.
 fn anchor_status_and_root(dir: &TempDir) -> (String, String) {
-    let text =
-        std::fs::read_to_string(common::store_dir(dir).join("anchor.toml")).unwrap();
+    let text = std::fs::read_to_string(common::store_dir(dir).join("anchor.toml")).unwrap();
     let field = |name: &str| {
         text.lines()
             .find(|l| l.trim_start().starts_with(name))
@@ -63,15 +62,27 @@ fn commit_anchors_and_finalizes_on_confirm() {
     dig(&dir).arg("init").assert().success();
     let f = dir.path().join("a.txt");
     std::fs::write(&f, b"alpha beta gamma").unwrap();
-    dig(&dir).args(["add"]).arg(&f).args(["--key", "a"]).assert().success();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
 
-    let out = dig(&dir).args(["commit", "-m", "first", "--json"]).output().unwrap();
+    let out = dig(&dir)
+        .args(["commit", "-m", "first", "--json"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "commit should succeed");
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let committed_root = v["root"].as_str().unwrap().to_string();
     assert_eq!(v["anchor_status"].as_str().unwrap(), "confirmed");
     assert!(v["mocked"].as_bool().unwrap(), "mock anchor reports mocked");
-    assert_eq!(v["coin_id"].as_str().unwrap().len(), 64, "coin_id is 32-byte hex");
+    assert_eq!(
+        v["coin_id"].as_str().unwrap().len(),
+        64,
+        "coin_id is 32-byte hex"
+    );
 
     // The generation is finalized: log shows it.
     dig(&dir)
@@ -95,7 +106,12 @@ fn commit_blocks_until_confirmed_and_does_not_finalize_on_timeout() {
     dig(&dir).arg("init").assert().success();
     let f = dir.path().join("b.txt");
     std::fs::write(&f, b"pending content").unwrap();
-    dig(&dir).args(["add"]).arg(&f).args(["--key", "b"]).assert().success();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "b"])
+        .assert()
+        .success();
 
     // Timeout env set on THIS command only.
     dig(&dir)
@@ -134,7 +150,12 @@ fn commit_resumes_pending_update_idempotently() {
     dig(&dir).arg("init").assert().success();
     let f = dir.path().join("c.txt");
     std::fs::write(&f, b"resume content").unwrap();
-    dig(&dir).args(["add"]).arg(&f).args(["--key", "c"]).assert().success();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "c"])
+        .assert()
+        .success();
 
     // First attempt times out (Pending).
     dig(&dir)
@@ -147,11 +168,18 @@ fn commit_resumes_pending_update_idempotently() {
     assert_eq!(status, "pending");
 
     // Re-run without the timeout env: confirms + finalizes.
-    let out = dig(&dir).args(["commit", "-m", "retry", "--json"]).output().unwrap();
+    let out = dig(&dir)
+        .args(["commit", "-m", "retry", "--json"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "resume should succeed");
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["anchor_status"].as_str().unwrap(), "confirmed");
-    assert_eq!(v["root"].as_str().unwrap(), pending_root, "same root as the pending update");
+    assert_eq!(
+        v["root"].as_str().unwrap(),
+        pending_root,
+        "same root as the pending update"
+    );
 
     dig(&dir)
         .args(["log"])

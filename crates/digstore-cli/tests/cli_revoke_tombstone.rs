@@ -107,7 +107,10 @@ fn clone_ignores_unsigned_or_wrong_key_tombstone() {
     dig(&dst).args(["clone", &url]).assert().success();
     let urn = format!("urn:dig:chia:{store_id}:{root}/doc");
     let cat = dig(&dst).args(["cat", &urn]).output().unwrap();
-    assert!(cat.status.success(), "cat must succeed: bogus tombstone ignored");
+    assert!(
+        cat.status.success(),
+        "cat must succeed: bogus tombstone ignored"
+    );
     assert_eq!(cat.stdout, b"revocable content");
 }
 
@@ -143,7 +146,14 @@ fn revoke_command_publishes_then_clone_fails_closed() {
         .assert()
         .success();
     dig(&src)
-        .args(["revoke", "--root", &root, "--reason", "compromise", "origin"])
+        .args([
+            "revoke",
+            "--root",
+            &root,
+            "--reason",
+            "compromise",
+            "origin",
+        ])
         .assert()
         .success();
 
@@ -214,7 +224,10 @@ fn remote_rejects_tombstone_with_bad_signature() {
             .status()
             .as_u16()
     });
-    assert_eq!(status, 403, "bad-signature tombstone must be rejected (403)");
+    assert_eq!(
+        status, 403,
+        "bad-signature tombstone must be rejected (403)"
+    );
 
     // And because it was never stored, a clone of the root still succeeds.
     let dst = tmp_dig();

@@ -91,7 +91,11 @@ mod tests {
     #[test]
     fn save_then_load_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        let c = GlobalConfig { coinset_url: "https://example.org".into(), unlock_ttl: 60, fee: 5 };
+        let c = GlobalConfig {
+            coinset_url: "https://example.org".into(),
+            unlock_ttl: 60,
+            fee: 5,
+        };
         c.save(dir.path()).unwrap();
         let loaded = GlobalConfig::load(dir.path()).unwrap();
         assert_eq!(loaded, c);

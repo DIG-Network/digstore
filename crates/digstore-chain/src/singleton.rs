@@ -29,7 +29,10 @@ pub fn build_mint(
 ) -> Result<MintBuild> {
     let selected = select_coins(unspent, fee + 1)
         .map_err(|e| ChainError::Chain(format!("select_coins: {e}")))?;
-    let SuccessResponse { coin_spends, new_datastore } = mint_store(
+    let SuccessResponse {
+        coin_spends,
+        new_datastore,
+    } = mint_store(
         keys.synthetic_pk,
         selected,
         root,
@@ -43,10 +46,18 @@ pub fn build_mint(
     )
     .map_err(|e| ChainError::Chain(format!("mint_store: {e}")))?;
     let launcher_id = new_datastore.info.launcher_id;
-    let signature = sign_coin_spends(&coin_spends, std::slice::from_ref(&keys.synthetic_sk), false)
-        .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
+    let signature = sign_coin_spends(
+        &coin_spends,
+        std::slice::from_ref(&keys.synthetic_sk),
+        false,
+    )
+    .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
     let bundle = SpendBundle::new(coin_spends, signature);
-    Ok(MintBuild { bundle, launcher_id, datastore: new_datastore })
+    Ok(MintBuild {
+        bundle,
+        launcher_id,
+        datastore: new_datastore,
+    })
 }
 
 /// A built, signed store-root update ready to broadcast.
@@ -65,7 +76,10 @@ pub fn build_update(
     fee_coins: &[Coin],
     fee: u64,
 ) -> Result<UpdateBuild> {
-    let SuccessResponse { coin_spends: update_spends, new_datastore } = update_store_metadata(
+    let SuccessResponse {
+        coin_spends: update_spends,
+        new_datastore,
+    } = update_store_metadata(
         store,
         new_root,
         None,
@@ -83,12 +97,19 @@ pub fn build_update(
         .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
     coin_spends.extend(update_spends);
 
-    let signature =
-        sign_coin_spends(&coin_spends, std::slice::from_ref(&keys.synthetic_sk), false)
-            .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
+    let signature = sign_coin_spends(
+        &coin_spends,
+        std::slice::from_ref(&keys.synthetic_sk),
+        false,
+    )
+    .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
     let new_coin_id = new_datastore.coin.coin_id();
     let bundle = SpendBundle::new(coin_spends, signature);
-    Ok(UpdateBuild { bundle, new_coin_id, datastore: new_datastore })
+    Ok(UpdateBuild {
+        bundle,
+        new_coin_id,
+        datastore: new_datastore,
+    })
 }
 
 /// Reconstructs the current unspent datastore singleton for `launcher_id` using
@@ -98,10 +119,7 @@ pub fn build_update(
 /// `DataStore::from_spend(ctx, spend, delegated)` returns the CHILD datastore
 /// created by spending `spend.coin`, so we walk launcher -> eve -> ... forward
 /// until we reach a singleton coin that is still unspent.
-pub async fn sync_datastore(
-    chain: &dyn ChainReads,
-    launcher_id: Bytes32,
-) -> Result<DataStore> {
+pub async fn sync_datastore(chain: &dyn ChainReads, launcher_id: Bytes32) -> Result<DataStore> {
     let mut ctx = SpendContext::new();
 
     // The launcher coin is spent to create the eve singleton.
@@ -200,9 +218,8 @@ mod sync_tests {
     use crate::coinset::Coinset;
 
     fn launcher_bytes32() -> Bytes32 {
-        let raw =
-            hex::decode("cf915cbaac0755db8c79b1b2e3b2eadf14d14f7246bb7e05d951802cd273211c")
-                .expect("valid hex");
+        let raw = hex::decode("cf915cbaac0755db8c79b1b2e3b2eadf14d14f7246bb7e05d951802cd273211c")
+            .expect("valid hex");
         let arr: [u8; 32] = raw.try_into().expect("32 bytes");
         Bytes32::new(arr)
     }

@@ -131,10 +131,17 @@ fn anchor_status_json_on_pending_store() {
         .args(["--json", "anchor", "status"])
         .output()
         .unwrap();
-    assert!(out.status.success(), "anchor status must exit 0; got: {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "anchor status must exit 0; got: {:?}",
+        out.status
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["status"], "pending", "persisted status must be pending");
-    assert_eq!(v["onchain_confirmed"], false, "live poll must report not confirmed");
+    assert_eq!(
+        v["onchain_confirmed"], false,
+        "live poll must report not confirmed"
+    );
 }
 
 /// `digstore anchor` on a store that is not anchored (no anchor.toml): chain

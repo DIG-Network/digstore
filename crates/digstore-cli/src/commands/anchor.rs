@@ -23,9 +23,8 @@ use digstore_chain::anchor::ConfirmState;
 /// finalize a local generation here.
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: AnchorArgs) -> Result<(), CliError> {
     // Every store is anchored at init; a missing anchor.toml is an error state.
-    let mut state = AnchorState::load(&ctx.dig_dir)?.ok_or_else(|| {
-        CliError::Chain("store is not anchored; run `digstore init`".into())
-    })?;
+    let mut state = AnchorState::load(&ctx.dig_dir)?
+        .ok_or_else(|| CliError::Chain("store is not anchored; run `digstore init`".into()))?;
 
     // Read-only: do NOT unlock the seed — confirm/status need no wallet keys.
     let (anchor, mocked) = build_anchor();
@@ -35,7 +34,15 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: AnchorArgs) -> Result<(),
 
     match args.action {
         Some(AnchorAction::Status) => status(ui, anchor.as_ref(), &state, coin_id, mocked),
-        None => resume(ctx, ui, anchor.as_ref(), &mut state, coin_id, mocked, args.wait_timeout),
+        None => resume(
+            ctx,
+            ui,
+            anchor.as_ref(),
+            &mut state,
+            coin_id,
+            mocked,
+            args.wait_timeout,
+        ),
     }
 }
 
@@ -73,7 +80,10 @@ fn status(
     ui.line(format!("network:          {}", state.network));
     ui.line(format!("store_id:         {}", state.store_id));
     ui.line(format!("coin_id:          {}", state.coin_id));
-    ui.line(format!("status:           {}", persisted_status(state.status)));
+    ui.line(format!(
+        "status:           {}",
+        persisted_status(state.status)
+    ));
     let last_root = if state.last_root.is_empty() {
         "(none)"
     } else {

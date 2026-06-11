@@ -25,7 +25,10 @@ fn status_reports_no_seed_initially() {
 #[test]
 fn generate_then_status_unlocked() {
     let home = tempfile::tempdir().unwrap();
-    digstore(home.path()).args(["seed", "generate"]).assert().success();
+    digstore(home.path())
+        .args(["seed", "generate"])
+        .assert()
+        .success();
     assert!(home.path().join("seed.enc").exists());
     digstore(home.path())
         .args(["seed", "status"])
@@ -37,7 +40,10 @@ fn generate_then_status_unlocked() {
 #[test]
 fn lock_then_status_locked() {
     let home = tempfile::tempdir().unwrap();
-    digstore(home.path()).args(["seed", "generate"]).assert().success();
+    digstore(home.path())
+        .args(["seed", "generate"])
+        .assert()
+        .success();
     digstore(home.path()).args(["lock"]).assert().success();
     digstore(home.path())
         .args(["seed", "status"])

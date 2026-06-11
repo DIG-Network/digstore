@@ -25,8 +25,12 @@ fn now_secs() -> u64 {
 
 /// Caches the phrase with a TTL (seconds from now).
 pub fn write_session(path: &Path, phrase: &str, ttl_secs: u64) -> Result<()> {
-    let s = Session { expires_at: now_secs().saturating_add(ttl_secs), phrase: phrase.to_string() };
-    let json = serde_json::to_vec(&s).map_err(|e| crate::error::ChainError::Config(e.to_string()))?;
+    let s = Session {
+        expires_at: now_secs().saturating_add(ttl_secs),
+        phrase: phrase.to_string(),
+    };
+    let json =
+        serde_json::to_vec(&s).map_err(|e| crate::error::ChainError::Config(e.to_string()))?;
     crate::fs_util::write_secret_file(path, &json)?;
     Ok(())
 }
@@ -60,7 +64,10 @@ pub fn is_unlocked(path: &Path) -> bool {
 // Test-only helper to write a session with an absolute expiry.
 #[cfg(test)]
 fn write_session_abs(path: &Path, phrase: &str, expires_at: u64) -> Result<()> {
-    let s = Session { expires_at, phrase: phrase.to_string() };
+    let s = Session {
+        expires_at,
+        phrase: phrase.to_string(),
+    };
     let json = serde_json::to_vec(&s).unwrap();
     crate::fs_util::write_secret_file(path, &json)?;
     Ok(())
@@ -75,7 +82,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session");
         write_session(&path, "my phrase", 3600).unwrap();
-        assert_eq!(read_session(&path).as_deref().map(|s| s.as_str()), Some("my phrase"));
+        assert_eq!(
+            read_session(&path).as_deref().map(|s| s.as_str()),
+            Some("my phrase")
+        );
         assert!(is_unlocked(&path));
     }
 
