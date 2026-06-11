@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod error;
+mod fs_util;
 pub mod seed;
 pub mod unlock;
 
