@@ -10,7 +10,9 @@ use digstore_chain::anchor::ConfirmState;
 /// launcher id becomes the store_id. This is a HARD GATE: no seed, no funds, or
 /// a mint failure all fail `init` BEFORE any local store scaffold is created, so
 /// there is nothing to roll back. The local scaffold is only written after the
-/// mint succeeds; a post-mint confirmation timeout KEEPS the (resumable) store.
+/// mint succeeds; any post-mint confirmation failure (a timeout OR a transient
+/// RPC error) KEEPS the (resumable) store on disk so it can be finished later
+/// with `digstore anchor`.
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), CliError> {
     let name = args.name.clone().unwrap_or_else(|| "default".to_string());
     crate::workspace::validate_store_name(&name)?;
@@ -20,6 +22,21 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     if ws.stores.contains_key(&name) {
         return Err(CliError::InvalidArgument(format!(
             "store '{name}' already exists"
+        )));
+    }
+
+    // Compute (WITHOUT creating) the on-disk store dir, and reject up front if a
+    // store is already scaffolded there. `store_ops::init_store` performs the same
+    // check, but only AFTER the mint — by which point we'd already have spent XCH
+    // on a singleton we then orphan. The workspace registry and the on-disk layout
+    // can disagree (e.g. a prior run minted+scaffolded but died before `ws.save()`,
+    // or `stores.toml` was edited/deleted), so this disk-level guard must run
+    // PRE-mint, in addition to the registry check above. Fail before spending.
+    let store_dir = ws.store_dir(&name);
+    if store_dir.join("config.toml").exists() {
+        return Err(CliError::InvalidArgument(format!(
+            "store already initialized at {}",
+            store_dir.display()
         )));
     }
 
@@ -71,8 +88,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     anchor_ux::report_submitted(ui, "mint", &store_id.to_hex(), ui.json());
 
     // --- Post-mint: create the local scaffold under the new store_id. ---
+    // (`store_dir` was computed and existence-checked PRE-mint above; create it
+    // only now that the mint has succeeded.)
 
-    let store_dir = ws.store_dir(&name);
     std::fs::create_dir_all(&store_dir).map_err(|e| CliError::Other(e.into()))?;
     let store_ctx = CliContext {
         dig_dir: store_dir,
@@ -104,9 +122,13 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     }
     ws.save()?;
 
-    // 5. Wait for the mint to confirm. On confirm → mark Confirmed (exit 0). On
-    //    timeout → keep the store, leave it Pending, and return ConfirmTimeout
-    //    (exit 14) so it can be resumed with `digstore anchor`.
+    // 5. Wait for the mint to confirm. The store + anchor.toml are ALREADY on disk
+    //    (saved above), so it stays recoverable no matter how confirm exits:
+    //    - confirmed     → mark Confirmed, exit 0.
+    //    - still pending → keep the store Pending, return ConfirmTimeout (exit 14).
+    //    - RPC error     → `?` below propagates CliError::Chain (exit 13); the
+    //                      store is unchanged and still resumable.
+    //    Any non-zero exit here is resumable via `digstore anchor`.
     let state =
         anchor_ux::confirm_with_ui(ui, anchor.as_ref(), mint.coin_id, args.wait_timeout, ui.json())?;
     anchor_state.apply_confirm(&state);
