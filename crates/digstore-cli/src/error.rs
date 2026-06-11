@@ -19,6 +19,12 @@ pub enum CliError {
     NonFastForward,
     #[error("unauthorized: {0}")]
     Unauthorized(String),
+    #[error("no seed found; run `digstore seed import` or `digstore seed generate`")]
+    NoSeed,
+    #[error("wrong passphrase")]
+    BadPassphrase,
+    #[error("invalid mnemonic: {0}")]
+    InvalidMnemonic(String),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -36,6 +42,9 @@ impl CliError {
             CliError::Network(_) => 6,
             CliError::NonFastForward => 7,
             CliError::Unauthorized(_) => 8,
+            CliError::NoSeed => 9,
+            CliError::BadPassphrase => 10,
+            CliError::InvalidMnemonic(_) => 11,
             CliError::Other(_) => 1,
         }
     }
@@ -47,6 +56,9 @@ impl CliError {
             CliError::NonFastForward => Some("run `digstore pull` first, then push".into()),
             CliError::Unauthorized(_) => Some("check your credentials / store signing key".into()),
             CliError::NotFound(_) => Some("run `digstore log` to list generations and keys".into()),
+            CliError::NoSeed => Some("run `digstore seed import` to set up your seed".into()),
+            CliError::BadPassphrase => Some("re-run and enter the correct passphrase".into()),
+            CliError::InvalidMnemonic(_) => Some("check the word list and word count (12/24)".into()),
             _ => None,
         }
     }
@@ -61,6 +73,18 @@ impl CliError {
                 CliError::Unauthorized(ctx.to_string())
             }
             _ => CliError::InvalidArgument(ctx.to_string()),
+        }
+    }
+}
+
+impl From<digstore_chain::ChainError> for CliError {
+    fn from(e: digstore_chain::ChainError) -> Self {
+        use digstore_chain::ChainError as C;
+        match e {
+            C::NoSeed(_) => CliError::NoSeed,
+            C::Decrypt => CliError::BadPassphrase,
+            C::InvalidMnemonic(m) => CliError::InvalidMnemonic(m),
+            other => CliError::Other(anyhow::anyhow!(other.to_string())),
         }
     }
 }

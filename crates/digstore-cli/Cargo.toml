@@ -13,6 +13,9 @@ path = "src/lib.rs"
 
 [dependencies]
 digstore-core = { path = "../digstore-core" }
+digstore-chain = { path = "../digstore-chain" }
+rpassword = "7"
+zeroize = "1"
 digstore-store = { path = "../digstore-store" }
 digstore-chunker = { path = "../digstore-chunker" }
 digstore-compiler = { path = "../digstore-compiler" }
