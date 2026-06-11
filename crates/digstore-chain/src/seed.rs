@@ -81,13 +81,13 @@ pub struct EncryptedSeed {
     pub ciphertext: Vec<u8>, // includes the 16-byte GCM tag
 }
 
-fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; KEY_LEN]> {
+fn derive_key(passphrase: &str, salt: &[u8]) -> Result<Zeroizing<[u8; KEY_LEN]>> {
     let params = Params::new(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, Some(KEY_LEN))
         .map_err(|e| ChainError::Crypto(e.to_string()))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut key = [0u8; KEY_LEN];
+    let mut key = Zeroizing::new([0u8; KEY_LEN]);
     argon
-        .hash_password_into(passphrase.as_bytes(), salt, &mut key)
+        .hash_password_into(passphrase.as_bytes(), salt, &mut *key)
         .map_err(|e| ChainError::Crypto(e.to_string()))?;
     Ok(key)
 }
@@ -100,7 +100,7 @@ pub fn encrypt_seed(phrase: &str, passphrase: &str) -> Result<EncryptedSeed> {
     getrandom::getrandom(&mut nonce).map_err(|e| ChainError::Crypto(e.to_string()))?;
 
     let key = derive_key(passphrase, &salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| ChainError::Crypto(e.to_string()))?;
+    let cipher = Aes256Gcm::new_from_slice(&*key).map_err(|e| ChainError::Crypto(e.to_string()))?;
     let ciphertext = cipher
         .encrypt(Nonce::from_slice(&nonce), phrase.as_bytes())
         .map_err(|_| ChainError::Crypto("AES-GCM encrypt failed".into()))?;
@@ -111,7 +111,7 @@ pub fn encrypt_seed(phrase: &str, passphrase: &str) -> Result<EncryptedSeed> {
 /// Decrypts an `EncryptedSeed` back to the mnemonic phrase.
 pub fn decrypt_seed(enc: &EncryptedSeed, passphrase: &str) -> Result<Zeroizing<String>> {
     let key = derive_key(passphrase, &enc.salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| ChainError::Crypto(e.to_string()))?;
+    let cipher = Aes256Gcm::new_from_slice(&*key).map_err(|e| ChainError::Crypto(e.to_string()))?;
     let plain = cipher
         .decrypt(Nonce::from_slice(&enc.nonce), enc.ciphertext.as_ref())
         .map_err(|_| ChainError::Decrypt)?;
@@ -200,5 +200,13 @@ mod crypto_tests {
             EncryptedSeed::from_bytes(&bytes),
             Err(ChainError::MalformedSeedFile(_))
         ));
+    }
+
+    #[test]
+    fn tampered_ciphertext_fails() {
+        let enc = encrypt_seed(PHRASE, "pw").unwrap();
+        let mut bad = enc.clone();
+        bad.ciphertext[0] ^= 0x01;
+        assert!(matches!(decrypt_seed(&bad, "pw"), Err(ChainError::Decrypt)));
     }
 }
