@@ -123,6 +123,20 @@ pub fn build_anchor() -> (Box<dyn ChainAnchor>, bool) {
     }
 }
 
+/// The shared "anchor gate" used by both `init` and `commit`: unlock the wallet
+/// seed (→ [`WalletKeys`]), build the (mock or real) anchor backend, warn loudly
+/// if mocked, and surface the configured `fee`. Returns
+/// `(keys, anchor, mocked, fee)`. A missing seed surfaces as
+/// [`CliError::NoSeed`] from `unlock_wallet_keys`.
+pub fn prepare_anchor(
+    ui: &Ui,
+) -> Result<(WalletKeys, Box<dyn ChainAnchor>, bool, u64), crate::error::CliError> {
+    let (keys, gcfg) = crate::ops::wallet::unlock_wallet_keys(ui)?;
+    let (anchor, mocked) = build_anchor();
+    warn_if_mocked(ui, mocked);
+    Ok((keys, anchor, mocked, gcfg.fee))
+}
+
 /// Prints a loud warning to the user when the anchor is mocked, so a mocked run
 /// is never mistaken for real anchoring. No-op when not mocked. In `--json`
 /// mode this goes through `Ui::line` (suppressed); the command's JSON carries a

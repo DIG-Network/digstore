@@ -126,6 +126,11 @@ pub struct AddArgs {
 pub struct CommitArgs {
     #[arg(short, long)]
     pub message: Option<String>,
+    /// Seconds to wait for the on-chain root update to confirm before returning a
+    /// resumable "pending" (the local generation is NOT finalized; re-run
+    /// `digstore commit` to finish once it confirms).
+    #[arg(long, default_value_t = 300)]
+    pub wait_timeout: u64,
 }
 
 #[derive(Debug, Args)]

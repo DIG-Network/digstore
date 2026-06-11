@@ -2,7 +2,7 @@ use crate::cli::InitArgs;
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::anchor_state::{AnchorState, AnchorStatus};
-use crate::ops::{anchor_backend, anchor_ux, store_ops, wallet};
+use crate::ops::{anchor_backend, anchor_ux, store_ops};
 use crate::runtime::block_on;
 use digstore_chain::anchor::ConfirmState;
 
@@ -58,13 +58,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
 
     // --- HARD GATE: seed → balance → mint, all BEFORE any local files. ---
 
-    // 1. Unlock the wallet seed (NoSeed surfaces here → exit 9).
-    let (keys, gcfg) = wallet::unlock_wallet_keys(ui)?;
-
-    // 2. Anchor backend (env-gated mock or real coinset mainnet).
-    let (anchor, mocked) = anchor_backend::build_anchor();
-    anchor_backend::warn_if_mocked(ui, mocked);
-    let fee = gcfg.fee;
+    // 1+2. Unlock the wallet seed (NoSeed → exit 9) and build the anchor backend
+    //      (env-gated mock or real coinset mainnet), warning loudly if mocked.
+    let (keys, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
 
     // 3. Preflight balance: need singleton amount (1 mojo) + fee. No files yet.
     let have = block_on(anchor.balance(&keys))??;

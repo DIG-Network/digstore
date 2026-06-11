@@ -686,7 +686,43 @@ pub struct CommitOutcome {
     pub output_size: u64,
 }
 
+/// The result of [`stage_to_root`]: the computed generation `root` plus every
+/// piece of in-memory state [`finalize_commit`] needs to persist it. Holding
+/// this between the two halves lets the orchestrator anchor `root` on-chain
+/// (and BLOCK until confirmed) BEFORE any local persistence — so local history
+/// never advances past the chain. Persists nothing on its own.
+pub struct PreparedCommit {
+    cfg: digstore_core::StoreConfig,
+    /// Generation merkle root over the ciphertext resource leaves (D5).
+    pub root: Bytes32,
+    /// Chunk ciphertext bodies, global pool order.
+    pool_bodies: Vec<Vec<u8>>,
+    /// SHA-256(chunk ciphertext) per body, same order (manifest/diff).
+    pool_hashes: Vec<Bytes32>,
+    /// (resource_key, chunk indices into the pool, plaintext total size).
+    key_records: Vec<(String, Vec<u32>, u64)>,
+    /// The generation id this commit will become.
+    next_id: u64,
+    /// Commit timestamp.
+    timestamp: u64,
+}
+
+/// Local commit: compute the root then immediately finalize it, with NO on-chain
+/// anchoring. This is the pre-anchoring behavior, preserved for tests and callers
+/// that exercise the local crypto/manifest/compile pipeline in isolation. The
+/// `digstore commit` COMMAND does NOT use this — it interleaves an on-chain root
+/// update + confirmation between [`stage_to_root`] and [`finalize_commit`] (see
+/// `commands::commit`), so local history never advances past the chain.
 pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcome, CliError> {
+    let prepared = stage_to_root(ctx)?;
+    finalize_commit(ctx, prepared)
+}
+
+/// Compute the next generation's merkle `root` from staging WITHOUT persisting
+/// anything. Returns a [`PreparedCommit`] carrying `root` + the in-memory state
+/// [`finalize_commit`] needs. Fails fast on empty staging / over-cap content so
+/// the orchestrator can bail before doing any wallet/anchor work.
+pub fn stage_to_root(ctx: &CliContext) -> Result<PreparedCommit, CliError> {
     let cfg = ctx.load_config()?;
     let salt = salt_of(&cfg);
 
@@ -769,12 +805,43 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
 
     let tree = MerkleTree::from_leaves(resource_leaves);
     let root = tree.root();
-    let root_hex = root.to_hex();
 
     let next_id = RootHistory::open(ctx.history_path())
         .and_then(|h| h.next_id())
         .map_err(|e| CliError::Other(anyhow::anyhow!("history: {e}")))?;
     let timestamp = current_time();
+
+    Ok(PreparedCommit {
+        cfg,
+        root,
+        pool_bodies,
+        pool_hashes,
+        key_records,
+        next_id,
+        timestamp,
+    })
+}
+
+/// Persist a [`PreparedCommit`]: write the generation manifest + ciphertext
+/// chunk bodies, append `roots.log`, write the local URN manifest, compile the
+/// serving `.wasm`, and clear staging. The orchestrator calls this ONLY after
+/// the new root has confirmed on-chain, so local history advances in lockstep
+/// with the singleton. Crypto/merkle/manifest bytes are byte-for-byte identical
+/// to the pre-split path — this is the persistence half, moved verbatim.
+pub fn finalize_commit(
+    ctx: &CliContext,
+    prepared: PreparedCommit,
+) -> Result<CommitOutcome, CliError> {
+    let PreparedCommit {
+        cfg,
+        root,
+        pool_bodies,
+        pool_hashes,
+        key_records,
+        next_id,
+        timestamp,
+    } = prepared;
+    let root_hex = root.to_hex();
 
     // Persist the generation manifest + ciphertext chunk bodies.
     let chunks_dir = ctx.generations_dir().join(&root_hex).join("chunks");
