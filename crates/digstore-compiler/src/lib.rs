@@ -47,8 +47,8 @@ pub use config::{
     UNIFORM_BLOB_LEN_ENV,
 };
 pub use data_section::{
-    encode_data_section, rekey_module_trusted, verify_module_root, DataSectionInputs,
-    ModuleIdentity,
+    encode_data_section, extract_data_section_blob, rekey_module_trusted, verify_module_root,
+    DataSectionInputs, ModuleIdentity,
 };
 pub use error::{CompilerError, Result};
 pub use filler::deterministic_filler;

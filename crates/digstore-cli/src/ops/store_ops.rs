@@ -715,7 +715,7 @@ pub struct PreparedCommit {
 /// `commands::commit`), so local history never advances past the chain.
 pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcome, CliError> {
     let prepared = stage_to_root(ctx)?;
-    finalize_commit(ctx, prepared)
+    finalize_commit(ctx, prepared, None)
 }
 
 /// Compute the next generation's merkle `root` from staging WITHOUT persisting
@@ -831,6 +831,7 @@ pub fn stage_to_root(ctx: &CliContext) -> Result<PreparedCommit, CliError> {
 pub fn finalize_commit(
     ctx: &CliContext,
     prepared: PreparedCommit,
+    chain_state: Option<digstore_core::datasection::ChainState>,
 ) -> Result<CommitOutcome, CliError> {
     let PreparedCommit {
         cfg,
@@ -940,7 +941,7 @@ pub fn finalize_commit(
     }
 
     // Compile a real module (so a real .wasm exists for host/push/clone).
-    let output_path = compile_module(ctx, &cfg, &pool_bodies, &manifest, root)?;
+    let output_path = compile_module(ctx, &cfg, &pool_bodies, &manifest, root, chain_state)?;
     let output_size = fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
 
     // Clear staging.
@@ -976,6 +977,7 @@ fn compile_module(
     pool_bodies: &[Vec<u8>],
     manifest: &GenerationManifest,
     root: Bytes32,
+    chain_state: Option<digstore_core::datasection::ChainState>,
 ) -> Result<PathBuf, CliError> {
     use digstore_compiler::{Compiler, CompilerConfig, GenerationView, ResourceView};
 
@@ -1055,9 +1057,20 @@ fn compile_module(
         // store would thread its configured policy into this argument instead.
         default_auth_info(),
         &trusted,
+        chain_state,
     )
     .map_err(|e| CliError::Other(anyhow::anyhow!("compile failed: {e:?}")))?;
     Ok(outcome.result.output_path)
+}
+
+/// Decode the embedded on-chain pointer from a compiled module's bytes, if any.
+pub fn read_module_chain_state(
+    module: &[u8],
+) -> Result<Option<digstore_core::datasection::ChainState>, CliError> {
+    let blob = digstore_compiler::extract_data_section_blob(module)
+        .map_err(|e| CliError::Other(anyhow::anyhow!("extract data section: {e:?}")))?;
+    digstore_core::datasection::read_chain_state(&blob)
+        .map_err(|e| CliError::Other(anyhow::anyhow!("decode chain state: {e:?}")))
 }
 
 pub fn log(ctx: &CliContext, limit: Option<usize>) -> Result<Vec<LogEntry>, CliError> {
