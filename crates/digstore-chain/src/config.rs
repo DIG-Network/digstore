@@ -99,10 +99,18 @@ mod tests {
 
     #[test]
     fn dig_home_honors_env_override() {
+        // Restore the env var on drop so a panic cannot leak it into other
+        // tests sharing this binary.
+        struct Guard;
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                std::env::remove_var("DIGSTORE_HOME");
+            }
+        }
+        let _g = Guard;
         std::env::set_var("DIGSTORE_HOME", "/tmp/digstore-test-home");
         let h = dig_home().unwrap();
         assert_eq!(h, PathBuf::from("/tmp/digstore-test-home"));
-        std::env::remove_var("DIGSTORE_HOME");
     }
 
     #[test]
