@@ -201,6 +201,19 @@ Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`
 (operating directory for this command), `--dig-dir <path>` (workspace location),
 `--json` (machine-readable), `--quiet`, `--verbose`, `--color <auto\|always\|never>`.
 
+### Wallet seed
+
+digstore keeps an encrypted BIP-39 seed in `~/.dig/seed.enc`.
+
+- `digstore seed generate` — create a new mnemonic (shown once; back it up).
+- `digstore seed import` — import an existing mnemonic.
+- `digstore seed status` — show whether a seed exists and is unlocked.
+- `digstore lock` — clear the cached-unlock session.
+
+The seed is encrypted with a passphrase (Argon2id + AES-256-GCM). After unlock
+it is cached for a configurable TTL (`~/.dig/config.toml`); `DIGSTORE_PASSPHRASE`
+supplies it non-interactively.
+
 ---
 
 ## What this gives you
