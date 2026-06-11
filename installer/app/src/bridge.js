@@ -114,7 +114,7 @@ export async function launchTerminal(installPath) {
 }
 
 export async function openDocs() {
-  const url = "https://dig.net/docs/digstore";
+  const url = "https://docs.dig.net/docs/digstore/what-is-digstore";
   if (_tauri) {
     try {
       if (!_shell) _shell = await import("@tauri-apps/plugin-shell");
