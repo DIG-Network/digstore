@@ -15,6 +15,10 @@ serde_json = "1"
 toml = "0.8"
 thiserror = "1"
 dirs = "5"
+datalayer-driver = "3"
+chia-protocol = "0.26"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 tempfile = "3"
