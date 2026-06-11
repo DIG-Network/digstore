@@ -1,19 +1,9 @@
 use crate::cli::{SeedAction, SeedArgs};
 use crate::error::CliError;
+use crate::ops::wallet::resolve_passphrase;
 use crate::ui::Ui;
 use digstore_chain::{config, seed, unlock};
 use zeroize::Zeroizing;
-
-/// Resolves a passphrase: `DIGSTORE_PASSPHRASE` env wins, else hidden prompt.
-fn resolve_passphrase(ui: &Ui, prompt: &str) -> Result<Zeroizing<String>, CliError> {
-    if let Some(p) = std::env::var_os("DIGSTORE_PASSPHRASE") {
-        let s = p.into_string().map_err(|_| CliError::BadPassphrase)?;
-        return Ok(Zeroizing::new(s));
-    }
-    ui.prompt_password(prompt)
-        .map(Zeroizing::new)
-        .ok_or(CliError::BadPassphrase)
-}
 
 pub fn run(ui: &Ui, args: SeedArgs) -> Result<(), CliError> {
     let home = config::dig_home().map_err(CliError::from)?;
