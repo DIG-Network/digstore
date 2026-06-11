@@ -26,7 +26,8 @@ pub fn run(ui: &Ui, args: SeedArgs) -> Result<(), CliError> {
             let enc = seed::encrypt_seed(&phrase, &pass).map_err(CliError::from)?;
             seed::save_seed(&seed_path, &enc).map_err(CliError::from)?;
             let cfg = config::GlobalConfig::load(&home).map_err(CliError::from)?;
-            unlock::write_session(&session_path, &phrase, cfg.unlock_ttl).map_err(CliError::from)?;
+            unlock::write_session(&session_path, &phrase, cfg.unlock_ttl)
+                .map_err(CliError::from)?;
             ui.success("seed imported and unlocked");
             Ok(())
         }
@@ -43,7 +44,8 @@ pub fn run(ui: &Ui, args: SeedArgs) -> Result<(), CliError> {
             }
             let enc = seed::encrypt_seed(&phrase, &pass).map_err(CliError::from)?;
             seed::save_seed(&seed_path, &enc).map_err(CliError::from)?;
-            unlock::write_session(&session_path, &phrase, cfg.unlock_ttl).map_err(CliError::from)?;
+            unlock::write_session(&session_path, &phrase, cfg.unlock_ttl)
+                .map_err(CliError::from)?;
             ui.success("seed generated and unlocked");
             Ok(())
         }

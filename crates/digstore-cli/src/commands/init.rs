@@ -125,8 +125,13 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     //    - RPC error     → `?` below propagates CliError::Chain (exit 13); the
     //                      store is unchanged and still resumable.
     //    Any non-zero exit here is resumable via `digstore anchor`.
-    let state =
-        anchor_ux::confirm_with_ui(ui, anchor.as_ref(), mint.coin_id, args.wait_timeout, ui.json())?;
+    let state = anchor_ux::confirm_with_ui(
+        ui,
+        anchor.as_ref(),
+        mint.coin_id,
+        args.wait_timeout,
+        ui.json(),
+    )?;
     anchor_state.apply_confirm(&state);
     anchor_state.save(&store_ctx.dig_dir)?;
 
@@ -155,7 +160,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         if first {
             ui.line("  set as active store");
         }
-        ui.line(format!("  trusted host key: {}", res.host_public_key.to_hex()));
+        ui.line(format!(
+            "  trusted host key: {}",
+            res.host_public_key.to_hex()
+        ));
         if confirmed {
             ui.line(format!("  anchored on mainnet (coin {coin_id_hex})"));
         } else {

@@ -26,7 +26,11 @@ pub enum CliError {
     #[error("invalid mnemonic: {0}")]
     InvalidMnemonic(String),
     #[error("insufficient funds: need {need} mojos, have {have}; fund {address}")]
-    InsufficientFunds { need: u64, have: u64, address: String },
+    InsufficientFunds {
+        need: u64,
+        have: u64,
+        address: String,
+    },
     #[error("chain error: {0}")]
     Chain(String),
     #[error("onchain confirmation timed out")]
@@ -132,7 +136,11 @@ mod tests {
             CliError::NoSeed,
             CliError::BadPassphrase,
             CliError::InvalidMnemonic("x".into()),
-            CliError::InsufficientFunds { need: 1, have: 0, address: "xch1test".into() },
+            CliError::InsufficientFunds {
+                need: 1,
+                have: 0,
+                address: "xch1test".into(),
+            },
             CliError::Chain("x".into()),
             CliError::ConfirmTimeout,
             CliError::MintFailed("x".into()),

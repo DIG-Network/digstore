@@ -71,7 +71,10 @@ fn reason_byte_round_trips_known_values() {
         assert_eq!(RevocationReason::from_u8(byte), r);
     }
     // Unknown bytes degrade to Unspecified for the human label.
-    assert_eq!(RevocationReason::from_u8(200), RevocationReason::Unspecified);
+    assert_eq!(
+        RevocationReason::from_u8(200),
+        RevocationReason::Unspecified
+    );
 }
 
 #[test]

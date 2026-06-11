@@ -74,7 +74,10 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         let coin_id = built.datastore.coin.coin_id();
         let launcher_id = built.launcher_id;
         self.chain.push(built.bundle).await?;
-        Ok(MintOutcome { launcher_id, coin_id })
+        Ok(MintOutcome {
+            launcher_id,
+            coin_id,
+        })
     }
 
     async fn update_root(
@@ -124,7 +127,8 @@ mod tests {
     use chia_protocol::Coin;
 
     // Public BIP-39 test vector (NOT a real wallet).
-    const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+    const ABANDON: &str =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon \
         abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
         abandon abandon abandon art";
 
@@ -164,7 +168,11 @@ mod tests {
         let outcome = anchor.mint_empty_store(&keys, 0).await.unwrap();
 
         // launcher_id must be non-default (it's a real hash from the mint).
-        assert_ne!(outcome.launcher_id, Bytes32::default(), "launcher_id should be non-default");
+        assert_ne!(
+            outcome.launcher_id,
+            Bytes32::default(),
+            "launcher_id should be non-default"
+        );
 
         // Exactly one SpendBundle must have been pushed.
         let pushed_count = anchor.chain.pushed.lock().unwrap().len();

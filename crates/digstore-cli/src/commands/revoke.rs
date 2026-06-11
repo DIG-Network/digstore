@@ -22,20 +22,19 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: RevokeArgs) -> Result<(),
     let reason = parse_reason(&args.reason)?;
 
     // Exactly one of --root / --all must be given (clap already rejects both).
-    let root = match (&args.root, args.all) {
-        (Some(hex), false) => Some(
-            Bytes32::from_hex(hex)
-                .map_err(|_| CliError::InvalidArgument(format!("bad --root hex: {hex}")))?,
-        ),
-        (None, true) => None,
-        (None, false) => {
-            return Err(CliError::InvalidArgument(
+    let root =
+        match (&args.root, args.all) {
+            (Some(hex), false) => Some(
+                Bytes32::from_hex(hex)
+                    .map_err(|_| CliError::InvalidArgument(format!("bad --root hex: {hex}")))?,
+            ),
+            (None, true) => None,
+            (None, false) => return Err(CliError::InvalidArgument(
                 "specify --root <hex> to revoke one generation, or --all to revoke the whole store"
                     .into(),
-            ))
-        }
-        (Some(_), true) => unreachable!("clap conflicts_with rejects --root with --all"),
-    };
+            )),
+            (Some(_), true) => unreachable!("clap conflicts_with rejects --root with --all"),
+        };
 
     let base = config::resolve_remote_url(ctx, &args.remote)?;
     let rt = tokio::runtime::Builder::new_current_thread()

@@ -273,7 +273,9 @@ pub struct UrnArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore keys\n  digstore keys --root <hex>\n  digstore keys --json")]
+#[command(
+    after_help = "EXAMPLES:\n  digstore keys\n  digstore keys --root <hex>\n  digstore keys --json"
+)]
 pub struct KeysArgs {
     /// Generation root to list (hex); defaults to the current root.
     #[arg(long)]
@@ -316,7 +318,9 @@ fn parse_word_count(s: &str) -> Result<usize, String> {
 pub struct LockArgs {}
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore anchor\n  digstore anchor status\n  digstore anchor --wait-timeout 600")]
+#[command(
+    after_help = "EXAMPLES:\n  digstore anchor\n  digstore anchor status\n  digstore anchor --wait-timeout 600"
+)]
 pub struct AnchorArgs {
     /// `status` to inspect read-only; omitted to resume a pending anchor.
     #[command(subcommand)]
@@ -407,7 +411,12 @@ mod tests {
     #[test]
     fn parses_revoke_root_with_reason() {
         let cli = Cli::try_parse_from([
-            "digstore", "revoke", "--root", "abcd", "--reason", "compromise",
+            "digstore",
+            "revoke",
+            "--root",
+            "abcd",
+            "--reason",
+            "compromise",
         ])
         .unwrap();
         match cli.command {

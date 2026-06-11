@@ -166,9 +166,6 @@ mod tests {
     #[test]
     fn path_is_anchor_toml_under_dig_dir() {
         let td = TempDir::new().unwrap();
-        assert_eq!(
-            AnchorState::path(td.path()),
-            td.path().join("anchor.toml")
-        );
+        assert_eq!(AnchorState::path(td.path()), td.path().join("anchor.toml"));
     }
 }

@@ -20,7 +20,8 @@ use axum::{
 use digstore_core::{Bytes96, Decode, Tombstone};
 
 fn parse_sig(s: &str) -> Result<Bytes96, RemoteError> {
-    let raw = hex::decode(s).map_err(|_| RemoteError::Validation("bad tombstone sig hex".into()))?;
+    let raw =
+        hex::decode(s).map_err(|_| RemoteError::Validation("bad tombstone sig hex".into()))?;
     let arr: [u8; 96] = raw
         .try_into()
         .map_err(|_| RemoteError::Validation("tombstone sig must be 96 bytes".into()))?;
@@ -58,7 +59,9 @@ pub async fn post_tombstone(
     // 422 on malformed record/signature.
     let record = match hex::decode(&req.record) {
         Ok(r) => r,
-        Err(_) => return RemoteError::Validation("bad tombstone record hex".into()).into_response(),
+        Err(_) => {
+            return RemoteError::Validation("bad tombstone record hex".into()).into_response()
+        }
     };
     let tombstone = match Tombstone::from_bytes(&record) {
         Ok(t) => t,
@@ -82,7 +85,9 @@ pub async fn post_tombstone(
     // Fail-closed: a bad or wrong-key tombstone is rejected, never stored.
     let pk = match digstore_crypto::bls::PublicKey::from_bytes(&head.public_key) {
         Ok(p) => p,
-        Err(_) => return RemoteError::Validation("store has no valid public key".into()).into_response(),
+        Err(_) => {
+            return RemoteError::Validation("store has no valid public key".into()).into_response()
+        }
     };
     if !digstore_crypto::verify_tombstone(&pk, &tombstone, &sig) {
         return RemoteError::Unauthorized("tombstone signature does not verify".into())

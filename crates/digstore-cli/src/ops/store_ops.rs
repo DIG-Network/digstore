@@ -1505,7 +1505,10 @@ mod tests {
         let res = init_store(&ctx, false, None, Some(launcher)).unwrap();
         // store_id is the override, NOT SHA-256(pubkey); host key still generated.
         assert_eq!(res.store_id, launcher);
-        assert_ne!(res.store_id, digstore_crypto::sha256(&res.host_public_key.0));
+        assert_ne!(
+            res.store_id,
+            digstore_crypto::sha256(&res.host_public_key.0)
+        );
         assert!(td.path().join("signing_key.bin").exists());
         assert!(td.path().join("trusted_keys.json").exists());
         let cfg = ctx.load_config().unwrap();
