@@ -59,9 +59,13 @@ impl ChainReads for Coinset {
             )));
         }
 
-        let coins = resp
-            .coin_records
-            .unwrap_or_default()
+        let coin_records = resp.coin_records.ok_or_else(|| {
+            ChainError::Chain(
+                "get_coin_records_by_puzzle_hashes: success=true but coin_records absent"
+                    .to_string(),
+            )
+        })?;
+        let coins = coin_records
             .into_iter()
             .filter(|cr| !cr.spent)
             .map(|cr| cr.coin)
@@ -175,6 +179,7 @@ pub(crate) mod mock {
         }
 
         async fn coin_spend(&self, coin_id: Bytes32, _h: u32) -> Result<Option<CoinSpend>> {
+            // mock returns the spend by coin_id only; spent_height is ignored
             Ok(self.spends.get(&coin_id).cloned())
         }
 
@@ -183,7 +188,7 @@ pub(crate) mod mock {
         }
 
         async fn push(&self, bundle: SpendBundle) -> Result<()> {
-            self.pushed.lock().unwrap().push(bundle);
+            self.pushed.lock().expect("MockChain pushed mutex poisoned").push(bundle);
             Ok(())
         }
     }
