@@ -225,6 +225,15 @@ impl Ui {
         }
     }
 
+    /// Prompts for a passphrase with hidden (non-echoed) input.
+    /// Returns `None` when not attached to an interactive terminal.
+    pub fn prompt_password(&self, prompt: &str) -> Option<String> {
+        if !self.interactive() {
+            return None;
+        }
+        rpassword::prompt_password(format!("{prompt}: ")).ok()
+    }
+
     /// Yes/no prompt. Returns `default` when non-interactive or on empty input.
     pub fn confirm(&self, prompt: &str, default: bool) -> bool {
         if !self.interactive() {
