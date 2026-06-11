@@ -118,7 +118,8 @@ impl Compiler {
             merkle_leaves,
             filler: Vec::new(),
             // Optional on-chain anchor pointer (id 12), embedded verbatim. It is
-            // a fixed-size addition independent of the filler budget math below.
+            // a content-sized addition already included in `blob_len_without_filler`
+            // below (it contains variable-length strings, so it is NOT fixed-size).
             chain_state,
         };
         let blob_len_without_filler = encode_data_section(&inputs).len();

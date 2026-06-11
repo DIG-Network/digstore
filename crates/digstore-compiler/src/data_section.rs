@@ -241,6 +241,15 @@ pub struct ModuleIdentity {
 /// that additionally requires verifying that the served root equals the launcher
 /// singleton's current on-chain root, which the current wire protocol does not
 /// transport (the chain is the real authority for the current root).
+/// Extract the raw data-section blob from a compiled module (the bytes a
+/// `DataView`/`read_chain_state` parses). Thin public wrapper over the internal
+/// extraction used by `verify_module_root`.
+pub fn extract_data_section_blob(module: &[u8]) -> Result<Vec<u8>, crate::error::CompilerError> {
+    use crate::inject::extract_data_section;
+    use crate::pipeline::DATA_SECTION_MEM_OFFSET;
+    extract_data_section(module, DATA_SECTION_MEM_OFFSET)
+}
+
 pub fn verify_module_root(
     module: &[u8],
     expected_store_id: &Bytes32,

@@ -97,6 +97,35 @@ fn commit_anchors_and_finalizes_on_confirm() {
     assert_eq!(last_root, committed_root);
 }
 
+/// The compiled module carries the on-chain `ChainState` pointer embedded at
+/// commit finalize: after a confirmed (mock) anchor, the `.dig` module's data
+/// section decodes to a `ChainState` with the store's launcher id and network.
+#[test]
+fn commit_embeds_chain_state_in_module() {
+    let dir = common::tmp_dig();
+    common::dig(&dir).arg("init").assert().success();
+    std::fs::write(dir.path().join("a.txt"), b"hello").unwrap();
+    common::dig(&dir).args(["add", "a.txt"]).assert().success();
+    let out = common::dig(&dir)
+        .args(["--json", "commit", "-m", "x"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let modules = common::store_dir(&dir).join("modules");
+    let module = std::fs::read_dir(&modules)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.extension().map(|x| x == "dig").unwrap_or(false))
+        .expect("a .dig module");
+    let bytes = std::fs::read(&module).unwrap();
+    let cs = digstore_cli::ops::store_ops::read_module_chain_state(&bytes)
+        .expect("read")
+        .expect("module carries ChainState");
+    assert_eq!(cs.network, "mainnet");
+    assert_ne!(cs.launcher_id, digstore_core::Bytes32([0u8; 32]));
+}
+
 /// Commit blocks and times out: with DIGSTORE_ANCHOR_MOCK_TIMEOUT=1 the confirm
 /// stays Pending → exit 14, NO new generation (roots.log not advanced), staging
 /// intact, anchor.toml Pending with last_root = the would-be root.

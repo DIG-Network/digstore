@@ -58,14 +58,36 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let confirmed =
         anchor_ux::confirm_with_ui(ui, anchor.as_ref(), coin_id, args.wait_timeout, ui.json())?;
     match confirmed {
-        ConfirmState::Confirmed { .. } => {
+        ConfirmState::Confirmed { height } => {
             // Record the confirmation BEFORE finalizing local state.
             state.apply_confirm(&confirmed);
             state.save(&ctx.dig_dir)?;
 
+            // Build the on-chain pointer to embed in the compiled module. The
+            // launcher id IS the store id; the coin id is the confirmed update
+            // coin. `coinset_url` is a transport hint read from the global config.
+            let to_core = |b: Bytes32| {
+                let mut a = [0u8; 32];
+                a.copy_from_slice(b.as_ref());
+                digstore_core::Bytes32(a)
+            };
+            let coinset_url = digstore_chain::config::dig_home()
+                .and_then(|home| digstore_chain::config::GlobalConfig::load(&home))
+                .map(|g| g.coinset_url)
+                .unwrap_or_else(|_| digstore_chain::config::DEFAULT_COINSET_URL.to_string());
+            let cs = digstore_core::datasection::ChainState {
+                version: digstore_core::datasection::ChainState::VERSION,
+                network: "mainnet".to_string(),
+                launcher_id: to_core(launcher_id),
+                coin_id: to_core(coin_id),
+                confirmed_height: height,
+                tx_id: state.last_tx_id.clone(), // best-effort; may be empty
+                coinset_url,
+            };
+
             // Only NOW advance local history (roots.log + generation + module +
             // clear staging). The chain has the root; the local store catches up.
-            let outcome = store_ops::finalize_commit(ctx, prepared)?;
+            let outcome = store_ops::finalize_commit(ctx, prepared, Some(cs))?;
             let coin_hex = hex::encode(coin_id.as_ref());
 
             if ui.json() {
