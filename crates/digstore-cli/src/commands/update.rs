@@ -105,10 +105,14 @@ pub fn select_installer_asset(_assets: &[Asset]) -> Option<&Asset> {
 
 /// Windows installer selection, factored out so it is unit-testable on any host.
 pub fn select_windows_installer(assets: &[Asset]) -> Option<&Asset> {
-    // Prefer the NSIS setup (it can update an existing install in place).
-    let nsis = assets
-        .iter()
-        .find(|a| a.name.to_ascii_lowercase().ends_with("-setup.exe"));
+    // Prefer the setup installer (it can update an existing install in place).
+    // The release asset is named `DigStore-Setup-<ver>-windows-x64.exe`, so we
+    // match any `.exe` whose name carries the "setup" marker rather than a fixed
+    // `-setup.exe` suffix (the version/arch tail comes after "Setup").
+    let nsis = assets.iter().find(|a| {
+        let n = a.name.to_ascii_lowercase();
+        n.ends_with(".exe") && n.contains("setup")
+    });
     if nsis.is_some() {
         return nsis;
     }
@@ -468,6 +472,18 @@ mod tests {
         ];
         let picked = select_windows_installer(&assets).unwrap();
         assert_eq!(picked.name, "digstore-0.4.0-x86_64-setup.exe");
+    }
+
+    #[test]
+    fn windows_installer_matches_release_asset_name() {
+        // The actual release asset (Setup mid-name, version/arch tail after).
+        let assets = vec![
+            asset("DigStore-Setup-0.4.4-linux-x86_64.AppImage"),
+            asset("DigStore-Setup-0.4.4-macos.dmg"),
+            asset("DigStore-Setup-0.4.4-windows-x64.exe"),
+        ];
+        let picked = select_windows_installer(&assets).unwrap();
+        assert_eq!(picked.name, "DigStore-Setup-0.4.4-windows-x64.exe");
     }
 
     #[test]
