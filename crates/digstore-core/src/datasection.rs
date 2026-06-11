@@ -368,10 +368,7 @@ impl ChainState {
         }
         impl<'a> R<'a> {
             fn take(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
-                let end = self
-                    .pos
-                    .checked_add(n)
-                    .ok_or(DecodeError::UnexpectedEof)?;
+                let end = self.pos.checked_add(n).ok_or(DecodeError::UnexpectedEof)?;
                 if end > self.b.len() {
                     return Err(DecodeError::UnexpectedEof);
                 }
