@@ -194,19 +194,41 @@ with `MintOutcome { launcher_id, coin_id, tx_id }`, `UpdateOutcome { new_coin_id
 ## Phase 5 — CLI integration
 
 ### Task 5.1: error variants + async bridge
-- [ ] Add `CliError::{InsufficientFunds { need: u64, have: u64, address: String }, Chain(String), ConfirmTimeout, MintFailed(String), UpdateFailed(String)}` + hints (fund address, "check coinset/network", "run `digstore anchor status`"). Map `ChainError` chain variants through. Add `crates/digstore-cli/src/runtime.rs` with `pub fn block_on<F: Future>(f: F) -> F::Output` using a cached `tokio` runtime. Commit.
+- [x] Add `CliError::{InsufficientFunds { need: u64, have: u64, address: String }, Chain(String), ConfirmTimeout, MintFailed(String), UpdateFailed(String)}` + hints (fund address, "check coinset/network", "run `digstore anchor status`"). Map `ChainError` chain variants through. Add `crates/digstore-cli/src/runtime.rs` with `pub fn block_on<F: Future>(f: F) -> F::Output` using a cached `tokio` runtime. Commit.
 
 ### Task 5.2: `init` mints (hard gate)
-- [ ] Gate: resolve seed (exists→unlock via the seed-mgmt `resolve_passphrase`; else `NoSeed`). Preflight `balances`; if short → `InsufficientFunds` with the receive address. `mint_empty_store` → on submit, write local store keyed on `launcher_id` as `store_id` + `[anchor] status=pending`; wait for confirm (Task 5.4 UX); flip to `confirmed`. On pre-submit failure → roll back scaffold; on post-submit timeout → keep store `pending`, exit non-zero. Tests with mock anchor. Commit.
+- [x] Gate: resolve seed (exists→unlock via the seed-mgmt `resolve_passphrase`; else `NoSeed`). Preflight `balances`; if short → `InsufficientFunds` with the receive address. `mint_empty_store` → on submit, write local store keyed on `launcher_id` as `store_id` + `[anchor] status=pending`; wait for confirm (Task 5.4 UX); flip to `confirmed`. On pre-submit failure → roll back scaffold; on post-submit timeout → keep store `pending`, exit non-zero. Tests with mock anchor. Commit.
 
 ### Task 5.3: `commit` updates (hard gate, blocks until confirmed)
-- [ ] After staging→new root: `update_root` → block until confirmed → only then finalize the generation (advance `roots.log`). On failure/timeout → abort, roots.log untouched. Idempotency: if an `update` tx for this root is already pending, reuse it. Tests with mock anchor. Commit.
+- [x] After staging→new root: `update_root` → block until confirmed → only then finalize the generation (advance `roots.log`). On failure/timeout → abort, roots.log untouched. Idempotency: if an `update` tx for this root is already pending, reuse it. Tests with mock anchor. Commit.
 
 ### Task 5.4: confirmation UX + `anchor`/`anchor status` + `[anchor]` config
-- [ ] Staged human-friendly progress (submitted→mempool→confirming N/M→confirmed) with `--wait-timeout` (default 300s) and `--json` structured states. `digstore anchor` resumes a `pending` store; `digstore anchor status` queries coinset for the active store. Read/write the `[anchor]` table in `config.toml` (`store_id`/`coin_id`/`status`/`last_root`/`last_tx_id`/`confirmed_height`). Tests. Commit.
+- [x] Staged human-friendly progress (submitted→mempool→confirming N/M→confirmed) with `--wait-timeout` (default 300s) and `--json` structured states. `digstore anchor` resumes a `pending` store; `digstore anchor status` queries coinset for the active store. Read/write the `[anchor]` table in `config.toml` (`store_id`/`coin_id`/`status`/`last_root`/`last_tx_id`/`confirmed_height`). Tests. Commit.
 
 ### Task 5.5: docs + full verification
-- [ ] README: anchoring section (init mints, commit anchors, funding, mainnet/coinset, `anchor status`). Run `cargo test -p digstore-chain -p digstore-cli`. Optionally a gated `DIGSTORE_E2E` testnet end-to-end test (never in CI). Commit.
+- [x] README: anchoring section (init mints, commit anchors, funding, mainnet/coinset, `anchor status`). Run `cargo test -p digstore-chain -p digstore-cli`. Gated `DIGSTORE_E2E` mainnet end-to-end test added (`crates/digstore-cli/tests/e2e_mainnet.rs`, `#[ignore]` + env-guarded; never in CI). Commit.
+
+---
+
+## Phase 5 implementation notes — accepted deviations
+
+Two deviations from the plan as written were accepted during implementation:
+
+- **Anchor state lives in a sibling `anchor.toml`, not in `config.toml`.** Tasks
+  5.2/5.4 specified an `[anchor]` table inside the store's `config.toml`. In
+  practice digstore-core owns `config.toml` and its `save_config` round-trips a
+  typed struct, so any CLI-added `[anchor]` table would be **truncated** on the
+  next core write. The CLI therefore owns a separate `<store>/anchor.toml`
+  (network, `store_id` = launcher, `coin_id`, `status` = pending|confirmed,
+  `last_root`, `last_tx_id`, `confirmed_height`) that core never touches.
+- **`store_id := launcher id` required relaxing the §20.1 self-cert check.**
+  Previously `store_id == SHA256(module pubkey)`; now it is the on-chain launcher
+  id, which is unrelated to the module's signing key. This meant relaxing the
+  §20.1 self-certification check in `digstore_compiler::verify_module_root` and
+  re-pointing remote head / tombstone signature verification at the module's
+  embedded public key (rather than re-deriving it from `store_id`). Documented as
+  residual #6 in `SECURITY.md`; third-party on-chain root verification on
+  clone/pull is the tracked follow-up.
 
 ---
 
