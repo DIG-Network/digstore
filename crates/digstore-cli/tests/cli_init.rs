@@ -39,6 +39,32 @@ fn init_twice_fails_with_exit_2() {
 }
 
 #[test]
+fn init_when_disk_store_exists_but_registry_lost_fails_before_minting() {
+    // Money-relevant guard: if the workspace registry (workspace.toml) and the
+    // on-disk store layout disagree — e.g. a prior run minted + scaffolded the
+    // store but the registry was lost/edited — a re-`init` must NOT mint a second
+    // singleton (spending XCH) only to then hit the disk "already initialized"
+    // check and orphan the fresh coin. The disk-level guard runs PRE-mint.
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    assert!(common::store_dir(&dir).join("config.toml").exists());
+
+    // Drop the registry so the `ws.stores.contains_key` check would pass, leaving
+    // only the disk-level guard to catch the still-scaffolded store on disk.
+    let registry = dir.path().join(".dig").join("workspace.toml");
+    assert!(registry.exists(), "registry written by first init");
+    std::fs::remove_file(&registry).unwrap();
+
+    // Second init: exit 2 (InvalidArgument) from the PRE-mint disk guard.
+    dig(&dir)
+        .arg("init")
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("already initialized"));
+}
+
+#[test]
 fn init_json_emits_store_id() {
     let dir = tmp_dig();
     let out = dig(&dir).args(["--json", "init"]).output().unwrap();
