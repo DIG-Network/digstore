@@ -6,7 +6,9 @@
 
 **Architecture:** Extend the existing `digstore-chain` crate (seed management already shipped) with `coinset.rs` (HTTP client), `keys.rs` (mnemonic→synthetic key→puzzle hash), `singleton.rs` (build/sign mint+update over datalayer-driver low-level fns + reconstruct `DataStore` from coinset), and `anchor.rs` (the `ChainAnchor` trait + impl). `digstore-cli` gates `init`/`commit` on seed+funds, adds confirmation UX, and `anchor`/`anchor status` commands. Commands that touch the chain run async via a `tokio` runtime bridged from the sync dispatch.
 
-**Tech stack:** Rust. `datalayer-driver 3.0` (Peer-free builders: `mint_store`, `update_store_metadata`, `select_coins`, `sign_coin_spends`, `spend_bundle_to_hex`, `master_secret_key_to_wallet_synthetic_secret_key`, `synthetic_key_to_puzzle_hash`, `get_mainnet_genesis_challenge`), `chia-protocol`/`chia-sdk-driver` types it re-exports (`Coin`, `CoinSpend`, `SpendBundle`, `DataStore`, `Proof`), `reqwest` (coinset HTTP), `serde_json`, `tokio`. Seed crypto reuses the shipped `digstore-chain::seed`/`unlock`.
+**Tech stack:** Rust. `datalayer-driver 3.0` (Peer-free builders: `mint_store`, `update_store_metadata`, `select_coins`, `sign_coin_spends`, `spend_bundle_to_hex`, `master_secret_key_to_wallet_synthetic_secret_key`, `synthetic_key_to_puzzle_hash`, `get_mainnet_genesis_challenge`), **`chia-sdk-coinset 0.30` (`CoinsetClient` — a ready-made coinset.org HTTP client implementing the `ChiaRpcClient` trait: `push_tx`, `get_coin_record_by_name`, `get_coin_records_by_puzzle_hashes`, `get_coin_records_by_parent_ids`, `get_puzzle_and_solution`, `get_blockchain_state`)**, `chia-protocol`/`chia-sdk-driver` types (`Coin`, `CoinSpend`, `SpendBundle`, `DataStore`, `Proof`), `tokio`, `serde_json`. Seed crypto reuses the shipped `digstore-chain::seed`/`unlock`.
+
+> **Discovery (Task 0.1):** the dep tree compiles cleanly on Windows and pulls `chia-sdk-coinset::CoinsetClient`, which already provides the entire coinset HTTP surface returning `chia-protocol` types. This eliminates the hand-written HTTP client (old Phase 1) and supplies the exact primitives (`get_coin_records_by_parent_ids` + `get_puzzle_and_solution`) needed for singleton lineage sync. The remaining true unknown is narrowed to: does `chia-wallet-sdk`/`datalayer-driver` expose a `DataStore` sync that runs over a `ChiaRpcClient` (vs. the Peer-based `sync_store_from_launcher_id`), or must we walk the lineage manually with those two RPCs? Phase 0 answers exactly that.
 
 **Spec:** `docs/superpowers/specs/2026-06-11-onchain-anchoring-design.md` (see the "Verification spike results (2026-06-11)" section — it supersedes the earlier "wrap dig-store-coin" assumption).
 
@@ -73,12 +75,12 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 - [ ] **Step 1:** Write an example `main` (async, `#[tokio::main]`) that, given a testnet mnemonic + `DIGSTORE_PROTO_PHRASE` env:
   1. `bip39` mnemonic → seed → `chia-protocol`/`datalayer-driver` master `SecretKey` (pin the exact derivation: `bip39` seed → BLS master key — confirm whether dig-wallet/datalayer-driver expose a `master_secret_key_from_seed`-style fn, else use `chia-bls` `SecretKey::from_seed`).
   2. `master_secret_key_to_wallet_synthetic_secret_key(&master)` → synthetic SK; `secret_key_to_public_key` → synthetic PK; `synthetic_key_to_puzzle_hash(&pk)` → owner puzzle hash.
-  3. POST `https://api-testnet.coinset.org/get_coin_records_by_puzzle_hash` with the owner puzzle hash → parse unspent `Coin`s. **Record the exact JSON response shape** (coin fields, hex prefixes) in this plan.
+  3. `chia_sdk_coinset::CoinsetClient::new("https://api-testnet.coinset.org".into())`; `get_coin_records_by_puzzle_hashes([owner_ph], None, None, Some(false))` → unspent `Coin`s (CoinsetClient handles JSON; no hand-rolled HTTP).
   4. `select_coins(&coins, fee)` for a small fee.
   5. `mint_store(synthetic_pk, selected_coins, root_hash = [0u8;32], None, None, None, None, owner_puzzle_hash, vec![], fee)` → `SuccessResponse`. **Record `SuccessResponse`'s real fields** (coin_spends? new `DataStore`? launcher id?) by inspecting the compiler/type.
-  6. Build a `SpendBundle` from the response's coin spends + `sign_coin_spends(&spends, &[synthetic_sk], for_testnet = true)`; `spend_bundle_to_hex`.
-  7. POST `https://api-testnet.coinset.org/push_tx` with the spend bundle JSON → record the ack response shape.
-  8. Poll `get_coin_record_by_name` for the launcher coin until confirmed; print the launcher id (= store_id).
+  6. Build a `SpendBundle` from the response's coin spends + `sign_coin_spends(&spends, &[synthetic_sk], for_testnet = true)`.
+  7. `client.push_tx(spend_bundle)` → inspect `PushTxResponse`.
+  8. Poll `client.get_coin_record_by_name(launcher_id)` until confirmed; print the launcher id (= store_id).
 - [ ] **Step 2:** Run it manually on testnet11 with a funded test wallet. Iterate until a store mints and confirms.
 - [ ] **Step 3:** **Record in this plan**, under "Phase 0 findings" below: exact `SuccessResponse` fields; the coinset request/response JSON for `get_coin_records_by_puzzle_hash`, `push_tx`, `get_coin_record_by_name`; the precise key-derivation chain; how the launcher id is obtained from the mint response.
 
@@ -100,31 +102,20 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 ---
 
-## Phase 1 — Coinset HTTP client (`coinset.rs`)
+## Phase 1 — Coinset access (`coinset.rs`) — thin wrapper over `chia_sdk_coinset::CoinsetClient`
 
-Fully specifiable now (REST shapes confirmed in Phase 0; the trait + tests do not depend on Chia internals).
+The hand-written HTTP client is no longer needed: `chia_sdk_coinset::CoinsetClient` provides the full `ChiaRpcClient` surface returning `chia-protocol` types. Phase 1 just provides a `Chain` read-interface our code (and tests) can mock, backed by `CoinsetClient` in production.
 
-### Task 1.1: `CoinsetApi` trait + `CoinsetClient` (reqwest) + stub tests
+### Task 1.1: `ChainReads` trait over `ChiaRpcClient` + mainnet constructor
 
-**Files:** `crates/digstore-chain/src/coinset.rs`, `crates/digstore-chain/Cargo.toml` (add `wiremock` dev-dep)
+**Files:** `crates/digstore-chain/src/coinset.rs`, `crates/digstore-chain/Cargo.toml` (add `chia-sdk-coinset = "0.30"`, `async-trait`)
 
-- [ ] **Step 1 (test first):** Add `wiremock = "0.6"` and `tokio` test feature to `[dev-dependencies]`. Write a test that starts a `wiremock` server returning a canned `push_tx` success body and asserts `CoinsetClient::push_tx` parses `{ "success": true, "status": "SUCCESS" }` into `Ok(TxAck { success: true, .. })`, and a `{ "success": false, "error": "..." }` body into an error.
-- [ ] **Step 2 (test):** `get_coin_records_by_puzzle_hash` returns parsed `Vec<CoinRecord>` from a canned body (use the exact shape recorded in Phase 0).
-- [ ] **Step 3 (test):** `get_coin_record_by_name` returns `Option<CoinRecord>` (None when `coin_record: null`).
-- [ ] **Step 4 (implement):** Define:
-```rust
-#[async_trait::async_trait]
-pub trait CoinsetApi: Send + Sync {
-    async fn push_tx(&self, spend_bundle_json: serde_json::Value) -> Result<TxAck>;
-    async fn coin_records_by_puzzle_hash(&self, puzzle_hash_hex: &str, include_spent: bool) -> Result<Vec<CoinRecord>>;
-    async fn coin_record_by_name(&self, name_hex: &str) -> Result<Option<CoinRecord>>;
-    async fn coin_records_by_parent_ids(&self, parent_ids_hex: &[String], include_spent: bool) -> Result<Vec<CoinRecord>>;
-    async fn puzzle_and_solution(&self, coin_id_hex: &str, height: u32) -> Result<PuzzleAndSolution>;
-    async fn blockchain_state(&self) -> Result<BlockchainState>; // peak height
-}
-```
-plus `CoinsetClient { base_url: String, http: reqwest::Client }` implementing it via POST `{base_url}/{endpoint}`, and the `CoinRecord`/`TxAck`/`PuzzleAndSolution`/`BlockchainState` structs (fields per Phase 0). `base_url` defaults to `https://api.coinset.org`.
-- [ ] **Step 5:** `cargo test -p digstore-chain coinset::`. Commit `feat(chain): coinset.org HTTP client`.
+- [ ] **Step 1:** Add `chia-sdk-coinset = "0.30"` and `async-trait = "0.1"` to `[dependencies]`. Confirm `cargo build -p digstore-chain` still passes.
+- [ ] **Step 2 (test):** Define a `ChainReads` trait exposing only what anchoring needs (`unspent_coins_for(puzzle_hash) -> Vec<Coin>`, `coin_record(name) -> Option<CoinRecord>`, `coin_records_by_parent(parent) -> Vec<CoinRecord>`, `puzzle_and_solution(coin_id, height)`, `peak_height() -> u32`, `push(spend_bundle: SpendBundle) -> PushTxResponse`). Write a hand-rolled mock impl + a test that a canned mock returns expected coins. (The mock — not a live server — is what the rest of the plan tests against.)
+- [ ] **Step 3 (implement):** `pub struct Coinset(pub chia_sdk_coinset::CoinsetClient)` with `Coinset::mainnet()` = `CoinsetClient::new("https://api.coinset.org".into())` (and `Coinset::with_url`), implementing `ChainReads` by delegating to the client's `ChiaRpcClient` methods and adapting responses to `chia-protocol` `Coin`s. Map client errors to `ChainError::Chain`.
+- [ ] **Step 4:** `cargo test -p digstore-chain coinset::`. Commit `feat(chain): coinset access via chia-sdk-coinset CoinsetClient`.
+
+> Note: a live testnet smoke test of `Coinset` belongs behind a `DIGSTORE_E2E` gate (Task 5.5), not in the default suite.
 
 ---
 
