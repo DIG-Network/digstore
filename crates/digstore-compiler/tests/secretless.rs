@@ -85,6 +85,7 @@ fn test_module_is_secretless() {
         sample_manifest(),
         common::no_auth(),
         &trusted,
+        None,
     )
     .expect("compiles");
 

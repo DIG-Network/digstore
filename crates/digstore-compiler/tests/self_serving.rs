@@ -194,6 +194,7 @@ fn real_compiled_module_serves_itself_with_verifying_proof() {
         common::sample_manifest(),
         common::no_auth(),
         &trusted,
+        None,
     )
     .expect("real module compiles");
 
@@ -308,6 +309,7 @@ fn real_compiled_module_miss_returns_decoy_failing_the_client_proof_gate() {
         common::sample_manifest(),
         common::no_auth(),
         &common::trusted_keys(),
+        None,
     )
     .expect("compiles");
     let module = std::fs::read(&outcome.result.output_path).unwrap();
@@ -404,6 +406,7 @@ fn obfuscation_is_behavior_preserving_identical_served_bytes_on_and_off() {
             common::sample_manifest(),
             common::no_auth(),
             &common::trusted_keys(),
+            None,
         )
         .expect("compiles");
         let bytes = std::fs::read(&outcome.result.output_path).unwrap();
@@ -501,6 +504,7 @@ fn obfuscated_real_module_still_serves_itself_with_verifying_proof() {
         common::sample_manifest(),
         common::no_auth(),
         &common::trusted_keys(),
+        None,
     )
     .expect("obfuscated module compiles");
     let module = std::fs::read(&outcome.result.output_path).unwrap();

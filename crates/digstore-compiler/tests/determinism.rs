@@ -21,6 +21,7 @@ fn compile_to_bytes(dir: &std::path::Path, obfuscate: bool) -> Vec<u8> {
         sample_manifest(),
         common::no_auth(),
         &trusted_keys(),
+        None,
     )
     .expect("compiles");
     std::fs::read(&outcome.result.output_path).unwrap()

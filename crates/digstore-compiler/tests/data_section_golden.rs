@@ -46,6 +46,7 @@ fn fixed_inputs() -> DataSectionInputs {
         chunk_pool_bodies: vec![b"abcdef".to_vec()],
         merkle_leaves: leaves,
         filler: vec![0x09; 16],
+        chain_state: None,
     }
 }
 

@@ -26,6 +26,7 @@ fn empty_trusted_set_is_refused() {
         sample_manifest(),
         common::no_auth(),
         &[],
+        None,
     )
     .unwrap_err();
     assert!(matches!(err, CompilerError::NoTrustedKeys));
@@ -47,6 +48,7 @@ fn produces_result_with_exact_filename_and_stats() {
         sample_manifest(),
         common::no_auth(),
         &trusted_keys(),
+        None,
     )
     .expect("compiles");
 
@@ -97,6 +99,7 @@ fn obfuscation_flag_sets_stat_and_still_writes_valid_module() {
         sample_manifest(),
         common::no_auth(),
         &trusted_keys(),
+        None,
     )
     .expect("compiles");
     assert!(outcome.detail.obfuscation_applied);
@@ -123,6 +126,7 @@ fn pool_byte_len_is_total_unique_content_bytes() {
         sample_manifest(),
         common::no_auth(),
         &trusted_keys(),
+        None,
     )
     .unwrap();
     // shared-chunk-body-0000(22) + alpha-body-1111(15) + beta-body-2222(14) = 51.
