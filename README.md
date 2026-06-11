@@ -249,6 +249,13 @@ digstore anchor status --json   # machine-readable state
 Per-store anchor state (network, store id / launcher, coin id, status, last root,
 last tx id, confirmed height) is recorded in the store's `anchor.toml`.
 
+The compiled `.dig` module also embeds the on-chain pointer (network, launcher/store id,
+current coin id, confirmed height, and a coinset endpoint hint) directly in its data
+section. `digstore anchor status` surfaces this alongside the local `anchor.toml` state
+(use `--json` for machine-readable output); `digstore anchor inspect <module.dig>` dumps
+the pointer from any module file without a local workspace. The embedded coinset URL is
+a hint only — local config and flags always take precedence.
+
 > Note: `clone`/`pull` verify the publisher's signature over the served head, but
 > do **not** yet perform third-party verification of the on-chain root against the
 > singleton — that is a tracked follow-up (see [`SECURITY.md`](SECURITY.md)).
@@ -274,7 +281,8 @@ last tx id, confirmed height) is recorded in the store's `anchor.toml`.
 | `digstore remote add\|list\|remove …` | Manage remotes |
 | `digstore clone <url>` / `push [remote]` / `pull [remote]` | Sync with a remote (verified) |
 | `digstore anchor [--wait-timeout <s>]` | Resume a pending on-chain anchor (confirm the coin, flip to confirmed) |
-| `digstore anchor status [--json]` | Show the active store's anchor state (read-only) |
+| `digstore anchor status [--json]` | Show the active store's anchor state + embedded module chain pointer (read-only) |
+| `digstore anchor inspect <module.dig> [--json]` | Dump the on-chain pointer embedded in any module file (read-only, no workspace needed) |
 | `digstore seed generate\|import\|status` / `digstore lock` | Manage the encrypted wallet seed used for anchoring |
 
 Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`

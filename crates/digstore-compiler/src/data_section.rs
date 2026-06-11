@@ -481,10 +481,7 @@ mod tests {
         // uniform-size padding still works. Both bodies are slices into `blob`.
         let view = DataView::parse(&blob).unwrap();
         let filler_ptr = view.section(SectionId::Filler).expect("filler").as_ptr() as usize;
-        let chain_ptr = view
-            .section(SectionId::ChainState)
-            .expect("chain")
-            .as_ptr() as usize;
+        let chain_ptr = view.section(SectionId::ChainState).expect("chain").as_ptr() as usize;
         assert!(
             filler_ptr > chain_ptr,
             "Filler must come after ChainState in the blob"

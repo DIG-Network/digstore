@@ -1,10 +1,22 @@
 # Chainstate-in-WASM — Design
 
 **Date:** 2026-06-11
-**Status:** Approved (design)
+**Status:** Phase A implemented; Phase B pending
 **Scope:** Couple a store's on-chain anchor state into its compiled WASM module so the
 module is self-describing for chain lookup, and (fast-follow) make `clone`/`pull`
 verify served content against the on-chain singleton.
+
+## Implementation status
+
+**Phase A (embed + read) is implemented** as of 2026-06-11. The `ChainState` section
+(`SectionId::ChainState = 12`) is encoded into every committed `.dig` module; `digstore
+anchor status` reads and surfaces it; `digstore anchor inspect <module.dig>` decodes it
+from any module file. All Phase A tests pass; workspace builds and clippy are clean.
+
+**Phase B (chain-verified clone/pull) remains the sequenced follow-up.** It is in scope
+and tracked — `clone`/`pull` do not yet verify the served root against the on-chain
+singleton. That gap is documented in `SECURITY.md` (residual #6) and will be closed when
+Phase B lands.
 
 ## Summary
 
