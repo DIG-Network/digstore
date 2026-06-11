@@ -181,7 +181,9 @@ impl Workspace {
 
     pub fn set_active(&mut self, name: &str) -> Result<(), CliError> {
         if !self.stores.contains_key(name) {
-            return Err(CliError::InvalidArgument(format!("unknown store '{name}'")));
+            return Err(CliError::InvalidArgument(format!(
+                "unknown store '{name}'; run `digstore stores` to list available stores"
+            )));
         }
         self.active = Some(name.to_string());
         Ok(())
@@ -210,7 +212,9 @@ impl Workspace {
             if self.stores.contains_key(name) {
                 return Ok(name.to_string());
             }
-            return Err(CliError::InvalidArgument(format!("unknown store '{name}'")));
+            return Err(CliError::InvalidArgument(format!(
+                "unknown store '{name}'; run `digstore stores` to list available stores"
+            )));
         }
         if let Some(active) = &self.active {
             if self.stores.contains_key(active) {

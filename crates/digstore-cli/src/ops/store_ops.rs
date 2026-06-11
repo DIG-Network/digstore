@@ -692,7 +692,9 @@ pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcom
         .records()
         .map_err(|e| CliError::Other(anyhow::anyhow!("read staging: {e}")))?;
     if records.is_empty() {
-        return Err(CliError::InvalidArgument("nothing staged to commit".into()));
+        return Err(CliError::InvalidArgument(
+            "nothing staged to commit; run `digstore add <paths>` to stage files first".into(),
+        ));
     }
 
     // Defensive cap check (§3): the stage cap is enforced atomically at `add`,
