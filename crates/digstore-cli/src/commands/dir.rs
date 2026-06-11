@@ -6,7 +6,12 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: crate::cli::DirArgs) -> Result<(), C
     let name = ctx
         .store_name
         .clone()
-        .ok_or_else(|| CliError::InvalidArgument("no store selected".into()))?;
+        .ok_or_else(|| {
+            CliError::InvalidArgument(
+                "no store selected; run `digstore stores` to list or `digstore use <name>` to select"
+                    .into(),
+            )
+        })?;
     let mut ws = crate::workspace::Workspace::load_or_migrate(&ctx.workspace_dir)?;
     match args.path {
         None => {
