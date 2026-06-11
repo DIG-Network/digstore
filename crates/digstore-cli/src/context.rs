@@ -185,6 +185,12 @@ impl CliContext {
     pub fn salt_path(&self) -> PathBuf {
         self.dig_dir.join("secret_salt.hex")
     }
+
+    /// Path of the CLI-owned on-chain anchor state (`anchor.toml`). Sibling of
+    /// the core-owned `config.toml`; the CLI owns this file end-to-end.
+    pub fn anchor_path(&self) -> PathBuf {
+        self.dig_dir.join("anchor.toml")
+    }
 }
 
 #[cfg(test)]
