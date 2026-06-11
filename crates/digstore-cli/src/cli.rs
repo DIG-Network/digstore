@@ -285,11 +285,19 @@ pub enum SeedAction {
     /// Generate a new BIP-39 mnemonic.
     Generate {
         /// Word count (12/15/18/21/24).
-        #[arg(long, default_value_t = 24)]
+        #[arg(long, default_value_t = 24, value_parser = parse_word_count)]
         words: usize,
     },
     /// Show whether a seed exists and is currently unlocked.
     Status,
+}
+
+fn parse_word_count(s: &str) -> Result<usize, String> {
+    let n: usize = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
+    match n {
+        12 | 15 | 18 | 21 | 24 => Ok(n),
+        _ => Err("word count must be one of 12, 15, 18, 21, 24".to_string()),
+    }
 }
 
 #[derive(Debug, Args)]

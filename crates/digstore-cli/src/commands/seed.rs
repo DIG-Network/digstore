@@ -7,7 +7,8 @@ use zeroize::Zeroizing;
 /// Resolves a passphrase: `DIGSTORE_PASSPHRASE` env wins, else hidden prompt.
 fn resolve_passphrase(ui: &Ui, prompt: &str) -> Result<Zeroizing<String>, CliError> {
     if let Some(p) = std::env::var_os("DIGSTORE_PASSPHRASE") {
-        return Ok(Zeroizing::new(p.to_string_lossy().into_owned()));
+        let s = p.into_string().map_err(|_| CliError::BadPassphrase)?;
+        return Ok(Zeroizing::new(s));
     }
     ui.prompt_password(prompt)
         .map(Zeroizing::new)
@@ -16,7 +17,6 @@ fn resolve_passphrase(ui: &Ui, prompt: &str) -> Result<Zeroizing<String>, CliErr
 
 pub fn run(ui: &Ui, args: SeedArgs) -> Result<(), CliError> {
     let home = config::dig_home().map_err(CliError::from)?;
-    let cfg = config::GlobalConfig::load(&home).map_err(CliError::from)?;
     let seed_path = config::seed_path(&home);
     let session_path = config::session_path(&home);
 
@@ -25,15 +25,17 @@ pub fn run(ui: &Ui, args: SeedArgs) -> Result<(), CliError> {
             let phrase = match mnemonic {
                 Some(m) => seed::validate_mnemonic(&m).map_err(CliError::from)?,
                 None => {
-                    let raw = ui
-                        .prompt_line("Enter your BIP-39 mnemonic", "")
-                        .ok_or_else(|| CliError::InvalidMnemonic("no input".into()))?;
+                    let raw = Zeroizing::new(
+                        ui.prompt_line("Enter your BIP-39 mnemonic", "")
+                            .ok_or_else(|| CliError::InvalidMnemonic("no input".into()))?,
+                    );
                     seed::validate_mnemonic(&raw).map_err(CliError::from)?
                 }
             };
             let pass = resolve_passphrase(ui, "Set a passphrase to encrypt your seed")?;
             let enc = seed::encrypt_seed(&phrase, &pass).map_err(CliError::from)?;
             seed::save_seed(&seed_path, &enc).map_err(CliError::from)?;
+            let cfg = config::GlobalConfig::load(&home).map_err(CliError::from)?;
             unlock::write_session(&session_path, &phrase, cfg.unlock_ttl).map_err(CliError::from)?;
             ui.success("seed imported and unlocked");
             Ok(())
@@ -50,6 +52,7 @@ pub fn run(ui: &Ui, args: SeedArgs) -> Result<(), CliError> {
             let pass = resolve_passphrase(ui, "Set a passphrase to encrypt your seed")?;
             let enc = seed::encrypt_seed(&phrase, &pass).map_err(CliError::from)?;
             seed::save_seed(&seed_path, &enc).map_err(CliError::from)?;
+            let cfg = config::GlobalConfig::load(&home).map_err(CliError::from)?;
             unlock::write_session(&session_path, &phrase, cfg.unlock_ttl).map_err(CliError::from)?;
             ui.success("seed generated and unlocked");
             Ok(())
