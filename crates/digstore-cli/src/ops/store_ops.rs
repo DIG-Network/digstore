@@ -103,6 +103,7 @@ pub fn init_store(
     ctx: &CliContext,
     private: bool,
     data_dir: Option<String>,
+    store_id_override: Option<Bytes32>,
 ) -> Result<InitResult, CliError> {
     if ctx.config_path().exists() {
         return Err(CliError::InvalidArgument(format!(
@@ -111,11 +112,14 @@ pub fn init_store(
         )));
     }
 
-    // Host BLS keypair (chia AugScheme). store_id = SHA-256(public key) (§20.1).
+    // Host BLS keypair (chia AugScheme) for CONTENT signing (§20.1, contract D6) —
+    // always generated + persisted, independent of the store_id source.
     let seed = random_seed();
     let secret = digstore_crypto::bls::SecretKey::from_seed(&seed);
     let host_public_key = secret.public_key().to_bytes();
-    let store_id = digstore_crypto::sha256(&host_public_key.0);
+    // When `Some`, store_id is the on-chain singleton launcher id (minted by
+    // `init`); otherwise (back-compat) it is SHA-256(host public key).
+    let store_id = store_id_override.unwrap_or_else(|| digstore_crypto::sha256(&host_public_key.0));
 
     let visibility = if private {
         // SecretSalt is INDEPENDENT randomness, not derived from the signing key.
@@ -1386,7 +1390,7 @@ mod tests {
     fn ctx(private: bool) -> (tempfile::TempDir, CliContext) {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        init_store(&ctx, private, None).unwrap();
+        init_store(&ctx, private, None, None).unwrap();
         (td, ctx)
     }
 
@@ -1400,7 +1404,7 @@ mod tests {
         std::fs::create_dir_all(&work).unwrap();
         let mut ctx = CliContext::workspace_only(dig.clone(), false, false);
         ctx.op_dir = work;
-        init_store(&ctx, false, None).unwrap();
+        init_store(&ctx, false, None, None).unwrap();
         (ctx, td)
     }
 
@@ -1408,7 +1412,7 @@ mod tests {
     fn init_creates_layout_and_config() {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        let res = init_store(&ctx, false, None).unwrap();
+        let res = init_store(&ctx, false, None, None).unwrap();
         assert!(ctx.config_path().exists());
         assert!(ctx.modules_dir().exists());
         assert!(ctx.generations_dir().exists());
@@ -1421,9 +1425,24 @@ mod tests {
     fn init_store_id_is_sha256_of_pubkey() {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        let res = init_store(&ctx, false, None).unwrap();
+        let res = init_store(&ctx, false, None, None).unwrap();
         let expected = digstore_crypto::sha256(&res.host_public_key.0);
         assert_eq!(res.store_id, expected);
+    }
+
+    #[test]
+    fn init_store_id_override_is_used_verbatim() {
+        let td = tempdir().unwrap();
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
+        let launcher = Bytes32([7u8; 32]);
+        let res = init_store(&ctx, false, None, Some(launcher)).unwrap();
+        // store_id is the override, NOT SHA-256(pubkey); host key still generated.
+        assert_eq!(res.store_id, launcher);
+        assert_ne!(res.store_id, digstore_crypto::sha256(&res.host_public_key.0));
+        assert!(td.path().join("signing_key.bin").exists());
+        assert!(td.path().join("trusted_keys.json").exists());
+        let cfg = ctx.load_config().unwrap();
+        assert_eq!(cfg.store_id, launcher);
     }
 
     #[test]

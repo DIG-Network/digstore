@@ -1,8 +1,16 @@
 use crate::cli::InitArgs;
 use crate::context::CliContext;
 use crate::error::CliError;
-use crate::ops::store_ops;
+use crate::ops::anchor_state::{AnchorState, AnchorStatus};
+use crate::ops::{anchor_backend, anchor_ux, store_ops, wallet};
+use crate::runtime::block_on;
+use digstore_chain::anchor::ConfirmState;
 
+/// `digstore init` MINTS an empty store singleton on Chia mainnet; the on-chain
+/// launcher id becomes the store_id. This is a HARD GATE: no seed, no funds, or
+/// a mint failure all fail `init` BEFORE any local store scaffold is created, so
+/// there is nothing to roll back. The local scaffold is only written after the
+/// mint succeeds; a post-mint confirmation timeout KEEPS the (resumable) store.
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), CliError> {
     let name = args.name.clone().unwrap_or_else(|| "default".to_string());
     crate::workspace::validate_store_name(&name)?;
@@ -31,7 +39,39 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         private = ui.confirm("Make this a private (salted) store?", false);
     }
 
-    // Per-store context for init_store (dig_dir = .dig/stores/<name>/).
+    // --- HARD GATE: seed → balance → mint, all BEFORE any local files. ---
+
+    // 1. Unlock the wallet seed (NoSeed surfaces here → exit 9).
+    let (keys, gcfg) = wallet::unlock_wallet_keys(ui)?;
+
+    // 2. Anchor backend (env-gated mock or real coinset mainnet).
+    let (anchor, mocked) = anchor_backend::build_anchor();
+    anchor_backend::warn_if_mocked(ui, mocked);
+    let fee = gcfg.fee;
+
+    // 3. Preflight balance: need singleton amount (1 mojo) + fee. No files yet.
+    let have = block_on(anchor.balance(&keys))??;
+    let need = fee + 1;
+    if have < need {
+        return Err(CliError::InsufficientFunds {
+            need,
+            have,
+            address: digstore_chain::keys::owner_address(&keys),
+        });
+    }
+
+    // 4. Mint the empty store singleton. The launcher id becomes the store_id.
+    let mint = block_on(anchor.mint_empty_store(&keys, fee))
+        .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
+    let store_id = {
+        let mut a = [0u8; 32];
+        a.copy_from_slice(mint.launcher_id.as_ref());
+        digstore_core::Bytes32(a)
+    };
+    anchor_ux::report_submitted(ui, "mint", &store_id.to_hex(), ui.json());
+
+    // --- Post-mint: create the local scaffold under the new store_id. ---
+
     let store_dir = ws.store_dir(&name);
     std::fs::create_dir_all(&store_dir).map_err(|e| CliError::Other(e.into()))?;
     let store_ctx = CliContext {
@@ -42,40 +82,78 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         json: ctx.json,
         verbose: ctx.verbose,
     };
-    let res = store_ops::init_store(&store_ctx, private, None)?;
+    let res = store_ops::init_store(&store_ctx, private, None, Some(store_id))?;
+
+    // Persist the on-chain anchor state (Pending until confirmed).
+    let coin_id_hex = hex::encode(mint.coin_id.as_ref());
+    let mut anchor_state = AnchorState {
+        network: "mainnet".to_string(),
+        store_id: store_id.to_hex(),
+        coin_id: coin_id_hex.clone(),
+        status: AnchorStatus::Pending,
+        last_root: String::new(),
+        last_tx_id: String::new(),
+        confirmed_height: 0,
+    };
+    anchor_state.save(&store_ctx.dig_dir)?;
 
     let first = ws.stores.is_empty();
-    ws.register(&name, &res.store_id.to_hex(), content_root.clone())?;
+    ws.register(&name, &store_id.to_hex(), content_root.clone())?;
     if first {
         ws.set_active(&name)?;
     }
     ws.save()?;
 
+    // 5. Wait for the mint to confirm. On confirm → mark Confirmed (exit 0). On
+    //    timeout → keep the store, leave it Pending, and return ConfirmTimeout
+    //    (exit 14) so it can be resumed with `digstore anchor`.
+    let state =
+        anchor_ux::confirm_with_ui(ui, anchor.as_ref(), mint.coin_id, args.wait_timeout, ui.json())?;
+    anchor_state.apply_confirm(&state);
+    anchor_state.save(&store_ctx.dig_dir)?;
+
+    let confirmed = matches!(state, ConfirmState::Confirmed { .. });
     let content_root_display = content_root.clone().unwrap_or_else(|| ".".to_string());
+
     if ui.json() {
         ui.emit_json(&serde_json::json!({
             "store": name,
-            "store_id": res.store_id.to_hex(),
-            "host_public_key": res.host_public_key.to_hex(),
+            "store_id": store_id.to_hex(),
+            "coin_id": coin_id_hex,
+            "anchor_status": if confirmed { "confirmed" } else { "pending" },
+            "mocked": mocked,
             "content_root": content_root,
             "private": private,
             "active": first,
+            "host_public_key": res.host_public_key.to_hex(),
         }));
     } else {
         ui.success(format!(
             "Initialized store '{}' ({})",
             name,
-            res.store_id.to_hex()
+            store_id.to_hex()
         ));
         ui.line(format!("  content root: {content_root_display}"));
         if first {
             ui.line("  set as active store");
         }
-        ui.line(format!(
-            "  trusted host key: {}",
-            res.host_public_key.to_hex()
-        ));
-        ui.hint("digstore add -A");
+        ui.line(format!("  trusted host key: {}", res.host_public_key.to_hex()));
+        if confirmed {
+            ui.line(format!("  anchored on mainnet (coin {coin_id_hex})"));
+        } else {
+            ui.line(format!(
+                "  ⏳ anchored on mainnet (coin {coin_id_hex}) — not yet confirmed; run `digstore anchor`"
+            ));
+        }
     }
-    Ok(())
+
+    if confirmed {
+        if !ui.json() {
+            ui.hint("digstore add -A");
+        }
+        Ok(())
+    } else {
+        // Resumable: the store is KEPT (Pending), but signal a non-zero exit.
+        Err(CliError::ConfirmTimeout)
+    }
 }

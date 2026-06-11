@@ -19,9 +19,11 @@ Do not open public issues for unpatched security bugs.
   verified against the requested store identity before use.
 - **WASM guest modules are untrusted**: the host sandboxes them with memory /
   table / fuel / wall-clock limits and a restricted host-import surface.
-- **Store identity is self-certifying**: `store_id == SHA-256(store BLS public
-  key)` (§20.1). Authorization to advance a served root is a BLS signature over
-  `SHA-256(root || store_id)`.
+- **Store identity is the on-chain Chia launcher id** (§20.1): `store_id` is the
+  launcher id of the store's singleton, minted by `digstore init`. It is NOT a
+  hash of the publisher key. Head authorization — advancing a store to a served
+  root — is a BLS signature over `SHA-256(root || store_id)` verified against the
+  module's embedded publisher key.
 
 ## Hardening applied (2026-06-09)
 
@@ -37,18 +39,18 @@ Crypto
 
 Remote sync (clone / pull / client)
 - **Downloaded modules are cryptographically verified before use.** `clone` and
-  `pull` now require: embedded `StoreId == requested store id`, `SHA-256(embedded
-  PublicKey) == StoreId`, and the merkle root recomputed from the module's own
-  content equals both the embedded `CurrentRoot` and the served root. Previously
-  the client installed and executed whatever bytes the server returned.
-  (`digstore-compiler::verify_module_root`, wired in `digstore-cli/.../remote_ops.rs`)
+  `pull` now require: embedded `StoreId == requested store id` (the launcher id),
+  and the merkle root recomputed from the module's own content equals both the
+  embedded `CurrentRoot` and the served root. Previously the client installed and
+  executed whatever bytes the server returned. (`digstore-compiler::verify_module_root`,
+  wired in `digstore-cli/.../remote_ops.rs`)
 - **Authenticated head (closes the former residual #1).** The remote now persists
   the verified publisher push signature per root and returns the served-head
   signature in the store descriptor; `clone`/`pull` re-verify it (`verify_push`)
-  against the store-id-bound module key and **fail closed** on an absent or
+  against the module's embedded publisher key and **fail closed** on an absent or
   invalid signature. This upgrades clone/pull from "self-consistent module" to
-  "publisher-authorized content", so a malicious origin holding only the public
-  store key can no longer serve fabricated content. A regression test
+  "publisher-authorized content", so a malicious origin that does not hold the
+  publisher's private key can no longer serve fabricated content. A regression test
   (`clone_rejects_unauthenticated_or_forged_head`) proves the fail-closed path.
   (`digstore-remote` wire/backends/handlers, `remote_ops.rs::verify_head_signature`)
 - **Transport policy enforced.** Remote URLs must be `https://` (plaintext
@@ -183,6 +185,21 @@ not mistaken for closed.
    rationale and must be re-evaluated if `rsa` is ever used to decrypt. The former
    `bincode 1.x` advisory (RUSTSEC-2025-0141) ignore has been **removed**: `bincode`
    is no longer in the dependency tree. Re-evaluate each audit.
+6. **Clone/pull head authentication rests on the module's embedded publisher key,
+   not on the chain (§20.1 / on-chain anchoring).** Now that `store_id` is the
+   on-chain Chia launcher id (no longer `SHA-256(publisher key)`), the integrity
+   gate (`verify_module_root`) checks `StoreId == requested` + merkle self-
+   consistency, and the head signature is verified against the publisher key that
+   the *module itself carries*. A client therefore trusts the first-seen module's
+   embedded key (self-consistency + first-use trust) rather than a key-hash binding
+   to the requested id. The **stronger** guarantee — verifying that the served root
+   equals the launcher singleton's *current on-chain root*, with the chain (not the
+   serving origin) as the authority for both the publisher key and the latest
+   authorized root — is a tracked follow-up of the on-chain anchoring feature and is
+   not yet wired into clone/pull. Until then, a malicious origin that serves a
+   self-consistent module with an attacker-chosen embedded key (for the correct
+   launcher id) and a matching self-signed head is not detected by clone/pull alone;
+   out-of-band key/launcher confirmation closes this gap in the interim.
 
 ## Running the checks
 

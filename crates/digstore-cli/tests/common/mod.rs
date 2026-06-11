@@ -4,17 +4,54 @@ use std::sync::Arc;
 use assert_cmd::Command;
 use tempfile::TempDir;
 
+/// Public BIP-39 test vector (NOT a real wallet). The anchoring seam unlocks
+/// with this via a cached-unlock session so `init` can mint against the mock.
+pub const ABANDON_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon \
+    abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+    abandon abandon abandon abandon abandon art";
+
+/// Provide a seeded, mocked anchoring environment on `cmd`.
+///
+/// `digstore init` now MINTS a store singleton (it requires a seed + an anchor
+/// backend). To keep the offline integration suite working, this:
+/// - points `DIGSTORE_HOME` at a stable per-project `<dir>/.dighome`,
+/// - writes a cached-unlock session there carrying the ABANDON test mnemonic
+///   (the exact `digstore_chain::unlock` Session format: `{expires_at, phrase}`),
+///   so unlock returns the phrase with no seed.enc and no passphrase prompt, and
+/// - sets `DIGSTORE_ANCHOR_MOCK=1` so anchoring is the in-memory mock (no network).
+///
+/// ABANDON is a public test vector and the mock spends nothing, so this is safe.
+pub fn seed_mock_env(cmd: &mut Command, dir: &std::path::Path) {
+    let home = dir.join(".dighome");
+    std::fs::create_dir_all(&home).unwrap();
+    let session = home.join("session");
+    if !session.exists() {
+        // Far-future absolute expiry (year 2100) so the session never lapses.
+        let body = serde_json::json!({
+            "expires_at": 4_102_444_800u64,
+            "phrase": ABANDON_MNEMONIC,
+        });
+        std::fs::write(&session, serde_json::to_vec(&body).unwrap()).unwrap();
+    }
+    cmd.env("DIGSTORE_HOME", &home)
+        .env("DIGSTORE_ANCHOR_MOCK", "1");
+}
+
 /// A `digstore` invocation against the temp project `dir`. The workspace lives at
 /// `<dir>/.dig` (a SUBDIR of the build/content dir) and the command runs WITH
 /// `current_dir(dir)`, so `op_dir` defaults to `<dir>` — exactly like a real user
 /// running `digstore` from inside their project. Content files written under
 /// `<dir>` therefore key RELATIVE to `<dir>` (never as absolute paths), and the
 /// `.dig` skip only excludes `<dir>/.dig` (a proper subdir of op_dir = `<dir>`).
+///
+/// Transparently carries the seeded mock anchoring env (see [`seed_mock_env`]) so
+/// `init` mints against the in-memory mock instead of Chia mainnet.
 pub fn dig(dir: &TempDir) -> Command {
     let mut cmd = Command::cargo_bin("digstore").unwrap();
     cmd.arg("--dig-dir")
         .arg(dir.path().join(".dig"))
         .current_dir(dir.path());
+    seed_mock_env(&mut cmd, dir.path());
     cmd
 }
 
