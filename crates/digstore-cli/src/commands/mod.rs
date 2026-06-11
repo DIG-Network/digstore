@@ -13,11 +13,13 @@ pub mod diff;
 pub mod dir;
 pub mod init;
 pub mod keys;
+pub mod lock;
 pub mod log;
 pub mod pull;
 pub mod push;
 pub mod remote;
 pub mod revoke;
+pub mod seed;
 pub mod staged;
 pub mod status;
 pub mod stores;
@@ -66,6 +68,8 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
             let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
             return update::run(&ctx, &ui, a);
         }
+        Command::Seed(a) => return seed::run(&ui, a),
+        Command::Lock(_) => return lock::run(&ui),
         _ => {}
     }
 
@@ -104,7 +108,9 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         | Command::Clone(_)
         | Command::Stores(_)
         | Command::Use(_)
-        | Command::Update(_) => {
+        | Command::Update(_)
+        | Command::Seed(_)
+        | Command::Lock(_) => {
             unreachable!("handled above")
         }
     }
