@@ -210,3 +210,89 @@ mod crypto_tests {
         assert!(matches!(decrypt_seed(&bad, "pw"), Err(ChainError::Decrypt)));
     }
 }
+
+use std::path::Path;
+
+/// Writes bytes to `path` with owner-only permissions where the platform
+/// supports it (unix `0600`); on Windows the file inherits the (already
+/// user-scoped) `~/.dig` directory ACL. Mirrors digstore-cli's
+/// `write_secret_file`.
+fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(bytes)?;
+        f.flush()?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, bytes)
+    }
+}
+
+/// Saves an encrypted seed to `path` (owner-only).
+pub fn save_seed(path: &Path, enc: &EncryptedSeed) -> Result<()> {
+    write_secret_file(path, &enc.to_bytes())?;
+    Ok(())
+}
+
+/// Loads an encrypted seed from `path`.
+pub fn load_seed(path: &Path) -> Result<EncryptedSeed> {
+    if !path.exists() {
+        return Err(ChainError::NoSeed(path.display().to_string()));
+    }
+    let bytes = std::fs::read(path)?;
+    EncryptedSeed::from_bytes(&bytes)
+}
+
+/// Whether a seed file exists at `path`.
+pub fn seed_exists(path: &Path) -> bool {
+    path.exists()
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    const PHRASE: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+    #[test]
+    fn save_then_load_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seed.enc");
+        let enc = encrypt_seed(PHRASE, "pw").unwrap();
+        save_seed(&path, &enc).unwrap();
+        assert!(seed_exists(&path));
+        let loaded = load_seed(&path).unwrap();
+        assert_eq!(&*decrypt_seed(&loaded, "pw").unwrap(), PHRASE);
+    }
+
+    #[test]
+    fn load_missing_is_no_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absent.enc");
+        assert!(matches!(load_seed(&path), Err(ChainError::NoSeed(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seed.enc");
+        save_seed(&path, &encrypt_seed(PHRASE, "pw").unwrap()).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
