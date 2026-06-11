@@ -5,6 +5,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 
 pub mod add;
+pub mod anchor;
 pub mod cat;
 pub mod checkout;
 pub mod clone;
@@ -104,6 +105,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Push(a) => push::run(&ctx, &ui, a),
         Command::Pull(a) => pull::run(&ctx, &ui, a),
         Command::Revoke(a) => revoke::run(&ctx, &ui, a),
+        Command::Anchor(a) => anchor::run(&ctx, &ui, a),
         Command::Init(_)
         | Command::Clone(_)
         | Command::Stores(_)
