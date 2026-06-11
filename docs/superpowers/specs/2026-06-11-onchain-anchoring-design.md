@@ -20,8 +20,9 @@ Anchoring is **mandatory**: there is no offline escape. Network: **mainnet**.
 
 | Decision | Choice |
 |----------|--------|
-| Chain access | Depend directly on crates.io `dig-wallet` 2.0, `dig-store-coin` 2.1, `datalayer-driver` 3.0 (the crates `dig-chia` itself wraps). Stay standalone — no dependency on the `dig_library` workspace. |
-| Network | Mainnet. (Chain client takes a network param internally so tests can target testnet11.) |
+| Chain access | Build + sign transactions with crates.io `dig-wallet` 2.0 / `dig-store-coin` 2.1 / `datalayer-driver` 3.0 (the crates `dig-chia` wraps). **Broadcast and confirm via coinset.org**, not a direct P2P full-node peer. Stay standalone — no dependency on the `dig_library` workspace. |
+| Network | **Mainnet only.** No testnet path in the shipped CLI. Network is hardcoded to mainnet — not configurable. |
+| Broadcast transport | coinset.org full-node RPC over HTTPS (`https://api.coinset.org`): `push_tx` to submit signed spend bundles, coin-record / block queries to observe confirmation. No local full node, no P2P peer. |
 | Anchor timing | Mandatory. `init` mints; `commit` updates. No `--no-anchor`, no draft mode. |
 | Seed entry | Import BIP-39 mnemonic, or generate a new one on first run. |
 | Seed at rest | Argon2id (t=3, m=64 MiB, p=4) → AES-256-GCM, in `~/.dig/seed.enc`. Owner-only perms. |
@@ -33,7 +34,11 @@ Anchoring is **mandatory**: there is no offline escape. Network: **mainnet**.
 
 The `dig-chia` source comments that `dig-store-coin` 2.1.0 function signatures *"should be verified against the actual API."* **Before building on it**, confirm `dig-wallet` 2.0.0 + `dig-store-coin` 2.1.0 + `datalayer-driver` 3.0.0 publish on crates.io and compile in this workspace, and pin the real `mint` / `update` / `MintParams` / `UpdateParams` shapes. If the API differs, the anchoring details shift.
 
-Second planning task: confirm `dig-wallet`'s own key persistence. We feed the mnemonic via `Wallet::from_mnemonic` each run and own the encrypted seed in `~/.dig`; verify dig-wallet does not also persist keys somewhere we must manage or clean up.
+**Broadcast transport (critical):** `dig-store-coin::mint` / `update` take a P2P `Peer` and appear to build *and* broadcast in one call. We must broadcast via coinset.org instead. The first planning task verifies whether these crates can either (a) accept a coinset-backed transport, or (b) return the signed `SpendBundle` so we broadcast it ourselves via coinset `push_tx`. If neither, fall back to building/signing the singleton spends at the `datalayer-driver` level and broadcasting via coinset directly. This is the highest-risk unknown — confirm it before committing to the `dig-store-coin` all-in-one path.
+
+Also pin the exact coinset.org endpoints + request/response shapes (`push_tx`, `get_coin_record_by_name`, `get_block_record_by_height` / blockchain state) and any rate limits or auth.
+
+Third planning task: confirm `dig-wallet`'s own key persistence. We feed the mnemonic via `Wallet::from_mnemonic` each run and own the encrypted seed in `~/.dig`; verify dig-wallet does not also persist keys somewhere we must manage or clean up.
 
 ## Architecture
 
@@ -43,18 +48,22 @@ New crate **`digstore-chain`** (`crates/digstore-chain`) isolates all blockchain
 digstore-chain
 ├── seed.rs      # mnemonic import/generate, Argon2id+AES-GCM encrypt/decrypt, ~/.dig I/O
 ├── unlock.rs    # cached-unlock session (decrypt once, reuse within TTL)
-├── wallet.rs    # thin adapter over dig-wallet (from_mnemonic, peer connect, balance)
-├── anchor.rs    # ChainAnchor trait + dig-store-coin-backed impl (mint / update / status)
-└── config.rs    # ~/.dig global config (network, ttl, default fee)
+├── wallet.rs    # thin adapter over dig-wallet (from_mnemonic, key derivation, balance)
+├── coinset.rs   # coinset.org HTTPS client: push_tx + coin-record/block polling
+├── anchor.rs    # ChainAnchor trait + impl: build/sign (dig-store-coin) → broadcast (coinset)
+└── config.rs    # ~/.dig global config (coinset url, ttl, default fee)
 ```
 
-New dependencies: `dig-wallet`, `dig-store-coin`, `datalayer-driver`, `argon2`, `aes-gcm`, `bip39`, `zeroize`.
+New dependencies: `dig-wallet`, `dig-store-coin`, `datalayer-driver`, `argon2`, `aes-gcm`, `bip39`, `zeroize`, `reqwest` (coinset HTTPS; already in the workspace).
+
+**Mainnet is hardcoded.** The wallet derives mainnet keys/addresses; there is no network selector. Balance and confirmation reads, and all broadcasts, go through coinset.org — the CLI never opens a P2P peer connection.
 
 **`ChainAnchor` trait** abstracts the chain so the hard-gate flows are testable without mainnet:
 
 ```rust
 #[async_trait]
 pub trait ChainAnchor {
+    async fn balances(&self, wallet: &Wallet) -> Result<Balances, ChainError>;
     async fn mint_empty_store(&self, wallet: &Wallet, fee: u64) -> Result<MintOutcome, ChainError>;
     async fn update_root(&self, store_id: Bytes32, new_root: Bytes32, wallet: &Wallet, fee: u64)
         -> Result<UpdateOutcome, ChainError>;
@@ -62,7 +71,7 @@ pub trait ChainAnchor {
 }
 ```
 
-Real impl wraps `dig-store-coin`. A mock impl drives unit/CLI tests.
+The real impl **builds + signs** the singleton spends with `dig-store-coin` / `datalayer-driver`, then **broadcasts via the coinset.org client** (`coinset.rs`) and **polls coin records / block height** there to observe confirmation. A mock impl drives unit/CLI tests. The coinset HTTP client is itself swappable so transport tests can run against a stub server.
 
 ## Seed management
 
@@ -123,6 +132,8 @@ Blocking wait with a staged, human-friendly indicator:
    ✓ confirmed         height 5,012,233  ·  42s
 ```
 
+Confirmation is observed by polling coinset.org (coin record spent/created + current block height) on an interval until the target depth is reached.
+
 - `--wait-timeout` (default 5 min). On timeout: leave `status=pending`, tell the user it will confirm in the background, and to check `digstore anchor status`. (For `commit`, a timeout aborts finalization — local history stays behind the chain until confirmation is observed.)
 - Status surfaces wherever store status is shown: `Anchor: ✓ confirmed (mainnet, store 0x…, height …)` / `⏳ pending (3m)` / `✗ failed`.
 - `--json` emits structured state transitions for scripting.
@@ -132,10 +143,12 @@ Blocking wait with a staged, human-friendly indicator:
 **Global** `~/.dig/config.toml`:
 
 ```toml
-network    = "mainnet"
-unlock_ttl = 3600      # seconds
-fee        = 0         # default tx fee (mojos); 0 = auto/estimate
+coinset_url = "https://api.coinset.org"  # broadcast + confirmation endpoint
+unlock_ttl  = 3600                        # seconds
+fee         = 0                           # default tx fee (mojos); 0 = auto/estimate
 ```
+
+Network is not configurable — mainnet is hardcoded. `coinset_url` is overridable only so a different coinset-compatible mainnet endpoint can be pointed at if api.coinset.org is unavailable.
 
 **Per-store** `config.toml` gains an `[anchor]` table:
 
@@ -173,7 +186,8 @@ Hard-gate cleanup: init rolls back the local scaffold on failure; commit leaves 
 
 - **Unit**: seed encrypt/decrypt round-trip; BIP-39 test vectors; Argon2id params; session TTL expiry; `[anchor]` config serde; error→message mapping; confirmation-status formatting.
 - **Mock chain** (`ChainAnchor` mock): init hard-gate, commit-blocks-until-confirmed, timeout→pending, retry/idempotency — all offline and deterministic.
-- **Integration (gated)**: real mint/update on **testnet11**, behind `#[ignore]` + `DIGSTORE_E2E` env guard, so CI/dev never burns mainnet XCH.
+- **Coinset transport** (stub HTTP server, e.g. `wiremock`): `push_tx` success/reject, coin-record polling, block-height progression, malformed responses, timeouts/retries — without touching the real network.
+- **Manual mainnet e2e** (not in CI): there is no testnet path, so a real end-to-end mint/update runs only manually on mainnet behind `#[ignore]` + a `DIGSTORE_E2E` guard, and spends real XCH. Document the cost; never wire it into automated CI.
 - **CLI** (`assert_cmd`): command wiring; non-interactive unlock via `DIGSTORE_PASSPHRASE`; `anchor` / `anchor status` output; `--json` shape.
 
 ## Out of scope (this spec)
