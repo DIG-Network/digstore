@@ -1,15 +1,15 @@
-//! Build + sign Chia datastore singleton spends (mint here; update in a later
-//! task). Pure: callers fetch unspent coins via `ChainReads` and broadcast the
-//! returned bundle via `ChainReads::push`. Verified on mainnet in the Phase-0
-//! prototype.
+//! Build + sign Chia datastore singleton spends (mint + update). Pure: callers
+//! fetch unspent coins via `ChainReads` and broadcast the returned bundle via
+//! `ChainReads::push`. Verified on mainnet in the Phase-0 prototype.
 
 use crate::coinset::ChainReads;
 use crate::error::{ChainError, Result};
 use crate::keys::WalletKeys;
 use chia_wallet_sdk::driver::SpendContext;
 use datalayer_driver::{
-    mint_store, select_coins, sign_coin_spends, Bytes32, Coin, DataStore, DataStoreMetadata,
-    DelegatedPuzzle, SpendBundle, SuccessResponse,
+    add_fee, mint_store, select_coins, sign_coin_spends, update_store_metadata, Bytes32, Coin,
+    DataStore, DataStoreInnerSpend, DataStoreMetadata, DelegatedPuzzle, SpendBundle,
+    SuccessResponse,
 };
 
 /// A built, signed mint ready to broadcast.
@@ -47,6 +47,48 @@ pub fn build_mint(
         .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
     let bundle = SpendBundle::new(coin_spends, signature);
     Ok(MintBuild { bundle, launcher_id, datastore: new_datastore })
+}
+
+/// A built, signed store-root update ready to broadcast.
+pub struct UpdateBuild {
+    pub bundle: SpendBundle,
+    pub new_coin_id: Bytes32,
+    pub datastore: DataStore,
+}
+
+/// Builds + signs an owner-authorized update of `store`'s root to `new_root`.
+/// `fee_coins` are the wallet's spendable XCH coins for the fee; `fee` mojos.
+pub fn build_update(
+    keys: &WalletKeys,
+    store: DataStore,
+    new_root: Bytes32,
+    fee_coins: &[Coin],
+    fee: u64,
+) -> Result<UpdateBuild> {
+    let SuccessResponse { coin_spends: update_spends, new_datastore } = update_store_metadata(
+        store,
+        new_root,
+        None,
+        None,
+        None,
+        None,
+        DataStoreInnerSpend::Owner(keys.synthetic_pk),
+    )
+    .map_err(|e| ChainError::Chain(format!("update_store_metadata: {e}")))?;
+
+    let selected = select_coins(fee_coins, fee)
+        .map_err(|e| ChainError::Chain(format!("select_coins (fee): {e}")))?;
+    let coin_ids: Vec<Bytes32> = selected.iter().map(|c| c.coin_id()).collect();
+    let mut coin_spends = add_fee(&keys.synthetic_pk, &selected, &coin_ids, fee)
+        .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
+    coin_spends.extend(update_spends);
+
+    let signature =
+        sign_coin_spends(&coin_spends, std::slice::from_ref(&keys.synthetic_sk), false)
+            .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
+    let new_coin_id = new_datastore.coin.coin_id();
+    let bundle = SpendBundle::new(coin_spends, signature);
+    Ok(UpdateBuild { bundle, new_coin_id, datastore: new_datastore })
 }
 
 /// Reconstructs the current unspent datastore singleton for `launcher_id` using
@@ -118,6 +160,21 @@ mod tests {
     const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 
     #[test]
+    fn build_update_errors_with_empty_fee_coins_and_nonzero_fee() {
+        // Constructing a real DataStore requires going through mint_store; skip
+        // that here and just confirm select_coins rejects the empty coin list
+        // before we even reach update_store_metadata.  We do this by calling
+        // build_mint first to get a valid DataStore, then immediately feeding it
+        // to build_update with no fee coins.
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1_000_000);
+        let mb = build_mint(&keys, &[coin], Bytes32::default(), 0).unwrap();
+        // Now call build_update with an empty fee_coins slice and a nonzero fee.
+        let result = build_update(&keys, mb.datastore, Bytes32::new([1u8; 32]), &[], 1_000);
+        assert!(result.is_err(), "expected error with empty fee coins");
+    }
+
+    #[test]
     fn build_mint_produces_signed_bundle_and_launcher() {
         let keys = derive_wallet_keys(ABANDON).unwrap();
         // A synthetic funding coin at the owner puzzle hash (mint_store builds
@@ -162,6 +219,31 @@ mod sync_tests {
             ChainError::Chain(msg) => assert!(msg.contains("not found"), "got: {msg}"),
             other => panic!("expected Chain error, got {other:?}"),
         }
+    }
+
+    // Live build-only test: syncs the real mainnet store, builds (but does NOT
+    // push) an owner-authorized root update. Free — no XCH spent.
+    // Requires a wallet mnemonic in ../../.testcredentials (gitignored).
+    // Run with:
+    //   cargo test -p digstore-chain --lib -- --ignored build_update_live_no_broadcast --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn build_update_live_no_broadcast() {
+        use crate::keys::derive_wallet_keys;
+        let chain = Coinset::mainnet();
+        let launcher = launcher_bytes32();
+        let store = sync_datastore(&chain, launcher).await.unwrap();
+        // Read the test wallet mnemonic from the gitignored .testcredentials
+        // file at runtime.  cargo runs tests with the crate dir as CWD, so
+        // ../../.testcredentials reaches the repo root from crates/digstore-chain.
+        let phrase = std::fs::read_to_string("../../.testcredentials").unwrap();
+        let keys = derive_wallet_keys(phrase.trim()).unwrap();
+        let fee_coins = chain.unspent_coins(keys.owner_puzzle_hash).await.unwrap();
+        let new_root = Bytes32::new([7u8; 32]);
+        let built = build_update(&keys, store, new_root, &fee_coins, 1_000).unwrap();
+        assert!(!built.bundle.coin_spends.is_empty());
+        assert_eq!(built.datastore.info.metadata.root_hash, new_root);
+        println!("built update; new coin id = {:?}", built.new_coin_id);
     }
 
     // Live read-only test against the real minted mainnet store. Free (no spend).
