@@ -66,6 +66,7 @@ pub enum SectionId {
     ChunkPool = 9,
     MerkleNodes = 10,
     Filler = 11,
+    ChainState = 12,
 }
 
 /// Build the data-section blob from `(id, body)` sections.
@@ -312,4 +313,173 @@ pub fn decode_merkle_leaves(body: &[u8]) -> Result<Vec<Bytes32>, DecodeError> {
         pos += 32;
     }
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// ChainState body (id 12)
+//   version       : u8
+//   network       : u32 BE len || utf8 bytes
+//   launcher_id   : 32 raw bytes
+//   coin_id       : 32 raw bytes
+//   confirmed_height : u32 BE
+//   tx_id         : u32 BE len || utf8 bytes
+//   coinset_url   : u32 BE len || utf8 bytes
+// ---------------------------------------------------------------------------
+
+/// On-chain anchor pointer embedded in a compiled module's data section
+/// (`SectionId::ChainState`). Lets any reader locate the store's singleton on
+/// Chia from the module bytes alone. `coinset_url` is a transport HINT only —
+/// callers override it with local config; it can go stale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainState {
+    pub version: u8,
+    pub network: alloc::string::String,
+    pub launcher_id: Bytes32,
+    pub coin_id: Bytes32,
+    pub confirmed_height: u32,
+    pub tx_id: alloc::string::String,
+    pub coinset_url: alloc::string::String,
+}
+
+impl ChainState {
+    /// Current encoding version.
+    pub const VERSION: u8 = 1;
+
+    pub fn encode(&self) -> Vec<u8> {
+        fn put_str(out: &mut Vec<u8>, s: &str) {
+            out.extend_from_slice(&(s.len() as u32).to_be_bytes());
+            out.extend_from_slice(s.as_bytes());
+        }
+        let mut out = Vec::new();
+        out.push(self.version);
+        put_str(&mut out, &self.network);
+        out.extend_from_slice(&self.launcher_id.0);
+        out.extend_from_slice(&self.coin_id.0);
+        out.extend_from_slice(&self.confirmed_height.to_be_bytes());
+        put_str(&mut out, &self.tx_id);
+        put_str(&mut out, &self.coinset_url);
+        out
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<ChainState, DecodeError> {
+        struct R<'a> {
+            b: &'a [u8],
+            pos: usize,
+        }
+        impl<'a> R<'a> {
+            fn take(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
+                let end = self
+                    .pos
+                    .checked_add(n)
+                    .ok_or(DecodeError::UnexpectedEof)?;
+                if end > self.b.len() {
+                    return Err(DecodeError::UnexpectedEof);
+                }
+                let s = &self.b[self.pos..end];
+                self.pos = end;
+                Ok(s)
+            }
+            fn u8(&mut self) -> Result<u8, DecodeError> {
+                Ok(self.take(1)?[0])
+            }
+            fn u32(&mut self) -> Result<u32, DecodeError> {
+                let s = self.take(4)?;
+                Ok(u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+            }
+            fn b32(&mut self) -> Result<Bytes32, DecodeError> {
+                let s = self.take(32)?;
+                let mut a = [0u8; 32];
+                a.copy_from_slice(s);
+                Ok(Bytes32(a))
+            }
+            fn s(&mut self) -> Result<alloc::string::String, DecodeError> {
+                let n = self.u32()? as usize;
+                let s = self.take(n)?;
+                alloc::string::String::from_utf8(s.to_vec())
+                    .map_err(|_| DecodeError::Invalid("ChainState: bad utf8"))
+            }
+        }
+        let mut r = R { b: buf, pos: 0 };
+        let version = r.u8()?;
+        let network = r.s()?;
+        let launcher_id = r.b32()?;
+        let coin_id = r.b32()?;
+        let confirmed_height = r.u32()?;
+        let tx_id = r.s()?;
+        let coinset_url = r.s()?;
+        Ok(ChainState {
+            version,
+            network,
+            launcher_id,
+            coin_id,
+            confirmed_height,
+            tx_id,
+            coinset_url,
+        })
+    }
+}
+
+/// Decode the embedded `ChainState` from a module data-section blob, if present.
+/// Returns `Ok(None)` for older modules that carry no `ChainState` section.
+pub fn read_chain_state(blob: &[u8]) -> Result<Option<ChainState>, DecodeError> {
+    let view = DataView::parse(blob)?;
+    match view.section(SectionId::ChainState) {
+        Some(body) => Ok(Some(ChainState::decode(body)?)),
+        None => Ok(None),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytes::Bytes32;
+
+    #[test]
+    fn chain_state_round_trips() {
+        let cs = ChainState {
+            version: 1,
+            network: "mainnet".to_string(),
+            launcher_id: Bytes32([0xAB; 32]),
+            coin_id: Bytes32([0xCD; 32]),
+            confirmed_height: 8_854_632,
+            tx_id: "deadbeef".to_string(),
+            coinset_url: "https://api.coinset.org".to_string(),
+        };
+        let bytes = cs.encode();
+        let back = ChainState::decode(&bytes).expect("decode");
+        assert_eq!(back, cs);
+    }
+
+    #[test]
+    fn chain_state_decode_rejects_truncated() {
+        assert!(ChainState::decode(&[1u8, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn read_chain_state_absent_is_none() {
+        let blob = encode_blob(&[(SectionId::StoreId as u16, vec![7u8; 32])]);
+        assert!(read_chain_state(&blob).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_chain_state_present_round_trips() {
+        let cs = ChainState {
+            version: 1,
+            network: "mainnet".into(),
+            launcher_id: Bytes32([1; 32]),
+            coin_id: Bytes32([2; 32]),
+            confirmed_height: 42,
+            tx_id: String::new(),
+            coinset_url: "https://api.coinset.org".into(),
+        };
+        let blob = encode_blob(&[
+            (SectionId::StoreId as u16, cs.launcher_id.0.to_vec()),
+            (SectionId::ChainState as u16, cs.encode()),
+        ]);
+        assert_eq!(read_chain_state(&blob).unwrap().unwrap(), cs);
+    }
 }
