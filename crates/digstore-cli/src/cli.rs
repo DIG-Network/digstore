@@ -76,6 +76,10 @@ pub enum Command {
     Keys(KeysArgs),
     /// Update DigStore to the latest release.
     Update(UpdateArgs),
+    /// Manage the encrypted wallet seed in ~/.dig.
+    Seed(SeedArgs),
+    /// Lock the seed (clear the cached-unlock session).
+    Lock(LockArgs),
 }
 
 #[derive(Debug, Args)]
@@ -263,6 +267,33 @@ pub struct KeysArgs {
     #[arg(long)]
     pub root: Option<String>,
 }
+
+#[derive(Debug, Args)]
+pub struct SeedArgs {
+    #[command(subcommand)]
+    pub action: SeedAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SeedAction {
+    /// Import an existing BIP-39 mnemonic.
+    Import {
+        /// Provide the mnemonic non-interactively (otherwise prompted).
+        #[arg(long)]
+        mnemonic: Option<String>,
+    },
+    /// Generate a new BIP-39 mnemonic.
+    Generate {
+        /// Word count (12/15/18/21/24).
+        #[arg(long, default_value_t = 24)]
+        words: usize,
+    },
+    /// Show whether a seed exists and is currently unlocked.
+    Status,
+}
+
+#[derive(Debug, Args)]
+pub struct LockArgs {}
 
 #[derive(Debug, Args)]
 #[command(
