@@ -17,8 +17,10 @@ thiserror = "1"
 dirs = "5"
 datalayer-driver = "3"
 chia-protocol = "0.26"
+chia-sdk-coinset = "0.30"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 tempfile = "3"
+hex = "0.4"
