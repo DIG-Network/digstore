@@ -178,17 +178,94 @@ for `localhost`).
 
 ---
 
+## On-chain anchoring (Chia mainnet)
+
+Every store is **anchored on Chia mainnet**. `digstore init` mints an empty store
+singleton on-chain, and the singleton's **launcher id becomes the store id**.
+Every `digstore commit` then pushes the new generation's root to that singleton
+with an on-chain update and **blocks until the update confirms** before finalizing
+the generation locally.
+
+> **This spends real XCH.** Anchoring is mandatory — there is no offline mode.
+> `init` and `commit` will not proceed without an unlocked wallet seed and enough
+> funds, and they block on mainnet confirmation. All broadcast and chain reads go
+> through [coinset.org](https://coinset.org) over HTTPS (no peer node or TLS cert
+> to run).
+
+### 1. Set up a wallet seed
+
+digstore keeps an encrypted BIP-39 seed in `~/.dig/seed.enc`.
+
+```sh
+digstore seed generate          # create a new mnemonic (shown once — back it up)
+# or
+digstore seed import            # import an existing mnemonic
+digstore seed status            # is a seed present / unlocked?
+digstore lock                   # clear the cached-unlock session
+```
+
+The seed is encrypted with a passphrase (Argon2id + AES-256-GCM). After unlock it
+is cached for a configurable TTL; `DIGSTORE_PASSPHRASE` supplies the passphrase
+non-interactively (for CI/scripts). Global settings live in `~/.dig/config.toml`
+(`coinset_url`, `unlock_ttl`, `fee`).
+
+### 2. Fund the wallet
+
+Minting and updates cost a small mainnet fee, so the wallet derived from your seed
+needs XCH. If it's short, `init`/`commit` fail with `insufficient funds` and print
+the **receive address** to send XCH to:
+
+```
+insufficient funds: need <N> mojos, have <M>; fund xch1…
+```
+
+Send XCH to that address, wait for it to confirm, then retry.
+
+### 3. Init mints, commit anchors
+
+```sh
+digstore init                   # mints the store singleton; store id = launcher id
+                                # blocks until the mint confirms on mainnet
+
+digstore add readme.txt --key readme
+digstore commit -m "first generation"
+                                # pushes the new root on-chain; blocks until
+                                # confirmed, then finalizes the generation locally
+```
+
+Both commands take `--wait-timeout <secs>` (default `300`) for how long to wait on
+confirmation. On a confirm-timeout the store is kept **pending** (and the local
+generation is *not* finalized) — it is resumable, not lost.
+
+### 4. Resume / inspect an anchor
+
+```sh
+digstore anchor                 # resume a pending anchor: confirm the chain coin
+                                # and flip the store to confirmed (idempotent)
+digstore anchor status          # read-only: show the store's anchor state
+digstore anchor status --json   # machine-readable state
+```
+
+Per-store anchor state (network, store id / launcher, coin id, status, last root,
+last tx id, confirmed height) is recorded in the store's `anchor.toml`.
+
+> Note: `clone`/`pull` verify the publisher's signature over the served head, but
+> do **not** yet perform third-party verification of the on-chain root against the
+> singleton — that is a tracked follow-up (see [`SECURITY.md`](SECURITY.md)).
+
+---
+
 ## Command reference
 
 | Command | What it does |
 |---|---|
-| `digstore init [name] [--dir <path>] [--private]` | Create a store (default name `default`); `--dir` sets its content root |
+| `digstore init [name] [--dir <path>] [--private] [--wait-timeout <s>]` | Create a store (default name `default`); mints its singleton on mainnet (store id = launcher id); `--dir` sets its content root |
 | `digstore stores` | List stores with active marker, root, content root, capacity |
 | `digstore use <name>` | Set the active store |
 | `digstore dir [<path>]` | Show or set the active store's content root |
 | `digstore add <path…> [-A] [--key <name>]` | Stage files (`-A` = the whole content root) |
 | `digstore staged` / `digstore unstage` | List the staging area / clear it |
-| `digstore commit [-m <msg>]` | Seal a new generation, compile the module, write the URN manifest |
+| `digstore commit [-m <msg>] [--wait-timeout <s>]` | Seal a new generation, anchor its root on mainnet (blocks until confirmed), compile the module, write the URN manifest |
 | `digstore status` | Show staged/modified/untracked + capacity |
 | `digstore log [--limit N]` / `digstore diff <a> <b>` | List / compare generations |
 | `digstore urn [PATHS…] [--root <hex>]` | Preview the URN(s) files will have |
@@ -196,6 +273,9 @@ for `localhost`).
 | `digstore checkout <root> --out <dir> [--salt <hex>]` | Write a whole generation to a directory |
 | `digstore remote add\|list\|remove …` | Manage remotes |
 | `digstore clone <url>` / `push [remote]` / `pull [remote]` | Sync with a remote (verified) |
+| `digstore anchor [--wait-timeout <s>]` | Resume a pending on-chain anchor (confirm the coin, flip to confirmed) |
+| `digstore anchor status [--json]` | Show the active store's anchor state (read-only) |
+| `digstore seed generate\|import\|status` / `digstore lock` | Manage the encrypted wallet seed used for anchoring |
 
 Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`
 (operating directory for this command), `--dig-dir <path>` (workspace location),
@@ -203,16 +283,9 @@ Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`
 
 ### Wallet seed
 
-digstore keeps an encrypted BIP-39 seed in `~/.dig/seed.enc`.
-
-- `digstore seed generate` — create a new mnemonic (shown once; back it up).
-- `digstore seed import` — import an existing mnemonic.
-- `digstore seed status` — show whether a seed exists and is unlocked.
-- `digstore lock` — clear the cached-unlock session.
-
-The seed is encrypted with a passphrase (Argon2id + AES-256-GCM). After unlock
-it is cached for a configurable TTL (`~/.dig/config.toml`); `DIGSTORE_PASSPHRASE`
-supplies it non-interactively.
+`digstore seed generate|import|status` and `digstore lock` manage the encrypted
+BIP-39 wallet seed used for on-chain anchoring — see
+[On-chain anchoring](#on-chain-anchoring-chia-mainnet) above for details.
 
 ---
 

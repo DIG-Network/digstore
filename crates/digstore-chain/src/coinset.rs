@@ -188,7 +188,10 @@ pub(crate) mod mock {
         }
 
         async fn push(&self, bundle: SpendBundle) -> Result<()> {
-            self.pushed.lock().expect("MockChain pushed mutex poisoned").push(bundle);
+            self.pushed
+                .lock()
+                .expect("MockChain pushed mutex poisoned")
+                .push(bundle);
             Ok(())
         }
     }
@@ -228,8 +231,10 @@ mod tests {
 
     #[tokio::test]
     async fn mock_peak_height() {
-        let mut m = MockChain::default();
-        m.peak = 6_515_821;
+        let m = MockChain {
+            peak: 6_515_821,
+            ..Default::default()
+        };
         assert_eq!(m.peak_height().await.unwrap(), 6_515_821);
     }
 
