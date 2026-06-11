@@ -45,12 +45,12 @@ pub(crate) fn push_auth_message(root: &Bytes32, store_id: &Bytes32) -> [u8; 32] 
 }
 
 /// Verify the remote's served-head authorization: a publisher BLS signature over
-/// `SHA-256(root || store_id)` under `pubkey` (§21.6). `pubkey` is the store key
-/// embedded in the verified module, already proven by `verify_module_root` to
-/// satisfy `SHA-256(pubkey) == store_id`, so a valid signature here proves the
-/// served root was authorized by the store's private key — not merely that the
-/// module is self-consistent. Fails closed on an absent signature: a missing sig
-/// would otherwise let a malicious origin strip authorization (downgrade attack).
+/// `SHA-256(root || store_id)` under `pubkey` (§21.6). `pubkey` is the publisher
+/// key embedded in the verified module (`store_id` is the on-chain launcher id, not
+/// a hash of this key). A valid signature here proves the served root was authorized
+/// by the publisher's private key — not merely that the module is self-consistent.
+/// Fails closed on an absent signature: a missing sig would otherwise let a
+/// malicious origin strip authorization (downgrade attack).
 fn verify_head_signature(
     pubkey: &Bytes48,
     root: &Bytes32,
@@ -76,9 +76,9 @@ fn verify_head_signature(
 }
 
 /// Fail-closed revocation check (SECURITY.md residual #1 Layer 1). After fetching
-/// the descriptor, verify each served tombstone's signature against the
-/// store-id-bound module key (`pubkey`, already proven by `verify_module_root` to
-/// hash to `store_id`), and REFUSE to install/advance to `served_root` if:
+/// the descriptor, verify each served tombstone's signature against the module's
+/// embedded publisher key (`pubkey`), and REFUSE to install/advance to
+/// `served_root` if:
 ///   - any VALID `Store`-scoped tombstone is present (the whole store is revoked), or
 ///   - a VALID `Root`-scoped tombstone names exactly `served_root`.
 ///
@@ -212,11 +212,11 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
 
     // Download + verify. The closure cryptographically validates the downloaded
     // module against the store identity the user asked for: the module's embedded
-    // StoreId must equal `store_id`, SHA-256(embedded PublicKey) must equal the
-    // store id (§20.1 self-certifying identity), and the merkle root recomputed
-    // from the module's own content must equal both the embedded CurrentRoot and
-    // the served root. A server returning an arbitrary/foreign/corrupted module
-    // therefore fails closed instead of being installed and executed.
+    // StoreId must equal `store_id` (the on-chain launcher id), and the merkle root
+    // recomputed from the module's own content must equal both the embedded
+    // CurrentRoot and the served root. A server returning an arbitrary/foreign/
+    // corrupted module therefore fails closed instead of being installed and
+    // executed. Publisher authorization of the head is checked separately below.
     let (etag_root, module) = client
         .clone_store(&store_id, |bytes, served_root| {
             let id = digstore_compiler::verify_module_root(bytes, &store_id)
@@ -239,10 +239,10 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     }
 
     // Authenticated head (§21.6): the served root must carry the publisher's BLS
-    // signature, verified against the store key embedded in the module (which
-    // verify_module_root proved hashes to the store id). This is what upgrades
-    // clone from "self-consistent module" to "publisher-authorized content", so a
-    // malicious origin holding the public store key cannot serve a fabricated root.
+    // signature, verified against the publisher key embedded in the module. This is
+    // what upgrades clone from "self-consistent module" to "publisher-authorized
+    // content", so a malicious origin that does not hold the publisher's private
+    // key cannot serve a fabricated root.
     let identity = digstore_compiler::verify_module_root(&module, &store_id)
         .map_err(|e| CliError::VerificationFailed(format!("module verify: {e:?}")))?;
     verify_head_signature(
@@ -254,7 +254,7 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
 
     // Fail-closed revocation (§ residual #1 Layer 1): refuse to install a served
     // root that a signed tombstone retracts (or to clone a Store-revoked store),
-    // verifying each tombstone against the same store-id-bound module key.
+    // verifying each tombstone against the same module-embedded publisher key.
     check_not_revoked(
         &identity.public_key,
         &remote_root,
@@ -362,8 +362,8 @@ pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliEr
     }
 }
 
-/// The store's BLS public key as embedded in (and proven self-certifying by) the
-/// LOCAL module for `root`, if that module is present on disk. Used to verify
+/// The store's BLS publisher key as embedded in the verified LOCAL module for
+/// `root`, if that module is present on disk. Used to verify
 /// served tombstones on a pull/up-to-date path where no fresh module is
 /// downloaded. Returns `None` (caller falls back to the served-module key) if the
 /// local module is absent or fails verification.
@@ -429,7 +429,7 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
     let local_root = store_ops::current_root(ctx)?;
 
     // Fail-closed revocation gate up front (SECURITY.md residual #1 Layer 1):
-    // fetch the descriptor and, using the LOCAL module's store-id-bound key,
+    // fetch the descriptor and, using the LOCAL module's embedded publisher key,
     // refuse a Store-revoked store (or a remote-root-revoked head) BEFORE any
     // advance — including the up-to-date case where no module is downloaded. The
     // Module branch below re-checks against the freshly downloaded module key too.
@@ -465,8 +465,8 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
         PullResult::UpToDate => Ok(local_root.unwrap_or(Bytes32([0u8; 32]))),
         PullResult::Module { root, bytes } => {
             // Verify the downloaded module before persisting/serving it: embedded
-            // StoreId must match, SHA-256(PublicKey)==StoreId, and the recomputed
-            // content root must equal the claimed root (same gate as `clone`).
+            // StoreId must match (the launcher id), and the recomputed content root
+            // must equal the claimed root (same gate as `clone`).
             let id = digstore_compiler::verify_module_root(&bytes, &cfg.store_id)
                 .map_err(|e| CliError::VerificationFailed(format!("module verify: {e:?}")))?;
             if id.root != root {
@@ -479,7 +479,7 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
             // Real generation id/timestamp from /roots.
             let info = client.fetch(&cfg.store_id).await.map_err(map_remote_err)?;
             // Authenticated head (§21.6): require the publisher signature over the
-            // pulled root, verified against the store-id-bound module key.
+            // pulled root, verified against the module's embedded publisher key.
             verify_head_signature(
                 &id.public_key,
                 &root,

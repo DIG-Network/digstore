@@ -51,6 +51,8 @@ impl MockAnchor {
     /// Builds a mock from `DIGSTORE_ANCHOR_MOCK_*` env overrides.
     /// - `DIGSTORE_ANCHOR_MOCK_BALANCE`: u64 mojos (default 1_000_000_000_000).
     /// - `DIGSTORE_ANCHOR_MOCK_TIMEOUT=1`: make `confirm` return `Pending`.
+    /// - `DIGSTORE_ANCHOR_MOCK_FAIL_MINT=<msg>`: make `mint_empty_store` fail
+    ///   with a chain error carrying `<msg>` (exercises the MintFailed path).
     pub fn from_env() -> Self {
         let balance_mojos = std::env::var("DIGSTORE_ANCHOR_MOCK_BALANCE")
             .ok()
@@ -59,10 +61,11 @@ impl MockAnchor {
         let confirm_pending = std::env::var("DIGSTORE_ANCHOR_MOCK_TIMEOUT")
             .map(|v| v == "1")
             .unwrap_or(false);
+        let fail_mint = std::env::var("DIGSTORE_ANCHOR_MOCK_FAIL_MINT").ok();
         MockAnchor {
             balance_mojos,
             confirm_pending,
-            fail_mint: None,
+            fail_mint,
             fail_update: None,
         }
     }

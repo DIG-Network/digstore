@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use digstore_chain::anchor::ConfirmState;
+
 use crate::error::CliError;
 
 /// Confirmation status of the store's current singleton coin.
@@ -55,6 +57,22 @@ impl AnchorState {
         let state = toml::from_str(&text)
             .map_err(|e| CliError::Other(anyhow::anyhow!("parse anchor.toml: {e}")))?;
         Ok(Some(state))
+    }
+
+    /// Apply a terminal [`ConfirmState`] to this state: `Confirmed { height }`
+    /// sets status=Confirmed + records the height; `Pending` leaves it Pending
+    /// with height 0.
+    pub fn apply_confirm(&mut self, state: &ConfirmState) {
+        match state {
+            ConfirmState::Confirmed { height } => {
+                self.status = AnchorStatus::Confirmed;
+                self.confirmed_height = *height;
+            }
+            ConfirmState::Pending => {
+                self.status = AnchorStatus::Pending;
+                self.confirmed_height = 0;
+            }
+        }
     }
 
     /// Persist this anchor state to `<dig_dir>/anchor.toml` (pretty TOML).
@@ -126,6 +144,23 @@ mod tests {
             let loaded = AnchorState::load(td.path()).unwrap().unwrap();
             assert_eq!(loaded.status, status);
         }
+    }
+
+    #[test]
+    fn apply_confirm_sets_status_and_height() {
+        let mut s = sample();
+        s.apply_confirm(&ConfirmState::Confirmed { height: 99 });
+        assert_eq!(s.status, AnchorStatus::Confirmed);
+        assert_eq!(s.confirmed_height, 99);
+
+        let mut s2 = AnchorState {
+            status: AnchorStatus::Confirmed,
+            confirmed_height: 5,
+            ..sample()
+        };
+        s2.apply_confirm(&ConfirmState::Pending);
+        assert_eq!(s2.status, AnchorStatus::Pending);
+        assert_eq!(s2.confirmed_height, 0);
     }
 
     #[test]

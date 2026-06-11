@@ -56,11 +56,10 @@ fn init_json_emits_store_id() {
 use assert_cmd::Command;
 
 fn init_in(dir: &std::path::Path) -> assert_cmd::assert::Assert {
-    Command::cargo_bin("digstore")
-        .unwrap()
-        .current_dir(dir)
-        .arg("init")
-        .assert()
+    let mut cmd = Command::cargo_bin("digstore").unwrap();
+    cmd.current_dir(dir);
+    common::seed_mock_env(&mut cmd, dir);
+    cmd.arg("init").assert()
 }
 
 fn gitignore_lines(dir: &std::path::Path) -> Vec<String> {
@@ -107,4 +106,82 @@ fn init_does_not_duplicate_existing_dig_entry() {
         .filter(|l| l.as_str() == ".dig/" || l.as_str() == ".dig")
         .count();
     assert_eq!(count, 1, "must not duplicate the .dig entry");
+}
+
+// --- on-chain mint gate (mocked) -----------------------------------------------
+// These exercise the new `init` flow: it mints a store singleton via the env-gated
+// in-memory mock (never the network) and the launcher id becomes the store_id.
+
+#[test]
+fn init_mints_and_confirms_against_mock() {
+    let dir = tmp_dig();
+    let out = dig(&dir).args(["--json", "init"]).output().unwrap();
+    assert!(out.status.success(), "init should succeed (confirmed mock)");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(v["store_id"].as_str().is_some(), "carries a store_id");
+    assert_eq!(v["anchor_status"], "confirmed");
+    assert_eq!(v["mocked"], true);
+    assert!(v["coin_id"].as_str().is_some());
+
+    // anchor.toml exists in the store dir with status = "confirmed".
+    let anchor = common::store_dir(&dir).join("anchor.toml");
+    assert!(anchor.exists(), "anchor.toml written");
+    let text = std::fs::read_to_string(&anchor).unwrap();
+    assert!(
+        text.contains("status = \"confirmed\""),
+        "anchor.toml should be confirmed; got:\n{text}"
+    );
+}
+
+#[test]
+fn init_insufficient_funds_exits_12_and_creates_no_store() {
+    let dir = tmp_dig();
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_BALANCE", "0")
+        .arg("init")
+        .assert()
+        .failure()
+        .code(12);
+    // Hard gate: nothing on disk before the mint.
+    assert!(
+        !common::store_dir(&dir).exists(),
+        "no store dir on insufficient funds"
+    );
+}
+
+#[test]
+fn init_confirm_timeout_exits_14_and_keeps_pending_store() {
+    let dir = tmp_dig();
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_TIMEOUT", "1")
+        .args(["init", "--wait-timeout", "1"])
+        .assert()
+        .failure()
+        .code(14);
+    // The store IS created (resumable) and anchor.toml stays pending.
+    let anchor = common::store_dir(&dir).join("anchor.toml");
+    assert!(anchor.exists(), "store kept on confirm timeout");
+    let text = std::fs::read_to_string(&anchor).unwrap();
+    assert!(
+        text.contains("status = \"pending\""),
+        "anchor.toml should be pending; got:\n{text}"
+    );
+}
+
+#[test]
+fn init_without_seed_exits_9() {
+    // A bare DIGSTORE_HOME with NO session → unlock yields NoSeed (exit 9).
+    let dir = tmp_dig();
+    let home = tmp_dig();
+    Command::cargo_bin("digstore")
+        .unwrap()
+        .arg("--dig-dir")
+        .arg(dir.path().join(".dig"))
+        .current_dir(dir.path())
+        .env("DIGSTORE_HOME", home.path())
+        .env("DIGSTORE_ANCHOR_MOCK", "1")
+        .arg("init")
+        .assert()
+        .failure()
+        .code(9);
 }

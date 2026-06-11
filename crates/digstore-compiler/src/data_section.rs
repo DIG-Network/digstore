@@ -170,8 +170,11 @@ pub fn rekey_module_trusted(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleIdentity {
     /// Embedded StoreId, confirmed to equal the caller's expected store id.
+    /// This is the store's on-chain Chia launcher id, not a hash of any key.
     pub store_id: Bytes32,
-    /// Embedded store BLS G1 public key, confirmed to hash to `store_id`.
+    /// The module's embedded publisher (host) BLS G1 public key. Head
+    /// authorization is a separate push-signature check against this key;
+    /// it is NOT bound to `store_id` by any hash relationship.
     pub public_key: Bytes48,
     /// Per-resource merkle root recomputed from the embedded MerkleNodes leaves,
     /// confirmed to equal the embedded CurrentRoot.
@@ -182,20 +185,26 @@ pub struct ModuleIdentity {
 /// the recomputed generation root. This is the integrity gate a `clone`/`pull`
 /// MUST run before trusting or executing a module fetched from a remote.
 ///
+/// The `expected_store_id` is the store's on-chain Chia launcher id (the store's
+/// singleton). The publisher key is taken from the module's embedded `PublicKey`
+/// section; head authorization is a SEPARATE push-signature check the caller runs
+/// against this embedded key — there is no `id == SHA-256(key)` binding.
+///
 /// Enforced PURELY from the module bytes (no trust in any server-supplied field):
 ///  1. embedded `StoreId` == `expected_store_id` (the id the caller asked for);
-///  2. `SHA-256(embedded PublicKey) == StoreId` — the §20.1 self-certifying store
-///     identity: the module names the publisher key whose hash is the store id;
-///  3. the merkle root recomputed from the embedded `MerkleNodes` leaves equals
-///     the embedded `CurrentRoot` (the served content is internally consistent).
+///  2. the merkle root recomputed from the embedded `MerkleNodes` leaves equals
+///     the embedded `CurrentRoot` (the served content is internally consistent
+///     and tamper-evident).
 ///
 /// The caller MUST ALSO check `identity.root == claimed_served_root` so the bytes
-/// are bound to the root advertised by the descriptor/ETag.
+/// are bound to the root advertised by the descriptor/ETag, and MUST verify the
+/// publisher BLS signature over `(root, store_id)` against `identity.public_key`.
 ///
 /// LIMITATION: this proves the module is a self-consistent build for the requested
 /// store identity, but NOT that `root` is the publisher's latest authorized root —
-/// that additionally requires verifying a publisher BLS signature over
-/// `(root, store_id)`, which the current wire protocol does not transport.
+/// that additionally requires verifying that the served root equals the launcher
+/// singleton's current on-chain root, which the current wire protocol does not
+/// transport (the chain is the real authority for the current root).
 pub fn verify_module_root(
     module: &[u8],
     expected_store_id: &Bytes32,
@@ -229,11 +238,9 @@ pub fn verify_module_root(
     let pk_arr: [u8; 48] = pk
         .try_into()
         .map_err(|_| err("PublicKey section not 48 bytes".into()))?;
-    if digstore_core::sha256(&pk_arr) != store_id {
-        return Err(err(
-            "SHA-256(PublicKey) != StoreId: store identity is not self-certifying".into(),
-        ));
-    }
+    // NOTE: store_id is the on-chain launcher id and is intentionally NOT bound to
+    // SHA-256(pk). Head authorization is verified by the caller as a BLS push
+    // signature over (root, store_id) against this embedded publisher key.
 
     let cr = view
         .section(SectionId::CurrentRoot)

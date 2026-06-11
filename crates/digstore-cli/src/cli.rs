@@ -94,6 +94,10 @@ pub struct InitArgs {
     /// Content root (the build-output directory this store captures).
     #[arg(long)]
     pub dir: Option<String>,
+    /// Seconds to wait for the on-chain mint to confirm before returning a
+    /// resumable "pending" (the store is kept; run `digstore anchor` to resume).
+    #[arg(long, default_value_t = 300)]
+    pub wait_timeout: u64,
 }
 
 #[derive(Debug, Args)]

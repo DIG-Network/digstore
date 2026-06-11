@@ -20,6 +20,7 @@ use tempfile::TempDir;
 fn dig_at(project: &Path) -> Command {
     let mut c = Command::cargo_bin("digstore").unwrap();
     c.current_dir(project);
+    common::seed_mock_env(&mut c, project);
     c
 }
 
