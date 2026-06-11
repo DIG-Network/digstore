@@ -195,3 +195,26 @@ Hard-gate cleanup: init rolls back the local scaffold on failure; commit leaves 
 - Mirror coins, collateral top-up/reclaim beyond what `mint` requires, epoch/L2 anchoring (`l2-anchor`).
 - Multi-account / multiple mnemonics. One global seed.
 - Key rotation.
+
+## Verification spike results (2026-06-11) — RESOLVES the top risk; CHANGES the approach
+
+The crates publish at the assumed versions: `dig-store-coin 2.1.0`, `dig-wallet 2.0.0`, `datalayer-driver 3.0.0`. coinset.org exposes the standard Chia Full Node RPC over HTTPS POST with no TLS cert (`push_tx`, `get_coin_record_by_name`, `get_coin_records_by_puzzle_hash`, blockchain state / block-record reads at `https://api.coinset.org/<endpoint>`).
+
+**Critical finding — `dig-store-coin` is NOT usable for coinset-only broadcast.** Its `MintParams` carries `ssl_cert_path` / `ssl_key_path` / `network`; `dig_store_coin::mint` (and `update`) connect to a Chia full node over **TLS P2P** and broadcast there. `datalayer-driver`'s connection API is likewise P2P (`connect_peer(network, tls_connector, SocketAddr)`, `broadcast_spend_bundle(peer, …)`). coinset.org is HTTP RPC, not a P2P peer — so the thin `dig_store_coin::mint(params, peer, wallet)` wrapper assumed earlier in this spec **cannot be used**.
+
+**Corrected approach — build at the `datalayer-driver` level, broadcast via coinset (this is fallback (c) from the original risk note).** `datalayer-driver` exposes pure builder functions that take no `Peer`:
+- `mint_store(minter_synthetic_key, selected_coins: Vec<Coin>, root_hash, label, description, bytes, size_proof, owner_puzzle_hash, delegated_puzzles, fee) -> SuccessResponse`
+- `update_store_metadata(...)` / `update_store_ownership(...)`
+- `sign_coin_spends(...)`, `select_coins(...)`, `add_fee(...)`, `spend_bundle_to_hex(...)`, `get_coin_id(...)`, `get_mainnet_genesis_challenge()` (const)
+
+`anchor.rs` therefore becomes a bespoke pipeline, NOT a wrapper:
+1. Derive the wallet synthetic key + owner puzzle hash from the seed (datalayer-driver `master_*`/`*_to_puzzle_hash` helpers; `dig-wallet` may be used for mnemonic→master-key only).
+2. Fetch the wallet's unspent XCH coins from **coinset** (`get_coin_records_by_puzzle_hash`) and `select_coins` for the fee.
+3. `mint_store(root = EMPTY, …)` for init / `update_store_metadata(new_root, …)` for commit → builds coin spends + the launcher/store id.
+4. `sign_coin_spends(...)` with the synthetic secret key.
+5. Serialize and broadcast via **coinset `push_tx`** (our `coinset.rs` client), NOT `broadcast_spend_bundle`.
+6. Poll **coinset** (`get_coin_record_by_name` + peak height) for confirmation.
+
+**New hardest task for Plan 2:** singleton **sync over coinset** — to build `commit`'s `update`, we must find the current unspent singleton coin for a launcher id by following its lineage via coinset coin-record reads (datalayer-driver's `sync_store_from_launcher_id` is Peer-based and unusable). This is the largest single risk in subsystem 2.
+
+**Scope impact:** subsystem 2 is a custom Chia singleton client over coinset HTTP — materially larger and riskier than "wrap dig-store-coin." The `ChainAnchor` trait and the build/sign-then-broadcast split still hold; only the implementation behind it changes (datalayer-driver low-level + coinset, no P2P peer, no `dig-store-coin`).
