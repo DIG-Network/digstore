@@ -82,6 +82,61 @@ fn anchor_resume_already_confirmed_is_noop() {
         .stdout(predicate::str::contains("already confirmed"));
 }
 
+/// Resume a still-pending anchor (TIMEOUT env on both init AND resume): exit 14,
+/// anchor.toml stays `status = "pending"`.
+#[test]
+fn anchor_resume_still_pending_exits_14() {
+    let dir = tmp_dig();
+    // Init with a mock that times out → leaves anchor.toml pending (exit 14).
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_TIMEOUT", "1")
+        .args(["init", "--wait-timeout", "1"])
+        .assert()
+        .failure()
+        .code(14);
+
+    // Resume also with the timeout env and --wait-timeout 0 → still pending (exit 14).
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_TIMEOUT", "1")
+        .args(["anchor", "--wait-timeout", "0"])
+        .assert()
+        .failure()
+        .code(14);
+
+    let anchor = store_dir(&dir).join("anchor.toml");
+    let text = std::fs::read_to_string(&anchor).unwrap();
+    assert!(
+        text.contains("status = \"pending\""),
+        "anchor.toml must still be pending after failed resume; got:\n{text}"
+    );
+}
+
+/// `digstore anchor status --json` on a pending store: exit 0, JSON reports
+/// `status == "pending"` and `onchain_confirmed == false`.
+#[test]
+fn anchor_status_json_on_pending_store() {
+    let dir = tmp_dig();
+    // Init with a mock that times out → leaves anchor.toml pending.
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_TIMEOUT", "1")
+        .args(["init", "--wait-timeout", "1"])
+        .assert()
+        .failure()
+        .code(14);
+
+    // `anchor status --json` with the timeout env active so the live poll also
+    // returns pending (timeout 0 inside status).
+    let out = dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_TIMEOUT", "1")
+        .args(["--json", "anchor", "status"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "anchor status must exit 0; got: {:?}", out.status);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["status"], "pending", "persisted status must be pending");
+    assert_eq!(v["onchain_confirmed"], false, "live poll must report not confirmed");
+}
+
 /// `digstore anchor` on a store that is not anchored (no anchor.toml): chain
 /// error (exit 13) pointing at `digstore init`.
 #[test]
