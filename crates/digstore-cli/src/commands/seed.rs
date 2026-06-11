@@ -41,6 +41,8 @@ pub fn run(ui: &Ui, args: SeedArgs) -> Result<(), CliError> {
             Ok(())
         }
         SeedAction::Generate { words } => {
+            let cfg = config::GlobalConfig::load(&home).map_err(CliError::from)?;
+            let pass = resolve_passphrase(ui, "Set a passphrase to encrypt your seed")?;
             let phrase = seed::generate_mnemonic(words).map_err(CliError::from)?;
             if !ui.json() {
                 ui.line("");
@@ -49,10 +51,8 @@ pub fn run(ui: &Ui, args: SeedArgs) -> Result<(), CliError> {
                 ui.line(format!("    {}", &*phrase));
                 ui.line("");
             }
-            let pass = resolve_passphrase(ui, "Set a passphrase to encrypt your seed")?;
             let enc = seed::encrypt_seed(&phrase, &pass).map_err(CliError::from)?;
             seed::save_seed(&seed_path, &enc).map_err(CliError::from)?;
-            let cfg = config::GlobalConfig::load(&home).map_err(CliError::from)?;
             unlock::write_session(&session_path, &phrase, cfg.unlock_ttl).map_err(CliError::from)?;
             ui.success("seed generated and unlocked");
             Ok(())
