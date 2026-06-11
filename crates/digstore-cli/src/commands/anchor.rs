@@ -6,6 +6,7 @@ use crate::error::CliError;
 use crate::ops::anchor_backend::{build_anchor, warn_if_mocked};
 use crate::ops::anchor_state::{AnchorState, AnchorStatus};
 use crate::ops::anchor_ux;
+use crate::ops::store_ops;
 use digstore_chain::anchor::ConfirmState;
 
 /// `digstore anchor` resumes a pending on-chain anchor; `digstore anchor status`
@@ -33,7 +34,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: AnchorArgs) -> Result<(),
     let coin_id = parse_coin_id(&state.coin_id)?;
 
     match args.action {
-        Some(AnchorAction::Status) => status(ctx, ui, anchor.as_ref(), &state, coin_id, mocked),
+        Some(AnchorAction::Status) => status(ui, anchor.as_ref(), &state, coin_id, mocked),
         None => resume(ctx, ui, anchor.as_ref(), &mut state, coin_id, mocked, args.wait_timeout),
     }
 }
@@ -41,7 +42,6 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: AnchorArgs) -> Result<(),
 /// Read-only inspect: print the persisted record plus a single live on-chain
 /// check (`confirm(_, 0)` polls once, non-blocking). Always exits 0.
 fn status(
-    _ctx: &CliContext,
     ui: &crate::ui::Ui,
     anchor: &dyn digstore_chain::anchor::ChainAnchor,
     state: &AnchorState,
@@ -128,12 +128,23 @@ fn resume(
         ConfirmState::Confirmed { .. } => {
             state.apply_confirm(&confirmed);
             state.save(&ctx.dig_dir)?;
+
+            // Determine whether the anchored root is ahead of the local head.
+            // This happens when a `commit` timed out: the on-chain root update was
+            // confirmed here but the local generation was never finalized.
+            let local_head = store_ops::current_root(ctx)?
+                .map(|r| r.to_hex())
+                .unwrap_or_default();
+            let needs_commit_finalize =
+                !state.last_root.is_empty() && state.last_root != local_head;
+
             if ui.json() {
                 ui.emit_json(&serde_json::json!({
                     "store_id": state.store_id,
                     "coin_id": state.coin_id,
                     "status": "confirmed",
                     "confirmed_height": state.confirmed_height,
+                    "needs_commit_finalize": needs_commit_finalize,
                     "mocked": mocked,
                 }));
             } else {
@@ -141,6 +152,12 @@ fn resume(
                     "anchor confirmed (height {})",
                     state.confirmed_height
                 ));
+                if needs_commit_finalize {
+                    ui.hint(
+                        "the anchored root is ahead of your local history; \
+                         run `digstore commit` to finalize it",
+                    );
+                }
             }
             Ok(())
         }
