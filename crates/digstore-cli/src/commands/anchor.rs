@@ -22,6 +22,12 @@ use digstore_chain::anchor::ConfirmState;
 /// keep this command focused on chain-state confirmation and never try to
 /// finalize a local generation here.
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: AnchorArgs) -> Result<(), CliError> {
+    // `inspect` operates on the given module file only — it does not require
+    // the store's anchor.toml, so dispatch it before that load.
+    if let Some(AnchorAction::Inspect { ref module }) = args.action {
+        return inspect(ui, module);
+    }
+
     // Every store is anchored at init; a missing anchor.toml is an error state.
     let mut state = AnchorState::load(&ctx.dig_dir)?
         .ok_or_else(|| CliError::Chain("store is not anchored; run `digstore init`".into()))?;
@@ -33,7 +39,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: AnchorArgs) -> Result<(),
     let coin_id = parse_coin_id(&state.coin_id)?;
 
     match args.action {
-        Some(AnchorAction::Status) => status(ui, anchor.as_ref(), &state, coin_id, mocked),
+        Some(AnchorAction::Status) => status(ctx, ui, anchor.as_ref(), &state, coin_id, mocked),
+        // `Inspect` is handled above; this arm is unreachable but required by the compiler.
+        Some(AnchorAction::Inspect { .. }) => unreachable!(),
         None => resume(
             ctx,
             ui,
@@ -46,9 +54,34 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: AnchorArgs) -> Result<(),
     }
 }
 
+/// Serialize a `ChainState` to a JSON value for `--json` output.
+fn chain_state_json(cs: &digstore_core::datasection::ChainState) -> serde_json::Value {
+    serde_json::json!({
+        "network": cs.network,
+        "launcher_id": cs.launcher_id.to_hex(),
+        "coin_id": cs.coin_id.to_hex(),
+        "confirmed_height": cs.confirmed_height,
+        "tx_id": cs.tx_id,
+        "coinset_url": cs.coinset_url,
+    })
+}
+
+/// Best-effort: load the current module and decode its embedded `ChainState`.
+/// Returns `None` on any error (no committed module, missing file, no pointer).
+fn read_module_chain_state_for_store(
+    ctx: &CliContext,
+    store_id_hex: &str,
+) -> Option<digstore_core::datasection::ChainState> {
+    let store_id = digstore_core::Bytes32::from_hex(store_id_hex).ok()?;
+    let path = store_ops::module_path_for(ctx, &store_id, None).ok()?;
+    let bytes = std::fs::read(&path).ok()?;
+    store_ops::read_module_chain_state(&bytes).ok().flatten()
+}
+
 /// Read-only inspect: print the persisted record plus a single live on-chain
 /// check (`confirm(_, 0)` polls once, non-blocking). Always exits 0.
 fn status(
+    ctx: &CliContext,
     ui: &crate::ui::Ui,
     anchor: &dyn digstore_chain::anchor::ChainAnchor,
     state: &AnchorState,
@@ -62,6 +95,9 @@ fn status(
         ConfirmState::Pending => (false, None),
     };
 
+    // Best-effort: decode the embedded chain pointer from the current module.
+    let module_cs = read_module_chain_state_for_store(ctx, &state.store_id);
+
     if ui.json() {
         ui.emit_json(&serde_json::json!({
             "network": state.network,
@@ -73,6 +109,7 @@ fn status(
             "onchain_confirmed": onchain_confirmed,
             "onchain_height": onchain_height,
             "mocked": mocked,
+            "module_chain_state": module_cs.as_ref().map(chain_state_json),
         }));
         return Ok(());
     }
@@ -99,6 +136,33 @@ fn status(
     } else {
         ui.line("on-chain:         not yet confirmed");
     }
+    if let Some(cs) = &module_cs {
+        ui.line(format!("module network:   {}", cs.network));
+        ui.line(format!("module launcher:  {}", cs.launcher_id.to_hex()));
+        ui.line(format!("module coin:      {}", cs.coin_id.to_hex()));
+        ui.line(format!("module height:    {}", cs.confirmed_height));
+    }
+    Ok(())
+}
+
+/// Decode and print the embedded chain pointer from a compiled `.dig` module.
+fn inspect(ui: &crate::ui::Ui, module: &std::path::Path) -> Result<(), CliError> {
+    let bytes =
+        std::fs::read(module).map_err(|e| CliError::Other(anyhow::anyhow!("read module: {e}")))?;
+    let cs = store_ops::read_module_chain_state(&bytes)?
+        .ok_or_else(|| CliError::NotFound("module carries no chain state".into()))?;
+
+    if ui.json() {
+        ui.emit_json(&chain_state_json(&cs));
+        return Ok(());
+    }
+
+    ui.line(format!("network:          {}", cs.network));
+    ui.line(format!("launcher_id:      {}", cs.launcher_id.to_hex()));
+    ui.line(format!("coin_id:          {}", cs.coin_id.to_hex()));
+    ui.line(format!("confirmed_height: {}", cs.confirmed_height));
+    ui.line(format!("tx_id:            {}", cs.tx_id));
+    ui.line(format!("coinset_url:      {}", cs.coinset_url));
     Ok(())
 }
 
