@@ -59,6 +59,12 @@ impl CliError {
             CliError::NoSeed => Some("run `digstore seed import` to set up your seed".into()),
             CliError::BadPassphrase => Some("re-run and enter the correct passphrase".into()),
             CliError::InvalidMnemonic(_) => Some("check the word list and word count (12/24)".into()),
+            CliError::Network(_) => Some(
+                "check your connection and that the remote is reachable; run `digstore remote list`".into(),
+            ),
+            CliError::VerificationFailed(_) => Some(
+                "content failed verification — wrong salt/key or the store data was tampered with".into(),
+            ),
             _ => None,
         }
     }
