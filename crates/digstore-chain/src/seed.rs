@@ -1,5 +1,7 @@
 //! BIP-39 mnemonic handling and encrypted seed storage.
 
+use std::path::Path;
+
 use crate::error::{ChainError, Result};
 use bip39::Mnemonic;
 use zeroize::Zeroizing;
@@ -211,48 +213,21 @@ mod crypto_tests {
     }
 }
 
-use std::path::Path;
-
-/// Writes bytes to `path` with owner-only permissions where the platform
-/// supports it (unix `0600`); on Windows the file inherits the (already
-/// user-scoped) `~/.dig` directory ACL. Mirrors digstore-cli's
-/// `write_secret_file`.
-fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        f.write_all(bytes)?;
-        f.flush()?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, bytes)
-    }
-}
-
 /// Saves an encrypted seed to `path` (owner-only).
 pub fn save_seed(path: &Path, enc: &EncryptedSeed) -> Result<()> {
-    write_secret_file(path, &enc.to_bytes())?;
+    crate::fs_util::write_secret_file(path, &enc.to_bytes())?;
     Ok(())
 }
 
 /// Loads an encrypted seed from `path`.
 pub fn load_seed(path: &Path) -> Result<EncryptedSeed> {
-    if !path.exists() {
-        return Err(ChainError::NoSeed(path.display().to_string()));
-    }
-    let bytes = std::fs::read(path)?;
+    let bytes = std::fs::read(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ChainError::NoSeed(path.display().to_string())
+        } else {
+            ChainError::Io(e)
+        }
+    })?;
     EncryptedSeed::from_bytes(&bytes)
 }
 
