@@ -80,6 +80,8 @@ pub enum Command {
     Seed(SeedArgs),
     /// Lock the seed (clear the cached-unlock session).
     Lock(LockArgs),
+    /// Resume or inspect the store's on-chain anchor.
+    Anchor(AnchorArgs),
 }
 
 #[derive(Debug, Args)]
@@ -94,8 +96,9 @@ pub struct InitArgs {
     /// Content root (the build-output directory this store captures).
     #[arg(long)]
     pub dir: Option<String>,
-    /// Seconds to wait for the on-chain mint to confirm before returning a
-    /// resumable "pending" (the store is kept; run `digstore anchor` to resume).
+    /// Seconds to wait for on-chain confirmation (default 300; 0 = a single
+    /// check, do not block). On a timeout the store is kept resumable; run
+    /// `digstore anchor` to resume.
     #[arg(long, default_value_t = 300)]
     pub wait_timeout: u64,
 }
@@ -126,9 +129,9 @@ pub struct AddArgs {
 pub struct CommitArgs {
     #[arg(short, long)]
     pub message: Option<String>,
-    /// Seconds to wait for the on-chain root update to confirm before returning a
-    /// resumable "pending" (the local generation is NOT finalized; re-run
-    /// `digstore commit` to finish once it confirms).
+    /// Seconds to wait for on-chain confirmation (default 300; 0 = a single
+    /// check, do not block). On a timeout the local generation is NOT finalized
+    /// and a resumable pending anchor is left; re-run `digstore commit` to finish.
     #[arg(long, default_value_t = 300)]
     pub wait_timeout: u64,
 }
@@ -313,6 +316,24 @@ fn parse_word_count(s: &str) -> Result<usize, String> {
 pub struct LockArgs {}
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore anchor\n  digstore anchor status\n  digstore anchor --wait-timeout 600")]
+pub struct AnchorArgs {
+    /// `status` to inspect read-only; omitted to resume a pending anchor.
+    #[command(subcommand)]
+    pub action: Option<AnchorAction>,
+    /// Seconds to wait for on-chain confirmation when resuming (default 300;
+    /// 0 = a single check, do not block).
+    #[arg(long, default_value_t = 300)]
+    pub wait_timeout: u64,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AnchorAction {
+    /// Inspect the anchor: persisted state plus a single live on-chain check.
+    Status,
+}
+
+#[derive(Debug, Args)]
 #[command(
     after_help = "EXAMPLES:\n  digstore update\n  digstore update --check\n  digstore update --yes"
 )]
@@ -437,6 +458,39 @@ mod tests {
     fn global_json_flag_after_subcommand() {
         let cli = Cli::try_parse_from(["digstore", "status", "--json"]).unwrap();
         assert!(cli.json);
+    }
+
+    #[test]
+    fn parses_anchor_resume() {
+        let cli = Cli::try_parse_from(["digstore", "anchor"]).unwrap();
+        match cli.command {
+            Command::Anchor(a) => {
+                assert!(a.action.is_none());
+                assert_eq!(a.wait_timeout, 300);
+            }
+            _ => panic!("expected anchor"),
+        }
+    }
+
+    #[test]
+    fn parses_anchor_status() {
+        let cli = Cli::try_parse_from(["digstore", "anchor", "status"]).unwrap();
+        match cli.command {
+            Command::Anchor(a) => assert!(matches!(a.action, Some(AnchorAction::Status))),
+            _ => panic!("expected anchor status"),
+        }
+    }
+
+    #[test]
+    fn parses_anchor_wait_timeout() {
+        let cli = Cli::try_parse_from(["digstore", "anchor", "--wait-timeout", "0"]).unwrap();
+        match cli.command {
+            Command::Anchor(a) => {
+                assert!(a.action.is_none());
+                assert_eq!(a.wait_timeout, 0);
+            }
+            _ => panic!("expected anchor"),
+        }
     }
 
     #[test]
