@@ -16,6 +16,8 @@ pub enum ChainError {
     Io(#[from] std::io::Error),
     #[error("config error: {0}")]
     Config(String),
+    #[error("chain error: {0}")]
+    Chain(String),
 }
 
 pub type Result<T> = std::result::Result<T, ChainError>;

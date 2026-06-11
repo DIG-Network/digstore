@@ -5,6 +5,7 @@ edition = "2021"
 license.workspace = true
 
 [dependencies]
+async-trait = "0.1"
 bip39 = { version = "2", features = ["rand"] }
 argon2 = "0.5"
 aes-gcm = "0.10"

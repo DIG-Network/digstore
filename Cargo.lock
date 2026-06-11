@@ -2145,6 +2145,7 @@ version = "0.4.5"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "async-trait",
  "bip39",
  "chia-protocol",
  "chia-sdk-coinset",

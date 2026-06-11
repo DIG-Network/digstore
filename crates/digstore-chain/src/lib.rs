@@ -1,5 +1,6 @@
 //! Seed management and (later) Chia anchoring for digstore.
 
+pub mod coinset;
 pub mod config;
 pub mod error;
 mod fs_util;
