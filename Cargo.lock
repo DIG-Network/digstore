@@ -2149,6 +2149,7 @@ dependencies = [
  "bip39",
  "chia-protocol",
  "chia-sdk-coinset",
+ "chia-wallet-sdk",
  "datalayer-driver",
  "dirs",
  "getrandom 0.2.17",
