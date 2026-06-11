@@ -25,6 +25,16 @@ pub enum CliError {
     BadPassphrase,
     #[error("invalid mnemonic: {0}")]
     InvalidMnemonic(String),
+    #[error("insufficient funds: need {need} mojos, have {have}; fund {address}")]
+    InsufficientFunds { need: u64, have: u64, address: String },
+    #[error("chain error: {0}")]
+    Chain(String),
+    #[error("onchain confirmation timed out")]
+    ConfirmTimeout,
+    #[error("mint failed: {0}")]
+    MintFailed(String),
+    #[error("update failed: {0}")]
+    UpdateFailed(String),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -45,6 +55,11 @@ impl CliError {
             CliError::NoSeed => 9,
             CliError::BadPassphrase => 10,
             CliError::InvalidMnemonic(_) => 11,
+            CliError::InsufficientFunds { .. } => 12,
+            CliError::Chain(_) => 13,
+            CliError::ConfirmTimeout => 14,
+            CliError::MintFailed(_) => 15,
+            CliError::UpdateFailed(_) => 16,
             CliError::Other(_) => 1,
         }
     }
@@ -65,6 +80,10 @@ impl CliError {
             CliError::VerificationFailed(_) => Some(
                 "content failed verification — wrong salt/key or the store data was tampered with".into(),
             ),
+            CliError::InsufficientFunds { address, .. } => Some(format!("send XCH to {address}, then retry")),
+            CliError::Chain(_) => Some("check your connection to coinset.org and retry".into()),
+            CliError::ConfirmTimeout => Some("the transaction may still confirm; run `digstore anchor status`".into()),
+            CliError::MintFailed(_) | CliError::UpdateFailed(_) => Some("retry; if it persists, check wallet funds and coinset.org".into()),
             _ => None,
         }
     }
@@ -90,6 +109,7 @@ impl From<digstore_chain::ChainError> for CliError {
             C::NoSeed(_) => CliError::NoSeed,
             C::Decrypt => CliError::BadPassphrase,
             C::InvalidMnemonic(m) => CliError::InvalidMnemonic(m),
+            C::Chain(m) => CliError::Chain(m),
             other => CliError::Other(anyhow::anyhow!(other.to_string())),
         }
     }
@@ -112,6 +132,11 @@ mod tests {
             CliError::NoSeed,
             CliError::BadPassphrase,
             CliError::InvalidMnemonic("x".into()),
+            CliError::InsufficientFunds { need: 1, have: 0, address: "xch1test".into() },
+            CliError::Chain("x".into()),
+            CliError::ConfirmTimeout,
+            CliError::MintFailed("x".into()),
+            CliError::UpdateFailed("x".into()),
         ];
         let mut codes: Vec<i32> = errs.iter().map(|e| e.exit_code()).collect();
         let n = codes.len();
