@@ -2147,6 +2147,7 @@ dependencies = [
  "argon2",
  "async-trait",
  "bip39",
+ "chia",
  "chia-protocol",
  "chia-sdk-coinset",
  "chia-sha2 0.26.0",
