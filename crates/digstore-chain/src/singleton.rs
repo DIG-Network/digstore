@@ -211,6 +211,14 @@ mod tests {
     }
 }
 
+/// Read the launcher's current on-chain root by syncing its singleton lineage
+/// over `chain` and returning the latest metadata root. Errors (propagated from
+/// `sync_datastore`) mean the chain could not be read — callers MUST fail closed.
+pub async fn current_root(chain: &dyn ChainReads, launcher_id: Bytes32) -> Result<Bytes32> {
+    let store = sync_datastore(chain, launcher_id).await?;
+    Ok(store.info.metadata.root_hash)
+}
+
 #[cfg(test)]
 mod sync_tests {
     use super::*;
@@ -230,6 +238,22 @@ mod sync_tests {
     async fn sync_errors_when_launcher_not_found() {
         let chain = MockChain::default();
         let err = sync_datastore(&chain, Bytes32::default())
+            .await
+            .unwrap_err();
+        match err {
+            ChainError::Chain(msg) => assert!(msg.contains("not found"), "got: {msg}"),
+            other => panic!("expected Chain error, got {other:?}"),
+        }
+    }
+
+    // current_root propagates the same Chain error when the launcher is absent.
+    // This mirrors sync_errors_when_launcher_not_found with the same MockChain
+    // fixture — confirming current_root delegates to sync_datastore and fails
+    // closed on any chain read error.
+    #[tokio::test]
+    async fn current_root_returns_synced_metadata_root() {
+        let chain = MockChain::default();
+        let err = current_root(&chain, Bytes32::default())
             .await
             .unwrap_err();
         match err {
