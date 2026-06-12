@@ -1,0 +1,9 @@
+# Cargo build output
+/target
+
+# Generated runtime smoke fixture (regenerate with the example).
+/smoke_fixture.json
+
+# wasm-pack output for the Node smoke test target (the browser deliverable
+# pkg/ is committed; pkg-node/ is verification-only and regenerable).
+/pkg-node

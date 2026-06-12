@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/digstore-core", "crates/digstore-chunker", "crates/digstore-crypto", "crates/digstore-store", "crates/digstore-guest", "crates/digstore-prover", "crates/digstore-host", "crates/digstore-compiler", "crates/digstore-remote", "crates/digstore-cli", "crates/digstore-chain"]
-exclude = ["crates/digstore-prover/guest"]
+exclude = ["crates/digstore-prover/guest", "crates/dig-client-wasm"]
 
 [workspace.package]
 edition = "2021"
