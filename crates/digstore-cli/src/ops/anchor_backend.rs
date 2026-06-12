@@ -97,6 +97,7 @@ impl ChainAnchor for MockAnchor {
         Ok(MintOutcome {
             launcher_id: random_bytes32(),
             coin_id: random_bytes32(),
+            tx_id: random_bytes32(),
         })
     }
 
@@ -112,6 +113,7 @@ impl ChainAnchor for MockAnchor {
         }
         Ok(UpdateOutcome {
             new_coin_id: random_bytes32(),
+            tx_id: random_bytes32(),
         })
     }
 
@@ -183,6 +185,9 @@ mod tests {
         assert_ne!(a.launcher_id, Bytes32::default());
         assert_ne!(a.launcher_id, b.launcher_id, "two mints must differ");
         assert_ne!(a.coin_id, b.coin_id);
+        // tx_id is populated (the conventional bundle-hash tx id) and unique.
+        assert_ne!(a.tx_id, Bytes32::default());
+        assert_ne!(a.tx_id, b.tx_id);
     }
 
     #[tokio::test]

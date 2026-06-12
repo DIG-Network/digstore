@@ -7,7 +7,7 @@
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::runtime::block_on;
-use digstore_chain::dig::format_dig;
+use digstore_chain::dig::{format_dig, format_xch};
 
 pub fn run(_ctx: &CliContext, ui: &crate::ui::Ui) -> Result<(), CliError> {
     // Unlock the wallet seed (NoSeed → exit 9) to derive the owner keys.
@@ -33,7 +33,7 @@ pub fn run(_ctx: &CliContext, ui: &crate::ui::Ui) -> Result<(), CliError> {
         }));
     } else {
         ui.line(format!("address: {addr}"));
-        ui.line(format!("XCH: {xch} mojos"));
+        ui.line(format!("XCH: {} ({xch} mojos)", format_xch(xch)));
         ui.line(format!("DIG: {} ({dig} base units)", format_dig(dig)));
     }
 

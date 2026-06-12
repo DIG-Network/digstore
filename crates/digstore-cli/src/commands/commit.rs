@@ -7,7 +7,7 @@ use crate::ops::anchor_state::{AnchorState, AnchorStatus};
 use crate::ops::{anchor_backend, anchor_ux, store_ops};
 use crate::runtime::block_on;
 use digstore_chain::anchor::ConfirmState;
-use digstore_chain::dig::{self, format_dig};
+use digstore_chain::dig::{self, format_dig, format_xch};
 
 /// `digstore commit` pushes the staged generation's new root to the store's
 /// on-chain singleton via a Chia `update` and BLOCKS until confirmed BEFORE
@@ -56,14 +56,14 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
 
     if !ui.json() {
         ui.line(format!(
-            "⛓  Committing anchors a new root on Chia mainnet and costs {} DIG + up to {} mojos XCH.",
+            "⛓  Committing anchors a new root on Chia mainnet and costs {} DIG + up to {} XCH (fee).",
             format_dig(dig::COMMIT_DIG),
-            fee
+            format_xch(fee)
         ));
         ui.line(format!(
-            "   you have {} DIG and {} mojos XCH.",
+            "   you have {} DIG and {} XCH.",
             format_dig(have_dig),
-            have_xch
+            format_xch(have_xch)
         ));
     }
 
@@ -87,7 +87,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     // 4. Submit the on-chain root update (or reuse an in-flight one).
     //    Idempotency: if a Pending update for THIS exact root was already
     //    submitted, do not re-submit — reuse its coin id and skip to confirm.
-    let resume = state.status == AnchorStatus::Pending && state.last_root == new_root_hex;
+    //    `--resubmit` overrides this to force a fresh update (for a stuck pending
+    //    update that will not confirm); it spends DIG + an XCH fee again.
+    let resume =
+        !args.resubmit && state.status == AnchorStatus::Pending && state.last_root == new_root_hex;
     let coin_id = if resume {
         parse_bytes32(&state.coin_id, "coin_id")?
     } else {
@@ -101,6 +104,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
         state.status = AnchorStatus::Pending;
         state.last_root = new_root_hex.clone();
         state.coin_id = coin_hex;
+        state.last_tx_id = hex::encode(upd.tx_id.as_ref());
         state.save(&ctx.dig_dir)?;
         upd.new_coin_id
     };

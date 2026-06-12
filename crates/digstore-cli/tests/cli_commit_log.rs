@@ -55,7 +55,11 @@ fn commit_unchanged_content_is_rejected_not_reanchored() {
 
     // Re-stage the SAME content and try to commit again → refused, no new generation.
     dig(&dir).args(["add", "a.txt"]).assert().success();
-    dig(&dir).args(["commit", "-m", "g2"]).assert().failure().code(2);
+    dig(&dir)
+        .args(["commit", "-m", "g2"])
+        .assert()
+        .failure()
+        .code(2);
 
     let out = dig(&dir).args(["log", "--json"]).output().unwrap();
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -276,4 +280,45 @@ fn commit_resumes_pending_update_idempotently() {
     let (status, last_root) = anchor_status_and_root(&dir);
     assert_eq!(status, "confirmed");
     assert_eq!(last_root, pending_root);
+}
+
+/// `commit --resubmit` forces a fresh on-chain update from a Pending state
+/// (escape hatch for a stuck in-flight update), rather than only re-confirming
+/// the old coin. From a timed-out Pending commit, `--resubmit` (no timeout)
+/// submits anew, confirms, and finalizes the generation.
+#[test]
+fn commit_resubmit_forces_fresh_update_from_pending() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let f = dir.path().join("r.txt");
+    std::fs::write(&f, b"resubmit content").unwrap();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "r"])
+        .assert()
+        .success();
+
+    // First attempt times out → Pending, no generation.
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_TIMEOUT", "1")
+        .args(["commit", "-m", "first try"])
+        .assert()
+        .failure()
+        .code(14);
+    let (status, _) = anchor_status_and_root(&dir);
+    assert_eq!(status, "pending");
+
+    // --resubmit (no timeout env) forces a fresh update → confirms + finalizes.
+    dig(&dir)
+        .args(["commit", "-m", "resubmit", "--resubmit"])
+        .assert()
+        .success();
+    dig(&dir)
+        .args(["log"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("generation 0"));
+    let (status, _) = anchor_status_and_root(&dir);
+    assert_eq!(status, "confirmed");
 }
