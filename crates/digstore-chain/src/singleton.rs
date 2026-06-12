@@ -248,10 +248,12 @@ mod sync_tests {
 
     // current_root propagates the same Chain error when the launcher is absent.
     // This mirrors sync_errors_when_launcher_not_found with the same MockChain
-    // fixture — confirming current_root delegates to sync_datastore and fails
-    // closed on any chain read error.
+    // fixture — verifying error propagation: current_root delegates to
+    // sync_datastore and fails closed on any chain read error. The happy-path
+    // (successful root retrieval) is covered by the ignored live test
+    // `sync_live_minted_store`.
     #[tokio::test]
-    async fn current_root_returns_synced_metadata_root() {
+    async fn current_root_fails_closed_when_launcher_not_found() {
         let chain = MockChain::default();
         let err = current_root(&chain, Bytes32::default()).await.unwrap_err();
         match err {

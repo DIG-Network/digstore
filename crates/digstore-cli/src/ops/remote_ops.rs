@@ -167,6 +167,7 @@ async fn verify_chain_root(
     }
 
     let onchain: Bytes32 = if std::env::var_os("DIGSTORE_ANCHOR_MOCK").is_some() {
+        eprintln!("⚠ chain-root verification MOCKED (DIGSTORE_ANCHOR_MOCK) — clone/pull NOT verified against the real chain");
         if std::env::var_os("DIGSTORE_ANCHOR_MOCK_CHAIN_UNREACHABLE").is_some() {
             return Err(CliError::VerificationFailed(
                 "could not read the store's on-chain root (chain unreachable)".into(),
