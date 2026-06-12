@@ -186,11 +186,18 @@ Every `digstore commit` then pushes the new generation's root to that singleton
 with an on-chain update and **blocks until the update confirms** before finalizing
 the generation locally.
 
-> **This spends real XCH.** Anchoring is mandatory — there is no offline mode.
+> **This spends real XCH and DIG.** Anchoring is mandatory — there is no offline mode.
 > `init` and `commit` will not proceed without an unlocked wallet seed and enough
 > funds, and they block on mainnet confirmation. All broadcast and chain reads go
 > through [coinset.org](https://coinset.org) over HTTPS (no peer node or TLS cert
 > to run).
+>
+> **DIG token fees (v0.5.4):** every `init` pays **100 DIG** to the DIG treasury,
+> and every `commit` pays **10 DIG** — embedded atomically in the same spend bundle
+> as the mint/update (memo = store id). Before submitting, each command prints the
+> cost and your current balance; if the wallet is short on XCH **or** DIG the
+> command blocks and tells you what's missing. Use `digstore balance` to check your
+> spendable XCH (mojos) and DIG at any time.
 
 ### 1. Set up a wallet seed
 
@@ -211,15 +218,18 @@ non-interactively (for CI/scripts). Global settings live in `~/.dig/config.toml`
 
 ### 2. Fund the wallet
 
-Minting and updates cost a small mainnet fee, so the wallet derived from your seed
-needs XCH. If it's short, `init`/`commit` fail with `insufficient funds` and print
-the **receive address** to send XCH to:
+Minting and updates cost both XCH (the transaction fee) and DIG (the DIG token, a
+Chia CAT). The wallet derived from your seed needs **both**. Run `digstore balance`
+to see your current spendable XCH (mojos), DIG (3-decimal display), and the wallet
+receive address. If either is short, `init`/`commit` block, disclose the exact cost
+up front, and print the **receive address** to fund:
 
 ```
 insufficient funds: need <N> mojos, have <M>; fund xch1…
 ```
 
-Send XCH to that address, wait for it to confirm, then retry.
+Both XCH and DIG are received at the same `xch1…` receive address (DIG as a CAT).
+Send funds there, wait for them to confirm, then retry.
 
 ### 3. Init mints, commit anchors
 
@@ -286,6 +296,7 @@ a hint only — local config and flags always take precedence.
 | `digstore anchor [--wait-timeout <s>]` | Resume a pending on-chain anchor (confirm the coin, flip to confirmed) |
 | `digstore anchor status [--json]` | Show the active store's anchor state + embedded module chain pointer (read-only) |
 | `digstore anchor inspect <module.dig> [--json]` | Dump the on-chain pointer embedded in any module file (read-only, no workspace needed) |
+| `digstore balance [--json]` | Show spendable XCH (mojos) and DIG (3-decimal) + the wallet receive address (read-only) |
 | `digstore seed generate\|import\|status` / `digstore lock` | Manage the encrypted wallet seed used for anchoring |
 
 Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`
