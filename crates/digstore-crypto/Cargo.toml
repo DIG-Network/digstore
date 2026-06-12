@@ -1,5 +1,6 @@
 [package]
 name = "digstore-crypto"
+license = "GPL-2.0-only"
 version = "0.1.0"
 edition = "2021"
 description = "Host-side cryptography for Digstore: URN key derivation, AES-256-GCM chunk encryption, and Chia AugScheme BLS."

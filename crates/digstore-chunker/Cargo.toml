@@ -1,5 +1,6 @@
 [package]
 name = "digstore-chunker"
+license = "GPL-2.0-only"
 version.workspace = true
 edition.workspace = true
 

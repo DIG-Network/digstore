@@ -1,5 +1,6 @@
 [package]
 name = "digstore-prover"
+license = "GPL-2.0-only"
 version = "0.1.0"
 edition = "2021"
 description = "Execution proofs and Chia chain anchoring for digstore (§13)."

@@ -1,5 +1,6 @@
 [package]
 name = "digstore-compiler"
+license = "GPL-2.0-only"
 version = "1.0.0"
 edition = "2021"
 description = "dig-compiler: deterministic transform from on-disk generations to a self-serving WASM module (paper 5, 8.3, 17.1, 19)."
