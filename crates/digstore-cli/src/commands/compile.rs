@@ -28,8 +28,9 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError>
     //    would not match), so a private store should always pass its stored salt.
     let salt_override = match &args.salt {
         Some(hex) => {
-            let b = Bytes32::from_hex(hex.trim_start_matches("0x"))
-                .map_err(|e| CliError::InvalidArgument(format!("--salt is not 32-byte hex: {e}")))?;
+            let b = Bytes32::from_hex(hex.trim_start_matches("0x")).map_err(|e| {
+                CliError::InvalidArgument(format!("--salt is not 32-byte hex: {e}"))
+            })?;
             Some(SecretSalt(b.0))
         }
         None => None,
