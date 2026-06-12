@@ -26,6 +26,26 @@ fn remote_add_and_list_persists() {
         .stdout(predicate::str::contains("origin").and(predicate::str::contains("example")));
 }
 
+/// A `clone` whose source URL is rejected (here, plaintext http to a non-loopback
+/// host violates the transport policy) MUST fail closed and leave NO local
+/// workspace/store behind — the URL is validated before any directory is created.
+/// Regression: `clone` previously created `<dst>/.dig/stores/default/` before
+/// validating the URL, stranding a partial scaffold on a rejected clone.
+#[test]
+fn clone_bad_scheme_url_creates_no_local_store() {
+    let dst = tmp_dig();
+    let id = "ab".repeat(32);
+    dig(&dst)
+        .args(["clone", &format!("http://evil.example.com/stores/{id}")])
+        .assert()
+        .failure()
+        .code(2);
+    assert!(
+        !dst.path().join(".dig").exists(),
+        "a rejected clone must not create a .dig workspace/store"
+    );
+}
+
 #[test]
 fn clone_then_cat_round_trips_from_remote() {
     let src = tmp_dig();

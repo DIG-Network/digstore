@@ -18,7 +18,10 @@ pub fn run(ws_ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(
         )));
     }
     let store_dir = workspace.store_dir(name);
-    std::fs::create_dir_all(&store_dir).map_err(|e| CliError::Other(e.into()))?;
+    // Do NOT create the store directory yet — the source URL has not been
+    // validated. `clone_from` validates the URL (and every other gate) first and
+    // creates the local layout only after all checks pass, so a rejected clone
+    // (bad scheme, unreachable remote, failed verification) leaves nothing behind.
     let ctx = &CliContext {
         dig_dir: store_dir,
         workspace_dir: ws_ctx.workspace_dir.clone(),
