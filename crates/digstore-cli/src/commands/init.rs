@@ -124,7 +124,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         json: ctx.json,
         verbose: ctx.verbose,
     };
-    let res = store_ops::init_store(&store_ctx, private, None, Some(store_id))?;
+    let res = store_ops::init_store(&store_ctx, private, None, Some(store_id), None)?;
 
     // Persist the on-chain anchor state (Pending until confirmed).
     let coin_id_hex = hex::encode(mint.coin_id.as_ref());
