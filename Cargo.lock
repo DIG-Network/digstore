@@ -2141,7 +2141,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chain"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2170,7 +2170,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chunker"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "digstore-core",
  "hex",
@@ -2180,7 +2180,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-cli"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-core"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "hex",
  "serde",
@@ -2336,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-remote"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "axum",
  "base64 0.22.1",
