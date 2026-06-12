@@ -82,6 +82,8 @@ pub enum Command {
     Lock(LockArgs),
     /// Resume or inspect the store's on-chain anchor.
     Anchor(AnchorArgs),
+    /// Show wallet XCH + DIG balance.
+    Balance(BalanceArgs),
 }
 
 #[derive(Debug, Args)]
@@ -318,6 +320,10 @@ fn parse_word_count(s: &str) -> Result<usize, String> {
 pub struct LockArgs {}
 
 #[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore balance\n  digstore balance --json")]
+pub struct BalanceArgs {}
+
+#[derive(Debug, Args)]
 #[command(
     after_help = "EXAMPLES:\n  digstore anchor\n  digstore anchor status\n  digstore anchor --wait-timeout 600"
 )]
@@ -472,6 +478,12 @@ mod tests {
     fn global_json_flag_after_subcommand() {
         let cli = Cli::try_parse_from(["digstore", "status", "--json"]).unwrap();
         assert!(cli.json);
+    }
+
+    #[test]
+    fn parses_balance() {
+        let cli = Cli::try_parse_from(["digstore", "balance"]).unwrap();
+        assert!(matches!(cli.command, Command::Balance(_)));
     }
 
     #[test]

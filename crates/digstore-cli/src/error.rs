@@ -25,11 +25,12 @@ pub enum CliError {
     BadPassphrase,
     #[error("invalid mnemonic: {0}")]
     InvalidMnemonic(String),
-    #[error("insufficient funds: need {need} mojos, have {have}; fund {address}")]
+    #[error("insufficient {asset}: need {need}, have {have}; fund {address}")]
     InsufficientFunds {
         need: u64,
         have: u64,
         address: String,
+        asset: String,
     },
     #[error("chain error: {0}")]
     Chain(String),
@@ -84,7 +85,7 @@ impl CliError {
             CliError::VerificationFailed(_) => Some(
                 "content failed verification — wrong salt/key or the store data was tampered with".into(),
             ),
-            CliError::InsufficientFunds { address, .. } => Some(format!("send XCH to {address}, then retry")),
+            CliError::InsufficientFunds { address, asset, .. } => Some(format!("send {asset} to {address}, then retry")),
             CliError::Chain(_) => Some("check your connection to coinset.org and retry".into()),
             CliError::ConfirmTimeout => Some("the transaction may still confirm; run `digstore anchor status`".into()),
             CliError::MintFailed(_) | CliError::UpdateFailed(_) => Some("retry; if it persists, check wallet funds and coinset.org".into()),
@@ -140,6 +141,7 @@ mod tests {
                 need: 1,
                 have: 0,
                 address: "xch1test".into(),
+                asset: "XCH".into(),
             },
             CliError::Chain("x".into()),
             CliError::ConfirmTimeout,

@@ -20,6 +20,8 @@ use crate::ui::Ui;
 pub struct MockAnchor {
     /// Mojos reported by `balance`.
     pub balance_mojos: u64,
+    /// DIG base units reported by `dig_balance`.
+    pub dig_base_units: u64,
     /// When true, `confirm` returns `Pending` (simulates a confirmation timeout).
     pub confirm_pending: bool,
     /// `Some(msg)` makes `mint_empty_store` fail with a chain error carrying `msg`.
@@ -32,6 +34,7 @@ impl Default for MockAnchor {
     fn default() -> Self {
         MockAnchor {
             balance_mojos: 1_000_000_000_000,
+            dig_base_units: 1_000_000_000,
             confirm_pending: false,
             fail_mint: None,
             fail_update: None,
@@ -50,6 +53,7 @@ fn random_bytes32() -> Bytes32 {
 impl MockAnchor {
     /// Builds a mock from `DIGSTORE_ANCHOR_MOCK_*` env overrides.
     /// - `DIGSTORE_ANCHOR_MOCK_BALANCE`: u64 mojos (default 1_000_000_000_000).
+    /// - `DIGSTORE_ANCHOR_MOCK_DIG`: u64 DIG base units (default 1_000_000_000).
     /// - `DIGSTORE_ANCHOR_MOCK_TIMEOUT=1`: make `confirm` return `Pending`.
     /// - `DIGSTORE_ANCHOR_MOCK_FAIL_MINT=<msg>`: make `mint_empty_store` fail
     ///   with a chain error carrying `<msg>` (exercises the MintFailed path).
@@ -58,12 +62,17 @@ impl MockAnchor {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(1_000_000_000_000);
+        let dig_base_units = std::env::var("DIGSTORE_ANCHOR_MOCK_DIG")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(1_000_000_000);
         let confirm_pending = std::env::var("DIGSTORE_ANCHOR_MOCK_TIMEOUT")
             .map(|v| v == "1")
             .unwrap_or(false);
         let fail_mint = std::env::var("DIGSTORE_ANCHOR_MOCK_FAIL_MINT").ok();
         MockAnchor {
             balance_mojos,
+            dig_base_units,
             confirm_pending,
             fail_mint,
             fail_update: None,
@@ -75,6 +84,10 @@ impl MockAnchor {
 impl ChainAnchor for MockAnchor {
     async fn balance(&self, _keys: &WalletKeys) -> ChainResult<u64> {
         Ok(self.balance_mojos)
+    }
+
+    async fn dig_balance(&self, _keys: &WalletKeys) -> ChainResult<u64> {
+        Ok(self.dig_base_units)
     }
 
     async fn mint_empty_store(&self, _keys: &WalletKeys, _fee: u64) -> ChainResult<MintOutcome> {

@@ -29,6 +29,8 @@ pub enum ConfirmState {
 pub trait ChainAnchor: Send + Sync {
     /// Spendable XCH (mojos) at the wallet's owner puzzle hash.
     async fn balance(&self, keys: &WalletKeys) -> Result<u64>;
+    /// Spendable DIG (base units) at the wallet's DIG CAT puzzle hash.
+    async fn dig_balance(&self, keys: &WalletKeys) -> Result<u64>;
     /// Mint an empty (root = 0) owner-only store; broadcast. Returns ids.
     async fn mint_empty_store(&self, keys: &WalletKeys, fee: u64) -> Result<MintOutcome>;
     /// Sync the current singleton for `launcher_id`, build+broadcast a root update.
@@ -65,6 +67,10 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
     async fn balance(&self, keys: &WalletKeys) -> Result<u64> {
         let coins = self.chain.unspent_coins(keys.owner_puzzle_hash).await?;
         Ok(coins.iter().map(|c| c.amount).sum())
+    }
+
+    async fn dig_balance(&self, keys: &WalletKeys) -> Result<u64> {
+        crate::cat::dig_balance(&self.chain as &dyn ChainReads, keys.owner_puzzle_hash).await
     }
 
     async fn mint_empty_store(&self, keys: &WalletKeys, fee: u64) -> Result<MintOutcome> {
@@ -150,6 +156,25 @@ mod tests {
         let anchor = CoinsetAnchor::new(mock);
         let bal = anchor.balance(&keys).await.unwrap();
         assert_eq!(bal, 800_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 1b: dig_balance sums DIG CAT coins at the owner's DIG CAT ph.
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn dig_balance_sums_cat_coins_at_dig_ph() {
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let mut mock = MockChain::default();
+        let cat_ph = crate::cat::dig_cat_puzzle_hash(keys.owner_puzzle_hash);
+        mock.coins_by_ph.insert(
+            cat_ph,
+            vec![
+                Coin::new(Bytes32::default(), cat_ph, 60_000),
+                Coin::new(Bytes32::new([1u8; 32]), cat_ph, 40_000),
+            ],
+        );
+        let anchor = CoinsetAnchor::new(mock);
+        assert_eq!(anchor.dig_balance(&keys).await.unwrap(), 100_000);
     }
 
     // -----------------------------------------------------------------------
