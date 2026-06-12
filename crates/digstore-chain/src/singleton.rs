@@ -5,12 +5,128 @@
 use crate::coinset::ChainReads;
 use crate::error::{ChainError, Result};
 use crate::keys::WalletKeys;
-use chia_wallet_sdk::driver::SpendContext;
+use chia_wallet_sdk::driver::{DriverError, Launcher, SpendContext, StandardLayer};
+use chia_wallet_sdk::types::{conditions::CreateCoin, Condition, Conditions};
 use datalayer_driver::{
-    add_fee, mint_store, select_coins, sign_coin_spends, update_store_metadata, Bytes32, Coin,
-    DataStore, DataStoreInnerSpend, DataStoreMetadata, DelegatedPuzzle, SpendBundle,
+    add_fee, select_coins, sign_coin_spends, update_store_metadata, Bytes32, Coin, DataStore,
+    DataStoreInnerSpend, DataStoreMetadata, DelegatedPuzzle, PublicKey, SpendBundle,
     SuccessResponse,
 };
+use hex_literal::hex;
+
+/// `sha256("datastore")` — the global launcher hint (kept as a second memo for
+/// compatibility with DATASTORE_LAUNCHER_HINT-based tooling). Matches chip35 + datalayer.
+const DATASTORE_LAUNCHER_HINT: Bytes32 = Bytes32::new(hex!(
+    "aa7e5b234e1d55967bf0a316395a2eab6cb3370332c0f251f0e44a5afb84fc68"
+));
+/// The well-known singleton launcher puzzle hash (eff07522…). A CREATE_COIN to this puzzle
+/// hash is the store's launcher coin (coin_id == launcher_id == store_id).
+const SINGLETON_LAUNCHER_PH: Bytes32 = Bytes32::new(hex!(
+    "eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9"
+));
+
+/// Domain tag for the digstore-scoped owner DISCOVERY hint — IDENTICAL to chip35's
+/// (hub.dig.net), so one coinset get_coin_records_by_hint query finds stores minted by
+/// EITHER the CLI or the web app. Do not change without changing chip35 in lockstep.
+const DIGSTORE_OWNER_HINT_DOMAIN: &[u8] = b"dig:datastore:owner:v1";
+
+/// Derive the digstore-scoped owner discovery hint = `sha256(DOMAIN || owner_puzzle_hash)`,
+/// emitted as the FIRST (indexed) launcher memo. MUST match chip35's derivation byte-for-byte.
+fn digstore_owner_hint(owner_puzzle_hash: Bytes32) -> Bytes32 {
+    let mut h = chia_sha2::Sha256::new();
+    h.update(DIGSTORE_OWNER_HINT_DOMAIN);
+    h.update(owner_puzzle_hash);
+    Bytes32::new(h.finalize())
+}
+
+/// Mint an owner-only DataLayer store, emitting the digstore-scoped owner hint as the
+/// launcher coin's indexed memo. This is datalayer_driver::mint_store's body re-expressed on
+/// the chia-wallet-sdk primitives, with ONE change: the launcher CREATE_COIN carries
+/// `[digstore_owner_hint(owner_ph), DATASTORE_LAUNCHER_HINT]` instead of just the launcher
+/// hint (datalayer_driver hardcodes a single memo and exposes no hint param). Byte-identical
+/// to chip35 (hub.dig.net) so both paths are discoverable by one owner-hint query.
+#[allow(clippy::too_many_arguments)]
+fn mint_store_digstore(
+    minter_synthetic_key: PublicKey,
+    selected_coins: Vec<Coin>,
+    root_hash: Bytes32,
+    owner_puzzle_hash: Bytes32,
+    delegated_puzzles: Vec<DelegatedPuzzle>,
+    fee: u64,
+) -> std::result::Result<SuccessResponse, DriverError> {
+    // Coins are held at owner_puzzle_hash (= standard puzzle of the synthetic key), so any
+    // change returns there.
+    let minter_puzzle_hash = owner_puzzle_hash;
+    let total_amount_from_coins = selected_coins.iter().map(|c| c.amount).sum::<u64>();
+    let total_amount = fee + 1;
+
+    let mut ctx = SpendContext::new();
+    let p2 = StandardLayer::new(minter_synthetic_key);
+
+    let lead_coin = selected_coins[0];
+    let lead_coin_name = lead_coin.coin_id();
+
+    for coin in selected_coins.into_iter().skip(1) {
+        p2.spend(
+            &mut ctx,
+            coin,
+            Conditions::new().assert_concurrent_spend(lead_coin_name),
+        )?;
+    }
+
+    let (launch_singleton, datastore) = Launcher::new(lead_coin_name, 1).mint_datastore(
+        &mut ctx,
+        DataStoreMetadata {
+            root_hash,
+            label: None,
+            description: None,
+            bytes: None,
+            size_proof: None,
+        },
+        owner_puzzle_hash.into(),
+        delegated_puzzles,
+    )?;
+
+    let launch_singleton = Conditions::new().extend(
+        launch_singleton
+            .into_iter()
+            .map(|cond| {
+                if let Condition::CreateCoin(cc) = cond {
+                    if cc.puzzle_hash == SINGLETON_LAUNCHER_PH {
+                        let hint = ctx.memos(&[
+                            digstore_owner_hint(owner_puzzle_hash),
+                            DATASTORE_LAUNCHER_HINT,
+                        ])?;
+                        return Ok(Condition::CreateCoin(CreateCoin {
+                            puzzle_hash: cc.puzzle_hash,
+                            amount: cc.amount,
+                            memos: hint,
+                        }));
+                    }
+                    return Ok(Condition::CreateCoin(cc));
+                }
+                Ok(cond)
+            })
+            .collect::<std::result::Result<Vec<_>, DriverError>>()?,
+    );
+
+    let lead_coin_conditions = if total_amount_from_coins > total_amount {
+        let hint = ctx.hint(minter_puzzle_hash)?;
+        launch_singleton.create_coin(
+            minter_puzzle_hash,
+            total_amount_from_coins - total_amount,
+            hint,
+        )
+    } else {
+        launch_singleton
+    };
+    p2.spend(&mut ctx, lead_coin, lead_coin_conditions)?;
+
+    Ok(SuccessResponse {
+        coin_spends: ctx.take(),
+        new_datastore: datastore,
+    })
+}
 
 /// A built, signed mint ready to broadcast.
 pub struct MintBuild {
@@ -32,14 +148,10 @@ pub fn build_mint(
     let SuccessResponse {
         coin_spends,
         new_datastore,
-    } = mint_store(
+    } = mint_store_digstore(
         keys.synthetic_pk,
         selected,
         root,
-        None,
-        None,
-        None,
-        None,
         keys.owner_puzzle_hash,
         vec![],
         fee,
