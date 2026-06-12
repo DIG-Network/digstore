@@ -18,8 +18,13 @@ thiserror = "1"
 dirs = "5"
 datalayer-driver = "3"
 chia-protocol = "0.26"
+chia-sha2 = "0.26"
 chia-sdk-coinset = "0.30"
-chia-wallet-sdk = "0.30"
+# chip-0035 exposes the DataLayer driver primitives (Launcher::mint_datastore, etc.) so we
+# can replicate chip35's mint with the digstore-scoped owner hint memo (datalayer_driver's
+# mint_store hardcodes a single launcher hint and exposes no hint parameter).
+chia-wallet-sdk = { version = "0.30", features = ["chip-0035"] }
+hex-literal = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
