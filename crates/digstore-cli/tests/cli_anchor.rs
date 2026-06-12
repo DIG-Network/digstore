@@ -2,6 +2,23 @@ mod common;
 use common::{dig, store_dir, tmp_dig};
 use predicates::prelude::*;
 
+/// `anchor inspect` on a file that is not a digstore module fails with a clean
+/// "not a digstore module" message (exit 2), not a raw wasm-decoder dump.
+#[test]
+fn anchor_inspect_non_module_errors_cleanly() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let junk = dir.path().join("notamodule.dig");
+    std::fs::write(&junk, b"definitely not a wasm module").unwrap();
+    dig(&dir)
+        .args(["anchor", "inspect"])
+        .arg(&junk)
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("not a digstore module"));
+}
+
 /// `digstore anchor status` on a freshly-init'd (confirmed) store: prints the
 /// store_id + "confirmed", and `--json` reports the persisted + live state.
 #[test]

@@ -149,8 +149,23 @@ fn status(
 fn inspect(ui: &crate::ui::Ui, module: &std::path::Path) -> Result<(), CliError> {
     let bytes =
         std::fs::read(module).map_err(|e| CliError::Other(anyhow::anyhow!("read module: {e}")))?;
-    let cs = store_ops::read_module_chain_state(&bytes)?
-        .ok_or_else(|| CliError::NotFound("module carries no chain state".into()))?;
+    let cs = match store_ops::read_module_chain_state(&bytes) {
+        Ok(Some(cs)) => cs,
+        // Valid module, but compiled before chain pointers were embedded.
+        Ok(None) => {
+            return Err(CliError::NotFound(
+                "module carries no chain state (older module with no embedded pointer)".into(),
+            ))
+        }
+        // Not a digstore module (no parseable data section) — give a clean message
+        // instead of a raw wasm-decoder dump.
+        Err(_) => {
+            return Err(CliError::InvalidArgument(format!(
+                "not a digstore module: {} (could not read an embedded data section)",
+                module.display()
+            )))
+        }
+    };
 
     if ui.json() {
         ui.emit_json(&chain_state_json(&cs));

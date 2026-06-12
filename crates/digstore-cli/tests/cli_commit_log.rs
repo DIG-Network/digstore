@@ -66,6 +66,38 @@ fn commit_unchanged_content_is_rejected_not_reanchored() {
     );
 }
 
+/// Committing on a store whose INITIAL mint never confirmed (pending init) must be
+/// refused with a clear pointer to `digstore anchor`, not a confusing chain error —
+/// and must not finalize any generation. (On a real chain the update would fail at
+/// lineage sync; the guard makes the precondition explicit.)
+#[test]
+fn commit_on_pending_init_is_refused_clearly() {
+    let dir = tmp_dig();
+    // init times out → store kept, mint anchor stays Pending with no root anchored.
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_TIMEOUT", "1")
+        .arg("init")
+        .assert()
+        .failure()
+        .code(14);
+    std::fs::write(dir.path().join("a.txt"), b"x").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+
+    dig(&dir)
+        .args(["commit", "-m", "g1"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("digstore anchor"));
+
+    // No generation finalized.
+    dig(&dir)
+        .args(["log"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("generation").not());
+}
+
 /// The anchor.toml status + last_root for the default store.
 fn anchor_status_and_root(dir: &TempDir) -> (String, String) {
     let text = std::fs::read_to_string(common::store_dir(dir).join("anchor.toml")).unwrap();
