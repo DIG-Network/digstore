@@ -40,6 +40,32 @@ fn commit_with_nothing_staged_fails_exit_2() {
     dig(&dir).args(["commit"]).assert().failure().code(2);
 }
 
+/// Re-committing UNCHANGED content must be refused (exit 2), NOT anchored again.
+/// Committing clears staging, so re-`add`ing an identical file re-stages it and the
+/// recomputed root equals the current head root — without a guard, `commit` would
+/// anchor a duplicate root on-chain (spending real XCH) and append a no-op
+/// generation. Regression: caught by permutation testing.
+#[test]
+fn commit_unchanged_content_is_rejected_not_reanchored() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    std::fs::write(dir.path().join("a.txt"), b"identical bytes").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+    dig(&dir).args(["commit", "-m", "g1"]).assert().success();
+
+    // Re-stage the SAME content and try to commit again → refused, no new generation.
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+    dig(&dir).args(["commit", "-m", "g2"]).assert().failure().code(2);
+
+    let out = dig(&dir).args(["log", "--json"]).output().unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v.as_array().unwrap().len(),
+        1,
+        "an unchanged commit must not add a generation"
+    );
+}
+
 /// The anchor.toml status + last_root for the default store.
 fn anchor_status_and_root(dir: &TempDir) -> (String, String) {
     let text = std::fs::read_to_string(common::store_dir(dir).join("anchor.toml")).unwrap();

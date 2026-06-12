@@ -806,6 +806,19 @@ pub fn stage_to_root(ctx: &CliContext) -> Result<PreparedCommit, CliError> {
     let tree = MerkleTree::from_leaves(resource_leaves);
     let root = tree.root();
 
+    // Refuse a no-op commit. Committing clears staging, so re-`add`ing identical
+    // content re-stages it and produces the SAME root as the current head. Without
+    // this guard `commit` would anchor that identical root on-chain (spending real
+    // XCH) and append a duplicate-root generation. Bail BEFORE any wallet/anchor
+    // work, like `git commit` refusing an empty commit.
+    if current_root(ctx)? == Some(root) {
+        return Err(CliError::InvalidArgument(format!(
+            "nothing changed since the last commit (staged content produces the current root {}); \
+             stage different content, or `digstore unstage` to discard",
+            root.to_hex()
+        )));
+    }
+
     let next_id = RootHistory::open(ctx.history_path())
         .and_then(|h| h.next_id())
         .map_err(|e| CliError::Other(anyhow::anyhow!("history: {e}")))?;
