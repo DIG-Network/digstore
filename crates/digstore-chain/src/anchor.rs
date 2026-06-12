@@ -2,11 +2,14 @@
 //! its root, and wait for confirmation — all over coinset. Ties together
 //! key derivation, spend building/signing, lineage sync, and broadcast.
 
+use crate::cat::{build_dig_payment, dig_cats};
 use crate::coinset::ChainReads;
-use crate::error::Result;
+use crate::error::{ChainError, Result};
 use crate::keys::WalletKeys;
-use crate::singleton::{build_mint, build_update, sync_datastore};
+use crate::dig;
+use crate::singleton::{build_mint_unsigned, build_update_unsigned, sync_datastore};
 use chia_protocol::Bytes32;
+use datalayer_driver::{sign_coin_spends, SpendBundle};
 
 #[derive(Clone, Debug)]
 pub struct MintOutcome {
@@ -75,11 +78,24 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
 
     async fn mint_empty_store(&self, keys: &WalletKeys, fee: u64) -> Result<MintOutcome> {
         let unspent = self.chain.unspent_coins(keys.owner_puzzle_hash).await?;
-        let built = build_mint(keys, &unspent, Bytes32::default(), fee)?;
-        // Read coin_id and launcher_id BEFORE moving `built.bundle` into push.
-        let coin_id = built.datastore.coin.coin_id();
-        let launcher_id = built.launcher_id;
-        self.chain.push(built.bundle).await?;
+        // 1) UNSIGNED mint coin spends (gives the launcher id == store id).
+        let mint = build_mint_unsigned(keys, &unspent, Bytes32::default(), fee)?;
+        let coin_id = mint.datastore.coin.coin_id();
+        let launcher_id = mint.launcher_id;
+
+        // 2) UNSIGNED DIG payment: 100 DIG to the treasury, memo = launcher id.
+        let cats =
+            dig_cats(&self.chain as &dyn ChainReads, keys.owner_puzzle_hash).await?;
+        let pay = build_dig_payment(keys, &cats, dig::INIT_DIG, launcher_id)?;
+
+        // 3) Combine into ONE bundle and sign atomically with the synthetic key.
+        let mut all = mint.coin_spends;
+        all.extend(pay);
+        let signature = sign_coin_spends(&all, std::slice::from_ref(&keys.synthetic_sk), false)
+            .map_err(|e| ChainError::Chain(format!("sign combined mint+DIG bundle: {e}")))?;
+        let bundle = SpendBundle::new(all, signature);
+
+        self.chain.push(bundle).await?;
         Ok(MintOutcome {
             launcher_id,
             coin_id,
@@ -96,10 +112,23 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         // &self.chain is &C; coerces to &dyn ChainReads because C: ChainReads.
         let store = sync_datastore(&self.chain as &dyn ChainReads, launcher_id).await?;
         let unspent = self.chain.unspent_coins(keys.owner_puzzle_hash).await?;
-        let built = build_update(keys, store, new_root, &unspent, fee)?;
-        // Read new_coin_id BEFORE moving `built.bundle` into push.
-        let new_coin_id = built.new_coin_id;
-        self.chain.push(built.bundle).await?;
+        // 1) UNSIGNED update coin spends (singleton + XCH fee).
+        let update = build_update_unsigned(keys, store, new_root, &unspent, fee)?;
+        let new_coin_id = update.new_coin_id;
+
+        // 2) UNSIGNED DIG payment: 10 DIG to the treasury, memo = store id.
+        let cats =
+            dig_cats(&self.chain as &dyn ChainReads, keys.owner_puzzle_hash).await?;
+        let pay = build_dig_payment(keys, &cats, dig::COMMIT_DIG, launcher_id)?;
+
+        // 3) Combine into ONE bundle and sign atomically with the synthetic key.
+        let mut all = update.coin_spends;
+        all.extend(pay);
+        let signature = sign_coin_spends(&all, std::slice::from_ref(&keys.synthetic_sk), false)
+            .map_err(|e| ChainError::Chain(format!("sign combined update+DIG bundle: {e}")))?;
+        let bundle = SpendBundle::new(all, signature);
+
+        self.chain.push(bundle).await?;
         Ok(UpdateOutcome { new_coin_id })
     }
 
@@ -178,30 +207,36 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 2: mint_empty_store builds a bundle and records exactly one push.
+    // Test 2: mint_empty_store now embeds a DIG payment in the SAME bundle, so a
+    // wallet with XCH but NO DIG is blocked before any push (atomic: the mint
+    // cannot ride without its DIG payment). This proves the DIG payment is wired
+    // into the mint path. The happy path (a real DIG CAT reconstructed over
+    // coinset + the combined signed bundle) is validated LIVE by the controller
+    // and by the ignored `dig_cats_live_reconstruct` test — a valid DIG CAT
+    // cannot be reconstructed offline without real CLVM lineage matching the
+    // mainnet DIG asset id.
     // -----------------------------------------------------------------------
     #[tokio::test]
-    async fn mint_empty_store_pushes_one_bundle() {
+    async fn mint_empty_store_blocks_without_dig() {
         let keys = derive_wallet_keys(ABANDON).unwrap();
         let mut mock = MockChain::default();
         let ph = keys.owner_puzzle_hash;
-        // Provide a synthetic funding coin with enough mojos (mint needs fee+1 minimum).
+        // Plenty of XCH, but no DIG CAT coins at the DIG puzzle hash.
         let funding_coin = Coin::new(Bytes32::default(), ph, 1_000_000);
         mock.coins_by_ph.insert(ph, vec![funding_coin]);
 
         let anchor = CoinsetAnchor::new(mock);
-        let outcome = anchor.mint_empty_store(&keys, 0).await.unwrap();
+        let err = anchor.mint_empty_store(&keys, 0).await.unwrap_err();
+        match err {
+            crate::error::ChainError::Chain(msg) => {
+                assert!(msg.contains("insufficient DIG"), "got: {msg}");
+            }
+            other => panic!("expected insufficient DIG, got {other:?}"),
+        }
 
-        // launcher_id must be non-default (it's a real hash from the mint).
-        assert_ne!(
-            outcome.launcher_id,
-            Bytes32::default(),
-            "launcher_id should be non-default"
-        );
-
-        // Exactly one SpendBundle must have been pushed.
+        // Nothing was pushed — the mint is atomic with its DIG payment.
         let pushed_count = anchor.chain.pushed.lock().unwrap().len();
-        assert_eq!(pushed_count, 1, "expected exactly one pushed bundle");
+        assert_eq!(pushed_count, 0, "expected no pushed bundle when DIG is short");
     }
 
     // -----------------------------------------------------------------------
