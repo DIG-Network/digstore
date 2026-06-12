@@ -7,8 +7,7 @@ pub const DIG_ASSET_ID: Bytes32 = Bytes32::new(hex_literal::hex!(
 ));
 
 /// DIG treasury recipient (bech32 `xch1…`); DIG is sent to this address's CAT ph.
-pub const TREASURY_ADDRESS: &str =
-    "xch1a37rq3cgcl2ecpudttsf35x75qzdan68lgw2l6ajvmqs44jxdn5qv6pk3y";
+pub const TREASURY_ADDRESS: &str = "xch1a37rq3cgcl2ecpudttsf35x75qzdan68lgw2l6ajvmqs44jxdn5qv6pk3y";
 
 /// DIG has 3 decimals: 1 DIG = 1000 base units.
 pub const DIG_DECIMALS: u32 = 3;
@@ -28,6 +27,15 @@ pub fn format_dig(base_units: u64) -> String {
     format!("{}.{:03}", base_units / 1000, base_units % 1000)
 }
 
+/// Mojos per XCH: 1 XCH = 1_000_000_000_000 mojos (12 decimals).
+pub const MOJOS_PER_XCH: u64 = 1_000_000_000_000;
+
+/// Format mojos as a human XCH string (÷1e12, 12 dp), e.g.
+/// `format_xch(903_384) == "0.000000903384"`.
+pub fn format_xch(mojos: u64) -> String {
+    format!("{}.{:012}", mojos / MOJOS_PER_XCH, mojos % MOJOS_PER_XCH)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41,5 +49,13 @@ mod tests {
         assert_eq!(format_dig(100_000), "100.000");
         assert_eq!(format_dig(10_500), "10.500");
         assert_eq!(format_dig(1), "0.001");
+    }
+    #[test]
+    fn format_xch_renders_twelve_decimals() {
+        assert_eq!(format_xch(MOJOS_PER_XCH), "1.000000000000");
+        assert_eq!(format_xch(903_384), "0.000000903384");
+        assert_eq!(format_xch(1), "0.000000000001");
+        assert_eq!(format_xch(0), "0.000000000000");
+        assert_eq!(format_xch(1_500_000_000_000), "1.500000000000");
     }
 }

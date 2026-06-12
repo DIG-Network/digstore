@@ -138,6 +138,11 @@ pub struct CommitArgs {
     /// and a resumable pending anchor is left; re-run `digstore commit` to finish.
     #[arg(long, default_value_t = 300)]
     pub wait_timeout: u64,
+    /// Ignore an in-flight pending update and submit a fresh one (spends DIG +
+    /// an XCH fee). Use when a previous commit's update is stuck and will not
+    /// confirm. Without it, a re-run reuses the pending update.
+    #[arg(long)]
+    pub resubmit: bool,
 }
 
 #[derive(Debug, Args)]
@@ -486,6 +491,21 @@ mod tests {
     fn parses_balance() {
         let cli = Cli::try_parse_from(["digstore", "balance"]).unwrap();
         assert!(matches!(cli.command, Command::Balance(_)));
+    }
+
+    #[test]
+    fn parses_commit_resubmit() {
+        let cli = Cli::try_parse_from(["digstore", "commit", "--resubmit"]).unwrap();
+        match cli.command {
+            Command::Commit(c) => assert!(c.resubmit),
+            _ => panic!("expected commit"),
+        }
+        // default is false
+        let cli = Cli::try_parse_from(["digstore", "commit"]).unwrap();
+        match cli.command {
+            Command::Commit(c) => assert!(!c.resubmit),
+            _ => panic!("expected commit"),
+        }
     }
 
     #[test]

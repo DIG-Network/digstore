@@ -16,9 +16,7 @@ use crate::error::{ChainError, Result};
 use crate::keys::WalletKeys;
 use chia::puzzles::cat::CatArgs;
 use chia_protocol::{Bytes32, CoinSpend};
-use chia_wallet_sdk::driver::{
-    Action, Cat, Id, Puzzle, Relation, SpendContext, Spends,
-};
+use chia_wallet_sdk::driver::{Action, Cat, Id, Puzzle, Relation, SpendContext, Spends};
 use chia_wallet_sdk::prelude::TreeHash;
 use indexmap::indexmap;
 
@@ -59,9 +57,10 @@ pub async fn dig_cats(chain: &dyn ChainReads, owner_puzzle_hash: Bytes32) -> Res
         let coin_id = coin.coin_id();
 
         // The child's own confirmation height == the height its parent was spent.
-        let rec = chain.coin_record(coin_id).await?.ok_or_else(|| {
-            ChainError::Chain(format!("DIG coin {coin_id:?} record not found"))
-        })?;
+        let rec = chain
+            .coin_record(coin_id)
+            .await?
+            .ok_or_else(|| ChainError::Chain(format!("DIG coin {coin_id:?} record not found")))?;
         let parent_spent_height = rec.confirmed_block_index;
 
         // Fetch the parent's spend (puzzle + solution) at that height.
@@ -89,9 +88,7 @@ pub async fn dig_cats(chain: &dyn ChainReads, owner_puzzle_hash: Bytes32) -> Res
             Cat::parse_children(&mut ctx, parent_spend.coin, parent_puzzle, parent_solution)
                 .map_err(|e| ChainError::Chain(format!("Cat::parse_children: {e}")))?
                 .ok_or_else(|| {
-                    ChainError::Chain(format!(
-                        "DIG coin {coin_id:?}: parent is not a CAT"
-                    ))
+                    ChainError::Chain(format!("DIG coin {coin_id:?}: parent is not a CAT"))
                 })?;
 
         let cat = children
@@ -154,7 +151,10 @@ pub fn build_dig_payment(
     amount: u64,
     store_id: Bytes32,
 ) -> Result<Vec<CoinSpend>> {
-    let (selected, _sum) = select_dig_cats(dig_cats, amount)?;
+    let (selected, sum) = select_dig_cats(dig_cats, amount)?;
+    // Post-condition of selection: the chosen cats cover the requested amount.
+    // (select_dig_cats already errors if short; this makes the guarantee explicit.)
+    debug_assert!(sum >= amount, "selection must cover amount");
 
     let mut ctx = SpendContext::new();
     let treasury_ph = treasury_inner_puzzle_hash();
@@ -244,7 +244,11 @@ mod tests {
         use chia_wallet_sdk::driver::CatInfo;
         // A bare Cat with the right asset id + amount. lineage_proof is None here
         // (selection does not read it), so this is NOT spendable — selection-only.
-        let coin = Coin::new(Bytes32::from([parent; 32]), Bytes32::from([0xcau8; 32]), amount);
+        let coin = Coin::new(
+            Bytes32::from([parent; 32]),
+            Bytes32::from([0xcau8; 32]),
+            amount,
+        );
         Cat::new(
             coin,
             None,
@@ -302,6 +306,38 @@ mod tests {
         }
     }
 
+    // Offline error-path coverage for dig_cats reconstruction: an unspent DIG CAT
+    // coin exists at the wallet's DIG CAT puzzle hash, but its OWN coin record is
+    // missing (so the parent's spend height is unknown). Reconstruction must error
+    // cleanly ("record not found") rather than panic. This exercises the first
+    // fallible branch in dig_cats without needing real CLVM lineage. The happy
+    // path (a parent that parses into DIG children) needs real chain data and is
+    // covered by the ignored live test + the controller.
+    #[tokio::test]
+    async fn dig_cats_errors_when_parent_record_missing() {
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let owner_ph = keys.owner_puzzle_hash;
+        let cat_ph = dig_cat_puzzle_hash(owner_ph);
+
+        let mut mock = MockChain::default();
+        // An unspent coin exists at the DIG CAT ph, so unspent_coins returns it...
+        mock.coins_by_ph.insert(
+            cat_ph,
+            vec![Coin::new(Bytes32::from([3u8; 32]), cat_ph, 50_000)],
+        );
+        // ...but we deliberately seed NO `records` entry for that coin, so the
+        // coin_record lookup returns None → "record not found".
+
+        let res = dig_cats(&mock, owner_ph).await;
+        assert!(res.is_err(), "missing parent record must error, not panic");
+        match res.unwrap_err() {
+            ChainError::Chain(msg) => {
+                assert!(msg.contains("record not found"), "got: {msg}");
+            }
+            other => panic!("expected Chain error, got {other:?}"),
+        }
+    }
+
     // dig_cats over coinset and the full CAT spend (sending to the treasury with
     // a store-id memo + change) require real CLVM/lineage data and are validated
     // by the controller's live init/commit, plus the ignored live test below.
@@ -314,7 +350,10 @@ mod tests {
         let keys = derive_wallet_keys(phrase.trim()).unwrap();
         let cats = dig_cats(&chain, keys.owner_puzzle_hash).await.unwrap();
         let total: u64 = cats.iter().map(|c| c.coin.amount).sum();
-        println!("reconstructed {} DIG cats, total {total} base units", cats.len());
+        println!(
+            "reconstructed {} DIG cats, total {total} base units",
+            cats.len()
+        );
         for c in &cats {
             assert_eq!(c.info.asset_id, DIG_ASSET_ID);
             assert!(c.lineage_proof.is_some());

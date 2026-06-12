@@ -31,11 +31,39 @@ fn classify_coin_record(
         return Ok(mapped);
     }
     let msg = error.unwrap_or_default();
-    if msg.to_lowercase().contains("not found") {
+    if is_not_found(&msg) {
         return Ok(None);
     }
     Err(ChainError::Chain(format!(
         "get_coin_record_by_name failed: {msg:?}"
+    )))
+}
+
+/// coinset reports an absent coin/spend as `success = false` + a `"…not found"`
+/// error. That is the NORMAL transient state while a freshly-pushed tx sits in
+/// the mempool (no on-chain record / no solution yet), not a hard chain error.
+fn is_not_found(msg: &str) -> bool {
+    msg.to_lowercase().contains("not found")
+}
+
+/// Classify a `get_puzzle_and_solution` response into present / absent / error,
+/// mirroring [`classify_coin_record`]: a `"…not found"` (the coin is not yet
+/// on-chain / has no recorded solution) maps to `Ok(None)`; any other
+/// `success = false` is a genuine RPC failure and is surfaced.
+fn classify_coin_spend(
+    success: bool,
+    error: Option<String>,
+    mapped: Option<CoinSpend>,
+) -> Result<Option<CoinSpend>> {
+    if success {
+        return Ok(mapped);
+    }
+    let msg = error.unwrap_or_default();
+    if is_not_found(&msg) {
+        return Ok(None);
+    }
+    Err(ChainError::Chain(format!(
+        "get_puzzle_and_solution failed: {msg:?}"
     )))
 }
 
@@ -122,14 +150,7 @@ impl ChainReads for Coinset {
             .await
             .map_err(|e| ChainError::Chain(format!("get_puzzle_and_solution: {e}")))?;
 
-        if !resp.success {
-            return Err(ChainError::Chain(format!(
-                "get_puzzle_and_solution failed: {:?}",
-                resp.error
-            )));
-        }
-
-        Ok(resp.coin_solution)
+        classify_coin_spend(resp.success, resp.error, resp.coin_solution)
     }
 
     async fn peak_height(&self) -> Result<u32> {
@@ -281,6 +302,24 @@ mod tests {
     #[test]
     fn classify_real_rpc_error_propagates() {
         let r = classify_coin_record(false, Some("internal server error".into()), None);
+        assert!(matches!(r, Err(ChainError::Chain(_))));
+    }
+
+    // Same regression as coin_record but for get_puzzle_and_solution: a coin not
+    // yet on-chain (no recorded solution) comes back success=false + "…not found",
+    // which MUST be Ok(None) (pending), not a chain error that aborts reconstruction.
+    #[test]
+    fn classify_coin_spend_not_found_is_pending_not_error() {
+        let r = classify_coin_spend(false, Some("Coin spend 0xabc not found".into()), None);
+        assert!(
+            matches!(r, Ok(None)),
+            "coin_spend not-found must be Ok(None), got {r:?}"
+        );
+    }
+
+    #[test]
+    fn classify_coin_spend_real_rpc_error_propagates() {
+        let r = classify_coin_spend(false, Some("internal server error".into()), None);
         assert!(matches!(r, Err(ChainError::Chain(_))));
     }
 

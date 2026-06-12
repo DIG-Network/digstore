@@ -15,11 +15,13 @@ use datalayer_driver::{sign_coin_spends, SpendBundle};
 pub struct MintOutcome {
     pub launcher_id: Bytes32, // == store_id
     pub coin_id: Bytes32,     // eve singleton coin to poll for confirmation
+    pub tx_id: Bytes32,       // SpendBundle::name() — conventional tx id of the mint
 }
 
 #[derive(Clone, Debug)]
 pub struct UpdateOutcome {
     pub new_coin_id: Bytes32, // new singleton coin to poll
+    pub tx_id: Bytes32,       // SpendBundle::name() — conventional tx id of the update
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,10 +101,13 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
             .map_err(|e| ChainError::Chain(format!("sign combined mint+DIG bundle: {e}")))?;
         let bundle = SpendBundle::new(all, signature);
 
+        // Bundle hash == conventional tx id; capture it BEFORE the bundle moves.
+        let tx_id = bundle.name();
         self.chain.push(bundle).await?;
         Ok(MintOutcome {
             launcher_id,
             coin_id,
+            tx_id,
         })
     }
 
@@ -136,8 +141,10 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
             .map_err(|e| ChainError::Chain(format!("sign combined update+DIG bundle: {e}")))?;
         let bundle = SpendBundle::new(all, signature);
 
+        // Bundle hash == conventional tx id; capture it BEFORE the bundle moves.
+        let tx_id = bundle.name();
         self.chain.push(bundle).await?;
-        Ok(UpdateOutcome { new_coin_id })
+        Ok(UpdateOutcome { new_coin_id, tx_id })
     }
 
     /// Polls chain every 10 s until `coin_id` appears or the poll budget expires.

@@ -5,7 +5,7 @@ use crate::ops::anchor_state::{AnchorState, AnchorStatus};
 use crate::ops::{anchor_backend, anchor_ux, store_ops};
 use crate::runtime::block_on;
 use digstore_chain::anchor::ConfirmState;
-use digstore_chain::dig::{self, format_dig};
+use digstore_chain::dig::{self, format_dig, format_xch};
 
 /// `digstore init` MINTS an empty store singleton on Chia mainnet; the on-chain
 /// launcher id becomes the store_id. This is a HARD GATE: no seed, no funds, or
@@ -72,14 +72,14 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
 
     if !ui.json() {
         ui.line(format!(
-            "⛓  Minting a store on Chia mainnet costs {} DIG + up to {} mojos XCH (fee).",
+            "⛓  Minting a store on Chia mainnet costs {} DIG + up to {} XCH (fee).",
             format_dig(dig::INIT_DIG),
-            fee
+            format_xch(fee)
         ));
         ui.line(format!(
-            "   you have {} DIG and {} mojos XCH.",
+            "   you have {} DIG and {} XCH.",
             format_dig(have_dig),
-            have_xch
+            format_xch(have_xch)
         ));
     }
 
@@ -134,7 +134,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         coin_id: coin_id_hex.clone(),
         status: AnchorStatus::Pending,
         last_root: String::new(),
-        last_tx_id: String::new(),
+        last_tx_id: hex::encode(mint.tx_id.as_ref()),
         confirmed_height: 0,
     };
     anchor_state.save(&store_ctx.dig_dir)?;
