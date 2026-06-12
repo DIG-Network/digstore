@@ -8,8 +8,8 @@ use crate::keys::WalletKeys;
 use chia_wallet_sdk::driver::{DriverError, Launcher, SpendContext, StandardLayer};
 use chia_wallet_sdk::types::{conditions::CreateCoin, Condition, Conditions};
 use datalayer_driver::{
-    add_fee, select_coins, sign_coin_spends, update_store_metadata, Bytes32, Coin, DataStore,
-    DataStoreInnerSpend, DataStoreMetadata, DelegatedPuzzle, PublicKey, SpendBundle,
+    add_fee, select_coins, sign_coin_spends, update_store_metadata, Bytes32, Coin, CoinSpend,
+    DataStore, DataStoreInnerSpend, DataStoreMetadata, DelegatedPuzzle, PublicKey, SpendBundle,
     SuccessResponse,
 };
 use hex_literal::hex;
@@ -135,14 +135,25 @@ pub struct MintBuild {
     pub datastore: DataStore,
 }
 
-/// Builds + signs a mint of an owner-only empty/initial store with `root`.
-/// `unspent` are the wallet's spendable XCH coins; `fee` in mojos.
-pub fn build_mint(
+/// The UNSIGNED mint: the raw coin spends plus the ids derived from them. Used
+/// when extra coin spends (e.g. a DIG CAT payment) must be concatenated into the
+/// SAME bundle and signed together. The owner's synthetic key signs the whole set.
+pub struct MintUnsigned {
+    pub coin_spends: Vec<CoinSpend>,
+    pub launcher_id: Bytes32,
+    pub datastore: DataStore,
+}
+
+/// Builds the UNSIGNED mint coin spends for an owner-only empty/initial store with
+/// `root`. `unspent` are the wallet's spendable XCH coins; `fee` in mojos. The
+/// launcher id is derived intact from the mint; the caller signs (alone, or after
+/// concatenating other coin spends into one bundle).
+pub fn build_mint_unsigned(
     keys: &WalletKeys,
     unspent: &[Coin],
     root: Bytes32,
     fee: u64,
-) -> Result<MintBuild> {
+) -> Result<MintUnsigned> {
     let selected = select_coins(unspent, fee + 1)
         .map_err(|e| ChainError::Chain(format!("select_coins: {e}")))?;
     let SuccessResponse {
@@ -158,6 +169,26 @@ pub fn build_mint(
     )
     .map_err(|e| ChainError::Chain(format!("mint_store: {e}")))?;
     let launcher_id = new_datastore.info.launcher_id;
+    Ok(MintUnsigned {
+        coin_spends,
+        launcher_id,
+        datastore: new_datastore,
+    })
+}
+
+/// Builds + signs a mint of an owner-only empty/initial store with `root`.
+/// `unspent` are the wallet's spendable XCH coins; `fee` in mojos.
+pub fn build_mint(
+    keys: &WalletKeys,
+    unspent: &[Coin],
+    root: Bytes32,
+    fee: u64,
+) -> Result<MintBuild> {
+    let MintUnsigned {
+        coin_spends,
+        launcher_id,
+        datastore,
+    } = build_mint_unsigned(keys, unspent, root, fee)?;
     let signature = sign_coin_spends(
         &coin_spends,
         std::slice::from_ref(&keys.synthetic_sk),
@@ -168,7 +199,7 @@ pub fn build_mint(
     Ok(MintBuild {
         bundle,
         launcher_id,
-        datastore: new_datastore,
+        datastore,
     })
 }
 
@@ -179,15 +210,25 @@ pub struct UpdateBuild {
     pub datastore: DataStore,
 }
 
-/// Builds + signs an owner-authorized update of `store`'s root to `new_root`.
-/// `fee_coins` are the wallet's spendable XCH coins for the fee; `fee` mojos.
-pub fn build_update(
+/// The UNSIGNED root update: raw coin spends (singleton + fee) plus derived ids.
+/// Used to concatenate a DIG CAT payment into the SAME bundle before signing.
+pub struct UpdateUnsigned {
+    pub coin_spends: Vec<CoinSpend>,
+    pub new_coin_id: Bytes32,
+    pub datastore: DataStore,
+}
+
+/// Builds the UNSIGNED owner-authorized update of `store`'s root to `new_root`
+/// (singleton spend + XCH fee spend). `fee_coins` are the wallet's spendable XCH
+/// coins for the fee; `fee` mojos. The caller signs (alone or after concatenating
+/// other coin spends into one bundle).
+pub fn build_update_unsigned(
     keys: &WalletKeys,
     store: DataStore,
     new_root: Bytes32,
     fee_coins: &[Coin],
     fee: u64,
-) -> Result<UpdateBuild> {
+) -> Result<UpdateUnsigned> {
     let SuccessResponse {
         coin_spends: update_spends,
         new_datastore,
@@ -209,18 +250,39 @@ pub fn build_update(
         .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
     coin_spends.extend(update_spends);
 
+    let new_coin_id = new_datastore.coin.coin_id();
+    Ok(UpdateUnsigned {
+        coin_spends,
+        new_coin_id,
+        datastore: new_datastore,
+    })
+}
+
+/// Builds + signs an owner-authorized update of `store`'s root to `new_root`.
+/// `fee_coins` are the wallet's spendable XCH coins for the fee; `fee` mojos.
+pub fn build_update(
+    keys: &WalletKeys,
+    store: DataStore,
+    new_root: Bytes32,
+    fee_coins: &[Coin],
+    fee: u64,
+) -> Result<UpdateBuild> {
+    let UpdateUnsigned {
+        coin_spends,
+        new_coin_id,
+        datastore,
+    } = build_update_unsigned(keys, store, new_root, fee_coins, fee)?;
     let signature = sign_coin_spends(
         &coin_spends,
         std::slice::from_ref(&keys.synthetic_sk),
         false,
     )
     .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
-    let new_coin_id = new_datastore.coin.coin_id();
     let bundle = SpendBundle::new(coin_spends, signature);
     Ok(UpdateBuild {
         bundle,
         new_coin_id,
-        datastore: new_datastore,
+        datastore,
     })
 }
 

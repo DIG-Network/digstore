@@ -26,6 +26,7 @@ chia-sdk-coinset = "0.30"
 # mint_store hardcodes a single launcher hint and exposes no hint parameter).
 chia-wallet-sdk = { version = "0.30", features = ["chip-0035"] }
 hex-literal = "0.4"
+indexmap = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
