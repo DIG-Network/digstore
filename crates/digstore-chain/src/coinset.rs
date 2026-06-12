@@ -272,7 +272,10 @@ mod tests {
     #[test]
     fn classify_not_found_is_pending_not_error() {
         let r = classify_coin_record(false, Some("Coin record 0xabc not found".into()), None);
-        assert!(matches!(r, Ok(None)), "not-found must be Ok(None), got {r:?}");
+        assert!(
+            matches!(r, Ok(None)),
+            "not-found must be Ok(None), got {r:?}"
+        );
     }
 
     #[test]
