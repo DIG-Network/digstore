@@ -7,6 +7,7 @@ use crate::ops::anchor_state::{AnchorState, AnchorStatus};
 use crate::ops::{anchor_backend, anchor_ux, store_ops};
 use crate::runtime::block_on;
 use digstore_chain::anchor::ConfirmState;
+use digstore_chain::dig::{self, format_dig};
 
 /// `digstore commit` pushes the staged generation's new root to the store's
 /// on-chain singleton via a Chia `update` and BLOCKS until confirmed BEFORE
@@ -45,6 +46,43 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
 
     let launcher_id = parse_bytes32(&state.store_id, "store_id")?;
     let new_root_b32 = Bytes32::new(prepared.root.0);
+
+    // 3b. Preflight balance for BOTH assets, with up-front cost disclosure. A
+    //     commit pays COMMIT_DIG (10 DIG) embedded in the on-chain bundle PLUS the
+    //     XCH fee. Block before the update if the wallet is short on EITHER asset;
+    //     roots.log / staging are untouched on a block.
+    let have_xch = block_on(anchor.balance(&keys))??;
+    let have_dig = block_on(anchor.dig_balance(&keys))??;
+
+    if !ui.json() {
+        ui.line(format!(
+            "⛓  Committing anchors a new root on Chia mainnet and costs {} DIG + up to {} mojos XCH.",
+            format_dig(dig::COMMIT_DIG),
+            fee
+        ));
+        ui.line(format!(
+            "   you have {} DIG and {} mojos XCH.",
+            format_dig(have_dig),
+            have_xch
+        ));
+    }
+
+    if have_xch < fee {
+        return Err(CliError::InsufficientFunds {
+            need: fee,
+            have: have_xch,
+            address: digstore_chain::keys::owner_address(&keys),
+            asset: "XCH".into(),
+        });
+    }
+    if have_dig < dig::COMMIT_DIG {
+        return Err(CliError::InsufficientFunds {
+            need: dig::COMMIT_DIG,
+            have: have_dig,
+            address: digstore_chain::keys::owner_address(&keys),
+            asset: "DIG".into(),
+        });
+    }
 
     // 4. Submit the on-chain root update (or reuse an in-flight one).
     //    Idempotency: if a Pending update for THIS exact root was already

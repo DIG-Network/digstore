@@ -5,6 +5,7 @@ use crate::ops::anchor_state::{AnchorState, AnchorStatus};
 use crate::ops::{anchor_backend, anchor_ux, store_ops};
 use crate::runtime::block_on;
 use digstore_chain::anchor::ConfirmState;
+use digstore_chain::dig::{self, format_dig};
 
 /// `digstore init` MINTS an empty store singleton on Chia mainnet; the on-chain
 /// launcher id becomes the store_id. This is a HARD GATE: no seed, no funds, or
@@ -62,15 +63,41 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     //      (env-gated mock or real coinset mainnet), warning loudly if mocked.
     let (keys, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
 
-    // 3. Preflight balance: need singleton amount (1 mojo) + fee. No files yet.
-    let have = block_on(anchor.balance(&keys))??;
-    let need = fee + 1;
-    if have < need {
+    // 3. Preflight balance for BOTH assets, with up-front cost disclosure. A
+    //    mint pays INIT_DIG (100 DIG) embedded in the on-chain bundle PLUS the
+    //    singleton amount (1 mojo) + the XCH fee. Block before any spend if the
+    //    wallet is short on EITHER asset; no files exist yet, so nothing rolls back.
+    let have_xch = block_on(anchor.balance(&keys))??;
+    let have_dig = block_on(anchor.dig_balance(&keys))??;
+
+    if !ui.json() {
+        ui.line(format!(
+            "⛓  Minting a store on Chia mainnet costs {} DIG + up to {} mojos XCH (fee).",
+            format_dig(dig::INIT_DIG),
+            fee
+        ));
+        ui.line(format!(
+            "   you have {} DIG and {} mojos XCH.",
+            format_dig(have_dig),
+            have_xch
+        ));
+    }
+
+    let need_xch = fee + 1;
+    if have_xch < need_xch {
         return Err(CliError::InsufficientFunds {
-            need,
-            have,
+            need: need_xch,
+            have: have_xch,
             address: digstore_chain::keys::owner_address(&keys),
             asset: "XCH".into(),
+        });
+    }
+    if have_dig < dig::INIT_DIG {
+        return Err(CliError::InsufficientFunds {
+            need: dig::INIT_DIG,
+            have: have_dig,
+            address: digstore_chain::keys::owner_address(&keys),
+            asset: "DIG".into(),
         });
     }
 
