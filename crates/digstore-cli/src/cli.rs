@@ -88,7 +88,7 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "EXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
+    after_help = "Costs 100 DIG + an XCH fee (paid on-chain at mint).\n\nEXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
 )]
 pub struct InitArgs {
     /// Store name (default: "default").
@@ -127,7 +127,9 @@ pub struct AddArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore commit -m \"first generation\"")]
+#[command(
+    after_help = "Costs 10 DIG + an XCH fee per commit.\n\nEXAMPLES:\n  digstore commit -m \"first generation\""
+)]
 pub struct CommitArgs {
     #[arg(short, long)]
     pub message: Option<String>,
