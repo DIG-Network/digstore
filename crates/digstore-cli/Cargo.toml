@@ -1,5 +1,6 @@
 [package]
 name = "digstore-cli"
+license = "GPL-2.0-only"
 version = "0.5.5"
 edition = "2021"
 

@@ -1,5 +1,6 @@
 [package]
 name = "digstore-host"
+license = "GPL-2.0-only"
 version = "0.1.0"
 edition = "2021"
 description = "wasmtime runtime for serving compiled Digstore WASM modules (paper 6.3, 6.4, 18)."
