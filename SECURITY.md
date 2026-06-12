@@ -185,21 +185,28 @@ not mistaken for closed.
    rationale and must be re-evaluated if `rsa` is ever used to decrypt. The former
    `bincode 1.x` advisory (RUSTSEC-2025-0141) ignore has been **removed**: `bincode`
    is no longer in the dependency tree. Re-evaluate each audit.
-6. **Clone/pull head authentication rests on the module's embedded publisher key,
-   not on the chain (§20.1 / on-chain anchoring).** Now that `store_id` is the
-   on-chain Chia launcher id (no longer `SHA-256(publisher key)`), the integrity
-   gate (`verify_module_root`) checks `StoreId == requested` + merkle self-
-   consistency, and the head signature is verified against the publisher key that
-   the *module itself carries*. A client therefore trusts the first-seen module's
-   embedded key (self-consistency + first-use trust) rather than a key-hash binding
-   to the requested id. The **stronger** guarantee — verifying that the served root
-   equals the launcher singleton's *current on-chain root*, with the chain (not the
-   serving origin) as the authority for both the publisher key and the latest
-   authorized root — is a tracked follow-up of the on-chain anchoring feature and is
-   not yet wired into clone/pull. Until then, a malicious origin that serves a
-   self-consistent module with an attacker-chosen embedded key (for the correct
-   launcher id) and a matching self-signed head is not detected by clone/pull alone;
-   out-of-band key/launcher confirmation closes this gap in the interim.
+6. **Clone/pull chain-verified head authentication — Closed (2026-06-11, Phase B).**
+   Now that `store_id` is the on-chain Chia launcher id (no longer
+   `SHA-256(publisher key)`), the integrity gate (`verify_module_root`) checks
+   `StoreId == requested` + merkle self-consistency, and the head signature is
+   verified against the publisher key the *module itself carries*. On top of that,
+   `clone`/`pull` now verify that the served root **equals the store singleton's
+   current on-chain root**, read from the chain via the launcher id embedded in the
+   module's `ChainState` section (Phase A). The check **fails closed** on a mismatch
+   *or* an unreachable chain (`CliError::VerificationFailed`, exit code 5) — it never
+   silently falls back to trusting the served head. The chain (not the serving origin)
+   is therefore the authority for the latest authorized root, closing the earlier
+   first-use-trust gap: a malicious origin can no longer serve a self-consistent module
+   with an attacker-chosen root for the correct launcher id, because the on-chain root
+   will not match.
+
+   *Backward-compat caveat:* a module that carries **no embedded `ChainState`** (older
+   modules predating Phase A) has no on-chain pointer to verify against, so the
+   chain-root gate is a no-op for it and the head-signature gate remains the authority.
+   *Offline test seam:* verification is exercised entirely offline via the
+   `DIGSTORE_ANCHOR_MOCK` seam (`DIGSTORE_ANCHOR_MOCK_CHAIN_ROOT` /
+   `DIGSTORE_ANCHOR_MOCK_CHAIN_UNREACHABLE`; see
+   `crates/digstore-cli/tests/cli_chain_verify.rs`).
 
 ## Running the checks
 

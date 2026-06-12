@@ -1,7 +1,7 @@
 # Chainstate-in-WASM — Design
 
 **Date:** 2026-06-11
-**Status:** Phase A implemented; Phase B pending
+**Status:** Phase A implemented; Phase B implemented
 **Scope:** Couple a store's on-chain anchor state into its compiled WASM module so the
 module is self-describing for chain lookup, and (fast-follow) make `clone`/`pull`
 verify served content against the on-chain singleton.
@@ -13,10 +13,15 @@ verify served content against the on-chain singleton.
 anchor status` reads and surfaces it; `digstore anchor inspect <module.dig>` decodes it
 from any module file. All Phase A tests pass; workspace builds and clippy are clean.
 
-**Phase B (chain-verified clone/pull) remains the sequenced follow-up.** It is in scope
-and tracked — `clone`/`pull` do not yet verify the served root against the on-chain
-singleton. That gap is documented in `SECURITY.md` (residual #6) and will be closed when
-Phase B lands.
+**Phase B (chain-verified clone/pull) is implemented** as of 2026-06-11. `digstore-chain`
+exposes `current_root(launcher)` (sync the singleton, return its metadata root), and
+`clone`/`pull` now verify — after the existing module/head/revocation gates — that the
+served root equals the store singleton's current on-chain root, read via the launcher id
+embedded in the module's `ChainState`. The check **fails closed** on a mismatch or an
+unreachable chain (`CliError::VerificationFailed`, exit code 5) and is offline-testable
+via the `DIGSTORE_ANCHOR_MOCK` seam (`crates/digstore-cli/tests/cli_chain_verify.rs`).
+A module with no embedded `ChainState` (older modules) falls back to the head-signature
+gate. This closes `SECURITY.md` residual #6.
 
 ## Summary
 
