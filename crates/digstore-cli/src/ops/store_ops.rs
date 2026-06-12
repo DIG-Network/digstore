@@ -104,6 +104,7 @@ pub fn init_store(
     private: bool,
     data_dir: Option<String>,
     store_id_override: Option<Bytes32>,
+    salt_override: Option<SecretSalt>,
 ) -> Result<InitResult, CliError> {
     if ctx.config_path().exists() {
         return Err(CliError::InvalidArgument(format!(
@@ -123,7 +124,10 @@ pub fn init_store(
 
     let visibility = if private {
         // SecretSalt is INDEPENDENT randomness, not derived from the signing key.
-        Visibility::Private(SecretSalt(random_seed()))
+        // A caller may supply a DETERMINISTIC salt (e.g. a headless re-compile of a
+        // private store, where the same files + salt must reproduce the same root);
+        // otherwise it is fresh OS randomness.
+        Visibility::Private(salt_override.unwrap_or_else(|| SecretSalt(random_seed())))
     } else {
         Visibility::Public
     };
@@ -1483,7 +1487,7 @@ mod tests {
     fn ctx(private: bool) -> (tempfile::TempDir, CliContext) {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        init_store(&ctx, private, None, None).unwrap();
+        init_store(&ctx, private, None, None, None).unwrap();
         (td, ctx)
     }
 
@@ -1497,7 +1501,7 @@ mod tests {
         std::fs::create_dir_all(&work).unwrap();
         let mut ctx = CliContext::workspace_only(dig.clone(), false, false);
         ctx.op_dir = work;
-        init_store(&ctx, false, None, None).unwrap();
+        init_store(&ctx, false, None, None, None).unwrap();
         (ctx, td)
     }
 
@@ -1505,7 +1509,7 @@ mod tests {
     fn init_creates_layout_and_config() {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        let res = init_store(&ctx, false, None, None).unwrap();
+        let res = init_store(&ctx, false, None, None, None).unwrap();
         assert!(ctx.config_path().exists());
         assert!(ctx.modules_dir().exists());
         assert!(ctx.generations_dir().exists());
@@ -1518,7 +1522,7 @@ mod tests {
     fn init_store_id_is_sha256_of_pubkey() {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        let res = init_store(&ctx, false, None, None).unwrap();
+        let res = init_store(&ctx, false, None, None, None).unwrap();
         let expected = digstore_crypto::sha256(&res.host_public_key.0);
         assert_eq!(res.store_id, expected);
     }
@@ -1528,7 +1532,7 @@ mod tests {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
         let launcher = Bytes32([7u8; 32]);
-        let res = init_store(&ctx, false, None, Some(launcher)).unwrap();
+        let res = init_store(&ctx, false, None, Some(launcher), None).unwrap();
         // store_id is the override, NOT SHA-256(pubkey); host key still generated.
         assert_eq!(res.store_id, launcher);
         assert_ne!(

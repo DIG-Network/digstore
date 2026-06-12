@@ -13,7 +13,7 @@ use digstore_prover::{MockChainSource, MockProver};
 fn setup() -> (tempfile::TempDir, CliContext) {
     let td = tempfile::tempdir().unwrap();
     let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
-    store_ops::init_store(&ctx, false, None, None).unwrap();
+    store_ops::init_store(&ctx, false, None, None, None).unwrap();
     (td, ctx)
 }
 

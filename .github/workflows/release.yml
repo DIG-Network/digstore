@@ -157,3 +157,78 @@ jobs:
           ls -la dist-all
           gh release create "${GITHUB_REF_NAME}" --repo "$GH_REPO" --title "digstore ${GITHUB_REF_NAME}" --generate-notes || echo "release already exists"
           gh release upload "${GITHUB_REF_NAME}" --repo "$GH_REPO" dist-all/* --clobber
+
+  # ---------------------------------------------------------------------------
+  # Publish the raw Linux x86_64 `digstore` binary to the dighub S3 artifact
+  # bucket, so the hub compile-worker can SYNC the latest binary at runtime
+  # (it shells out to `digstore compile` to build stores from staged files).
+  # Layout:
+  #   digstore/<version>/digstore   — the binary for this release
+  #   digstore/latest.json          — { version, key, sha256 } the worker reads
+  # Auth is GitHub OIDC into a dedicated dighub role (S3 PutObject on the bucket
+  # only); configure these repo settings:
+  #   secret AWS_ARTIFACT_ROLE_ARN, var AWS_REGION, var DIGSTORE_ARTIFACT_BUCKET
+  # The job no-ops (does not fail the release) when they are absent.
+  # ---------------------------------------------------------------------------
+  publish-s3-binary:
+    name: Publish digstore binary to S3
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write # OIDC
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Skip if AWS artifact bucket is not configured
+        id: gate
+        run: |
+          if [ -z "${{ secrets.AWS_ARTIFACT_ROLE_ARN }}" ] || [ -z "${{ vars.DIGSTORE_ARTIFACT_BUCKET }}" ]; then
+            echo "AWS artifact publishing not configured (set AWS_ARTIFACT_ROLE_ARN + DIGSTORE_ARTIFACT_BUCKET); skipping."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install pinned Rust toolchain
+        if: steps.gate.outputs.enabled == 'true'
+        run: rustup show
+
+      - name: Build guest wasm
+        if: steps.gate.outputs.enabled == 'true'
+        run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
+
+      - name: Build digstore CLI (Linux x86_64, release)
+        if: steps.gate.outputs.enabled == 'true'
+        run: cargo build -p digstore-cli --release --locked
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.gate.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ARTIFACT_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload binary + version marker to S3
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          BUCKET: ${{ vars.DIGSTORE_ARTIFACT_BUCKET }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          BIN=target/release/digstore
+          test -f "$BIN" || { echo "missing $BIN"; exit 1; }
+          SHA=$(sha256sum "$BIN" | cut -d' ' -f1)
+          KEY="digstore/${VERSION}/digstore"
+          echo "publishing $BIN ($SHA) -> s3://$BUCKET/$KEY"
+          aws s3 cp "$BIN" "s3://$BUCKET/$KEY" \
+            --content-type application/octet-stream \
+            --metadata "sha256=$SHA,version=$VERSION"
+          # The version marker the worker polls. Written LAST so a half-uploaded
+          # binary is never advertised as latest.
+          printf '{"version":"%s","key":"%s","sha256":"%s"}\n' "$VERSION" "$KEY" "$SHA" > latest.json
+          aws s3 cp latest.json "s3://$BUCKET/digstore/latest.json" \
+            --content-type application/json --cache-control "no-cache"
+          echo "published digstore ${VERSION}"

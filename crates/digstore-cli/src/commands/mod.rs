@@ -11,6 +11,7 @@ pub mod cat;
 pub mod checkout;
 pub mod clone;
 pub mod commit;
+pub mod compile;
 pub mod diff;
 pub mod dir;
 pub mod init;
@@ -35,9 +36,13 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
     let cwd = std::env::current_dir().map_err(|e| CliError::Other(e.into()))?;
 
     // `init` and `clone` CREATE a store, so they anchor to CWD/.dig (no walk-up,
-    // like `git init`/`git clone`); everything else discovers an existing
-    // workspace by walking up.
-    let workspace_dir = if matches!(cli.command, Command::Init(_) | Command::Clone(_)) {
+    // like `git init`/`git clone`); `compile` is a self-contained headless build
+    // into an ephemeral `.dig` (the caller passes --dig-dir); everything else
+    // discovers an existing workspace by walking up.
+    let workspace_dir = if matches!(
+        cli.command,
+        Command::Init(_) | Command::Clone(_) | Command::Compile(_)
+    ) {
         CliContext::init_workspace(cli.dig_dir.clone())
     } else {
         CliContext::discover_workspace(cli.dig_dir.clone())
@@ -53,6 +58,19 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Clone(a) => {
             let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
             return clone::run(&ctx, &ui, a);
+        }
+        // `compile` builds an ephemeral single-store context at the (temp) workspace
+        // dir, with op_dir == the --in content root, and never touches the chain.
+        Command::Compile(a) => {
+            let ctx = CliContext {
+                dig_dir: workspace_dir.clone(),
+                workspace_dir,
+                op_dir: a.r#in.clone(),
+                store_name: Some("default".to_string()),
+                json: cli.json,
+                verbose: cli.verbose,
+            };
+            return compile::run(&ctx, &ui, a);
         }
         Command::Stores(a) => {
             let ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
@@ -115,6 +133,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Anchor(a) => anchor::run(&ctx, &ui, a),
         Command::Init(_)
         | Command::Clone(_)
+        | Command::Compile(_)
         | Command::Stores(_)
         | Command::Use(_)
         | Command::Update(_)

@@ -41,7 +41,7 @@ struct Fixture {
 fn build_fixture() -> (tempfile::TempDir, Fixture) {
     let td = tempfile::tempdir().unwrap();
     let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
-    store_ops::init_store(&ctx, false, None, None).unwrap();
+    store_ops::init_store(&ctx, false, None, None, None).unwrap();
 
     let f = td.path().join("known.txt");
     std::fs::write(&f, ORIGINAL).unwrap();

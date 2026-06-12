@@ -40,6 +40,9 @@ pub enum Command {
     Add(AddArgs),
     /// Commit the staged content as a new generation root.
     Commit(CommitArgs),
+    /// Compile a directory into a hostable module + root, with NO chain/wallet
+    /// (headless). The caller anchors the printed root on-chain separately.
+    Compile(CompileArgs),
     /// Show the active store, its content root, and pending staged changes.
     Status(StatusArgs),
     /// Show the store's generation (commit) history.
@@ -143,6 +146,29 @@ pub struct CommitArgs {
     /// confirm. Without it, a re-run reuses the pending update.
     #[arg(long)]
     pub resubmit: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Headless: NO wallet, NO chain, NO signing. Stages <in>, computes the\ngeneration root, and writes the compiled module to <out>. The caller anchors\nthe printed root on-chain (e.g. via a wallet) separately.\n\nEXAMPLES:\n  digstore compile --in ./content --out ./module.dig --store-id <64-hex> --json"
+)]
+pub struct CompileArgs {
+    /// Directory of files to compile into the store generation (the content root).
+    #[arg(long)]
+    pub r#in: PathBuf,
+    /// Path to write the compiled module to.
+    #[arg(long)]
+    pub out: PathBuf,
+    /// The on-chain store id (launcher id, 64-hex) this generation belongs to.
+    #[arg(long = "store-id")]
+    pub store_id: String,
+    /// Compile as a private (salted) store. Provide --salt for a deterministic root.
+    #[arg(long)]
+    pub private: bool,
+    /// 32-byte hex SecretSalt for a private store (makes the root deterministic).
+    /// Implies --private.
+    #[arg(long)]
+    pub salt: Option<String>,
 }
 
 #[derive(Debug, Args)]
