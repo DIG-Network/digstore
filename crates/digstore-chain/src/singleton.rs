@@ -253,9 +253,7 @@ mod sync_tests {
     #[tokio::test]
     async fn current_root_returns_synced_metadata_root() {
         let chain = MockChain::default();
-        let err = current_root(&chain, Bytes32::default())
-            .await
-            .unwrap_err();
+        let err = current_root(&chain, Bytes32::default()).await.unwrap_err();
         match err {
             ChainError::Chain(msg) => assert!(msg.contains("not found"), "got: {msg}"),
             other => panic!("expected Chain error, got {other:?}"),

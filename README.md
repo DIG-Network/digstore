@@ -256,9 +256,12 @@ section. `digstore anchor status` surfaces this alongside the local `anchor.toml
 the pointer from any module file without a local workspace. The embedded coinset URL is
 a hint only — local config and flags always take precedence.
 
-> Note: `clone`/`pull` verify the publisher's signature over the served head, but
-> do **not** yet perform third-party verification of the on-chain root against the
-> singleton — that is a tracked follow-up (see [`SECURITY.md`](SECURITY.md)).
+> Note: `clone`/`pull` verify the publisher's signature over the served head **and**
+> verify that the served root equals the store's current on-chain singleton root —
+> read from the chain via the launcher id embedded in the module. They **fail closed**
+> on a mismatch or an unreachable chain, making the chain the authority for the current
+> root. (A module with no embedded on-chain pointer falls back to the head-signature
+> gate.) See [`SECURITY.md`](SECURITY.md).
 
 ---
 
