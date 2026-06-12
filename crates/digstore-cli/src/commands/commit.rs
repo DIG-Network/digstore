@@ -30,6 +30,19 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     //    missing anchor.toml is an error state, not a fresh-store case.
     let mut state = AnchorState::load(&ctx.dig_dir)?
         .ok_or_else(|| CliError::Chain("store is not anchored; run `digstore init`".into()))?;
+
+    // A store whose INITIAL mint has not confirmed yet (pending init, no root
+    // anchored) cannot accept a commit: there is no confirmed on-chain singleton
+    // to update, so an `update` would fail at lineage sync. Refuse with a clear
+    // next step rather than a confusing chain error. A pending COMMIT (an in-flight
+    // root update) carries a non-empty `last_root` and is the resumable case
+    // handled below — so ONLY an empty `last_root` indicates a pending init.
+    if state.status == AnchorStatus::Pending && state.last_root.is_empty() {
+        return Err(CliError::InvalidArgument(
+            "the store's initial mint is not yet confirmed; run `digstore anchor` to confirm it before committing".into(),
+        ));
+    }
+
     let launcher_id = parse_bytes32(&state.store_id, "store_id")?;
     let new_root_b32 = Bytes32::new(prepared.root.0);
 
