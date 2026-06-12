@@ -145,6 +145,64 @@ fn check_not_revoked(
     Ok(())
 }
 
+/// Verify that `expected_root` (the root we are about to install from the remote)
+/// equals the store singleton's CURRENT on-chain root, using the launcher pointer
+/// embedded in the verified `module`. Fails closed on mismatch or an unreachable
+/// chain. If the module carries no `ChainState` (older modules), this is a no-op
+/// (no embedded pointer to verify against) and the head-signature gate remains the
+/// authority. Offline-testable via DIGSTORE_ANCHOR_MOCK (see the env branch).
+async fn verify_chain_root(
+    module: &[u8],
+    store_id: &Bytes32,
+    expected_root: &Bytes32,
+) -> Result<(), CliError> {
+    let cs = match store_ops::read_module_chain_state(module)? {
+        Some(cs) => cs,
+        None => return Ok(()), // no embedded chain pointer; head-sig gate applies
+    };
+    if cs.launcher_id != *store_id {
+        return Err(CliError::VerificationFailed(
+            "module ChainState launcher id does not match the store id".into(),
+        ));
+    }
+
+    let onchain: Bytes32 = if std::env::var_os("DIGSTORE_ANCHOR_MOCK").is_some() {
+        if std::env::var_os("DIGSTORE_ANCHOR_MOCK_CHAIN_UNREACHABLE").is_some() {
+            return Err(CliError::VerificationFailed(
+                "could not read the store's on-chain root (chain unreachable)".into(),
+            ));
+        }
+        match std::env::var("DIGSTORE_ANCHOR_MOCK_CHAIN_ROOT") {
+            Ok(hex) => Bytes32::from_hex(&hex).map_err(|_| {
+                CliError::Other(anyhow::anyhow!("bad DIGSTORE_ANCHOR_MOCK_CHAIN_ROOT hex"))
+            })?,
+            Err(_) => return Ok(()), // mock active, no configured root => skip (legacy tests)
+        }
+    } else {
+        let chain = digstore_chain::coinset::Coinset::mainnet();
+        let launcher = chia_protocol::Bytes32::new(store_id.0);
+        let root = digstore_chain::singleton::current_root(&chain, launcher)
+            .await
+            .map_err(|e| {
+                CliError::VerificationFailed(format!(
+                    "could not read the store's on-chain root: {e}"
+                ))
+            })?;
+        let mut a = [0u8; 32];
+        a.copy_from_slice(root.as_ref());
+        Bytes32(a)
+    };
+
+    if onchain != *expected_root {
+        return Err(CliError::VerificationFailed(format!(
+            "served root {} does not match the store's on-chain root {} (chain is the authority)",
+            expected_root.to_hex(),
+            onchain.to_hex()
+        )));
+    }
+    Ok(())
+}
+
 /// True if `base` is an `http://` URL pointing at the loopback interface.
 /// Plaintext transport is permitted ONLY to loopback (local dev/tests); every
 /// other host must use TLS so store contents and push credentials are not sent
@@ -261,6 +319,10 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
         &store_id,
         &info.descriptor.tombstones,
     )?;
+
+    // Chain-verified head (SECURITY.md residual #6): the served root must equal the
+    // store singleton's current on-chain root. Fail closed on mismatch/unreachable.
+    verify_chain_root(&module, &store_id, &remote_root).await?;
 
     // Real generation id/timestamp from /roots.
     let gen = info
@@ -494,6 +556,9 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
                 &cfg.store_id,
                 &info.descriptor.tombstones,
             )?;
+            // Chain-verified head (SECURITY.md residual #6): the pulled root must
+            // equal the store singleton's current on-chain root. Fail closed.
+            verify_chain_root(&bytes, &cfg.store_id, &root).await?;
             let gen = info
                 .roots
                 .roots
