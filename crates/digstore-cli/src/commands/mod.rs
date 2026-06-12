@@ -6,6 +6,7 @@ use crate::error::CliError;
 
 pub mod add;
 pub mod anchor;
+pub mod balance;
 pub mod cat;
 pub mod checkout;
 pub mod clone;
@@ -71,6 +72,12 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Command::Seed(a) => return seed::run(&ui, a),
         Command::Lock(_) => return lock::run(&ui),
+        // `balance` is wallet-only (it derives keys from the seed and queries the
+        // anchor backend); it needs no store, like `seed`/`lock`.
+        Command::Balance(_) => {
+            let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
+            return balance::run(&ctx, &ui);
+        }
         _ => {}
     }
 
@@ -112,7 +119,8 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         | Command::Use(_)
         | Command::Update(_)
         | Command::Seed(_)
-        | Command::Lock(_) => {
+        | Command::Lock(_)
+        | Command::Balance(_) => {
             unreachable!("handled above")
         }
     }

@@ -70,6 +70,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
             need,
             have,
             address: digstore_chain::keys::owner_address(&keys),
+            asset: "XCH".into(),
         });
     }
 
