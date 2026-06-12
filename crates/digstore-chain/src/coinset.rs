@@ -14,6 +14,31 @@ pub struct CoinInfo {
     pub spent_block_index: u32,
 }
 
+/// Classify a `get_coin_record_by_name` response into present / absent / error.
+///
+/// coinset returns `success = false` with a `"…not found"` error when the coin is
+/// not (yet) on-chain — the NORMAL transient state while a freshly-pushed tx sits
+/// in the mempool. That MUST be treated as "no record yet" so confirmation polling
+/// keeps waiting, NOT as a hard chain error (otherwise `confirm` aborts on the very
+/// first poll and a real mint/update can never confirm). Any other `success = false`
+/// is a genuine RPC failure and is surfaced.
+fn classify_coin_record(
+    success: bool,
+    error: Option<String>,
+    mapped: Option<CoinInfo>,
+) -> Result<Option<CoinInfo>> {
+    if success {
+        return Ok(mapped);
+    }
+    let msg = error.unwrap_or_default();
+    if msg.to_lowercase().contains("not found") {
+        return Ok(None);
+    }
+    Err(ChainError::Chain(format!(
+        "get_coin_record_by_name failed: {msg:?}"
+    )))
+}
+
 /// Minimal chain interface anchoring needs (reads + broadcast).
 #[async_trait::async_trait]
 pub trait ChainReads: Send + Sync {
@@ -81,19 +106,13 @@ impl ChainReads for Coinset {
             .await
             .map_err(|e| ChainError::Chain(format!("get_coin_record_by_name: {e}")))?;
 
-        if !resp.success {
-            return Err(ChainError::Chain(format!(
-                "get_coin_record_by_name failed: {:?}",
-                resp.error
-            )));
-        }
-
-        Ok(resp.coin_record.map(|cr| CoinInfo {
+        let mapped = resp.coin_record.map(|cr| CoinInfo {
             coin: cr.coin,
             spent: cr.spent,
             confirmed_block_index: cr.confirmed_block_index,
             spent_block_index: cr.spent_block_index,
-        }))
+        });
+        classify_coin_record(resp.success, resp.error, mapped)
     }
 
     async fn coin_spend(&self, coin_id: Bytes32, spent_height: u32) -> Result<Option<CoinSpend>> {
@@ -243,5 +262,35 @@ mod tests {
         let m = MockChain::default();
         let name = Bytes32::from([0xab; 32]);
         assert!(m.coin_record(name).await.unwrap().is_none());
+    }
+
+    // Regression: coinset reports a not-yet-confirmed (mempool) coin as
+    // success=false + a "…not found" error. That MUST map to Ok(None) so
+    // `confirm` keeps polling, not to a chain error that aborts confirmation on
+    // the first poll. (Found by a real mainnet init: the mint broadcast fine but
+    // confirmation died with `get_coin_record_by_name failed: ... not found`.)
+    #[test]
+    fn classify_not_found_is_pending_not_error() {
+        let r = classify_coin_record(false, Some("Coin record 0xabc not found".into()), None);
+        assert!(matches!(r, Ok(None)), "not-found must be Ok(None), got {r:?}");
+    }
+
+    #[test]
+    fn classify_real_rpc_error_propagates() {
+        let r = classify_coin_record(false, Some("internal server error".into()), None);
+        assert!(matches!(r, Err(ChainError::Chain(_))));
+    }
+
+    #[test]
+    fn classify_success_passes_record_through() {
+        let info = CoinInfo {
+            coin: Coin::new(Bytes32::default(), Bytes32::default(), 1),
+            spent: false,
+            confirmed_block_index: 100,
+            spent_block_index: 0,
+        };
+        let got = classify_coin_record(true, None, Some(info)).unwrap();
+        assert_eq!(got.map(|c| c.confirmed_block_index), Some(100));
+        assert!(classify_coin_record(true, None, None).unwrap().is_none());
     }
 }
