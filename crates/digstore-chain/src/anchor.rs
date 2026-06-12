@@ -4,9 +4,9 @@
 
 use crate::cat::{build_dig_payment, dig_cats};
 use crate::coinset::ChainReads;
+use crate::dig;
 use crate::error::{ChainError, Result};
 use crate::keys::WalletKeys;
-use crate::dig;
 use crate::singleton::{build_mint_unsigned, build_update_unsigned, sync_datastore};
 use chia_protocol::Bytes32;
 use datalayer_driver::{sign_coin_spends, SpendBundle};
@@ -84,11 +84,15 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         let launcher_id = mint.launcher_id;
 
         // 2) UNSIGNED DIG payment: 100 DIG to the treasury, memo = launcher id.
-        let cats =
-            dig_cats(&self.chain as &dyn ChainReads, keys.owner_puzzle_hash).await?;
+        let cats = dig_cats(&self.chain as &dyn ChainReads, keys.owner_puzzle_hash).await?;
         let pay = build_dig_payment(keys, &cats, dig::INIT_DIG, launcher_id)?;
 
         // 3) Combine into ONE bundle and sign atomically with the synthetic key.
+        //    ATOMICITY: the DIG payment and the singleton spend ride in a single
+        //    SpendBundle under one aggregated signature, so the mempool admits
+        //    them all-or-nothing. This co-signing is the SOLE atomicity guarantee
+        //    between the DIG payment and the anchor — these coin spends must never
+        //    be split across bundles or pushed separately.
         let mut all = mint.coin_spends;
         all.extend(pay);
         let signature = sign_coin_spends(&all, std::slice::from_ref(&keys.synthetic_sk), false)
@@ -117,11 +121,15 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         let new_coin_id = update.new_coin_id;
 
         // 2) UNSIGNED DIG payment: 10 DIG to the treasury, memo = store id.
-        let cats =
-            dig_cats(&self.chain as &dyn ChainReads, keys.owner_puzzle_hash).await?;
+        let cats = dig_cats(&self.chain as &dyn ChainReads, keys.owner_puzzle_hash).await?;
         let pay = build_dig_payment(keys, &cats, dig::COMMIT_DIG, launcher_id)?;
 
         // 3) Combine into ONE bundle and sign atomically with the synthetic key.
+        //    ATOMICITY: the DIG payment and the singleton spend ride in a single
+        //    SpendBundle under one aggregated signature, so the mempool admits
+        //    them all-or-nothing. This co-signing is the SOLE atomicity guarantee
+        //    between the DIG payment and the anchor — these coin spends must never
+        //    be split across bundles or pushed separately.
         let mut all = update.coin_spends;
         all.extend(pay);
         let signature = sign_coin_spends(&all, std::slice::from_ref(&keys.synthetic_sk), false)
@@ -236,7 +244,10 @@ mod tests {
 
         // Nothing was pushed — the mint is atomic with its DIG payment.
         let pushed_count = anchor.chain.pushed.lock().unwrap().len();
-        assert_eq!(pushed_count, 0, "expected no pushed bundle when DIG is short");
+        assert_eq!(
+            pushed_count, 0,
+            "expected no pushed bundle when DIG is short"
+        );
     }
 
     // -----------------------------------------------------------------------
