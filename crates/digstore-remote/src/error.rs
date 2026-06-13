@@ -10,6 +10,8 @@ pub enum RemoteError {
     UnknownRoot,
     #[error("push not authorized: {0}")]
     Unauthorized(String),
+    #[error("request authentication failed: {0}")]
+    AuthFailed(String),
     #[error("missing bearer token")]
     MissingBearer,
     #[error("non-fast-forward push")]
@@ -33,6 +35,7 @@ impl RemoteError {
         match self {
             RemoteError::UnknownStore | RemoteError::UnknownRoot => StatusCode::NOT_FOUND,
             RemoteError::Unauthorized(_) => StatusCode::FORBIDDEN,
+            RemoteError::AuthFailed(_) => StatusCode::UNAUTHORIZED,
             RemoteError::MissingBearer => StatusCode::UNAUTHORIZED,
             RemoteError::NonFastForward => StatusCode::CONFLICT,
             RemoteError::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,

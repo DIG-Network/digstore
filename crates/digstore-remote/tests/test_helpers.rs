@@ -24,5 +24,7 @@ pub fn one_store() -> (Arc<InMemoryBackend>, Bytes32, String) {
 }
 
 pub fn router_for(be: Arc<InMemoryBackend>) -> Router {
-    RemoteServer::new(be).router()
+    // These tests exercise the handler/protocol logic, not the §21.9 auth layer, so
+    // they run an anonymous (open) server. Auth enforcement has its own tests.
+    RemoteServer::new(be).allow_anonymous().router()
 }

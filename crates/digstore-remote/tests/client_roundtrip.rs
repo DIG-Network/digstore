@@ -5,7 +5,7 @@ use digstore_remote::{DigClient, InMemoryBackend, PullResult, PushResult, Remote
 use std::sync::Arc;
 
 async fn spawn_server(be: Arc<InMemoryBackend>) -> String {
-    let app = RemoteServer::new(be).router();
+    let app = RemoteServer::new(be).allow_anonymous().router();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

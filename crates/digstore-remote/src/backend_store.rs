@@ -109,6 +109,30 @@ impl StoreBackend {
         Ok(backend)
     }
 
+    /// Open an EXISTING on-disk `digstore-store` to serve it (no init). Used by the
+    /// runnable node (`digstore serve`): `data_dir` is the store's `.dig/stores/<name>`
+    /// directory, `public_key` is the store's BLS publisher key (the node reads it
+    /// from the current module's embedded identity), and `max_module_size` caps
+    /// accepted pushes. The root history, modules, sig + tombstone sidecars are read
+    /// from the live layout exactly as `initialize_for_test` writes them.
+    pub fn open(
+        data_dir: impl Into<String>,
+        store_id: Bytes32,
+        public_key: Bytes48,
+        max_module_size: u64,
+    ) -> Self {
+        let data_dir = data_dir.into();
+        let paths = StorePaths::new(&data_dir, store_id);
+        StoreBackend {
+            store_id,
+            data_dir,
+            public_key,
+            max_module_size,
+            paths,
+            pending: Mutex::new(None),
+        }
+    }
+
     fn ensure_store(&self, store_id: &Bytes32) -> Result<(), RemoteError> {
         if *store_id != self.store_id {
             return Err(RemoteError::UnknownStore);

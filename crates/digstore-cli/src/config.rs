@@ -93,7 +93,10 @@ pub fn normalize_remote_url(url: &str) -> String {
     // Strip the optional `<user>@` owner namespace from the authority — it is informational
     // (display/routing), not part of the wire address (the store id is). Caller auth is a
     // separate signed-header mechanism (§21.9).
-    let host_part = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host_part = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
 
     // `dig://[<user>@]<64-hex>` — the host part IS the store id (not a host): default network RPC.
     if path.is_empty() && is_store_id(host_part) {
@@ -182,7 +185,10 @@ mod tests {
             format!("https://rpc.dig.net/stores/{id}")
         );
         // Node base only (no store id) → just the host.
-        assert_eq!(normalize_remote_url("dig://rpc.dig.net"), "https://rpc.dig.net");
+        assert_eq!(
+            normalize_remote_url("dig://rpc.dig.net"),
+            "https://rpc.dig.net"
+        );
         // `<user>@` owner namespace is informational and stripped from the wire URL.
         assert_eq!(
             normalize_remote_url(&format!("dig://alice@node.example:8443/{id}")),

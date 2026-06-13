@@ -63,6 +63,8 @@ pub enum Command {
     Pull(PullArgs),
     /// Revoke a published root (or the whole store) with a signed tombstone.
     Revoke(RevokeArgs),
+    /// Run a dig:// remote node serving the active store (clone/pull/push, §21).
+    Serve(ServeArgs),
     /// List the stores in this workspace.
     Stores(StoresArgs),
     /// Switch the active store by name.
@@ -275,6 +277,20 @@ pub struct RevokeArgs {
     /// The configured remote to publish the tombstone to.
     #[arg(default_value = "origin")]
     pub remote: String,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Runs a dig:// remote NODE for the active store: serves clone/pull/push\nover the §21 protocol (the same one rpc.dig.net speaks), so anyone can host\nan origin. Every request must be authenticated by a signed message from the\ncaller's identity key (§21.9).\n\nEXAMPLES:\n  digstore serve --bind 0.0.0.0:8443\n  digstore serve --store site --bind 127.0.0.1:9000"
+)]
+pub struct ServeArgs {
+    /// Address to bind the node to (host:port).
+    #[arg(long, default_value = "127.0.0.1:8443")]
+    pub bind: String,
+    /// Serve anonymously (a fully-public read mirror): skip §21.9 request auth.
+    /// Off by default — the node requires a signed request from every caller.
+    #[arg(long)]
+    pub anonymous: bool,
 }
 
 #[derive(Debug, Args)]

@@ -295,7 +295,10 @@ pub fn sign_request(
     timestamp: u64,
     nonce: &[u8; 32],
 ) -> Bytes96 {
-    bls_sign(sk, &request_signing_message(method, store_id, timestamp, nonce))
+    bls_sign(
+        sk,
+        &request_signing_message(method, store_id, timestamp, nonce),
+    )
 }
 
 /// Verify a per-request authentication signature against the caller's identity
@@ -315,7 +318,10 @@ pub fn verify_request(
         Ok(s) => s,
         Err(_) => return false,
     };
-    pk.verify(&request_signing_message(method, store_id, timestamp, nonce), &sig)
+    pk.verify(
+        &request_signing_message(method, store_id, timestamp, nonce),
+        &sig,
+    )
 }
 
 /// Node execution-proof signature (paper §13.7, §16). Signs the canonical
@@ -380,7 +386,14 @@ mod request_auth_tests {
         let store = Bytes32([9u8; 32]);
         let nonce = [3u8; 32];
         let sig = sign_request(&sk, "module", &store, 1_700_000_000, &nonce);
-        assert!(verify_request(&pk, "module", &store, 1_700_000_000, &nonce, &sig));
+        assert!(verify_request(
+            &pk,
+            "module",
+            &store,
+            1_700_000_000,
+            &nonce,
+            &sig
+        ));
     }
 
     #[test]
@@ -393,7 +406,14 @@ mod request_auth_tests {
         // A signature over "module" must NOT verify as a "push" (no cross-method replay).
         assert!(!verify_request(&pk, "push", &store, ts, &nonce, &sig));
         // Different store / timestamp / nonce all break verification.
-        assert!(!verify_request(&pk, "module", &Bytes32([8u8; 32]), ts, &nonce, &sig));
+        assert!(!verify_request(
+            &pk,
+            "module",
+            &Bytes32([8u8; 32]),
+            ts,
+            &nonce,
+            &sig
+        ));
         assert!(!verify_request(&pk, "module", &store, ts + 1, &nonce, &sig));
         assert!(!verify_request(&pk, "module", &store, ts, &[4u8; 32], &sig));
     }
