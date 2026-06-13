@@ -2241,7 +2241,9 @@ dependencies = [
 name = "digstore-core"
 version = "0.5.7"
 dependencies = [
+ "aes-gcm-siv",
  "hex",
+ "hkdf",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2251,11 +2253,9 @@ dependencies = [
 name = "digstore-crypto"
 version = "0.1.0"
 dependencies = [
- "aes-gcm-siv",
  "chia-bls 0.45.0",
  "digstore-core",
  "hex",
- "hkdf",
  "serde",
  "serde_json",
  "sha2 0.10.9",

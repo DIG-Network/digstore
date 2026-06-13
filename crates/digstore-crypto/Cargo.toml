@@ -6,10 +6,12 @@ edition = "2021"
 description = "Host-side cryptography for Digstore: URN key derivation, AES-256-GCM chunk encryption, and Chia AugScheme BLS."
 
 [dependencies]
+# The AES-256-GCM-SIV seal + HKDF derivation now live in `digstore_core::crypto`
+# (the single source of truth shared with the producer + browser verifier); this
+# crate re-exports them via `aead`/`kdf` and adds BLS. So `aes-gcm-siv`/`hkdf` are
+# no longer direct deps here — they come transitively through `digstore-core`.
 digstore-core = { path = "../digstore-core" }
 sha2 = "0.10"
-hkdf = "0.12"
-aes-gcm-siv = "0.11"
 chia-bls = "=0.45.0"
 hex = "0.4"
 thiserror = "1"

@@ -25,7 +25,9 @@ fn b64(b: &[u8]) -> String {
 fn main() {
     let store = Bytes32([0x2au8; 32]);
     let resource = "index.html";
-    let plaintext = b"<!doctype html><title>dig smoke</title><p>verified + decrypted in the browser</p>".to_vec();
+    let plaintext =
+        b"<!doctype html><title>dig smoke</title><p>verified + decrypted in the browser</p>"
+            .to_vec();
 
     let canonical = canonical_urn(store, resource);
     let key = digstore_crypto::derive_decryption_key(&canonical, None);
@@ -66,7 +68,9 @@ fn main() {
         b64(&proof.to_bytes()),
         root.to_hex(),
         wrong_root.to_hex(),
-        String::from_utf8(plaintext.clone()).unwrap().replace('"', "\\\""),
+        String::from_utf8(plaintext.clone())
+            .unwrap()
+            .replace('"', "\\\""),
         Urn {
             chain: "chia".to_string(),
             store_id: store,

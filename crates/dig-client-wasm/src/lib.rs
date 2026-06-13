@@ -27,15 +27,14 @@
 
 extern crate alloc;
 
-mod crypto;
-
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use base64::Engine;
 use digstore_core::codec::Decode;
-use digstore_core::{Bytes32, MerkleProof, Urn};
+use digstore_core::crypto::{decrypt_chunk, derive_decryption_key};
+use digstore_core::{resource_leaf, Bytes32, MerkleProof, SecretSalt, Urn};
 use wasm_bindgen::prelude::*;
 
 /// The canonical chain tag for dighub stores (mainnet-only; API §1, §10).
@@ -103,7 +102,7 @@ fn verify_inclusion_core(
     proof: &MerkleProof,
     trusted_root: &Bytes32,
 ) -> Result<(), &'static str> {
-    let computed_leaf = Bytes32(crypto::sha256(ciphertext));
+    let computed_leaf = resource_leaf(ciphertext);
     if computed_leaf != proof.leaf {
         return Err("content does not match proof leaf (tampered ciphertext)");
     }
@@ -172,7 +171,9 @@ pub fn retrieval_key(store_id_hex: &str, resource_key: &str) -> Result<String, J
     } else {
         resource_key
     };
-    Ok(canonical_resource_urn(store_id, key).retrieval_key().to_hex())
+    Ok(canonical_resource_urn(store_id, key)
+        .retrieval_key()
+        .to_hex())
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +198,7 @@ pub fn derive_key(
         resource_key
     };
     let canonical = canonical_resource_urn(store_id, key).canonical();
-    let derived = crypto::derive_decryption_key(&canonical, salt.as_ref());
+    let derived = derive_decryption_key(&canonical, salt.map(SecretSalt).as_ref());
     Ok(hex::encode(derived))
 }
 
@@ -208,8 +209,9 @@ pub fn derive_key(
 pub fn decrypt_chunk_js(key_hex: &str, ciphertext: &[u8]) -> Result<Vec<u8>, JsError> {
     let key = Bytes32::from_hex(key_hex.trim())
         .map_err(|_| JsError::new("key must be 64 lowercase hex characters"))?;
-    crypto::decrypt_chunk(&key.0, ciphertext)
-        .map_err(|_| JsError::new("AES-256-GCM-SIV tag verification failed (wrong key or tampered ciphertext)"))
+    decrypt_chunk(&key.0, ciphertext).map_err(|_| {
+        JsError::new("AES-256-GCM-SIV tag verification failed (wrong key or tampered ciphertext)")
+    })
 }
 
 /// Full read pipeline for a resource's served ciphertext (Digstore §9.3 + §11),
@@ -251,7 +253,7 @@ pub fn decrypt_resource(
         resource_key
     };
     let canonical = canonical_resource_urn(store_id, key).canonical();
-    let aes_key = crypto::derive_decryption_key(&canonical, salt.as_ref());
+    let aes_key = derive_decryption_key(&canonical, salt.map(SecretSalt).as_ref());
 
     let plan: Vec<usize> = match chunk_lens {
         Some(lens) if !lens.is_empty() => lens.into_iter().map(|l| l as usize).collect(),
@@ -271,7 +273,7 @@ pub fn decrypt_resource(
     for len in plan {
         let ct = &ciphertext[p..p + len];
         p += len;
-        let pt = crypto::decrypt_chunk(&aes_key, ct).map_err(|_| {
+        let pt = decrypt_chunk(&aes_key, ct).map_err(|_| {
             JsError::new(
                 "AES-256-GCM-SIV tag verification failed (wrong key/salt or tampered ciphertext)",
             )
@@ -302,8 +304,7 @@ pub fn decrypt_resource_to_text(
         salt_hex,
         chunk_lens,
     )?;
-    String::from_utf8(bytes)
-        .map_err(|_| JsError::new("decrypted resource is not valid UTF-8 text"))
+    String::from_utf8(bytes).map_err(|_| JsError::new("decrypted resource is not valid UTF-8 text"))
 }
 
 // ---------------------------------------------------------------------------
@@ -386,22 +387,53 @@ pub fn install_global() {
     );
     set!(
         "decryptResource",
-        Closure::<dyn Fn(String, String, Vec<u8>, String, String, Option<String>, Option<Vec<u32>>) -> Result<Vec<u8>, JsError>>::new(
-            |s: String, r: String, ct: Vec<u8>, p: String, root: String, salt: Option<String>, lens: Option<Vec<u32>>|
-                decrypt_resource(&s, &r, &ct, &p, &root, salt, lens)
+        Closure::<
+            dyn Fn(
+                String,
+                String,
+                Vec<u8>,
+                String,
+                String,
+                Option<String>,
+                Option<Vec<u32>>,
+            ) -> Result<Vec<u8>, JsError>,
+        >::new(
+            |s: String,
+             r: String,
+             ct: Vec<u8>,
+             p: String,
+             root: String,
+             salt: Option<String>,
+             lens: Option<Vec<u32>>| decrypt_resource(
+                &s, &r, &ct, &p, &root, salt, lens
+            )
         )
     );
     set!(
         "decryptResourceToText",
-        Closure::<dyn Fn(String, String, Vec<u8>, String, String, Option<String>, Option<Vec<u32>>) -> Result<String, JsError>>::new(
-            |s: String, r: String, ct: Vec<u8>, p: String, root: String, salt: Option<String>, lens: Option<Vec<u32>>|
-                decrypt_resource_to_text(&s, &r, &ct, &p, &root, salt, lens)
+        Closure::<
+            dyn Fn(
+                String,
+                String,
+                Vec<u8>,
+                String,
+                String,
+                Option<String>,
+                Option<Vec<u32>>,
+            ) -> Result<String, JsError>,
+        >::new(
+            |s: String,
+             r: String,
+             ct: Vec<u8>,
+             p: String,
+             root: String,
+             salt: Option<String>,
+             lens: Option<Vec<u32>>| decrypt_resource_to_text(
+                &s, &r, &ct, &p, &root, salt, lens
+            )
         )
     );
-    set!(
-        "version",
-        Closure::<dyn Fn() -> String>::new(version)
-    );
+    set!("version", Closure::<dyn Fn() -> String>::new(version));
 
     let _ = js_sys::Reflect::set(&global, &JsValue::from_str("digClient"), &obj);
 }
