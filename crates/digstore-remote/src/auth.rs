@@ -12,13 +12,6 @@ use digstore_core::{Bytes32, Bytes48, Bytes96};
 /// Message = `SHA-256(root || store_id)`. Argument order is `(root, store_id)`.
 pub use digstore_crypto::push_signing_message;
 
-/// Parsed push-authorization inputs extracted from request headers/body.
-#[derive(Debug, Clone)]
-pub struct PushAuth {
-    pub signature: Bytes96,
-    pub bearer: Option<String>,
-}
-
 /// Verify the publisher BLS signature over the canonical push message (§21.6).
 /// Delegates to `digstore_crypto::verify_push` (Chia AugScheme). Returns true on
 /// a valid signature, false on any malformed input or verification failure.

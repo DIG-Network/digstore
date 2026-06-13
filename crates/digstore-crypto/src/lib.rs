@@ -31,7 +31,6 @@ pub mod aead;
 pub mod bls;
 pub mod error;
 pub mod fixtures;
-pub mod hash;
 pub mod kdf;
 
 pub use aead::{decrypt_chunk, encrypt_chunk};
@@ -45,7 +44,7 @@ pub use error::{BlsError, CryptoError, TamperError};
 pub use fixtures::{
     write_bls_fixtures, write_kdf_fixtures, BlsFixture, BlsFixtureSet, KdfFixture, KdfFixtureSet,
 };
-pub use hash::sha256;
+pub use digstore_core::hash::sha256;
 pub use kdf::derive_decryption_key;
 
 use digstore_core::Bytes48;
