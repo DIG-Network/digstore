@@ -1379,7 +1379,7 @@ fn current_time() -> u64 {
 /// seeds (time/pid/pointer-derived) would make BLS signing keys and the private
 /// `SecretSalt` guessable, so if the OS RNG is unavailable we panic rather than
 /// emit attacker-predictable key material.
-fn random_seed() -> [u8; 32] {
+pub(crate) fn random_seed() -> [u8; 32] {
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed)
         .expect("operating system CSPRNG must be available to generate key material");
@@ -1390,7 +1390,7 @@ fn random_seed() -> [u8; 32] {
 /// permissions. On Unix the file is created mode `0600`; on Windows it inherits
 /// the user-profile ACL (the `.dig` dir lives under the user's home), which is
 /// already restricted to the owner.
-fn write_secret_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_secret_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::io::Write;
