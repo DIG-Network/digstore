@@ -40,11 +40,11 @@ pub use bls::{
     sign_request, sign_tombstone, tombstone_signing_message, validate_public_key, verify_push,
     verify_request, verify_tombstone,
 };
+pub use digstore_core::hash::sha256;
 pub use error::{BlsError, CryptoError, TamperError};
 pub use fixtures::{
     write_bls_fixtures, write_kdf_fixtures, BlsFixture, BlsFixtureSet, KdfFixture, KdfFixtureSet,
 };
-pub use digstore_core::hash::sha256;
 pub use kdf::derive_decryption_key;
 
 use digstore_core::Bytes48;
