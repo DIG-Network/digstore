@@ -967,7 +967,15 @@ pub fn finalize_commit(
     }
 
     // Compile a real module (so a real .wasm exists for host/push/clone).
-    let output_path = compile_module(ctx, &cfg, &pool_bodies, &manifest, root, chain_state, &metadata)?;
+    let output_path = compile_module(
+        ctx,
+        &cfg,
+        &pool_bodies,
+        &manifest,
+        root,
+        chain_state,
+        &metadata,
+    )?;
     let output_size = fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
 
     // Clear staging.

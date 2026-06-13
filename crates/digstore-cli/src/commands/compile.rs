@@ -27,7 +27,11 @@ fn manifest_from_json(v: &serde_json::Value) -> MetadataManifest {
     let arr_str = |k: &str| {
         v.get(k)
             .and_then(|x| x.as_array())
-            .map(|a| a.iter().filter_map(|e| e.as_str().map(|t| t.to_string())).collect::<Vec<_>>())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| e.as_str().map(|t| t.to_string()))
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default()
     };
     let authors = v
@@ -39,8 +43,14 @@ fn manifest_from_json(v: &serde_json::Value) -> MetadataManifest {
                     let name = e.get("name").and_then(|n| n.as_str())?.to_string();
                     Some(Author {
                         name,
-                        handle: e.get("handle").and_then(|h| h.as_str()).map(|t| t.to_string()),
-                        contact: e.get("contact").and_then(|h| h.as_str()).map(|t| t.to_string()),
+                        handle: e
+                            .get("handle")
+                            .and_then(|h| h.as_str())
+                            .map(|t| t.to_string()),
+                        contact: e
+                            .get("contact")
+                            .and_then(|h| h.as_str())
+                            .map(|t| t.to_string()),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -58,10 +68,17 @@ fn manifest_from_json(v: &serde_json::Value) -> MetadataManifest {
     let custom = v
         .get("custom")
         .and_then(|x| x.as_object())
-        .map(|o| o.iter().map(|(k, val)| (k.clone(), val.clone())).collect::<BTreeMap<_, _>>())
+        .map(|o| {
+            o.iter()
+                .map(|(k, val)| (k.clone(), val.clone()))
+                .collect::<BTreeMap<_, _>>()
+        })
         .unwrap_or_default();
     MetadataManifest {
-        schema_version: v.get("schema_version").and_then(|x| x.as_u64()).unwrap_or(1) as u32,
+        schema_version: v
+            .get("schema_version")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(1) as u32,
         name: s("name").unwrap_or_default(),
         version: opt("version"),
         description: opt("description"),
@@ -128,8 +145,9 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError>
             let raw = std::fs::read_to_string(path).map_err(|e| {
                 CliError::InvalidArgument(format!("--metadata read {}: {e}", path.display()))
             })?;
-            let v: serde_json::Value = serde_json::from_str(&raw)
-                .map_err(|e| CliError::InvalidArgument(format!("--metadata is not valid JSON: {e}")))?;
+            let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+                CliError::InvalidArgument(format!("--metadata is not valid JSON: {e}"))
+            })?;
             manifest_from_json(&v)
         }
         None => crate::ops::serve::empty_manifest(),
