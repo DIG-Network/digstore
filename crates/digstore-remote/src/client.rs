@@ -144,7 +144,11 @@ impl DigClient {
     pub async fn fetch(&self, store_id: &Bytes32) -> Result<FetchInfo, ClientError> {
         let id = store_id.to_hex();
         let d: StoreDescriptor = self
-            .authed(self.http.get(self.url(&format!("/stores/{id}"))), "fetch", store_id)
+            .authed(
+                self.http.get(self.url(&format!("/stores/{id}"))),
+                "fetch",
+                store_id,
+            )
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?

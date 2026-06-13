@@ -54,7 +54,7 @@ async fn valid_push_advances_head_201() {
     // CONVENTIONS C7: message order is (root, store_id).
     let msg = push_signing_message(&new_root, &id);
     let sig = digstore_crypto::bls_sign(&sk, &msg);
-    let app = RemoteServer::new(be.clone()).router();
+    let app = RemoteServer::new(be.clone()).allow_anonymous().router();
     let resp = app
         .oneshot(put_req(
             &id_hex,
@@ -77,7 +77,7 @@ async fn valid_push_advances_head_201() {
 async fn bad_signature_is_403() {
     let (be, id, id_hex, _sk) = signed_store();
     let new_root = b32(0x20);
-    let app = RemoteServer::new(be.clone()).router();
+    let app = RemoteServer::new(be.clone()).allow_anonymous().router();
     let bad_sig = Bytes96([0xCD; 96]);
     let resp = app
         .oneshot(put_req(
@@ -105,7 +105,7 @@ async fn missing_bearer_when_required_is_401() {
     be.set_bearer(&id, "tok");
     let new_root = b32(0x20);
     let sig = digstore_crypto::bls_sign(&sk, &push_signing_message(&new_root, &id));
-    let app = RemoteServer::new(be.clone()).router();
+    let app = RemoteServer::new(be.clone()).allow_anonymous().router();
     // valid sig but NO bearer header -> 401
     let resp = app
         .oneshot(put_req(
@@ -128,7 +128,7 @@ async fn correct_bearer_and_sig_is_201() {
     be.set_bearer(&id, "tok");
     let new_root = b32(0x21);
     let sig = digstore_crypto::bls_sign(&sk, &push_signing_message(&new_root, &id));
-    let app = RemoteServer::new(be.clone()).router();
+    let app = RemoteServer::new(be.clone()).allow_anonymous().router();
     let resp = app
         .oneshot(put_req(
             &id_hex,
@@ -149,7 +149,7 @@ async fn non_fast_forward_is_409() {
     let (be, id, id_hex, sk) = signed_store();
     let new_root = b32(0x20);
     let sig = digstore_crypto::bls_sign(&sk, &push_signing_message(&new_root, &id));
-    let app = RemoteServer::new(be.clone()).router();
+    let app = RemoteServer::new(be.clone()).allow_anonymous().router();
     // parent does NOT match served head 0x10 -> 409
     let resp = app
         .oneshot(put_req(
@@ -172,7 +172,7 @@ async fn pending_push_is_202_and_served_head_unchanged() {
     let (be, id, id_hex, sk) = signed_store();
     let new_root = b32(0x20);
     let sig = digstore_crypto::bls_sign(&sk, &push_signing_message(&new_root, &id));
-    let app = RemoteServer::new(be.clone()).router();
+    let app = RemoteServer::new(be.clone()).allow_anonymous().router();
     let resp = app
         .oneshot(put_req(
             &id_hex,
@@ -203,7 +203,7 @@ async fn oversized_module_is_413() {
     be.add_store(id, pk, b32(0x10), vec![0u8; 8], None);
     let new_root = b32(0x20);
     let sig = digstore_crypto::bls_sign(&sk, &push_signing_message(&new_root, &id));
-    let app = RemoteServer::new(be.clone()).router();
+    let app = RemoteServer::new(be.clone()).allow_anonymous().router();
     let resp = app
         .oneshot(put_req(
             &id.to_hex(),
@@ -222,7 +222,7 @@ async fn oversized_module_is_413() {
 #[tokio::test]
 async fn malformed_signature_header_is_422_or_403() {
     let (be, _id, id_hex, _sk) = signed_store();
-    let app = RemoteServer::new(be).router();
+    let app = RemoteServer::new(be).allow_anonymous().router();
     let resp = app
         .oneshot(put_req(
             &id_hex,

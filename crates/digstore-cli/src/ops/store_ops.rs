@@ -1605,7 +1605,12 @@ mod tests {
         let f = td.path().join("a.txt");
         std::fs::write(&f, b"alpha beta gamma delta").unwrap();
         add_path(&ctx, &f, Some("a".into())).unwrap();
-        let res = commit(&ctx, Some("first".into()), crate::ops::serve::empty_manifest()).unwrap();
+        let res = commit(
+            &ctx,
+            Some("first".into()),
+            crate::ops::serve::empty_manifest(),
+        )
+        .unwrap();
         assert!(res.output_path.exists());
         let entries = log(&ctx, None).unwrap();
         assert_eq!(entries.len(), 1);
@@ -1757,14 +1762,18 @@ mod tests {
         let f = td.path().join("a.txt");
         std::fs::write(&f, b"v1").unwrap();
         add_path(&ctx, &f, Some("a".into())).unwrap();
-        let r1 = commit(&ctx, None, crate::ops::serve::empty_manifest()).unwrap().roothash;
+        let r1 = commit(&ctx, None, crate::ops::serve::empty_manifest())
+            .unwrap()
+            .roothash;
 
         std::fs::write(&f, b"v2-different-content").unwrap();
         add_path(&ctx, &f, Some("a".into())).unwrap();
         let g = td.path().join("b.txt");
         std::fs::write(&g, b"brand new").unwrap();
         add_path(&ctx, &g, Some("b".into())).unwrap();
-        let r2 = commit(&ctx, None, crate::ops::serve::empty_manifest()).unwrap().roothash;
+        let r2 = commit(&ctx, None, crate::ops::serve::empty_manifest())
+            .unwrap()
+            .roothash;
 
         let d = diff(&ctx, &r1, &r2).unwrap();
         assert!(d

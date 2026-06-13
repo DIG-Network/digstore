@@ -84,9 +84,15 @@ pub fn request_signer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // `DIG_IDENTITY_DIR` is process-global; serialize the tests that mutate it so
+    // they cannot clobber each other's setting when run in parallel.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn identity_is_created_then_stable() {
+        let _g = ENV_LOCK.lock().unwrap();
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_IDENTITY_DIR", td.path());
         let (_seed1, pk1) = load_or_create_seed().unwrap();
@@ -99,6 +105,7 @@ mod tests {
 
     #[test]
     fn request_signer_produces_verifiable_signatures() {
+        let _g = ENV_LOCK.lock().unwrap();
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_IDENTITY_DIR", td.path());
         let (pk_hex, sign) = request_signer().unwrap();
@@ -108,7 +115,9 @@ mod tests {
         .unwrap();
         let store = digstore_core::Bytes32([5u8; 32]);
         let nonce = [1u8; 32];
-        let sig = sign(&digstore_crypto::request_signing_message("fetch", &store, 100, &nonce));
+        let sig = sign(&digstore_crypto::request_signing_message(
+            "fetch", &store, 100, &nonce,
+        ));
         assert!(digstore_crypto::verify_request(
             &pk, "fetch", &store, 100, &nonce, &sig
         ));

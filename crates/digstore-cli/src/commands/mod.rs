@@ -23,6 +23,7 @@ pub mod push;
 pub mod remote;
 pub mod revoke;
 pub mod seed;
+pub mod serve;
 pub mod staged;
 pub mod status;
 pub mod stores;
@@ -130,6 +131,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Push(a) => push::run(&ctx, &ui, a),
         Command::Pull(a) => pull::run(&ctx, &ui, a),
         Command::Revoke(a) => revoke::run(&ctx, &ui, a),
+        Command::Serve(a) => serve::run(&ctx, &ui, a),
         Command::Anchor(a) => anchor::run(&ctx, &ui, a),
         Command::Init(_)
         | Command::Clone(_)

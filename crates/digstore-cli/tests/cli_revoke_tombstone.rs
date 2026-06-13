@@ -213,10 +213,29 @@ fn remote_rejects_tombstone_with_bad_signature() {
         "signature": hex::encode([0u8; 96]),
     });
 
+    // The server requires §21.9 per-request auth, so attach VALID auth headers
+    // (signed with a throwaway identity key) to get PAST the auth layer — this
+    // isolates the tombstone handler's own signature check, which must still 403
+    // the bad tombstone signature.
+    let (id_sk, id_pk) = digstore_crypto::bls_keygen(&[7u8; 32]);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let nonce = [9u8; 32];
+    let auth_sig = digstore_crypto::bls_sign(
+        &id_sk,
+        &digstore_crypto::request_signing_message("tombstone", &store_id_b, ts, &nonce),
+    );
+
     let rt = tokio::runtime::Runtime::new().unwrap();
     let status = rt.block_on(async {
         reqwest::Client::new()
             .post(&url)
+            .header("X-Dig-Identity", id_pk.to_hex())
+            .header("X-Dig-Timestamp", ts.to_string())
+            .header("X-Dig-Nonce", hex::encode(nonce))
+            .header("X-Dig-Auth", hex::encode(auth_sig.0))
             .json(&body)
             .send()
             .await
