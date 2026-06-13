@@ -142,7 +142,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
 
             // Only NOW advance local history (roots.log + generation + module +
             // clear staging). The chain has the root; the local store catches up.
-            let outcome = store_ops::finalize_commit(ctx, prepared, Some(cs))?;
+            // The interactive `commit` embeds an empty metadata manifest (the dighub `compile`
+            // path supplies the store's real manifest); a future CLI `--metadata` can thread one.
+            let outcome =
+                store_ops::finalize_commit(ctx, prepared, Some(cs), crate::ops::serve::empty_manifest())?;
             let coin_hex = hex::encode(coin_id.as_ref());
 
             if ui.json() {
