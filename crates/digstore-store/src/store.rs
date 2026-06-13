@@ -199,11 +199,13 @@ impl<C: Clock> Store<C> {
                 indices.push(index);
             }
 
-            // D5 leaf = SHA-256(concat_output(ordered chunk ciphertexts)) — the
-            // exact bytes `get_content` returns for this resource.
+            // D5 leaf = resource_leaf(concat_output(ordered chunk ciphertexts)) —
+            // SHA-256 over the exact bytes `get_content` returns for this resource.
+            // The SAME `digstore_core::resource_leaf` the browser verifier checks
+            // against (`dig-client-wasm`), so the content→leaf contract is shared.
             let slices: Vec<&[u8]> = ct_bodies.iter().map(|b| b.as_slice()).collect();
             let blob = concat_output(&slices);
-            let leaf = digstore_crypto::sha256(&blob);
+            let leaf = digstore_core::resource_leaf(&blob);
             resource_leaves.push((static_key.0, leaf));
 
             key_table.push(KeyTableRecord {

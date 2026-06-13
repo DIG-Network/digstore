@@ -18,3 +18,10 @@ sha2 = { version = "0.10", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+# Symmetric read-crypto (paper §11) — the AES-256-GCM-SIV chunk seal + HKDF
+# content-key derivation now live in `digstore_core::crypto`, the ONE place every
+# layer (producer, host, browser verifier) shares. `aes-gcm-siv` default features
+# are OFF so it never drags in `getrandom` (encryption is under a fixed nonce, no
+# RNG) — keeping the crate wasm-clean for `dig-client-wasm`.
+aes-gcm-siv = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+hkdf = { version = "0.12", default-features = false }

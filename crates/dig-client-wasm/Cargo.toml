@@ -20,16 +20,13 @@ description = "Browser read-crypto for dighub: URN reconstruction, AES-256-GCM-S
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# URN parsing/canonicalization, MerkleProof codec + verify, Bytes32, sha256.
-# Default features (std + serde) are off: we only need the pure `alloc` core.
+# The COMPLETE read contract — URN canonicalization + `retrieval_key`, the
+# MerkleProof codec + NODE_TAG verify, `resource_leaf`, Bytes32, sha256, AND the
+# symmetric read-crypto (`crypto::{derive_decryption_key, decrypt_chunk}`). This
+# is the single source of truth; the wasm crate no longer reproduces any crypto.
+# Default features (std + serde) are off — the pure `alloc` core is wasm-clean
+# (its `aes-gcm-siv`/`hkdf` deps carry no `getrandom` and no `blst`).
 digstore-core = { path = "../digstore-core", default-features = false }
-
-# Read-crypto primitives. `aes-gcm-siv` default features are DISABLED so it does
-# not drag in `getrandom` (decryption under a fixed nonce needs no RNG); we keep
-# only the `aes` backend + `alloc`. These versions MUST match digstore-crypto.
-aes-gcm-siv = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
-hkdf = "0.12"
-sha2 = { version = "0.10", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 
 # wasm-bindgen surface.

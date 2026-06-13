@@ -128,6 +128,19 @@ fn hash_leaf(chunk: &[u8]) -> Bytes32 {
     sha256(&buf)
 }
 
+/// The D5 per-resource merkle LEAF: `SHA-256(resource_ciphertext)` over the exact
+/// ciphertext bytes the host serves for a resource (NOT `LEAF_TAG`-tagged — the
+/// D5 leaves are the leaf layer fed to [`MerkleTree::from_leaves`], domain-separated
+/// from internal nodes by the [`NODE_TAG`] fold alone, per this module's header).
+///
+/// This is the ONE content→leaf binding shared by every layer: the producer
+/// (`digstore-store`) commits `resource_leaf(concat_output(chunk_ciphertexts))`
+/// and the browser verifier (`dig-client-wasm`) checks `resource_leaf(served_ct)
+/// == proof.leaf`. Both call THIS function so the contract can never skew.
+pub fn resource_leaf(ciphertext: &[u8]) -> Bytes32 {
+    sha256(ciphertext)
+}
+
 /// A built Merkle tree retaining every level so proofs can be generated.
 #[derive(Debug, Clone)]
 pub struct MerkleTree {

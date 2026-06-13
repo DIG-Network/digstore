@@ -6,6 +6,7 @@ pub mod abi;
 pub mod bytes;
 pub mod codec;
 pub mod config;
+pub mod crypto;
 pub mod datasection;
 pub mod error;
 pub mod hash;
@@ -19,6 +20,7 @@ pub mod wire;
 pub use abi::{is_error, pack_ptr_len, unpack_ptr_len};
 pub use bytes::{Bytes32, Bytes48, Bytes96};
 pub use codec::{Decode, DecodeError, Decoder, Encode, Encoder};
+pub use crypto::{decrypt_chunk, derive_decryption_key, encrypt_chunk};
 pub use error::{CoreError, ErrorCode};
 pub use hash::sha256;
 
@@ -53,7 +55,7 @@ pub use config::{
 };
 pub use keytable::{KeyTableEntry, PathWalk};
 pub use manifest::{Author, MetadataManifest};
-pub use merkle::{MerkleProof, MerkleTree, ProofStep};
+pub use merkle::{resource_leaf, MerkleProof, MerkleTree, ProofStep};
 pub use tombstone::{RevocationReason, Tombstone, TombstoneScope};
 pub use urn::Urn;
 pub use wire::{
