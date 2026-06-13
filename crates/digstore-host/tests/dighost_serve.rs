@@ -47,7 +47,7 @@ fn build_fixture() -> (tempfile::TempDir, Fixture) {
     std::fs::write(&f, ORIGINAL).unwrap();
     store_ops::add_path(&ctx, &f, Some("known".into())).unwrap();
 
-    let res = store_ops::commit(&ctx, None).unwrap();
+    let res = store_ops::commit(&ctx, None, digstore_cli::ops::serve::empty_manifest()).unwrap();
     let store_id = ctx.find_store_id().unwrap();
     let trusted_root = res.roothash;
     let module = std::fs::read(&res.output_path).unwrap();

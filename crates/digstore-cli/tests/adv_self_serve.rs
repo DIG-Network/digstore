@@ -64,7 +64,7 @@ fn adversarial_real_module_self_serves_with_verifying_proof() {
     std::fs::write(&f, &original).unwrap();
     store_ops::add_path(&ctx, &f, Some("known".into())).unwrap();
 
-    let res = store_ops::commit(&ctx, None).unwrap();
+    let res = store_ops::commit(&ctx, None, digstore_cli::ops::serve::empty_manifest()).unwrap();
     let store_id = ctx.find_store_id().unwrap();
     let trusted_root = res.roothash;
 

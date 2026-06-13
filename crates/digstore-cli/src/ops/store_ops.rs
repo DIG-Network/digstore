@@ -1605,7 +1605,7 @@ mod tests {
         let f = td.path().join("a.txt");
         std::fs::write(&f, b"alpha beta gamma delta").unwrap();
         add_path(&ctx, &f, Some("a".into())).unwrap();
-        let res = commit(&ctx, Some("first".into())).unwrap();
+        let res = commit(&ctx, Some("first".into()), crate::ops::serve::empty_manifest()).unwrap();
         assert!(res.output_path.exists());
         let entries = log(&ctx, None).unwrap();
         assert_eq!(entries.len(), 1);
@@ -1615,7 +1615,7 @@ mod tests {
     #[test]
     fn commit_with_nothing_staged_errors() {
         let (_td, ctx) = ctx(false);
-        assert!(commit(&ctx, None).is_err());
+        assert!(commit(&ctx, None, crate::ops::serve::empty_manifest()).is_err());
     }
 
     #[test]
@@ -1624,7 +1624,7 @@ mod tests {
         let f = td.path().join("x.txt");
         std::fs::write(&f, b"data").unwrap();
         add_path(&ctx, &f, Some("x".into())).unwrap();
-        let res = commit(&ctx, None).unwrap();
+        let res = commit(&ctx, None, crate::ops::serve::empty_manifest()).unwrap();
         let store_id = ctx.find_store_id().unwrap();
         let p = module_path_for(&ctx, &store_id, None).unwrap();
         assert!(p.ends_with(format!(
@@ -1640,7 +1640,7 @@ mod tests {
         let f = td.path().join("a.txt");
         std::fs::write(&f, b"alpha").unwrap();
         add_path(&ctx, &f, Some("a".into())).unwrap();
-        let res = commit(&ctx, None).unwrap();
+        let res = commit(&ctx, None, crate::ops::serve::empty_manifest()).unwrap();
         let keys = list_generation_resources(&ctx, &res.roothash).unwrap();
         assert!(keys.iter().any(|k| k == "a"));
     }
@@ -1712,7 +1712,7 @@ mod tests {
         let (ctx, _td) = test_store_ctx();
         std::fs::write(ctx.op_dir.join("readme.md"), b"hi").unwrap();
         add_files(&ctx, &[], true, false, None).unwrap();
-        let res = commit(&ctx, None).unwrap();
+        let res = commit(&ctx, None, crate::ops::serve::empty_manifest()).unwrap();
         let store_id = ctx.load_config().unwrap().store_id;
         let json = std::fs::read_to_string(ctx.dig_dir.join("urns.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1757,14 +1757,14 @@ mod tests {
         let f = td.path().join("a.txt");
         std::fs::write(&f, b"v1").unwrap();
         add_path(&ctx, &f, Some("a".into())).unwrap();
-        let r1 = commit(&ctx, None).unwrap().roothash;
+        let r1 = commit(&ctx, None, crate::ops::serve::empty_manifest()).unwrap().roothash;
 
         std::fs::write(&f, b"v2-different-content").unwrap();
         add_path(&ctx, &f, Some("a".into())).unwrap();
         let g = td.path().join("b.txt");
         std::fs::write(&g, b"brand new").unwrap();
         add_path(&ctx, &g, Some("b".into())).unwrap();
-        let r2 = commit(&ctx, None).unwrap().roothash;
+        let r2 = commit(&ctx, None, crate::ops::serve::empty_manifest()).unwrap().roothash;
 
         let d = diff(&ctx, &r1, &r2).unwrap();
         assert!(d
