@@ -717,9 +717,13 @@ pub struct PreparedCommit {
 /// `digstore commit` COMMAND does NOT use this — it interleaves an on-chain root
 /// update + confirmation between [`stage_to_root`] and [`finalize_commit`] (see
 /// `commands::commit`), so local history never advances past the chain.
-pub fn commit(ctx: &CliContext, _message: Option<String>) -> Result<CommitOutcome, CliError> {
+pub fn commit(
+    ctx: &CliContext,
+    _message: Option<String>,
+    metadata: digstore_core::MetadataManifest,
+) -> Result<CommitOutcome, CliError> {
     let prepared = stage_to_root(ctx)?;
-    finalize_commit(ctx, prepared, None)
+    finalize_commit(ctx, prepared, None, metadata)
 }
 
 /// Compute the next generation's merkle `root` from staging WITHOUT persisting
@@ -849,6 +853,11 @@ pub fn finalize_commit(
     ctx: &CliContext,
     prepared: PreparedCommit,
     chain_state: Option<digstore_core::datasection::ChainState>,
+    // The store-level metadata manifest to embed in the module's data section (Digstore §8.4,
+    // served ungated via the guest `get_metadata` export). The on-chain `commit` command passes
+    // an empty manifest; the chainless `compile` (dighub) passes the store's current manifest so
+    // the served `.dig` carries verifiable metadata bound to its `program_hash`.
+    metadata: digstore_core::MetadataManifest,
 ) -> Result<CommitOutcome, CliError> {
     let PreparedCommit {
         cfg,
@@ -958,7 +967,7 @@ pub fn finalize_commit(
     }
 
     // Compile a real module (so a real .wasm exists for host/push/clone).
-    let output_path = compile_module(ctx, &cfg, &pool_bodies, &manifest, root, chain_state)?;
+    let output_path = compile_module(ctx, &cfg, &pool_bodies, &manifest, root, chain_state, &metadata)?;
     let output_size = fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
 
     // Clear staging.
@@ -995,6 +1004,7 @@ fn compile_module(
     manifest: &GenerationManifest,
     root: Bytes32,
     chain_state: Option<digstore_core::datasection::ChainState>,
+    metadata: &digstore_core::MetadataManifest,
 ) -> Result<PathBuf, CliError> {
     use digstore_compiler::{Compiler, CompilerConfig, GenerationView, ResourceView};
 
@@ -1068,7 +1078,7 @@ fn compile_module(
         cfg.store_id,
         store_pubkey,
         &[gen],
-        crate::ops::serve::empty_manifest(),
+        metadata.clone(),
         // §4.1/§5.2: per-store auth policy is compiled into the module. The CLI
         // supplies the explicit no-auth default here; a JWT/session-required
         // store would thread its configured policy into this argument instead.

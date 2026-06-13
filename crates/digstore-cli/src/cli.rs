@@ -169,6 +169,12 @@ pub struct CompileArgs {
     /// Implies --private.
     #[arg(long)]
     pub salt: Option<String>,
+    /// Optional path to a JSON metadata manifest (the dighub `Manifest` shape: name, version,
+    /// description, authors, license, homepage, repository, keywords, categories, icon,
+    /// content_type, links, custom) to embed in the module's data section and serve ungated via
+    /// `get_metadata` (Digstore §8.4). Omitted => an empty manifest is embedded.
+    #[arg(long)]
+    pub metadata: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

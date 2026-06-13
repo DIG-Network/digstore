@@ -8,13 +8,75 @@
 //! are byte-identical to what an on-chain commit of the same files would produce.
 
 use digstore_core::config::SecretSalt;
-use digstore_core::Bytes32;
+use digstore_core::{Author, Bytes32, MetadataManifest};
+use std::collections::BTreeMap;
 
 use crate::cli::CompileArgs;
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::store_ops;
 use crate::ui::Ui;
+
+/// Build a [`MetadataManifest`] from the dighub `Manifest` JSON shape (14 publisher fields).
+/// Tolerant: missing/empty fields collapse to `None`/empty; unknown keys are ignored except
+/// `custom`, which is preserved verbatim. This is the inverse of the retrieval Lambda's
+/// `manifest_to_json`, so a round-trip (.dig -> RPC JSON -> recompile) is stable.
+fn manifest_from_json(v: &serde_json::Value) -> MetadataManifest {
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|x| x.to_string());
+    let opt = |k: &str| s(k).filter(|t| !t.is_empty());
+    let arr_str = |k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_array())
+            .map(|a| a.iter().filter_map(|e| e.as_str().map(|t| t.to_string())).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    let authors = v
+        .get("authors")
+        .and_then(|x| x.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    let name = e.get("name").and_then(|n| n.as_str())?.to_string();
+                    Some(Author {
+                        name,
+                        handle: e.get("handle").and_then(|h| h.as_str()).map(|t| t.to_string()),
+                        contact: e.get("contact").and_then(|h| h.as_str()).map(|t| t.to_string()),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let links = v
+        .get("links")
+        .and_then(|x| x.as_object())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, val)| val.as_str().map(|t| (k.clone(), t.to_string())))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let custom = v
+        .get("custom")
+        .and_then(|x| x.as_object())
+        .map(|o| o.iter().map(|(k, val)| (k.clone(), val.clone())).collect::<BTreeMap<_, _>>())
+        .unwrap_or_default();
+    MetadataManifest {
+        schema_version: v.get("schema_version").and_then(|x| x.as_u64()).unwrap_or(1) as u32,
+        name: s("name").unwrap_or_default(),
+        version: opt("version"),
+        description: opt("description"),
+        authors,
+        license: opt("license"),
+        homepage: opt("homepage"),
+        repository: opt("repository"),
+        keywords: arr_str("keywords"),
+        categories: arr_str("categories"),
+        icon: opt("icon"),
+        content_type: opt("content_type"),
+        links,
+        custom,
+    }
+}
 
 pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError> {
     // 1. The on-chain store id (launcher id) this generation belongs to. It is curried
@@ -58,11 +120,26 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError>
         )));
     }
 
-    // 5. Compute the root and compile the module locally — NO chain pointer (None).
-    //    finalize_commit writes the module to the store's modules/ dir; we copy it out.
-    let outcome = store_ops::commit(ctx, None)?;
+    // 5. Load the metadata manifest to embed in the module (the dighub `Manifest` JSON), or an
+    //    empty manifest when --metadata is absent. It is served ungated via `get_metadata` and is
+    //    bound to the module's program_hash, so a reader can verify it against the on-chain anchor.
+    let metadata = match &args.metadata {
+        Some(path) => {
+            let raw = std::fs::read_to_string(path).map_err(|e| {
+                CliError::InvalidArgument(format!("--metadata read {}: {e}", path.display()))
+            })?;
+            let v: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|e| CliError::InvalidArgument(format!("--metadata is not valid JSON: {e}")))?;
+            manifest_from_json(&v)
+        }
+        None => crate::ops::serve::empty_manifest(),
+    };
 
-    // 6. Place the module at --out and hash it (program_hash = SHA-256 of the module
+    // 6. Compute the root and compile the module locally — NO chain pointer (None).
+    //    finalize_commit writes the module to the store's modules/ dir; we copy it out.
+    let outcome = store_ops::commit(ctx, None, metadata)?;
+
+    // 7. Place the module at --out and hash it (program_hash = SHA-256 of the module
     //    bytes — the "size proof" the singleton metadata can carry).
     if let Some(parent) = args.out.parent() {
         if !parent.as_os_str().is_empty() {
@@ -79,7 +156,7 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError>
     let module_bytes = std::fs::read(&args.out).map_err(|e| CliError::Other(e.into()))?;
     let program_hash = digstore_crypto::sha256(&module_bytes);
 
-    // 7. Emit the build result. JSON is the contract the worker parses.
+    // 8. Emit the build result. JSON is the contract the worker parses.
     if ui.json() {
         ui.emit_json(&serde_json::json!({
             "root": outcome.roothash.to_hex(),
