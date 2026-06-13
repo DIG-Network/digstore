@@ -54,13 +54,17 @@ pub enum PushResult {
     Pending,
 }
 
+/// A BLS signer over the 32-byte canonical request message (paper §21.9). Boxed +
+/// `Send + Sync` so it can live on the client and be called per request.
+pub type RequestSignFn = Box<dyn Fn(&[u8; 32]) -> Bytes96 + Send + Sync>;
+
 /// The caller's per-request authentication identity (paper §21.9). `pubkey_hex` is
 /// the 48-byte BLS G1 identity public key (the `<user>` in a `dig://<user>@host/…`
 /// origin); `sign` produces a BLS signature over the 32-byte canonical request
 /// message. Stored on the client so EVERY request is signed.
 pub struct RequestIdentity {
     pub pubkey_hex: String,
-    pub sign: Box<dyn Fn(&[u8; 32]) -> Bytes96 + Send + Sync>,
+    pub sign: RequestSignFn,
 }
 
 /// HTTPS remote client: clone/fetch/pull/push (§21). When constructed with an

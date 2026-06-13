@@ -81,6 +81,7 @@ fn is_store_id(s: &str) -> bool {
 ///   * `dig://[<user>@]<host>[:port]/<storeId>` -> `https://<host>[:port]/stores/<storeId>` (a node)
 ///   * `dig://[<user>@]<host>/stores/<storeId>` -> `https://<host>/stores/<storeId>`        (pathed)
 ///   * `dig://[<user>@]<host>[:port]`          -> `https://<host>[:port]`                   (base only)
+///
 /// Any non-`dig://` URL passes through unchanged (an explicit `https://…` remote still works).
 pub fn normalize_remote_url(url: &str) -> String {
     let Some(rest) = url.strip_prefix("dig://") else {
