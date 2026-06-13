@@ -34,14 +34,10 @@ use alloc::vec::Vec;
 use base64::Engine;
 use digstore_core::codec::Decode;
 use digstore_core::crypto::{decrypt_chunk, derive_decryption_key};
-use digstore_core::{resource_leaf, Bytes32, MerkleProof, SecretSalt, Urn};
+use digstore_core::{
+    resource_leaf, Bytes32, MerkleProof, SecretSalt, Urn, CHAIN, DEFAULT_RESOURCE_KEY,
+};
 use wasm_bindgen::prelude::*;
-
-/// The canonical chain tag for dighub stores (mainnet-only; API §1, §10).
-const CHAIN: &str = "chia";
-/// Conventional default-view resource key when a URN carries no resource path
-/// (Digstore §8.5 social conventions; mirrors the CLI `DEFAULT_RESOURCE_KEY`).
-const DEFAULT_RESOURCE_KEY: &str = "index.html";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
