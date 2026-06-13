@@ -23,7 +23,7 @@ pub mod ratelimit;
 pub mod server;
 pub mod wire;
 
-pub use auth::{push_signing_message, verify_push_signature, PushAuth};
+pub use auth::{push_signing_message, verify_push_signature};
 pub use client::{DigClient, FetchInfo, PullResult, PushResult, RequestIdentity, RequestSignFn};
 pub use ratelimit::RateLimiter;
 pub use server::{AppState, RemoteServer};

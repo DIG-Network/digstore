@@ -27,9 +27,3 @@ hex = "0.4"
 base64 = "0.22"
 getrandom = "0.2"
 
-[dev-dependencies]
-tower = { version = "0.4", features = ["util"] }
-digstore-crypto = { path = "../digstore-crypto" }
-hex = "0.4"
-http-body-util = "0.1"
-base64 = "0.22"

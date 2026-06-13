@@ -182,7 +182,7 @@ pub fn push_signing_message(root: &Bytes32, store_id: &Bytes32) -> [u8; 32] {
     buf.extend_from_slice(PUSH_DST);
     buf.extend_from_slice(&root.0);
     buf.extend_from_slice(&store_id.0);
-    crate::hash::sha256(&buf).0
+    crate::sha256(&buf).0
 }
 
 /// Canonical node execution-proof signing message (paper §13.7, §16).
@@ -238,7 +238,7 @@ pub fn tombstone_signing_message(t: &Tombstone) -> [u8; 32] {
     let mut buf = Vec::with_capacity(TOMB_DST.len() + canonical.len());
     buf.extend_from_slice(TOMB_DST);
     buf.extend_from_slice(&canonical);
-    crate::hash::sha256(&buf).0
+    crate::sha256(&buf).0
 }
 
 /// Canonical per-request authentication signing message (paper §21.9):
@@ -263,7 +263,7 @@ pub fn request_signing_message(
     buf.extend_from_slice(&store_id.0);
     buf.extend_from_slice(&timestamp.to_be_bytes());
     buf.extend_from_slice(nonce);
-    crate::hash::sha256(&buf).0
+    crate::sha256(&buf).0
 }
 
 // --- High-level signing/verification over canonical messages ---------------
