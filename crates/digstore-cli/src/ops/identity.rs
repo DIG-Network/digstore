@@ -72,8 +72,7 @@ pub fn identity_pubkey_hex() -> Result<String, CliError> {
 /// identity pubkey hex and a BLS signer over the 32-byte canonical request
 /// message. The seed is captured and the key reconstructed per call so the
 /// closure is trivially `Send + Sync`.
-pub fn request_signer(
-) -> Result<(String, Box<dyn Fn(&[u8; 32]) -> Bytes96 + Send + Sync>), CliError> {
+pub fn request_signer() -> Result<(String, digstore_remote::RequestSignFn), CliError> {
     let (seed, pk) = load_or_create_seed()?;
     let signer = move |msg: &[u8; 32]| -> Bytes96 {
         digstore_crypto::bls::bls_sign(&SecretKey::from_seed(&seed), msg)
