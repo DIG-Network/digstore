@@ -24,7 +24,7 @@ fn single_chunk_round_trip_through_host_and_client() {
     let f = td.path().join("doc.txt");
     std::fs::write(&f, &content).unwrap();
     store_ops::add_path(&ctx, &f, Some("doc".into())).unwrap();
-    let res = store_ops::commit(&ctx, None).unwrap();
+    let res = store_ops::commit(&ctx, None, digstore_cli::ops::serve::empty_manifest()).unwrap();
     let store_id = ctx.find_store_id().unwrap();
 
     let urn = Urn {
@@ -49,7 +49,7 @@ fn multi_chunk_round_trip() {
     let f = td.path().join("big.bin");
     std::fs::write(&f, &content).unwrap();
     store_ops::add_path(&ctx, &f, Some("big".into())).unwrap();
-    let res = store_ops::commit(&ctx, None).unwrap();
+    let res = store_ops::commit(&ctx, None, digstore_cli::ops::serve::empty_manifest()).unwrap();
     let store_id = ctx.find_store_id().unwrap();
 
     let urn = Urn {
@@ -110,7 +110,7 @@ fn commit_module_self_serves_through_host_serve_content() {
     let f = td.path().join("doc.txt");
     std::fs::write(&f, &content).unwrap();
     store_ops::add_path(&ctx, &f, Some("doc".into())).unwrap();
-    let res = store_ops::commit(&ctx, None).unwrap();
+    let res = store_ops::commit(&ctx, None, digstore_cli::ops::serve::empty_manifest()).unwrap();
     let store_id = ctx.find_store_id().unwrap();
 
     // Root-INDEPENDENT retrieval key (matches commit-time `static_key`).
@@ -188,7 +188,7 @@ fn miss_returns_decoy_that_fails_verification() {
     let f = td.path().join("doc.txt");
     std::fs::write(&f, b"real content").unwrap();
     store_ops::add_path(&ctx, &f, Some("doc".into())).unwrap();
-    let res = store_ops::commit(&ctx, None).unwrap();
+    let res = store_ops::commit(&ctx, None, digstore_cli::ops::serve::empty_manifest()).unwrap();
     let store_id = ctx.find_store_id().unwrap();
 
     let urn = Urn {

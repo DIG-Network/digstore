@@ -52,7 +52,7 @@ fn host_runtime_neither_decrypts_nor_inspects_the_payload() {
     std::fs::write(&f, &original).unwrap();
     store_ops::add_path(&ctx, &f, Some("secret".into())).unwrap();
 
-    let res = store_ops::commit(&ctx, None).unwrap();
+    let res = store_ops::commit(&ctx, None, serve::empty_manifest()).unwrap();
     let store_id = ctx.find_store_id().unwrap();
     let trusted_root = res.roothash;
 
