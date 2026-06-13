@@ -1181,7 +1181,9 @@ pub fn module_path_for(
 
 /// The conventional default-view resource key (§8.5 social conventions): a URN
 /// with no resource key resolves to the store's landing resource, `index.html`.
-pub const DEFAULT_RESOURCE_KEY: &str = "index.html";
+/// Re-exported from `digstore-core` (the single source of truth shared with the
+/// browser verifier) so the producer and verifier resolve the SAME default view.
+pub use digstore_core::DEFAULT_RESOURCE_KEY;
 
 /// Resolve the effective resource key for a URN (§8.5 social conventions).
 ///

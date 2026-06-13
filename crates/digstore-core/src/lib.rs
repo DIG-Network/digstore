@@ -58,6 +58,17 @@ pub use manifest::{Author, MetadataManifest};
 pub use merkle::{resource_leaf, MerkleProof, MerkleTree, ProofStep};
 pub use tombstone::{RevocationReason, Tombstone, TombstoneScope};
 pub use urn::Urn;
+
+/// The canonical chain tag for Digstore URNs (mainnet-only; paper §1/§10). The
+/// SINGLE definition shared by the producer (`digstore-cli`/`digstore-store`), the
+/// host, and the browser verifier (`dig-client-wasm`) — the value every layer puts
+/// in `Urn.chain`, so the retrieval key derived from the URN can never skew.
+pub const CHAIN: &str = "chia";
+
+/// Conventional default-view resource key when a URN carries no resource path
+/// (paper §8.5 social conventions): the landing page a bare store URL resolves to.
+/// Shared by the CLI producer and the browser verifier.
+pub const DEFAULT_RESOURCE_KEY: &str = "index.html";
 pub use wire::{
     AttestationChallenge, AttestationResponse, AuthenticationInfo, ChiaBlockRef, ContentResponse,
     ExecutionProof, ProofPrelude, ProofResponse, ATTEST_DST,
