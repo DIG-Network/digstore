@@ -2345,6 +2345,7 @@ dependencies = [
  "digstore-crypto",
  "digstore-host",
  "digstore-store",
+ "getrandom 0.2.17",
  "hex",
  "http 1.4.2",
  "http-body-util",

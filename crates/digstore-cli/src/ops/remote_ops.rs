@@ -11,11 +11,23 @@ use digstore_core::{
     MAX_STORE_BYTES,
 };
 use digstore_remote::wire::TombstoneEntry;
-use digstore_remote::{verify_push_signature, ClientError, DigClient, PullResult, PushResult};
+use digstore_remote::{
+    verify_push_signature, ClientError, DigClient, PullResult, PushResult, RequestIdentity,
+};
 
 use crate::context::CliContext;
 use crate::error::CliError;
-use crate::ops::store_ops;
+use crate::ops::{identity, store_ops};
+
+/// Build a `DigClient` for `base` carrying the CLI's per-request signing identity
+/// (paper §21.9), so EVERY remote request (clone/pull/push/fetch/tombstone) is
+/// authenticated by a signed message from this CLI. The identity key is the
+/// user-global one (`identity::request_signer`), independent of any store key, so
+/// even a `clone` of a foreign store is signed.
+fn authed_client(base: String) -> Result<DigClient, CliError> {
+    let (pubkey_hex, sign) = identity::request_signer()?;
+    Ok(DigClient::new(base).with_identity(RequestIdentity { pubkey_hex, sign }))
+}
 
 #[derive(Debug)]
 pub struct CloneSummary {
@@ -262,7 +274,7 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     let (base, store_id_hex) = parse_store_url(store_url)?;
     let store_id = Bytes32::from_hex(&store_id_hex)
         .map_err(|_| CliError::InvalidArgument("bad store id hex".into()))?;
-    let client = DigClient::new(base);
+    let client = authed_client(base)?;
 
     // Descriptor + roots.
     let info = client.fetch(&store_id).await.map_err(map_remote_err)?;
@@ -395,7 +407,7 @@ pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliEr
     let module = fs::read(&module_path).map_err(|e| CliError::Other(e.into()))?;
 
     let (base, _id) = parse_store_url(store_url)?;
-    let client = DigClient::new(base);
+    let client = authed_client(base)?;
 
     // Parent = the remote's current served root (genesis if fresh).
     let info = client.fetch(&cfg.store_id).await.map_err(map_remote_err)?;
@@ -457,7 +469,7 @@ pub async fn revoke_to(
 ) -> Result<RevokeScope, CliError> {
     let cfg = ctx.load_config()?;
     let (base, _id) = parse_store_url(store_url)?;
-    let client = DigClient::new(base);
+    let client = authed_client(base)?;
 
     let not_after = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -487,7 +499,7 @@ pub async fn revoke_to(
 pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliError> {
     let cfg = ctx.load_config()?;
     let (base, _id) = parse_store_url(store_url)?;
-    let client = DigClient::new(base);
+    let client = authed_client(base)?;
 
     let local_root = store_ops::current_root(ctx)?;
 

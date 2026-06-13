@@ -5,6 +5,7 @@ pub mod anchor_state;
 pub mod anchor_ux;
 pub mod client_crypto;
 pub mod discovery;
+pub mod identity;
 pub mod remote_ops;
 pub mod serve;
 pub mod store_ops;

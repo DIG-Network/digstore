@@ -54,10 +54,22 @@ pub enum PushResult {
     Pending,
 }
 
-/// HTTPS remote client: clone/fetch/pull/push (§21).
+/// The caller's per-request authentication identity (paper §21.9). `pubkey_hex` is
+/// the 48-byte BLS G1 identity public key (the `<user>` in a `dig://<user>@host/…`
+/// origin); `sign` produces a BLS signature over the 32-byte canonical request
+/// message. Stored on the client so EVERY request is signed.
+pub struct RequestIdentity {
+    pub pubkey_hex: String,
+    pub sign: Box<dyn Fn(&[u8; 32]) -> Bytes96 + Send + Sync>,
+}
+
+/// HTTPS remote client: clone/fetch/pull/push (§21). When constructed with an
+/// identity, every request carries the §21.9 auth headers (`X-Dig-Identity`,
+/// `X-Dig-Timestamp`, `X-Dig-Nonce`, `X-Dig-Auth`).
 pub struct DigClient {
     base_url: String,
     http: reqwest::Client,
+    identity: Option<RequestIdentity>,
 }
 
 impl DigClient {
@@ -74,6 +86,7 @@ impl DigClient {
         DigClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             http,
+            identity: None,
         }
     }
 
@@ -81,19 +94,57 @@ impl DigClient {
         DigClient {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             http,
+            identity: None,
         }
+    }
+
+    /// Attach a per-request signing identity (§21.9). Builder-style; chains after
+    /// `new`/`with_client`. The CLI sets this from its persistent identity key so
+    /// the whole remote protocol is authenticated.
+    pub fn with_identity(mut self, identity: RequestIdentity) -> Self {
+        self.identity = Some(identity);
+        self
     }
 
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
 
+    /// Stamp the §21.9 per-request auth headers onto a request, if an identity is
+    /// configured. `method` is the logical operation bound into the signed message
+    /// (`fetch`/`roots`/`module`/`content`/`proof`/`push`/`tombstone`/`delta`), so a
+    /// signature for one operation can never be replayed as another. A fresh
+    /// timestamp + random nonce make every signed request unique (server-side
+    /// freshness window + nonce defeat replay). No-op when no identity is set
+    /// (anonymous client / tests against an open server).
+    fn authed(
+        &self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        store_id: &Bytes32,
+    ) -> reqwest::RequestBuilder {
+        let Some(identity) = &self.identity else {
+            return req;
+        };
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut nonce = [0u8; 32];
+        let _ = getrandom::getrandom(&mut nonce);
+        let msg = digstore_crypto::request_signing_message(method, store_id, timestamp, &nonce);
+        let sig = (identity.sign)(&msg);
+        req.header("X-Dig-Identity", &identity.pubkey_hex)
+            .header("X-Dig-Timestamp", timestamp.to_string())
+            .header("X-Dig-Nonce", hex::encode(nonce))
+            .header("X-Dig-Auth", hex::encode(sig.0))
+    }
+
     /// §21.3 fetch: descriptor + root history only.
     pub async fn fetch(&self, store_id: &Bytes32) -> Result<FetchInfo, ClientError> {
         let id = store_id.to_hex();
         let d: StoreDescriptor = self
-            .http
-            .get(self.url(&format!("/stores/{id}")))
+            .authed(self.http.get(self.url(&format!("/stores/{id}"))), "fetch", store_id)
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?
@@ -103,8 +154,11 @@ impl DigClient {
             .await
             .map_err(|e| ClientError::Decode(e.to_string()))?;
         let roots: RootHistory = self
-            .http
-            .get(self.url(&format!("/stores/{id}/roots")))
+            .authed(
+                self.http.get(self.url(&format!("/stores/{id}/roots"))),
+                "roots",
+                store_id,
+            )
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?
@@ -130,8 +184,11 @@ impl DigClient {
     {
         let id = store_id.to_hex();
         let resp = self
-            .http
-            .get(self.url(&format!("/stores/{id}/module")))
+            .authed(
+                self.http.get(self.url(&format!("/stores/{id}/module"))),
+                "module",
+                store_id,
+            )
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?;
@@ -178,8 +235,12 @@ impl DigClient {
                 let from_h = from.to_hex();
                 let to_h = remote_root.to_hex();
                 let resp = self
-                    .http
-                    .get(self.url(&format!("/stores/{id}/delta?from={from_h}&to={to_h}")))
+                    .authed(
+                        self.http
+                            .get(self.url(&format!("/stores/{id}/delta?from={from_h}&to={to_h}"))),
+                        "delta",
+                        store_id,
+                    )
                     .send()
                     .await
                     .map_err(|e| ClientError::Transport(e.to_string()))?;
@@ -198,7 +259,11 @@ impl DigClient {
             }
         }
         // full module download with conditional request.
-        let mut req = self.http.get(self.url(&format!("/stores/{id}/module")));
+        let mut req = self.authed(
+            self.http.get(self.url(&format!("/stores/{id}/module"))),
+            "module",
+            store_id,
+        );
         if let Some(lr) = local_root {
             req = req.header(
                 reqwest::header::IF_NONE_MATCH,
@@ -248,8 +313,11 @@ impl DigClient {
         let msg = push_signing_message(new_root, store_id);
         let sig = sign(&msg);
         let mut req = self
-            .http
-            .put(self.url(&format!("/stores/{id}/module")))
+            .authed(
+                self.http.put(self.url(&format!("/stores/{id}/module"))),
+                "push",
+                store_id,
+            )
             .header("X-Dig-Parent", parent.to_hex())
             .header("X-Dig-Root", new_root.to_hex())
             .header("X-Dig-Signature", hex::encode(sig.0))
@@ -296,8 +364,11 @@ impl DigClient {
             signature: hex::encode(sig.0),
         };
         let resp = self
-            .http
-            .post(self.url(&format!("/stores/{id}/tombstone")))
+            .authed(
+                self.http.post(self.url(&format!("/stores/{id}/tombstone"))),
+                "tombstone",
+                store_id,
+            )
             .json(&body)
             .send()
             .await
@@ -322,8 +393,11 @@ impl DigClient {
             have: have.iter().map(|h| h.to_hex()).collect(),
         };
         let resp = self
-            .http
-            .post(self.url(&format!("/stores/{id}/delta")))
+            .authed(
+                self.http.post(self.url(&format!("/stores/{id}/delta"))),
+                "delta",
+                store_id,
+            )
             .json(&body)
             .send()
             .await

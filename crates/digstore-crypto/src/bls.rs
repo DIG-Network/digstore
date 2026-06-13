@@ -158,6 +158,13 @@ pub const NODE_DST: &[u8] = b"digstore:node:v1";
 /// (nor forged from) a push, node-proof, or attestation signature, even if the
 /// underlying payload bytes happened to coincide.
 pub const TOMB_DST: &[u8] = b"digstore:tomb:v1";
+/// Role tag for per-request remote-protocol authentication signatures
+/// (`sign_request` / `verify_request`, paper §21.9). Every dig:// remote request
+/// (fetch / roots / module / content / proof / push / tombstone) is signed by the
+/// CLI's IDENTITY key over [`request_signing_message`]; the role tag keeps such a
+/// request signature from ever being replayable as a push / node-proof /
+/// attestation / tombstone signature, and vice-versa.
+pub const REQ_DST: &[u8] = b"digstore:req:v1";
 /// Role tag for host attestation signatures (`sign_attestation`). Re-exported
 /// from `digstore_core` so the producer here and the guest's `build_challenge`
 /// verifier share ONE definition and stay byte-identical.
@@ -234,6 +241,31 @@ pub fn tombstone_signing_message(t: &Tombstone) -> [u8; 32] {
     crate::hash::sha256(&buf).0
 }
 
+/// Canonical per-request authentication signing message (paper §21.9):
+/// `SHA-256(REQ_DST || len(method) || method || store_id(32) || timestamp_be(8) || nonce(32))`
+/// (32 bytes). `method` is the logical operation (`"fetch"`, `"roots"`, `"module"`,
+/// `"content"`, `"proof"`, `"push"`, `"tombstone"`) — binding it stops a read-auth
+/// signature from being replayed as a write. `timestamp` (unix seconds) lets the
+/// server reject stale/replayed requests within a freshness window, and `nonce`
+/// (32 random bytes) makes each signed request unique. The method is length-prefixed
+/// (big-endian u32) so the preimage is unambiguous. Both the CLI signer and the
+/// server verifier go through this single builder so they stay byte-identical.
+pub fn request_signing_message(
+    method: &str,
+    store_id: &Bytes32,
+    timestamp: u64,
+    nonce: &[u8; 32],
+) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(REQ_DST.len() + 4 + method.len() + 32 + 8 + 32);
+    buf.extend_from_slice(REQ_DST);
+    buf.extend_from_slice(&(method.len() as u32).to_be_bytes());
+    buf.extend_from_slice(method.as_bytes());
+    buf.extend_from_slice(&store_id.0);
+    buf.extend_from_slice(&timestamp.to_be_bytes());
+    buf.extend_from_slice(nonce);
+    crate::hash::sha256(&buf).0
+}
+
 // --- High-level signing/verification over canonical messages ---------------
 
 /// Push-authorization signature (CONVENTIONS C7, paper §21.6): sign
@@ -251,6 +283,39 @@ pub fn verify_push(pk: &PublicKey, root: &Bytes32, store_id: &Bytes32, sig: &Byt
         Err(_) => return false,
     };
     pk.verify(&push_signing_message(root, store_id), &sig)
+}
+
+/// Per-request authentication signature (paper §21.9): sign the canonical
+/// [`request_signing_message`] with the CLI's identity key. Attached to every
+/// dig:// remote request so the server can authenticate the caller.
+pub fn sign_request(
+    sk: &SecretKey,
+    method: &str,
+    store_id: &Bytes32,
+    timestamp: u64,
+    nonce: &[u8; 32],
+) -> Bytes96 {
+    bls_sign(sk, &request_signing_message(method, store_id, timestamp, nonce))
+}
+
+/// Verify a per-request authentication signature against the caller's identity
+/// public key, using the byte-identical canonical message (paper §21.9). Returns
+/// false on a malformed signature. Freshness (timestamp window) and any
+/// authorization (e.g. the identity is the store owner for a push) are enforced
+/// by the caller; this proves only that `pk` signed exactly this request.
+pub fn verify_request(
+    pk: &PublicKey,
+    method: &str,
+    store_id: &Bytes32,
+    timestamp: u64,
+    nonce: &[u8; 32],
+    sig: &Bytes96,
+) -> bool {
+    let sig = match Signature::from_bytes(sig) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    pk.verify(&request_signing_message(method, store_id, timestamp, nonce), &sig)
 }
 
 /// Node execution-proof signature (paper §13.7, §16). Signs the canonical
@@ -298,4 +363,51 @@ pub fn verify_tombstone(pk: &PublicKey, t: &Tombstone, sig: &Bytes96) -> bool {
         Err(_) => return false,
     };
     pk.verify(&tombstone_signing_message(t), &sig)
+}
+
+#[cfg(test)]
+mod request_auth_tests {
+    use super::*;
+
+    fn keypair(seed: u8) -> (SecretKey, PublicKey) {
+        let (sk, pk_bytes) = bls_keygen(&[seed; 32]);
+        (sk, PublicKey::from_bytes(&pk_bytes).unwrap())
+    }
+
+    #[test]
+    fn request_signature_round_trips() {
+        let (sk, pk) = keypair(7);
+        let store = Bytes32([9u8; 32]);
+        let nonce = [3u8; 32];
+        let sig = sign_request(&sk, "module", &store, 1_700_000_000, &nonce);
+        assert!(verify_request(&pk, "module", &store, 1_700_000_000, &nonce, &sig));
+    }
+
+    #[test]
+    fn request_signature_is_bound_to_method_store_time_and_nonce() {
+        let (sk, pk) = keypair(7);
+        let store = Bytes32([9u8; 32]);
+        let nonce = [3u8; 32];
+        let ts = 1_700_000_000;
+        let sig = sign_request(&sk, "module", &store, ts, &nonce);
+        // A signature over "module" must NOT verify as a "push" (no cross-method replay).
+        assert!(!verify_request(&pk, "push", &store, ts, &nonce, &sig));
+        // Different store / timestamp / nonce all break verification.
+        assert!(!verify_request(&pk, "module", &Bytes32([8u8; 32]), ts, &nonce, &sig));
+        assert!(!verify_request(&pk, "module", &store, ts + 1, &nonce, &sig));
+        assert!(!verify_request(&pk, "module", &store, ts, &[4u8; 32], &sig));
+    }
+
+    #[test]
+    fn request_message_differs_from_push_message_for_same_bytes() {
+        // Defense-in-depth: the REQ_DST tag keeps a request message distinct from a
+        // push message even if the payload bytes coincide.
+        let store = Bytes32([9u8; 32]);
+        let root = Bytes32([9u8; 32]);
+        let nonce = [0u8; 32];
+        assert_ne!(
+            request_signing_message("push", &store, 0, &nonce),
+            push_signing_message(&root, &store)
+        );
+    }
 }

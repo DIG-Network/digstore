@@ -61,29 +61,67 @@ pub fn resolve_remote_url(ctx: &CliContext, name: &str) -> Result<String, CliErr
 /// The default network RPC host a bare `dig://` resolves to.
 pub const DEFAULT_DIG_RPC_HOST: &str = "rpc.dig.net";
 
-/// Resolve a `dig://` remote to the concrete HTTPS base the protocol client uses (it appends
-/// `/stores/{id}/...`). `dig://` is the network scheme — it resolves to HTTPS under the hood, the
-/// same way `git@github.com:` resolves to a transport. Forms:
-///   * `dig://<host>[:port]`            -> `https://<host>[:port]`            (a specific RPC node)
-///   * `dig://<host>/<storeId>`         -> `https://<host>`                   (host is the base; the
-///                                          storeId is carried by the clone/push args)
-///   * `dig://<storeId>` (bare 64-hex)  -> `https://rpc.dig.net`             (the default network RPC)
+/// True for a 64-hex (32-byte) store id.
+fn is_store_id(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Resolve a `dig://` remote to the concrete HTTPS **store URL** (`https://<host>/stores/<id>`)
+/// the protocol client and `parse_store_url` expect. `dig://` is the network scheme — it resolves
+/// to HTTPS under the hood, the same way `git@github.com:` resolves to a transport.
+///
+/// A `dig://` URL names BOTH the host (which node serves it — there can be many) AND, optionally,
+/// the `<user>` (the owner identity, like GitHub's `user/` namespace). The `<user>@` part is
+/// INFORMATIONAL for routing/display — the 64-hex store id alone identifies the store on the wire —
+/// so it is stripped from the resolved HTTPS URL. Caller AUTHENTICATION is separate: every request
+/// carries the requester's own signed identity headers (paper §21.9), not the URL's `<user>`.
+/// Forms (`[<user>@]` optional everywhere):
+///   * `dig://<storeId>` (bare 64-hex)        -> `https://rpc.dig.net/stores/<storeId>`  (default RPC)
+///   * `dig://<user>@<storeId>`               -> `https://rpc.dig.net/stores/<storeId>`
+///   * `dig://[<user>@]<host>[:port]/<storeId>` -> `https://<host>[:port]/stores/<storeId>` (a node)
+///   * `dig://[<user>@]<host>/stores/<storeId>` -> `https://<host>/stores/<storeId>`        (pathed)
+///   * `dig://[<user>@]<host>[:port]`          -> `https://<host>[:port]`                   (base only)
 /// Any non-`dig://` URL passes through unchanged (an explicit `https://…` remote still works).
 pub fn normalize_remote_url(url: &str) -> String {
     let Some(rest) = url.strip_prefix("dig://") else {
         return url.to_string();
     };
-    let authority = rest.split('/').next().unwrap_or("");
-    // A bare 64-hex authority is a store id, not a host → use the default network RPC.
-    if authority.len() == 64 && authority.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return format!("https://{DEFAULT_DIG_RPC_HOST}");
+    let (authority, path) = match rest.split_once('/') {
+        Some((a, p)) => (a, p.trim_start_matches('/')),
+        None => (rest, ""),
+    };
+    // Strip the optional `<user>@` owner namespace from the authority — it is informational
+    // (display/routing), not part of the wire address (the store id is). Caller auth is a
+    // separate signed-header mechanism (§21.9).
+    let host_part = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+
+    // `dig://[<user>@]<64-hex>` — the host part IS the store id (not a host): default network RPC.
+    if path.is_empty() && is_store_id(host_part) {
+        return format!("https://{DEFAULT_DIG_RPC_HOST}/stores/{host_part}");
     }
-    // Otherwise the authority is the node host; the base is just the host (the client appends the
-    // `/stores/{id}/...` protocol paths). Trailing path (e.g. a store id) is informational.
-    if authority.is_empty() {
-        return format!("https://{DEFAULT_DIG_RPC_HOST}");
+
+    // Otherwise the host part is the node host (empty → default RPC host).
+    let host = if host_part.is_empty() {
+        DEFAULT_DIG_RPC_HOST
+    } else {
+        host_part
+    };
+    if path.is_empty() {
+        // Node base only (no store id): used by `remote add` of a node; clone/push/pull
+        // that need a store id should use the `/stores/<id>` form.
+        return format!("https://{host}");
     }
-    format!("https://{authority}")
+    // Already canonical `stores/<id>[/...]`.
+    if path.starts_with("stores/") {
+        return format!("https://{host}/{path}");
+    }
+    // `dig://<host>/<storeId>` — insert the `/stores/` segment the protocol expects.
+    let first = path.split('/').next().unwrap_or("");
+    if is_store_id(first) {
+        return format!("https://{host}/stores/{first}");
+    }
+    // Fallback: preserve host + path verbatim.
+    format!("https://{host}/{path}")
 }
 
 #[cfg(test)]
@@ -126,19 +164,33 @@ mod tests {
     }
 
     #[test]
-    fn dig_scheme_resolves_to_https_base() {
-        // Specific node host.
-        assert_eq!(normalize_remote_url("dig://rpc.dig.net"), "https://rpc.dig.net");
-        // Host + store id → base is the host (client appends /stores/{id}).
-        assert_eq!(
-            normalize_remote_url("dig://rpc.dig.net/abcd1234"),
-            "https://rpc.dig.net"
-        );
-        // Bare 64-hex store id → default network RPC.
+    fn dig_scheme_resolves_to_https_store_url() {
         let id = "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb";
+        // Bare 64-hex store id → default network RPC + /stores/<id>.
         assert_eq!(
             normalize_remote_url(&format!("dig://{id}")),
-            "https://rpc.dig.net"
+            format!("https://rpc.dig.net/stores/{id}")
+        );
+        // Specific node host + store id → /stores/<id> on that host.
+        assert_eq!(
+            normalize_remote_url(&format!("dig://node.example:8443/{id}")),
+            format!("https://node.example:8443/stores/{id}")
+        );
+        // Already-pathed `stores/<id>` is preserved.
+        assert_eq!(
+            normalize_remote_url(&format!("dig://rpc.dig.net/stores/{id}")),
+            format!("https://rpc.dig.net/stores/{id}")
+        );
+        // Node base only (no store id) → just the host.
+        assert_eq!(normalize_remote_url("dig://rpc.dig.net"), "https://rpc.dig.net");
+        // `<user>@` owner namespace is informational and stripped from the wire URL.
+        assert_eq!(
+            normalize_remote_url(&format!("dig://alice@node.example:8443/{id}")),
+            format!("https://node.example:8443/stores/{id}")
+        );
+        assert_eq!(
+            normalize_remote_url(&format!("dig://alice@{id}")),
+            format!("https://rpc.dig.net/stores/{id}")
         );
         // Non-dig URLs pass through.
         assert_eq!(normalize_remote_url("https://h/x"), "https://h/x");
@@ -147,7 +199,11 @@ mod tests {
     #[test]
     fn resolve_remote_url_normalizes_dig_scheme() {
         let (_td, ctx) = ctx();
-        add_remote(&ctx, "origin", "dig://rpc.dig.net/store1").unwrap();
-        assert_eq!(resolve_remote_url(&ctx, "origin").unwrap(), "https://rpc.dig.net");
+        let id = "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb";
+        add_remote(&ctx, "origin", &format!("dig://{id}")).unwrap();
+        assert_eq!(
+            resolve_remote_url(&ctx, "origin").unwrap(),
+            format!("https://rpc.dig.net/stores/{id}")
+        );
     }
 }

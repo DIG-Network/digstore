@@ -37,8 +37,9 @@ pub mod kdf;
 pub use aead::{decrypt_chunk, encrypt_chunk};
 pub use bls::{
     attestation_signing_message, bls_keygen, bls_sign, bls_verify, node_signing_message,
-    push_signing_message, sign_attestation, sign_node, sign_push, sign_tombstone,
-    tombstone_signing_message, validate_public_key, verify_push, verify_tombstone,
+    push_signing_message, request_signing_message, sign_attestation, sign_node, sign_push,
+    sign_request, sign_tombstone, tombstone_signing_message, validate_public_key, verify_push,
+    verify_request, verify_tombstone,
 };
 pub use error::{BlsError, CryptoError, TamperError};
 pub use fixtures::{
