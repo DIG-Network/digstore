@@ -22,6 +22,7 @@ fn content_response_roundtrip() {
         ciphertext: vec![10, 20, 30, 40],
         merkle_proof: sample_merkle_proof(),
         roothash: Bytes32([4; 32]),
+        chunk_lens: vec![4],
     };
     assert_eq!(ContentResponse::from_bytes(&r.to_bytes()).unwrap(), r);
 }

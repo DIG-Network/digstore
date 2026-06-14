@@ -78,6 +78,7 @@ fn all_structs_roundtrip() {
         ciphertext: vec![1, 2, 3],
         merkle_proof: mp,
         roothash: Bytes32([16; 32]),
+        chunk_lens: vec![3],
     });
     assert_roundtrip(AttestationChallenge {
         nonce: [1; 32],
@@ -107,6 +108,7 @@ fn content_response_empty_golden() {
             root: Bytes32([0; 32]),
         },
         roothash: Bytes32([0; 32]),
+        chunk_lens: vec![],
     };
     let bytes = r.to_bytes();
     // ciphertext: 4-byte count(0) = 0,0,0,0
@@ -114,7 +116,8 @@ fn content_response_empty_golden() {
     // merkle_proof.path: 4-byte count(0) = 0,0,0,0
     // merkle_proof.root: 32 zero bytes
     // roothash: 32 zero bytes
-    assert_eq!(bytes.len(), 4 + 32 + 4 + 32 + 32);
+    // chunk_lens: 4-byte count(0) = 0,0,0,0 (appended; empty here)
+    assert_eq!(bytes.len(), 4 + 32 + 4 + 32 + 32 + 4);
     assert_eq!(&bytes[0..4], &[0, 0, 0, 0]);
 }
 

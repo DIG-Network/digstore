@@ -158,6 +158,7 @@ mod tests {
                 root: leaf,
             },
             roothash: leaf,
+            chunk_lens: Vec::new(),
         };
         // Empty chunk_lens => the whole blob is one chunk.
         assert_eq!(
@@ -183,6 +184,7 @@ mod tests {
                 root: leaf,
             },
             roothash: leaf,
+            chunk_lens: Vec::new(),
         };
         let lens = [ct_a.len(), ct_b.len()];
         let out = decrypt_and_verify(&resp, &urn, None, &leaf, &lens).unwrap();
@@ -204,6 +206,7 @@ mod tests {
                 root: leaf,
             },
             roothash: leaf,
+            chunk_lens: Vec::new(),
         };
         let err = decrypt_and_verify(&resp, &urn, None, &Bytes32([0xFF; 32]), &[]).unwrap_err();
         assert!(matches!(err, CliError::VerificationFailed(ref m) if m.contains("trusted root")));
@@ -223,6 +226,7 @@ mod tests {
                 root: leaf,
             },
             roothash: leaf,
+            chunk_lens: Vec::new(),
         };
         let err = decrypt_and_verify(&resp, &urn, None, &leaf, &[]).unwrap_err();
         assert!(matches!(err, CliError::VerificationFailed(ref m) if m.contains("tampered chunk")));
@@ -242,6 +246,7 @@ mod tests {
                 root: leaf, // fabricated
             },
             roothash: leaf,
+            chunk_lens: Vec::new(),
         };
         let err = decrypt_and_verify(&resp, &urn, None, &trusted, &[]).unwrap_err();
         assert!(matches!(err, CliError::VerificationFailed(ref m) if m.contains("trusted root")));
@@ -267,6 +272,7 @@ mod tests {
             ciphertext: ct,
             merkle_proof: proof,
             roothash: root,
+            chunk_lens: Vec::new(),
         };
         assert_eq!(
             decrypt_and_verify(&resp, &urn, None, &root, &[]).unwrap(),

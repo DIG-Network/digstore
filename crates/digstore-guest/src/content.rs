@@ -295,11 +295,16 @@ pub fn serve_content<H: DigHost + ?Sized>(
                 .iter()
                 .map(|pos| gathered[*pos].as_slice())
                 .collect();
+            // Per-chunk CIPHERTEXT lengths (in C9 order), so a streaming client can split the
+            // plain-concatenated ciphertext and GCM-SIV-open each chunk. Single-chunk resources
+            // carry a one-element vec; the client treats that identically to "whole blob".
+            let chunk_lens: Vec<u32> = real_slices.iter().map(|s| s.len() as u32).collect();
             let ciphertext = concat_output(&real_slices);
             ContentOutcome::Real(ContentResponse {
                 ciphertext,
                 merkle_proof,
                 roothash: root,
+                chunk_lens,
             })
         }
     }
@@ -338,11 +343,18 @@ pub fn serve_content_wire<H: DigHost + ?Sized>(
             merkle_proof,
             root,
         } => {
-            // Frame the small tail (merkle proof + roothash) on its own first; a
-            // proof is at most a few hundred bytes — never resource-sized.
+            // Frame the small tail (merkle proof + roothash + chunk_lens) on its own first; a
+            // proof is at most a few hundred bytes and chunk_lens is 4 bytes/chunk — never
+            // resource-sized. The tail MUST be byte-identical to `ContentResponse::encode`'s
+            // suffix (merkle_proof || roothash || chunk_lens) so a decoded response matches.
             let mut tail = Encoder::new();
             merkle_proof.encode(&mut tail);
             root.encode(&mut tail);
+            let chunk_lens: Vec<u32> = real_positions
+                .iter()
+                .map(|p| gathered[*p].len() as u32)
+                .collect();
+            chunk_lens.encode(&mut tail);
             let tail = tail.finish();
 
             // Served ciphertext length = sum of the real chunk lengths in C9 order

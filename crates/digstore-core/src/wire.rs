@@ -130,6 +130,16 @@ pub struct ContentResponse {
     pub ciphertext: Vec<u8>,
     pub merkle_proof: MerkleProof,
     pub roothash: Bytes32,
+    /// Per-chunk CIPHERTEXT byte lengths, in order, of `ciphertext` (which is the PLAIN
+    /// concatenation of the resource's chunk ciphertexts — D5/C9, no length framing in the
+    /// bytes themselves). A streaming client splits `ciphertext` by these lengths and
+    /// AES-256-GCM-SIV-opens each chunk; without them a multi-chunk resource (>~64 KiB) cannot
+    /// be decrypted client-side. Empty for a single-chunk resource. NOT covered by the merkle
+    /// leaf (`leaf == sha256(ciphertext)`): this is serving metadata, not content.
+    ///
+    /// Appended AFTER `roothash` so the wire stays backward-compatible: a module compiled by a
+    /// pre-chunk-lens producer emits nothing here, and `decode` reads it only if bytes remain.
+    pub chunk_lens: Vec<u32>,
 }
 
 impl Encode for ContentResponse {
@@ -137,15 +147,26 @@ impl Encode for ContentResponse {
         self.ciphertext.encode(enc);
         self.merkle_proof.encode(enc);
         self.roothash.encode(enc);
+        self.chunk_lens.encode(enc);
     }
 }
 
 impl Decode for ContentResponse {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        let ciphertext = Vec::<u8>::decode(dec)?;
+        let merkle_proof = MerkleProof::decode(dec)?;
+        let roothash = Bytes32::decode(dec)?;
+        // Backward-compat: a module from a pre-chunk-lens producer has no trailing bytes here.
+        let chunk_lens = if dec.remaining() > 0 {
+            Vec::<u32>::decode(dec)?
+        } else {
+            Vec::new()
+        };
         Ok(ContentResponse {
-            ciphertext: Vec::<u8>::decode(dec)?,
-            merkle_proof: MerkleProof::decode(dec)?,
-            roothash: Bytes32::decode(dec)?,
+            ciphertext,
+            merkle_proof,
+            roothash,
+            chunk_lens,
         })
     }
 }

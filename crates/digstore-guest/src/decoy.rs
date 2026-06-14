@@ -87,11 +87,54 @@ pub fn decoy_proof_blob(retrieval_key: &Bytes32) -> Vec<u8> {
 
 use digstore_core::{ContentResponse, MerkleProof, ProofStep};
 
+/// Target chunk size of the real content-defined chunker (digstore-chunker config). A decoy's
+/// `chunk_lens` is split around this so a miss is indistinguishable from a real multi-chunk
+/// resource of the same total size (a single-chunk decoy of a 200 KiB body would otherwise stand
+/// out against a real ~64 KiB-chunked resource).
+const CHUNK_TARGET: usize = 64 * 1024;
+
+/// Plausible per-chunk CIPHERTEXT lengths for a decoy of `total` bytes, deterministic per key.
+/// Bodies at/under the target stay a single chunk (the real chunker also emits one chunk below a
+/// boundary); larger bodies split into pseudo-random ~target-sized chunks summing to `total`.
+fn decoy_chunk_lens(retrieval_key: &Bytes32, total: usize) -> Vec<u32> {
+    if total == 0 {
+        return Vec::new();
+    }
+    if total <= CHUNK_TARGET {
+        return vec![total as u32];
+    }
+    let bytes = stream(
+        seed(retrieval_key, b"digstore-decoy-chunklens-v1"),
+        4 * (total / CHUNK_TARGET + 2),
+    );
+    let mut lens: Vec<u32> = Vec::new();
+    let mut rem = total;
+    let mut i = 0usize;
+    while rem > CHUNK_TARGET {
+        let r = u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]) as usize;
+        i += 4;
+        // Chunk size in [TARGET/2, 3*TARGET/2) so the mean is ~TARGET; never leave a sub-half-
+        // target tail (merge it into this chunk) so the final remainder is itself plausible.
+        let mut size = CHUNK_TARGET / 2 + (r % CHUNK_TARGET);
+        if rem.saturating_sub(size) < CHUNK_TARGET / 2 {
+            size = rem;
+        }
+        lens.push(size as u32);
+        rem -= size;
+    }
+    if rem > 0 {
+        lens.push(rem as u32);
+    }
+    lens
+}
+
 /// Build a decoy `ContentResponse` with the SAME field shape as a real hit:
 /// deterministic ciphertext + a structurally-real (but unverifiable) merkle
-/// proof + the requested root. Indistinguishable on the wire from a real hit.
+/// proof + the requested root + plausible per-chunk lengths. Indistinguishable
+/// on the wire from a real hit.
 pub fn decoy_content_response(retrieval_key: &Bytes32, root: &Bytes32) -> ContentResponse {
     let ciphertext = decoy_bytes(retrieval_key);
+    let chunk_lens = decoy_chunk_lens(retrieval_key, ciphertext.len());
     let leaf_seed = seed(retrieval_key, b"digstore-decoy-leaf-v1");
     let step_seed = seed(retrieval_key, b"digstore-decoy-step-v1");
     let path = alloc::vec![ProofStep {
@@ -107,6 +150,7 @@ pub fn decoy_content_response(retrieval_key: &Bytes32, root: &Bytes32) -> Conten
         ciphertext,
         merkle_proof,
         roothash: *root,
+        chunk_lens,
     }
 }
 

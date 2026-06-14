@@ -143,6 +143,20 @@ fn inmemory_serve_by_retrieval_key_verifies_to_root() {
         "served leaf must equal sha256(served ciphertext) — verifier leaf-binding"
     );
 
+    // CHUNK-LENS CONTRACT (multi-chunk client decrypt): the served envelope carries the per-chunk
+    // ciphertext lengths so a streaming client can split the plain-concatenated ciphertext and
+    // GCM-SIV-open each chunk. They MUST be non-empty on a real hit and sum to the ciphertext
+    // length; otherwise any resource larger than one chunk (>~64 KiB) is undecryptable in-browser.
+    assert!(
+        !resp.chunk_lens.is_empty(),
+        "a real hit must carry chunk_lens for client-side multi-chunk decryption"
+    );
+    assert_eq!(
+        resp.chunk_lens.iter().map(|l| *l as usize).sum::<usize>(),
+        resp.ciphertext.len(),
+        "chunk_lens must sum to the served ciphertext length"
+    );
+
     // Host is BLIND: served ciphertext must NOT equal the known plaintext.
     assert_ne!(
         resp.ciphertext.as_slice(),
