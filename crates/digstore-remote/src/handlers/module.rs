@@ -5,11 +5,12 @@ use crate::etag::{etag_for_root, matches_current};
 use crate::server::{parse_store_id, run_blocking, AppState};
 use axum::{
     body::{Body, Bytes},
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use digstore_core::{Bytes32, Bytes96};
+use std::collections::HashMap;
 
 pub async fn head_module(State(s): State<AppState>, Path(id): Path<String>) -> Response {
     let store_id = match parse_store_id(&id) {
@@ -101,15 +102,89 @@ fn parse_sig(s: &str) -> Result<Bytes96, RemoteError> {
     Ok(Bytes96(arr))
 }
 
-/// PUT /stores/{id}/module — push (§21.4, §21.6, §21.8).
-///
-/// Check precedence: parse store id (400) -> store exists / load head (404)
-/// -> parse parent/root/sig headers (422 on malformed) -> bearer required &
-/// valid (401) -> size limit (413) -> BLS signature valid (403) -> fast-forward
-/// parent == served head (409) -> accept push (201 advance / 202 pending).
+/// POST /stores/{id}/module/upload — push-init (dig RPC push protocol v1). A self-hosted node has
+/// no object store to presign against, so it always negotiates INLINE: the caller then PUTs the
+/// body to /module?root=. The publisher push signature (C7) + fast-forward are verified up front so
+/// a bad push is rejected before any bytes are uploaded.
+pub async fn post_upload_init(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let store_id = match parse_store_id(&id) {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    let backend = s.backend.clone();
+    let head = match run_blocking({
+        let b = backend.clone();
+        move || b.head_state(&store_id)
+    })
+    .await
+    {
+        Ok(h) => h,
+        Err(e) => return e.into_response(),
+    };
+    let init: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return RemoteError::Validation("bad push-init body".into()).into_response(),
+    };
+    let new_root = match init.get("new_root").and_then(|v| v.as_str()).map(parse_b32) {
+        Some(Ok(r)) => r,
+        _ => return RemoteError::Validation("bad new_root".into()).into_response(),
+    };
+    let sig = match header_str(&headers, "X-Dig-Signature").map(parse_sig) {
+        Some(Ok(sg)) => sg,
+        _ => {
+            return RemoteError::Validation("missing/malformed X-Dig-Signature".into())
+                .into_response()
+        }
+    };
+    // Ownership: the publisher push signature (CONVENTIONS C7) must verify against the store key.
+    if !verify_push_signature(&head.public_key, &new_root, &store_id, &sig) {
+        return RemoteError::Unauthorized("bad BLS signature".into()).into_response();
+    }
+    // Fast-forward: the declared parent must equal the served head.
+    let parent = init
+        .get("parent_root")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let parent_ok = match parse_b32(parent) {
+        Ok(p) => p == head.served_root,
+        Err(_) => false,
+    };
+    if !parent_ok {
+        return RemoteError::NonFastForward.into_response();
+    }
+    let out = serde_json::json!({ "mode": "inline", "upload_id": new_root.to_hex() });
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        out.to_string(),
+    )
+        .into_response()
+}
+
+/// POST /stores/{id}/module/complete — only meaningful for a PRESIGNED upload. A self-hosted node
+/// never offers presigned mode (it accepts the body inline via PUT /module), so there is nothing to
+/// complete here.
+pub async fn post_complete(State(_s): State<AppState>, Path(_id): Path<String>) -> Response {
+    RemoteError::Validation(
+        "this node serves inline uploads; PUT the module to /module?root= instead".into(),
+    )
+    .into_response()
+}
+
+/// PUT /stores/{id}/module?root= — push finalize (§21.4, §21.6, §21.8). The inline-mode upload
+/// leg of push protocol v1 (and the legacy single-PUT). Check precedence: parse store id (400) ->
+/// store exists / load head (404) -> root from ?root= or X-Dig-Root, sig from X-Dig-Signature (422
+/// on malformed) -> bearer required & valid (401) -> size limit (413) -> BLS signature valid (403)
+/// -> fast-forward parent == served head (409) -> accept push (201 advance / 202 pending).
 pub async fn put_module(
     State(s): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -130,17 +205,31 @@ pub async fn put_module(
         Err(e) => return e.into_response(),
     };
 
-    // 422 on malformed/missing required headers.
-    let (parent, root, sig) = match (
-        header_str(&headers, "X-Dig-Parent"),
-        header_str(&headers, "X-Dig-Root"),
-        header_str(&headers, "X-Dig-Signature"),
-    ) {
-        (Some(p), Some(r), Some(sg)) => match (parse_b32(p), parse_b32(r), parse_sig(sg)) {
-            (Ok(p), Ok(r), Ok(sg)) => (p, r, sg),
-            _ => return RemoteError::Validation("malformed push headers".into()).into_response(),
+    // root: ?root= (push protocol v1) or the X-Dig-Root header (legacy single-PUT). 422 if neither.
+    let root = match q
+        .get("root")
+        .map(String::as_str)
+        .or_else(|| header_str(&headers, "X-Dig-Root"))
+    {
+        Some(r) => match parse_b32(r) {
+            Ok(r) => r,
+            Err(_) => return RemoteError::Validation("malformed root".into()).into_response(),
         },
-        _ => return RemoteError::Validation("missing push headers".into()).into_response(),
+        None => return RemoteError::Validation("missing root".into()).into_response(),
+    };
+    // parent: the X-Dig-Parent header (legacy), else the served head (push protocol v1 derives it —
+    // the init step already validated the caller's declared parent against this head).
+    let parent = match header_str(&headers, "X-Dig-Parent") {
+        Some(p) => match parse_b32(p) {
+            Ok(p) => p,
+            Err(_) => return RemoteError::Validation("malformed parent".into()).into_response(),
+        },
+        None => head.served_root,
+    };
+    // sig: X-Dig-Signature (required). 422 if missing/malformed.
+    let sig = match header_str(&headers, "X-Dig-Signature").map(parse_sig) {
+        Some(Ok(sg)) => sg,
+        _ => return RemoteError::Validation("missing/malformed signature".into()).into_response(),
     };
 
     // 401 if bearer required but missing/invalid.

@@ -335,7 +335,6 @@ impl DigClient {
     where
         S: FnOnce(&[u8; 32]) -> Bytes96,
     {
-        let _ = pending; // the rpc §21 push protocol finalizes on the server (always advances).
         let id = store_id.to_hex();
         // CONVENTIONS C7: argument order is (root, store_id).
         let msg = push_signing_message(new_root, store_id);
@@ -382,7 +381,10 @@ impl DigClient {
         if init.get("status").and_then(|v| v.as_str()) == Some("advanced") {
             return Ok(PushResult::Advanced);
         }
-        let mode = init.get("mode").and_then(|v| v.as_str()).unwrap_or_default();
+        let mode = init
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
 
         match mode {
             "inline" => {
@@ -396,6 +398,12 @@ impl DigClient {
                     )
                     .header("X-Dig-Signature", &sig_hex)
                     .header("X-Dig-Upload-Id", &new_root_hex)
+                    // §21.4: a node may accept into pending state; the hub ignores this (always
+                    // advances). Carried on the inline finalize leg (nodes use inline).
+                    .header(
+                        "X-Dig-Push-Mode",
+                        if pending { "pending" } else { "advance" },
+                    )
                     .body(module.to_vec());
                 if let Some(t) = bearer {
                     req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {t}"));
@@ -409,10 +417,9 @@ impl DigClient {
             "presigned" => {
                 // (2b) PUT the bytes straight to the presigned S3 URL (no auth headers — the URL
                 // is the credential), then POST /module/complete to finalize.
-                let url = init
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ClientError::Decode("push-init: missing presigned url".into()))?;
+                let url = init.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+                    ClientError::Decode("push-init: missing presigned url".into())
+                })?;
                 let s3 = self
                     .http
                     .put(url)
@@ -445,7 +452,9 @@ impl DigClient {
                     .map_err(|e| ClientError::Transport(e.to_string()))?;
                 push_finalize_result(resp.status().as_u16())
             }
-            other => Err(ClientError::Decode(format!("push-init: unknown mode {other:?}"))),
+            other => Err(ClientError::Decode(format!(
+                "push-init: unknown mode {other:?}"
+            ))),
         }
     }
 
