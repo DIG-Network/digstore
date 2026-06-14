@@ -18,7 +18,14 @@ fn main() {
     let (json, quiet) = (cli.json, cli.quiet);
     let is_update = matches!(cli.command, Command::Update(_));
 
-    let ui = digstore_cli::ui::Ui::from_flags(cli.color, cli.json, cli.quiet, cli.verbose);
+    let ui = digstore_cli::ui::Ui::from_flags(
+        cli.color,
+        cli.json,
+        cli.quiet,
+        cli.verbose,
+        cli.non_interactive,
+        cli.yes,
+    );
     match commands::dispatch(cli) {
         Ok(()) => {
             // Best-effort, throttled, fail-safe update notice. Runs only after a

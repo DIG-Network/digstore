@@ -285,7 +285,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: UpdateArgs) -> Result<(),
         return Ok(());
     }
 
-    perform_update(ctx, ui, &release, current, &latest, args.yes)
+    perform_update(ctx, ui, &release, current, &latest, ui.assume_yes())
 }
 
 /// Render a version the way users expect (`vX.Y.Z`).

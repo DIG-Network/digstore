@@ -28,6 +28,14 @@ pub struct Cli {
     /// Operating directory for add/urn/status (overrides the store's content root).
     #[arg(short = 'C', long = "cwd", global = true)]
     pub cwd: Option<PathBuf>,
+    /// Never prompt; fail fast on missing required input. For automated / CI runs (also
+    /// auto-enabled when stdin is not a terminal). Pair with --yes to auto-approve confirmations.
+    #[arg(long, global = true)]
+    pub non_interactive: bool,
+    /// Assume "yes" to confirmation prompts. Required to proceed past a destructive/costly
+    /// confirmation in non-interactive mode.
+    #[arg(short = 'y', long, global = true)]
+    pub yes: bool,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -250,9 +258,15 @@ pub struct RemoteArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum RemoteAction {
-    Add { name: String, url: String },
+    /// Add a remote. In interactive mode, name/url are prompted when omitted.
+    Add {
+        name: Option<String>,
+        url: Option<String>,
+    },
     List,
-    Remove { name: String },
+    Remove {
+        name: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -426,9 +440,6 @@ pub struct UpdateArgs {
     /// Only report whether an update is available; never download.
     #[arg(long)]
     pub check: bool,
-    /// Skip the confirmation prompt before downloading/running the installer.
-    #[arg(short, long)]
-    pub yes: bool,
 }
 
 #[cfg(test)]
@@ -468,8 +479,8 @@ mod tests {
         match cli.command {
             Command::Remote(r) => match r.action {
                 RemoteAction::Add { name, url } => {
-                    assert_eq!(name, "origin");
-                    assert_eq!(url, "https://h/stores/x");
+                    assert_eq!(name.as_deref(), Some("origin"));
+                    assert_eq!(url.as_deref(), Some("https://h/stores/x"));
                 }
                 _ => panic!("expected remote add"),
             },
@@ -480,10 +491,10 @@ mod tests {
     #[test]
     fn parses_update_check_flag() {
         let cli = Cli::try_parse_from(["digstore", "update", "--check"]).unwrap();
+        assert!(!cli.yes); // the global --yes defaults off
         match cli.command {
             Command::Update(u) => {
                 assert!(u.check);
-                assert!(!u.yes);
             }
             _ => panic!("expected update"),
         }
@@ -530,12 +541,17 @@ mod tests {
     }
 
     #[test]
-    fn parses_update_yes_flag() {
+    fn parses_global_yes_flag() {
+        // --yes is now a GLOBAL flag (works on any subcommand), not update-specific.
         let cli = Cli::try_parse_from(["digstore", "update", "--yes"]).unwrap();
-        match cli.command {
-            Command::Update(u) => assert!(u.yes),
-            _ => panic!("expected update"),
-        }
+        assert!(cli.yes);
+        assert!(matches!(cli.command, Command::Update(_)));
+    }
+
+    #[test]
+    fn parses_global_non_interactive_flag() {
+        let cli = Cli::try_parse_from(["digstore", "--non-interactive", "status"]).unwrap();
+        assert!(cli.non_interactive);
     }
 
     #[test]

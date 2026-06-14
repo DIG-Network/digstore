@@ -24,6 +24,10 @@ pub struct Ui {
     quiet: bool,
     #[allow(dead_code)]
     verbose: bool,
+    /// Forced non-interactive (the `--non-interactive` flag): never prompt, fail fast.
+    non_interactive: bool,
+    /// Auto-approve confirmations (the `--yes`/`-y` flag).
+    assume_yes: bool,
 }
 
 /// Plain capacity string: "47.2 MB staged · 52.8 MB free of 100.0 MB".
@@ -68,15 +72,24 @@ impl Ui {
             json,
             quiet,
             verbose,
+            non_interactive: false,
+            assume_yes: false,
         }
     }
 
     /// Build from CLI flags, reading the real environment + TTY.
-    pub fn from_flags(color: ColorChoice, json: bool, quiet: bool, verbose: bool) -> Self {
+    pub fn from_flags(
+        color: ColorChoice,
+        json: bool,
+        quiet: bool,
+        verbose: bool,
+        non_interactive: bool,
+        assume_yes: bool,
+    ) -> Self {
         let no_color = std::env::var_os("NO_COLOR").is_some()
             || std::env::var("CLICOLOR").map(|v| v == "0").unwrap_or(false);
         let force = std::env::var_os("CLICOLOR_FORCE").is_some();
-        Ui::resolve(
+        let mut ui = Ui::resolve(
             color,
             json,
             quiet,
@@ -84,7 +97,10 @@ impl Ui {
             std::io::stdout().is_terminal(),
             no_color,
             force,
-        )
+        );
+        ui.non_interactive = non_interactive;
+        ui.assume_yes = assume_yes;
+        ui
     }
 
     pub fn color(&self) -> bool {
@@ -190,13 +206,53 @@ impl Ui {
         );
     }
 
-    /// True only when we can safely prompt: both stdio ends are a terminal and we
-    /// are neither in `--quiet` nor `--json` mode.
+    /// True only when we can safely prompt: not forced non-interactive (`--non-interactive`),
+    /// both stdio ends are a terminal, and we are neither in `--quiet` nor `--json` mode.
     fn interactive(&self) -> bool {
-        !self.quiet
+        !self.non_interactive
+            && !self.quiet
             && !self.json
             && std::io::stdin().is_terminal()
             && std::io::stdout().is_terminal()
+    }
+
+    /// Whether `--yes` was given (auto-approve confirmations).
+    pub fn assume_yes(&self) -> bool {
+        self.assume_yes
+    }
+
+    /// A confirmation that MUST be satisfied to proceed (destructive/costly actions). `--yes`
+    /// auto-approves. Interactive: a y/N prompt defaulting to No. Non-interactive without `--yes`:
+    /// a hard error — so automation can never silently proceed past a dangerous action.
+    pub fn confirm_or_fail(&self, prompt: &str) -> Result<(), crate::error::CliError> {
+        if self.assume_yes {
+            return Ok(());
+        }
+        if self.interactive() {
+            if self.confirm(prompt, false) {
+                return Ok(());
+            }
+            return Err(crate::error::CliError::InvalidArgument("aborted".into()));
+        }
+        Err(crate::error::CliError::InvalidArgument(format!(
+            "{prompt} — pass --yes to proceed in non-interactive mode"
+        )))
+    }
+
+    /// Require a value: interactive prompts for it; non-interactive (or an empty answer) errors,
+    /// telling the caller which flag/argument to supply. `flag_hint` names that input
+    /// (e.g. `"<name>"`, `"-m <message>"`).
+    pub fn require_input(
+        &self,
+        prompt: &str,
+        flag_hint: &str,
+    ) -> Result<String, crate::error::CliError> {
+        if let Some(v) = self.prompt_line(prompt, "") {
+            return Ok(v);
+        }
+        Err(crate::error::CliError::InvalidArgument(format!(
+            "{prompt} is required; pass {flag_hint} or run interactively"
+        )))
     }
 
     /// Prompt for a single line of input. Returns the trimmed answer, or `None`

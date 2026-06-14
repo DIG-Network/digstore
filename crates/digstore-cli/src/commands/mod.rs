@@ -33,7 +33,14 @@ pub mod urn;
 pub mod use_store;
 
 pub fn dispatch(cli: Cli) -> Result<(), CliError> {
-    let ui = crate::ui::Ui::from_flags(cli.color, cli.json, cli.quiet, cli.verbose);
+    let ui = crate::ui::Ui::from_flags(
+        cli.color,
+        cli.json,
+        cli.quiet,
+        cli.verbose,
+        cli.non_interactive,
+        cli.yes,
+    );
     let cwd = std::env::current_dir().map_err(|e| CliError::Other(e.into()))?;
 
     // `init` and `clone` CREATE a store, so they anchor to CWD/.dig (no walk-up,
