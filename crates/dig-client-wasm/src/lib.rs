@@ -33,7 +33,7 @@ use alloc::vec::Vec;
 
 use base64::Engine;
 use digstore_core::codec::Decode;
-use digstore_core::crypto::{decrypt_chunk, derive_decryption_key};
+use digstore_core::crypto::{decrypt_chunk, derive_decryption_key, encrypt_chunk};
 use digstore_core::{
     resource_leaf, Bytes32, MerkleProof, SecretSalt, Urn, CHAIN, DEFAULT_RESOURCE_KEY,
 };
@@ -208,6 +208,31 @@ pub fn decrypt_chunk_js(key_hex: &str, ciphertext: &[u8]) -> Result<Vec<u8>, JsE
     decrypt_chunk(&key.0, ciphertext).map_err(|_| {
         JsError::new("AES-256-GCM-SIV tag verification failed (wrong key or tampered ciphertext)")
     })
+}
+
+/// Seal a resource's plaintext as ONE AES-256-GCM-SIV blob under its per-URN key — the inverse of
+/// the read path's chunk decrypt. The browser uses this to PRE-ENCRYPT a file before upload so the
+/// server compiles the `.dig` from ciphertext alone (it never sees plaintext or any key). The
+/// output is the resource's whole-file ciphertext; `digstore compile --pre-encrypted` stores it
+/// verbatim as the single chunk, and `decryptResource`/`decryptChunk` under the same URN reverses
+/// it. `salt_hex` is the store's secret salt for a private store (omit for a public store).
+#[wasm_bindgen(js_name = encryptResource)]
+pub fn encrypt_resource(
+    store_id_hex: &str,
+    resource_key: &str,
+    plaintext: &[u8],
+    salt_hex: Option<String>,
+) -> Result<Vec<u8>, JsError> {
+    let store_id = parse_store_id(store_id_hex)?;
+    let salt = parse_salt(salt_hex)?;
+    let key = if resource_key.is_empty() {
+        DEFAULT_RESOURCE_KEY
+    } else {
+        resource_key
+    };
+    let canonical = canonical_resource_urn(store_id, key).canonical();
+    let aes_key = derive_decryption_key(&canonical, salt.map(SecretSalt).as_ref());
+    Ok(encrypt_chunk(&aes_key, plaintext))
 }
 
 /// Full read pipeline for a resource's served ciphertext (Digstore §9.3 + §11),

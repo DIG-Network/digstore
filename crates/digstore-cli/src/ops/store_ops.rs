@@ -734,11 +734,34 @@ pub fn commit(
     finalize_commit(ctx, prepared, None, metadata)
 }
 
+/// Local commit of PRE-ENCRYPTED staged content: each staged resource is already sealed under its
+/// per-URN key (the client encrypted before upload), so the server assembles the module from
+/// ciphertext alone — it never sees plaintext or the key. Used by `compile --pre-encrypted`.
+pub fn commit_pre_encrypted(
+    ctx: &CliContext,
+    metadata: digstore_core::MetadataManifest,
+) -> Result<CommitOutcome, CliError> {
+    let prepared = stage_to_root_with(ctx, true)?;
+    finalize_commit(ctx, prepared, None, metadata)
+}
+
 /// Compute the next generation's merkle `root` from staging WITHOUT persisting
 /// anything. Returns a [`PreparedCommit`] carrying `root` + the in-memory state
 /// [`finalize_commit`] needs. Fails fast on empty staging / over-cap content so
 /// the orchestrator can bail before doing any wallet/anchor work.
 pub fn stage_to_root(ctx: &CliContext) -> Result<PreparedCommit, CliError> {
+    stage_to_root_with(ctx, false)
+}
+
+/// Like [`stage_to_root`], but when `pre_encrypted` is true each staged resource's bytes are
+/// treated as ALREADY-SEALED ciphertext (the client encrypted them under the per-URN key before
+/// upload — the server never sees plaintext or the key). The resource is stored as a SINGLE chunk
+/// (`leaf = SHA-256(bytes)`, retrieval_key from the path), skipping the chunk + encrypt step. The
+/// produced module/merkle/wire format is otherwise identical, so the read path is unchanged.
+pub fn stage_to_root_with(
+    ctx: &CliContext,
+    pre_encrypted: bool,
+) -> Result<PreparedCommit, CliError> {
     let cfg = ctx.load_config()?;
     let salt = salt_of(&cfg);
 
@@ -785,21 +808,30 @@ pub fn stage_to_root(ctx: &CliContext) -> Result<PreparedCommit, CliError> {
 
     for rec in &records {
         let urn = canonical_resource_urn(cfg.store_id, &rec.resource_key);
-        let aes_key = digstore_crypto::derive_decryption_key(&urn.canonical(), salt.as_ref());
-        let chunks: Vec<Chunk> = chunk_slice(&rec.content, &chunker());
-        let chunks = if chunks.is_empty() {
-            vec![Chunk::new(0, Vec::new())]
+        // Ordered CHUNK CIPHERTEXTS for this resource.
+        let chunk_cts: Vec<Vec<u8>> = if pre_encrypted {
+            // PRE-ENCRYPTED: the staged bytes ARE the resource's already-sealed ciphertext (the
+            // client sealed it under the per-URN key; hub never sees plaintext or the key). Stored
+            // as ONE chunk — D5 leaf = SHA-256(these bytes). No chunking, no encryption here.
+            vec![rec.content.clone()]
         } else {
+            let aes_key = digstore_crypto::derive_decryption_key(&urn.canonical(), salt.as_ref());
+            let chunks: Vec<Chunk> = chunk_slice(&rec.content, &chunker());
+            let chunks = if chunks.is_empty() {
+                vec![Chunk::new(0, Vec::new())]
+            } else {
+                chunks
+            };
             chunks
+                .iter()
+                .map(|c| digstore_crypto::encrypt_chunk(&aes_key, &c.data))
+                .collect()
         };
-        let mut indices = Vec::with_capacity(chunks.len());
-        let mut chunk_cts: Vec<Vec<u8>> = Vec::with_capacity(chunks.len());
-        for c in &chunks {
-            let ct = digstore_crypto::encrypt_chunk(&aes_key, &c.data);
-            let h = digstore_crypto::sha256(&ct);
+        let mut indices = Vec::with_capacity(chunk_cts.len());
+        for ct in &chunk_cts {
+            let h = digstore_crypto::sha256(ct);
             let idx = pool_bodies.len() as u32;
-            chunk_cts.push(ct.clone());
-            pool_bodies.push(ct);
+            pool_bodies.push(ct.clone());
             pool_hashes.push(h);
             indices.push(idx);
         }
@@ -811,7 +843,13 @@ pub fn stage_to_root(ctx: &CliContext) -> Result<PreparedCommit, CliError> {
             urn.retrieval_key().0,
             digstore_crypto::sha256(&resource_blob),
         ));
-        key_records.push((rec.resource_key.clone(), indices, rec.content.len() as u64));
+        // Declared size: plaintext bytes. Pre-encrypted ciphertext carries a 16-byte GCM-SIV tag.
+        let size = if pre_encrypted {
+            rec.content.len().saturating_sub(16) as u64
+        } else {
+            rec.content.len() as u64
+        };
+        key_records.push((rec.resource_key.clone(), indices, size));
     }
 
     // Ascending by static_key (raw 32 bytes; Bytes32 has no Ord) — the exact

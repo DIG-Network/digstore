@@ -186,6 +186,12 @@ pub struct CompileArgs {
     /// unchanged; the program hash changes because the embedded key changed).
     #[arg(long = "host-key")]
     pub host_key: Option<String>,
+    /// Treat each input file as the resource's ALREADY-SEALED ciphertext (sealed client-side under
+    /// its per-URN key), not plaintext. The compiler stores each as a single chunk and skips
+    /// chunking + encryption — so the server assembles the `.dig` from ciphertext alone and never
+    /// sees plaintext or any decryption key. The read path is unchanged (one chunk per resource).
+    #[arg(long = "pre-encrypted")]
+    pub pre_encrypted: bool,
 }
 
 #[derive(Debug, Args)]
