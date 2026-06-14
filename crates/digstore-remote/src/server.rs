@@ -79,6 +79,17 @@ impl RemoteServer {
                     .head(crate::handlers::module::head_module)
                     .put(crate::handlers::module::put_module),
             )
+            // dig RPC push protocol v1: init negotiation + presigned-finalize. A self-hosted node
+            // has no object store to presign against, so init always negotiates INLINE and complete
+            // is a protocol error (the body comes via PUT /module).
+            .route(
+                "/stores/:id/module/upload",
+                post(crate::handlers::module::post_upload_init),
+            )
+            .route(
+                "/stores/:id/module/complete",
+                post(crate::handlers::module::post_complete),
+            )
             .route(
                 "/stores/:id/content",
                 post(crate::handlers::content::post_content),
@@ -141,6 +152,10 @@ fn request_method_tag(path: &str, http_method: &http::Method) -> Option<&'static
         ("roots", &Method::GET) => Some("roots"),
         ("module", &Method::GET) | ("module", &Method::HEAD) => Some("module"),
         ("module", &Method::PUT) => Some("push"),
+        // dig RPC push protocol v1 negotiation (init + presigned-finalize). Inline finalize reuses
+        // the "push" tag on PUT /module above.
+        ("module/upload", &Method::POST) => Some("push-init"),
+        ("module/complete", &Method::POST) => Some("push-complete"),
         ("content", &Method::POST) => Some("content"),
         ("proof", &Method::POST) => Some("proof"),
         ("delta", &Method::GET) | ("delta", &Method::POST) => Some("delta"),
