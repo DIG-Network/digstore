@@ -27,6 +27,17 @@ fn verify_delta_integrity(delta: &DeltaResponse) -> Result<(), ClientError> {
     Ok(())
 }
 
+/// Map a push finalize HTTP status (inline PUT or POST /module/complete) to a [`PushResult`].
+fn push_finalize_result(status: u16) -> Result<PushResult, ClientError> {
+    match status {
+        200 | 201 => Ok(PushResult::Advanced),
+        202 => Ok(PushResult::Pending),
+        401 | 403 => Err(ClientError::Unauthorized(status)),
+        409 => Err(ClientError::NonFastForward),
+        other => Err(ClientError::Status(other)),
+    }
+}
+
 /// Result of `fetch`: descriptor + root history (§21.3).
 #[derive(Debug, Clone)]
 pub struct FetchInfo {
@@ -299,9 +310,17 @@ impl DigClient {
         })
     }
 
-    /// §21.6 push: sign the canonical push message (CONVENTIONS C7,
-    /// `SHA-256(root || store_id)`) and PUT the module. `sign` is the caller's
-    /// BLS signer over the 32-byte push message.
+    /// §21.6 push (dig RPC push protocol v1): the dig RPC is the STANDARD push protocol, and the
+    /// spec carries the module EITHER inline OR via a presigned upload URL — negotiated at init —
+    /// because an HTTPS edge (e.g. a Lambda) caps request bodies well below a real capsule's size.
+    ///
+    /// Flow: (1) POST `/module/upload` with `{parent_root,new_root,program_hash,size_bytes}` +
+    /// the C7 push signature → server replies `{mode:"inline"|"presigned", upload_id, url?}`.
+    /// (2a) inline → PUT the bytes to `/module?root=` (the server finalizes). (2b) presigned → PUT
+    /// the bytes straight to the presigned URL, then POST `/module/complete`. One C7 signature
+    /// authorizes the whole push; each leg re-sends it and the server re-verifies against the
+    /// store's registered publisher key. `sign` is the caller's BLS signer over the 32-byte push
+    /// message.
     #[allow(clippy::too_many_arguments)]
     pub async fn push<S>(
         &self,
@@ -316,37 +335,117 @@ impl DigClient {
     where
         S: FnOnce(&[u8; 32]) -> Bytes96,
     {
+        let _ = pending; // the rpc §21 push protocol finalizes on the server (always advances).
         let id = store_id.to_hex();
         // CONVENTIONS C7: argument order is (root, store_id).
         let msg = push_signing_message(new_root, store_id);
-        let sig = sign(&msg);
-        let mut req = self
+        let sig_hex = hex::encode(sign(&msg).0);
+        let new_root_hex = new_root.to_hex();
+        // program_hash = SHA-256 of the whole `.dig` (the server validates the uploaded bytes
+        // against this before promoting them).
+        let program_hash = digstore_core::sha256(module).to_hex();
+
+        // (1) push-init: negotiate inline vs presigned.
+        let init_body = serde_json::json!({
+            "parent_root": parent.to_hex(),
+            "new_root": new_root_hex,
+            "program_hash": program_hash,
+            "size_bytes": module.len() as u64,
+        });
+        let mut ireq = self
             .authed(
-                self.http.put(self.url(&format!("/stores/{id}/module"))),
-                "push",
+                self.http
+                    .post(self.url(&format!("/stores/{id}/module/upload"))),
+                "push-init",
                 store_id,
             )
-            .header("X-Dig-Parent", parent.to_hex())
-            .header("X-Dig-Root", new_root.to_hex())
-            .header("X-Dig-Signature", hex::encode(sig.0))
-            .header(
-                "X-Dig-Push-Mode",
-                if pending { "pending" } else { "advance" },
-            )
-            .body(module.to_vec());
+            .header("X-Dig-Signature", &sig_hex)
+            .json(&init_body);
         if let Some(t) = bearer {
-            req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {t}"));
+            ireq = ireq.header(reqwest::header::AUTHORIZATION, format!("Bearer {t}"));
         }
-        let resp = req
+        let iresp = ireq
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?;
-        match resp.status().as_u16() {
-            201 => Ok(PushResult::Advanced),
-            202 => Ok(PushResult::Pending),
-            401 | 403 => Err(ClientError::Unauthorized(resp.status().as_u16())),
-            409 => Err(ClientError::NonFastForward),
-            other => Err(ClientError::Status(other)),
+        match iresp.status().as_u16() {
+            200 => {}
+            401 | 403 => return Err(ClientError::Unauthorized(iresp.status().as_u16())),
+            409 => return Err(ClientError::NonFastForward),
+            other => return Err(ClientError::Status(other)),
+        }
+        let init: serde_json::Value = iresp
+            .json()
+            .await
+            .map_err(|e| ClientError::Decode(e.to_string()))?;
+        // Idempotent: the server reports the head is already at this root.
+        if init.get("status").and_then(|v| v.as_str()) == Some("advanced") {
+            return Ok(PushResult::Advanced);
+        }
+        let mode = init.get("mode").and_then(|v| v.as_str()).unwrap_or_default();
+
+        match mode {
+            "inline" => {
+                // (2a) PUT the body to /module?root=; the server validates + finalizes.
+                let mut req = self
+                    .authed(
+                        self.http
+                            .put(self.url(&format!("/stores/{id}/module?root={new_root_hex}"))),
+                        "push",
+                        store_id,
+                    )
+                    .header("X-Dig-Signature", &sig_hex)
+                    .header("X-Dig-Upload-Id", &new_root_hex)
+                    .body(module.to_vec());
+                if let Some(t) = bearer {
+                    req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {t}"));
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|e| ClientError::Transport(e.to_string()))?;
+                push_finalize_result(resp.status().as_u16())
+            }
+            "presigned" => {
+                // (2b) PUT the bytes straight to the presigned S3 URL (no auth headers — the URL
+                // is the credential), then POST /module/complete to finalize.
+                let url = init
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ClientError::Decode("push-init: missing presigned url".into()))?;
+                let s3 = self
+                    .http
+                    .put(url)
+                    .body(module.to_vec())
+                    .send()
+                    .await
+                    .map_err(|e| ClientError::Transport(e.to_string()))?;
+                if !s3.status().is_success() {
+                    return Err(ClientError::Status(s3.status().as_u16()));
+                }
+                let complete_body = serde_json::json!({
+                    "upload_id": new_root_hex,
+                    "new_root": new_root_hex,
+                });
+                let mut req = self
+                    .authed(
+                        self.http
+                            .post(self.url(&format!("/stores/{id}/module/complete"))),
+                        "push-complete",
+                        store_id,
+                    )
+                    .header("X-Dig-Signature", &sig_hex)
+                    .json(&complete_body);
+                if let Some(t) = bearer {
+                    req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {t}"));
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|e| ClientError::Transport(e.to_string()))?;
+                push_finalize_result(resp.status().as_u16())
+            }
+            other => Err(ClientError::Decode(format!("push-init: unknown mode {other:?}"))),
         }
     }
 
