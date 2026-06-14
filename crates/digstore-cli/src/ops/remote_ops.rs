@@ -415,6 +415,9 @@ pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliEr
         .map_err(|_| CliError::VerificationFailed("bad descriptor root".into()))?;
 
     let sk = store_ops::load_signing_key(ctx)?;
+    // The publisher's 48-byte G1 public key (hex), sent in push-init so a remote that does not yet
+    // host this store auto-creates its record on first push, keyed by this key.
+    let publisher_pubkey = hex::encode(sk.public_key().to_bytes().0);
     let store_id = cfg.store_id;
     let result = client
         .push(
@@ -424,6 +427,7 @@ pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliEr
             &module,
             false,
             None,
+            &publisher_pubkey,
             |msg: &[u8; 32]| -> Bytes96 {
                 // The client computes msg = SHA-256(root || store_id); sign it.
                 debug_assert_eq!(*msg, push_auth_message(&root, &store_id));

@@ -321,6 +321,9 @@ impl DigClient {
     /// authorizes the whole push; each leg re-sends it and the server re-verifies against the
     /// store's registered publisher key. `sign` is the caller's BLS signer over the 32-byte push
     /// message.
+    /// `publisher_pubkey` is the 48-byte G1 publisher key (hex). It is sent in push-init so a remote
+    /// that does not yet host this store can AUTO-CREATE its record on first push (trust-on-first-use,
+    /// keyed by this key); a remote that already has a record ignores it.
     #[allow(clippy::too_many_arguments)]
     pub async fn push<S>(
         &self,
@@ -330,6 +333,7 @@ impl DigClient {
         module: &[u8],
         pending: bool,
         bearer: Option<&str>,
+        publisher_pubkey: &str,
         sign: S,
     ) -> Result<PushResult, ClientError>
     where
@@ -350,6 +354,7 @@ impl DigClient {
             "new_root": new_root_hex,
             "program_hash": program_hash,
             "size_bytes": module.len() as u64,
+            "store_pubkey": publisher_pubkey,
         });
         let mut ireq = self
             .authed(

@@ -126,9 +126,16 @@ async fn push_signs_and_advances_head() {
     let client = DigClient::new(base);
     let new_root = b32(0x20);
     let res = client
-        .push(&id, &b32(0x10), &new_root, &[1u8; 40], false, None, |msg| {
-            digstore_crypto::bls_sign(&sk, msg)
-        })
+        .push(
+            &id,
+            &b32(0x10),
+            &new_root,
+            &[1u8; 40],
+            false,
+            None,
+            &pk.to_hex(),
+            |msg| digstore_crypto::bls_sign(&sk, msg),
+        )
         .await
         .unwrap();
     assert_eq!(res, PushResult::Advanced);
@@ -151,6 +158,7 @@ async fn push_pending_returns_pending_and_pull_sees_confirmed_not_pending() {
             &[1u8; 40],
             true,
             None,
+            &pk.to_hex(),
             |msg| digstore_crypto::bls_sign(&sk, msg),
         )
         .await
@@ -174,9 +182,16 @@ async fn push_non_fast_forward_is_client_error() {
     let base = spawn_server(be).await;
     let client = DigClient::new(base);
     let res = client
-        .push(&id, &b32(0xEE), &b32(0x20), &[1u8; 8], false, None, |msg| {
-            digstore_crypto::bls_sign(&sk, msg)
-        })
+        .push(
+            &id,
+            &b32(0xEE),
+            &b32(0x20),
+            &[1u8; 8],
+            false,
+            None,
+            &pk.to_hex(),
+            |msg| digstore_crypto::bls_sign(&sk, msg),
+        )
         .await;
     assert!(matches!(
         res,
