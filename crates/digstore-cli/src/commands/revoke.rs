@@ -36,6 +36,17 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: RevokeArgs) -> Result<(),
             (Some(_), true) => unreachable!("clap conflicts_with rejects --root with --all"),
         };
 
+    // Destructive + public + permanent: a revocation tombstone cannot be undone. Confirm before
+    // publishing it (interactive y/N defaulting to No; non-interactive requires --yes).
+    let what = match &root {
+        Some(r) => format!("revoke generation {}", r.to_hex()),
+        None => "revoke the ENTIRE store (every generation)".to_string(),
+    };
+    ui.confirm_or_fail(&format!(
+        "{what} on '{}'? This publishes a permanent, public tombstone and cannot be undone.",
+        args.remote
+    ))?;
+
     let base = config::resolve_remote_url(ctx, &args.remote)?;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
