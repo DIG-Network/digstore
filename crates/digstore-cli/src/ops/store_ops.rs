@@ -105,6 +105,12 @@ pub fn init_store(
     data_dir: Option<String>,
     store_id_override: Option<Bytes32>,
     salt_override: Option<SecretSalt>,
+    // When `Some`, the module's TRUSTED host-key set is this public key instead of the locally
+    // generated one — so a DELEGATED serving node (e.g. the dighub retrieval host, which holds the
+    // matching secret) can attest and `serve_blind` releases real content rather than decoys
+    // (Digstore §12.2). The local `signing_key.bin` is still generated (content authoring), but it
+    // is NOT the trusted key, so this store cannot self-serve — serving is delegated by design.
+    trusted_host_override: Option<Bytes48>,
 ) -> Result<InitResult, CliError> {
     if ctx.config_path().exists() {
         return Err(CliError::InvalidArgument(format!(
@@ -157,10 +163,12 @@ pub fn init_store(
             .map_err(|e| CliError::Other(e.into()))?;
     }
 
-    // Persist the single canonical trusted host key (the compiler reads this).
+    // Persist the single canonical trusted host key (the compiler reads this). Default is the
+    // locally generated key; a `trusted_host_override` delegates serving to another node's key.
+    let trusted_pk = trusted_host_override.unwrap_or(host_public_key);
     let trusted = vec![TrustedHostKey {
-        public_key: host_public_key.0,
-        label: format!("dig-host-key-v1:{}", host_public_key.to_hex()),
+        public_key: trusted_pk.0,
+        label: format!("dig-host-key-v1:{}", trusted_pk.to_hex()),
     }];
     fs::write(
         ctx.dig_dir.join("trusted_keys.json"),
@@ -1507,7 +1515,7 @@ mod tests {
     fn ctx(private: bool) -> (tempfile::TempDir, CliContext) {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        init_store(&ctx, private, None, None, None).unwrap();
+        init_store(&ctx, private, None, None, None, None).unwrap();
         (td, ctx)
     }
 
@@ -1521,7 +1529,7 @@ mod tests {
         std::fs::create_dir_all(&work).unwrap();
         let mut ctx = CliContext::workspace_only(dig.clone(), false, false);
         ctx.op_dir = work;
-        init_store(&ctx, false, None, None, None).unwrap();
+        init_store(&ctx, false, None, None, None, None).unwrap();
         (ctx, td)
     }
 
@@ -1529,7 +1537,7 @@ mod tests {
     fn init_creates_layout_and_config() {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        let res = init_store(&ctx, false, None, None, None).unwrap();
+        let res = init_store(&ctx, false, None, None, None, None).unwrap();
         assert!(ctx.config_path().exists());
         assert!(ctx.modules_dir().exists());
         assert!(ctx.generations_dir().exists());
@@ -1542,7 +1550,7 @@ mod tests {
     fn init_store_id_is_sha256_of_pubkey() {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
-        let res = init_store(&ctx, false, None, None, None).unwrap();
+        let res = init_store(&ctx, false, None, None, None, None).unwrap();
         let expected = digstore_crypto::sha256(&res.host_public_key.0);
         assert_eq!(res.store_id, expected);
     }
@@ -1552,7 +1560,7 @@ mod tests {
         let td = tempdir().unwrap();
         let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
         let launcher = Bytes32([7u8; 32]);
-        let res = init_store(&ctx, false, None, Some(launcher), None).unwrap();
+        let res = init_store(&ctx, false, None, Some(launcher), None, None).unwrap();
         // store_id is the override, NOT SHA-256(pubkey); host key still generated.
         assert_eq!(res.store_id, launcher);
         assert_ne!(
