@@ -65,6 +65,11 @@ jobs:
           key: ${{ runner.os }}-publish-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-publish-
 
+      # digstore-cli's build.rs EMBEDS the compiled guest wasm (BINDING contract D6: the module
+      # serves itself), so it must exist before any digstore-cli build/test below.
+      - name: Build guest wasm (embedded by digstore-cli build.rs)
+        run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release
+
       # GATE: never publish a binary whose compiler/guest would emit proofs the deployed browser
       # verifier rejects. dighost_serve compiles a real store, serves it, and asserts the full
       # verifier contract (leaf == sha256(served ciphertext), fold -> root, root == trusted root).
