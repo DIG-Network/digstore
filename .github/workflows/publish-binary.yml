@@ -1,0 +1,108 @@
+name: Publish digstore binary
+
+# Builds the headless `digstore` CLI and publishes it to the dighub artifacts bucket
+# (s3://<bucket>/digstore/<ver>/digstore + digstore/latest.json). The hub compile-worker SYNCS this
+# binary by reading latest.json, so this workflow is how the BACKEND picks up the latest digstore —
+# the single fix for the producer/verifier drift (a stale binary emits proofs the deployed verifier
+# wasm rejects).
+#
+# - Static-musl x86_64: no glibc dependency, so it runs on the worker's Amazon-Linux-2023 base.
+# - CONTRACT GATE: the job first runs the producer<->verifier serve test (dighost_serve, which now
+#   asserts leaf == sha256(served_ciphertext) + fold->root + root==trusted). A binary whose compiler
+#   would emit proofs the browser verifier rejects therefore NEVER publishes.
+# - Auth: GitHub OIDC -> the pre-provisioned `dighub-digstore-publisher` role (PutObject on
+#   digstore/* only), via the repo secret AWS_ARTIFACT_ROLE_ARN.
+# - Version: `g<short-sha>` so every publish is a distinct, traceable version string — the worker
+#   caches by version, so a new string forces a re-pull (no manual cache busting).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/publish-binary.yml"
+
+concurrency:
+  group: publish-digstore-binary
+  cancel-in-progress: true
+
+permissions:
+  id-token: write # OIDC -> dighub-digstore-publisher
+  contents: read
+
+jobs:
+  publish:
+    name: Build + publish digstore binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain + musl target
+        shell: bash
+        run: |
+          rustup show
+          rustup target add x86_64-unknown-linux-musl
+          rustc --version && cargo --version
+
+      - name: Install musl linker
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-publish-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-publish-
+
+      # GATE: never publish a binary whose compiler/guest would emit proofs the deployed browser
+      # verifier rejects. dighost_serve compiles a real store, serves it, and asserts the full
+      # verifier contract (leaf == sha256(served ciphertext), fold -> root, root == trusted root).
+      - name: Contract gate (producer <-> verifier)
+        run: cargo test -p digstore-host --test dighost_serve
+
+      - name: Build static-musl digstore
+        run: cargo build --release --target x86_64-unknown-linux-musl -p digstore-cli --bin digstore
+
+      - name: Stage + hash
+        id: stage
+        shell: bash
+        run: |
+          BIN=target/x86_64-unknown-linux-musl/release/digstore
+          test -f "$BIN" || { echo "binary not produced"; exit 1; }
+          file "$BIN"
+          VER="g$(git rev-parse --short HEAD)"
+          SHA=$(sha256sum "$BIN" | cut -d' ' -f1)
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Built $BIN  ver=$VER  sha256=$SHA"
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ARTIFACT_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload binary + latest.json
+        env:
+          BUCKET: ${{ vars.DIGSTORE_ARTIFACT_BUCKET }}
+          VER: ${{ steps.stage.outputs.ver }}
+          SHA: ${{ steps.stage.outputs.sha }}
+        shell: bash
+        run: |
+          KEY="digstore/${VER}/digstore"
+          aws s3 cp "target/x86_64-unknown-linux-musl/release/digstore" "s3://${BUCKET}/${KEY}"
+          printf '{"version":"%s","key":"%s","sha256":"%s"}\n' "$VER" "$KEY" "$SHA" > latest.json
+          cat latest.json
+          aws s3 cp latest.json "s3://${BUCKET}/digstore/latest.json"
+          echo "Published s3://${BUCKET}/${KEY} (sha256 $SHA); compile-worker will re-pull on next job."
