@@ -123,10 +123,30 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError>
         )));
     }
 
+    // 2b. Optional serving-host public key. When set, the compiled module's trusted host-key set
+    //     is this key (Digstore §12.2), so the delegated serving node (e.g. the dighub retrieval
+    //     host) can attest and `serve_blind` releases real content instead of decoys. Embedded
+    //     NATIVELY at init (not a post-hoc re-key), so the 135 MB chunk pool is written once.
+    let host_key_override = match &args.host_key {
+        Some(hk) => Some(
+            digstore_core::Bytes48::from_hex(hk.trim_start_matches("0x")).map_err(|e| {
+                CliError::InvalidArgument(format!("--host-key is not 48-byte hex: {e}"))
+            })?,
+        ),
+        None => None,
+    };
+
     // 3. Scaffold the ephemeral store for THIS store id — config + staging + roots.log
     //    under the (temp) dig dir. NO mint, NO chain. data_dir defaults to the dig dir;
     //    the content walk is driven by ctx.op_dir (== --in), set by the dispatcher.
-    store_ops::init_store(ctx, private, None, Some(store_id), salt_override)?;
+    store_ops::init_store(
+        ctx,
+        private,
+        None,
+        Some(store_id),
+        salt_override,
+        host_key_override,
+    )?;
 
     // 4. Stage every file under the content root.
     let staged = store_ops::add_files(ctx, &[], true, false, None)?;
@@ -179,7 +199,7 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError>
         ui.emit_json(&serde_json::json!({
             "root": outcome.roothash.to_hex(),
             "program_hash": program_hash.to_hex(),
-            "size": outcome.output_size,
+            "size": module_bytes.len(),
             "module": args.out.display().to_string(),
             "store_id": store_id.to_hex(),
             "files": staged.staged.len(),

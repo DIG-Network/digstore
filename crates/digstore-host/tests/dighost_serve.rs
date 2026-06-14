@@ -41,7 +41,7 @@ struct Fixture {
 fn build_fixture() -> (tempfile::TempDir, Fixture) {
     let td = tempfile::tempdir().unwrap();
     let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
-    store_ops::init_store(&ctx, false, None, None, None).unwrap();
+    store_ops::init_store(&ctx, false, None, None, None, None).unwrap();
 
     let f = td.path().join("known.txt");
     std::fs::write(&f, ORIGINAL).unwrap();
@@ -132,6 +132,16 @@ fn inmemory_serve_by_retrieval_key_verifies_to_root() {
         "served proof roots at the trusted root"
     );
     assert_eq!(resp.roothash, fx.trusted_root);
+    // VERIFIER LEAF-BINDING (the exact step `dig-client-wasm::verify_inclusion_core` applies first):
+    // the served leaf MUST equal sha256(served ciphertext). The browser verifier recomputes the leaf
+    // from the bytes it received; if the real compiler/guest ever produced a leaf over different bytes
+    // (a different chunk concatenation, framing, etc.), content would silently fail to read in the
+    // app even though the proof "verifies" to a root. This pins the producer to the verifier contract.
+    assert_eq!(
+        digstore_core::sha256(&resp.ciphertext),
+        resp.merkle_proof.leaf,
+        "served leaf must equal sha256(served ciphertext) — verifier leaf-binding"
+    );
 
     // Host is BLIND: served ciphertext must NOT equal the known plaintext.
     assert_ne!(

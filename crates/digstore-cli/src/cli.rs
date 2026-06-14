@@ -177,6 +177,15 @@ pub struct CompileArgs {
     /// `get_metadata` (Digstore §8.4). Omitted => an empty manifest is embedded.
     #[arg(long)]
     pub metadata: Option<PathBuf>,
+    /// The 48-byte hex BLS public key of the host that will SERVE this module (Digstore §12.2
+    /// attestation gate). When set, the compiled module's trusted host-key set is the given key
+    /// instead of a freshly-generated local one, so a delegated serving node (e.g. the dighub
+    /// retrieval host) can attest and release real content — without it, that host fails the gate
+    /// and `serve_blind` returns indistinguishable decoys for every resource. Re-keys ONLY the
+    /// TrustedKeys section (chunks/merkle/root preserved byte-for-byte → the generation root is
+    /// unchanged; the program hash changes because the embedded key changed).
+    #[arg(long = "host-key")]
+    pub host_key: Option<String>,
 }
 
 #[derive(Debug, Args)]
