@@ -175,7 +175,12 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError>
 
     // 6. Compute the root and compile the module locally — NO chain pointer (None).
     //    finalize_commit writes the module to the store's modules/ dir; we copy it out.
-    let outcome = store_ops::commit(ctx, None, metadata)?;
+    //    --pre-encrypted: inputs are already sealed client-side (server stays blind to plaintext).
+    let outcome = if args.pre_encrypted {
+        store_ops::commit_pre_encrypted(ctx, metadata)?
+    } else {
+        store_ops::commit(ctx, None, metadata)?
+    };
 
     // 7. Place the module at --out and hash it (program_hash = SHA-256 of the module
     //    bytes — the "size proof" the singleton metadata can carry).
