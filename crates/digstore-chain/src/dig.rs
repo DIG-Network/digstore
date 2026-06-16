@@ -13,8 +13,9 @@ pub const TREASURY_ADDRESS: &str = "xch1a37rq3cgcl2ecpudttsf35x75qzdan68lgw2l6aj
 pub const DIG_DECIMALS: u32 = 3;
 /// Base units to mint a store (`init`): 100 DIG.
 pub const INIT_DIG: u64 = 100_000;
-/// Base units per root update (`commit`): 10 DIG.
-pub const COMMIT_DIG: u64 = 10_000;
+/// Base units per root update (`commit`): 100 DIG. Every capsule — mint OR update —
+/// costs the same 100 DIG protocol fee (matches the hub web app's `lib/dig.js`).
+pub const COMMIT_DIG: u64 = 100_000;
 
 /// The treasury's inner (standard) puzzle hash, decoded from `TREASURY_ADDRESS`.
 pub fn treasury_inner_puzzle_hash() -> Bytes32 {

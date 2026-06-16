@@ -48,7 +48,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let new_root_b32 = Bytes32::new(prepared.root.0);
 
     // 3b. Preflight balance for BOTH assets, with up-front cost disclosure. A
-    //     commit pays COMMIT_DIG (10 DIG) embedded in the on-chain bundle PLUS the
+    //     commit pays COMMIT_DIG (100 DIG) embedded in the on-chain bundle PLUS the
     //     XCH fee. Block before the update if the wallet is short on EITHER asset;
     //     roots.log / staging are untouched on a block.
     let sp = ui.spinner("Scanning your wallet…");

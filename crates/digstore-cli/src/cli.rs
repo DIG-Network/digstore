@@ -141,7 +141,7 @@ pub struct AddArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Costs 10 DIG + an XCH fee per commit.\n\nEXAMPLES:\n  digstore commit -m \"first generation\""
+    after_help = "Costs 100 DIG + an XCH fee per commit.\n\nEXAMPLES:\n  digstore commit -m \"first generation\""
 )]
 pub struct CommitArgs {
     #[arg(short, long)]

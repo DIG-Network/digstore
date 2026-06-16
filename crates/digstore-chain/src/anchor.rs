@@ -151,7 +151,7 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         let update = build_update_unsigned_multi(owner_pk, store, new_root, &all_xch, fee)?;
         let new_coin_id = update.new_coin_id;
 
-        // 2) UNSIGNED DIG payment: 10 DIG to the treasury, memo = store id.
+        // 2) UNSIGNED DIG payment: 100 DIG (COMMIT_DIG) to the treasury, memo = store id.
         //    Gather DIG cats across ALL scanned addresses.
         let cats = dig_cats_multi(&self.chain as &dyn ChainReads, w).await?;
         let pay = build_dig_payment_multi(
