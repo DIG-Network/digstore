@@ -11,5 +11,6 @@ pub mod keys;
 pub mod seed;
 pub mod singleton;
 pub mod unlock;
+pub mod wallet;
 
 pub use error::{ChainError, Result};
