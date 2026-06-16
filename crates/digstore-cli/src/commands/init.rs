@@ -61,14 +61,15 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
 
     // 1+2. Unlock the wallet seed (NoSeed → exit 9) and build the anchor backend
     //      (env-gated mock or real coinset mainnet), warning loudly if mocked.
-    let (keys, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
+    let (keys, mnemonic, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
 
     // 3. Preflight balance for BOTH assets, with up-front cost disclosure. A
     //    mint pays INIT_DIG (100 DIG) embedded in the on-chain bundle PLUS the
     //    singleton amount (1 mojo) + the XCH fee. Block before any spend if the
     //    wallet is short on EITHER asset; no files exist yet, so nothing rolls back.
-    let have_xch = block_on(anchor.balance(&keys))??;
-    let have_dig = block_on(anchor.dig_balance(&keys))??;
+    let w = block_on(anchor.scan(&mnemonic))??;
+    let have_xch = block_on(anchor.balance(&w))??;
+    let have_dig = block_on(anchor.dig_balance(&w))??;
 
     if !ui.json() {
         ui.line(format!(

@@ -12,7 +12,9 @@ use digstore_chain::anchor::{
 };
 use digstore_chain::error::ChainError;
 use digstore_chain::keys::WalletKeys;
+use digstore_chain::wallet::ScannedWallet;
 use digstore_chain::Result as ChainResult;
+use zeroize::Zeroizing;
 
 use crate::ui::Ui;
 
@@ -82,12 +84,58 @@ impl MockAnchor {
 
 #[async_trait]
 impl ChainAnchor for MockAnchor {
-    async fn balance(&self, _keys: &WalletKeys) -> ChainResult<u64> {
-        Ok(self.balance_mojos)
+    async fn scan(&self, _mnemonic: &str) -> ChainResult<ScannedWallet> {
+        // The mock returns a synthetic ScannedWallet that carries the configured
+        // balance_mojos and dig_base_units via the aggregate accessors.
+        use digstore_chain::wallet::AddressCoins;
+        use digstore_chain::keys::derive_wallet_keys;
+        // Use a fixed test-vector mnemonic to derive stable index-0 keys.
+        const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon \
+            abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+            abandon abandon abandon abandon abandon art";
+        let keys = derive_wallet_keys(ABANDON)
+            .map_err(|e| ChainError::Chain(format!("mock scan derive: {e}")))?;
+        let cat_ph = digstore_chain::cat::dig_cat_puzzle_hash(keys.owner_puzzle_hash);
+        // Synthesize coins so xch_balance() == balance_mojos and dig_balance() == dig_base_units.
+        let xch_coins = if self.balance_mojos > 0 {
+            vec![chia_protocol::Coin::new(
+                Bytes32::default(),
+                keys.owner_puzzle_hash,
+                self.balance_mojos,
+            )]
+        } else {
+            vec![]
+        };
+        let dig_coins = if self.dig_base_units > 0 {
+            vec![chia_protocol::Coin::new(
+                Bytes32::default(),
+                cat_ph,
+                self.dig_base_units,
+            )]
+        } else {
+            vec![]
+        };
+        let indexed = digstore_chain::keys::IndexedKeys {
+            index: 0,
+            synthetic_sk: keys.synthetic_sk,
+            synthetic_pk: keys.synthetic_pk,
+            owner_puzzle_hash: keys.owner_puzzle_hash,
+        };
+        Ok(ScannedWallet {
+            addrs: vec![AddressCoins {
+                keys: indexed,
+                xch: xch_coins,
+                dig: dig_coins,
+            }],
+        })
     }
 
-    async fn dig_balance(&self, _keys: &WalletKeys) -> ChainResult<u64> {
-        Ok(self.dig_base_units)
+    async fn balance(&self, w: &ScannedWallet) -> ChainResult<u64> {
+        Ok(w.xch_balance())
+    }
+
+    async fn dig_balance(&self, w: &ScannedWallet) -> ChainResult<u64> {
+        Ok(w.dig_balance())
     }
 
     async fn mint_empty_store(&self, _keys: &WalletKeys, _fee: u64) -> ChainResult<MintOutcome> {
@@ -139,17 +187,17 @@ pub fn build_anchor() -> (Box<dyn ChainAnchor>, bool) {
 }
 
 /// The shared "anchor gate" used by both `init` and `commit`: unlock the wallet
-/// seed (→ [`WalletKeys`]), build the (mock or real) anchor backend, warn loudly
-/// if mocked, and surface the configured `fee`. Returns
-/// `(keys, anchor, mocked, fee)`. A missing seed surfaces as
-/// [`CliError::NoSeed`] from `unlock_wallet_keys`.
+/// seed (→ [`WalletKeys`] + mnemonic), build the (mock or real) anchor backend,
+/// warn loudly if mocked, and surface the configured `fee`. Returns
+/// `(keys, mnemonic, anchor, mocked, fee)`. A missing seed surfaces as
+/// [`CliError::NoSeed`] from `unlock_wallet_phrase`.
 pub fn prepare_anchor(
     ui: &Ui,
-) -> Result<(WalletKeys, Box<dyn ChainAnchor>, bool, u64), crate::error::CliError> {
-    let (keys, gcfg) = crate::ops::wallet::unlock_wallet_keys(ui)?;
+) -> Result<(WalletKeys, Zeroizing<String>, Box<dyn ChainAnchor>, bool, u64), crate::error::CliError> {
+    let (keys, phrase, gcfg) = crate::ops::wallet::unlock_wallet_phrase(ui)?;
     let (anchor, mocked) = build_anchor();
     warn_if_mocked(ui, mocked);
-    Ok((keys, anchor, mocked, gcfg.fee))
+    Ok((keys, phrase, anchor, mocked, gcfg.fee))
 }
 
 /// Prints a loud warning to the user when the anchor is mocked, so a mocked run
@@ -223,7 +271,10 @@ mod tests {
             balance_mojos: 12345,
             ..MockAnchor::default()
         };
-        assert_eq!(m.balance(&dummy_keys()).await.unwrap(), 12345);
+        let w = m.scan("abandon abandon abandon abandon abandon abandon abandon abandon \
+            abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+            abandon abandon abandon abandon abandon art").await.unwrap();
+        assert_eq!(m.balance(&w).await.unwrap(), 12345);
     }
 
     // `DIGSTORE_ANCHOR_MOCK` is process-global; serialize env-mutating tests.

@@ -28,6 +28,22 @@ pub(crate) fn resolve_passphrase(ui: &Ui, prompt: &str) -> Result<Zeroizing<Stri
 /// Errors map cleanly via `?`: a missing seed → [`CliError::NoSeed`], a wrong
 /// passphrase → [`CliError::BadPassphrase`] (from `ChainError::Decrypt`).
 pub fn unlock_wallet_keys(ui: &Ui) -> Result<(WalletKeys, GlobalConfig), CliError> {
+    let (phrase, cfg) = unlock_phrase(ui)?;
+    let keys = derive_wallet_keys(&phrase)?;
+    Ok((keys, cfg))
+}
+
+/// Like [`unlock_wallet_keys`] but also returns the raw mnemonic phrase so the
+/// caller can pass it to `anchor.scan(mnemonic)` for a full HD wallet scan.
+/// The phrase is zeroized when the `Zeroizing<String>` is dropped.
+pub fn unlock_wallet_phrase(ui: &Ui) -> Result<(WalletKeys, Zeroizing<String>, GlobalConfig), CliError> {
+    let (phrase, cfg) = unlock_phrase(ui)?;
+    let keys = derive_wallet_keys(&phrase)?;
+    Ok((keys, phrase, cfg))
+}
+
+/// Internal: resolve the mnemonic phrase + global config from session or encrypted seed.
+fn unlock_phrase(ui: &Ui) -> Result<(Zeroizing<String>, GlobalConfig), CliError> {
     let home = config::dig_home()?;
     let cfg = GlobalConfig::load(&home)?;
     let session_path = config::session_path(&home);
@@ -48,8 +64,7 @@ pub fn unlock_wallet_keys(ui: &Ui) -> Result<(WalletKeys, GlobalConfig), CliErro
         }
     };
 
-    let keys = derive_wallet_keys(&phrase)?;
-    Ok((keys, cfg))
+    Ok((phrase, cfg))
 }
 
 #[cfg(test)]
