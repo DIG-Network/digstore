@@ -8,6 +8,7 @@ use crate::dig;
 use crate::error::{ChainError, Result};
 use crate::keys::WalletKeys;
 use crate::singleton::{build_mint_unsigned, build_update_unsigned, sync_datastore};
+use crate::wallet::ScannedWallet;
 use chia_protocol::Bytes32;
 use datalayer_driver::{sign_coin_spends, SpendBundle};
 
@@ -32,10 +33,12 @@ pub enum ConfirmState {
 
 #[async_trait::async_trait]
 pub trait ChainAnchor: Send + Sync {
-    /// Spendable XCH (mojos) at the wallet's owner puzzle hash.
-    async fn balance(&self, keys: &WalletKeys) -> Result<u64>;
-    /// Spendable DIG (base units) at the wallet's DIG CAT puzzle hash.
-    async fn dig_balance(&self, keys: &WalletKeys) -> Result<u64>;
+    /// Scan the HD wallet and return the aggregated state.
+    async fn scan(&self, mnemonic: &str) -> Result<ScannedWallet>;
+    /// Total spendable XCH (mojos) across all scanned addresses.
+    async fn balance(&self, w: &ScannedWallet) -> Result<u64>;
+    /// Total spendable DIG (base units) across all scanned addresses.
+    async fn dig_balance(&self, w: &ScannedWallet) -> Result<u64>;
     /// Mint an empty (root = 0) owner-only store; broadcast. Returns ids.
     async fn mint_empty_store(&self, keys: &WalletKeys, fee: u64) -> Result<MintOutcome>;
     /// Sync the current singleton for `launcher_id`, build+broadcast a root update.
@@ -69,13 +72,16 @@ impl CoinsetAnchor<crate::coinset::Coinset> {
 
 #[async_trait::async_trait]
 impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
-    async fn balance(&self, keys: &WalletKeys) -> Result<u64> {
-        let coins = self.chain.unspent_coins(keys.owner_puzzle_hash).await?;
-        Ok(coins.iter().map(|c| c.amount).sum())
+    async fn scan(&self, mnemonic: &str) -> Result<ScannedWallet> {
+        crate::wallet::scan_wallet(&self.chain as &dyn ChainReads, mnemonic).await
     }
 
-    async fn dig_balance(&self, keys: &WalletKeys) -> Result<u64> {
-        crate::cat::dig_balance(&self.chain as &dyn ChainReads, keys.owner_puzzle_hash).await
+    async fn balance(&self, w: &ScannedWallet) -> Result<u64> {
+        Ok(w.xch_balance())
+    }
+
+    async fn dig_balance(&self, w: &ScannedWallet) -> Result<u64> {
+        Ok(w.dig_balance())
     }
 
     async fn mint_empty_store(&self, keys: &WalletKeys, fee: u64) -> Result<MintOutcome> {
@@ -171,9 +177,10 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cat::dig_cat_puzzle_hash;
     use crate::coinset::mock::MockChain;
     use crate::coinset::CoinInfo;
-    use crate::keys::derive_wallet_keys;
+    use crate::keys::{derive_indexed_keys, derive_wallet_keys};
     use chia_protocol::Coin;
 
     // Public BIP-39 test vector (NOT a real wallet).
@@ -183,12 +190,12 @@ mod tests {
         abandon abandon abandon art";
 
     // -----------------------------------------------------------------------
-    // Test 1: balance sums unspent coins at the owner puzzle hash.
+    // Test 1: balance returns the ScannedWallet's aggregate XCH balance.
     // -----------------------------------------------------------------------
     #[tokio::test]
     async fn balance_sums_coins_at_owner_ph() {
-        let keys = derive_wallet_keys(ABANDON).unwrap();
         let mut mock = MockChain::default();
+        let keys = derive_wallet_keys(ABANDON).unwrap();
         let ph = keys.owner_puzzle_hash;
         mock.coins_by_ph.insert(
             ph,
@@ -197,19 +204,21 @@ mod tests {
                 Coin::new(Bytes32::new([1u8; 32]), ph, 300_000),
             ],
         );
+        // Scan to produce a ScannedWallet that has these coins at index 0.
         let anchor = CoinsetAnchor::new(mock);
-        let bal = anchor.balance(&keys).await.unwrap();
+        let w = anchor.scan(ABANDON).await.unwrap();
+        let bal = anchor.balance(&w).await.unwrap();
         assert_eq!(bal, 800_000);
     }
 
     // -----------------------------------------------------------------------
-    // Test 1b: dig_balance sums DIG CAT coins at the owner's DIG CAT ph.
+    // Test 1b: dig_balance returns the ScannedWallet's aggregate DIG balance.
     // -----------------------------------------------------------------------
     #[tokio::test]
     async fn dig_balance_sums_cat_coins_at_dig_ph() {
         let keys = derive_wallet_keys(ABANDON).unwrap();
+        let cat_ph = dig_cat_puzzle_hash(keys.owner_puzzle_hash);
         let mut mock = MockChain::default();
-        let cat_ph = crate::cat::dig_cat_puzzle_hash(keys.owner_puzzle_hash);
         mock.coins_by_ph.insert(
             cat_ph,
             vec![
@@ -218,7 +227,43 @@ mod tests {
             ],
         );
         let anchor = CoinsetAnchor::new(mock);
-        assert_eq!(anchor.dig_balance(&keys).await.unwrap(), 100_000);
+        let w = anchor.scan(ABANDON).await.unwrap();
+        assert_eq!(anchor.dig_balance(&w).await.unwrap(), 100_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 1c: balance and dig_balance aggregate across multiple HD indices.
+    // Seeds XCH at index 0 + index 2, DIG at index 2; asserts the totals are
+    // the cross-address sum. Mirrors balance_sums_coins_at_owner_ph but with
+    // a multi-index mock wallet.
+    // -----------------------------------------------------------------------
+    #[tokio::test]
+    async fn balance_aggregates_across_hd_indices() {
+        // Derive keys for indices 0 and 2.
+        let indexed = derive_indexed_keys(ABANDON, 0..3).unwrap();
+        let ph0 = indexed[0].owner_puzzle_hash;
+        let ph2 = indexed[2].owner_puzzle_hash;
+        let dig_ph2 = dig_cat_puzzle_hash(ph2);
+
+        let mut mock = MockChain::default();
+        // XCH at index 0: 500_000
+        mock.coins_by_ph
+            .insert(ph0, vec![Coin::new(Bytes32::default(), ph0, 500_000)]);
+        // XCH at index 2: 300_000; DIG at index 2: 120_000
+        mock.coins_by_ph
+            .insert(ph2, vec![Coin::new(Bytes32::new([2u8; 32]), ph2, 300_000)]);
+        mock.coins_by_ph.insert(
+            dig_ph2,
+            vec![Coin::new(Bytes32::new([3u8; 32]), dig_ph2, 120_000)],
+        );
+
+        let anchor = CoinsetAnchor::new(mock);
+        let w = anchor.scan(ABANDON).await.unwrap();
+
+        // Total XCH = 500_000 + 300_000 = 800_000
+        assert_eq!(anchor.balance(&w).await.unwrap(), 800_000);
+        // Total DIG = 120_000
+        assert_eq!(anchor.dig_balance(&w).await.unwrap(), 120_000);
     }
 
     // -----------------------------------------------------------------------

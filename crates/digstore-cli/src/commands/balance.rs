@@ -10,17 +10,19 @@ use crate::runtime::block_on;
 use digstore_chain::dig::{format_dig, format_xch};
 
 pub fn run(_ctx: &CliContext, ui: &crate::ui::Ui) -> Result<(), CliError> {
-    // Unlock the wallet seed (NoSeed → exit 9) to derive the owner keys.
-    let (keys, _gcfg) = crate::ops::wallet::unlock_wallet_keys(ui)?;
+    // Unlock the wallet seed (NoSeed → exit 9) to derive the owner keys + mnemonic.
+    let (keys, phrase, _gcfg) = crate::ops::wallet::unlock_wallet_phrase(ui)?;
 
     // Build the (mock or real) anchor backend; warn loudly if mocked.
     let (anchor, mocked) = crate::ops::anchor_backend::build_anchor();
     crate::ops::anchor_backend::warn_if_mocked(ui, mocked);
 
-    // Query spendable balances. `block_on` → Result<ChainResult<u64>, CliError>;
-    // the inner ChainError maps to CliError via `?`.
-    let xch = block_on(anchor.balance(&keys))??;
-    let dig = block_on(anchor.dig_balance(&keys))??;
+    // Scan the HD wallet to aggregate balances across all addresses.
+    let w = block_on(anchor.scan(&phrase))??;
+
+    // Query spendable balances from the scanned wallet.
+    let xch = block_on(anchor.balance(&w))??;
+    let dig = block_on(anchor.dig_balance(&w))??;
     let addr = digstore_chain::keys::owner_address(&keys);
 
     if ui.json() {

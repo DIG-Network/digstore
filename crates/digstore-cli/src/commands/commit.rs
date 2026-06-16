@@ -25,7 +25,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
 
     // 2. Anchor gate: unlock seed (NoSeed → exit 9), build the (mock or real)
     //    backend, warn if mocked, surface the fee.
-    let (keys, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
+    let (keys, mnemonic, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
 
     // 3. Load the store's anchor state. Every store is anchored at init, so a
     //    missing anchor.toml is an error state, not a fresh-store case.
@@ -51,8 +51,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     //     commit pays COMMIT_DIG (10 DIG) embedded in the on-chain bundle PLUS the
     //     XCH fee. Block before the update if the wallet is short on EITHER asset;
     //     roots.log / staging are untouched on a block.
-    let have_xch = block_on(anchor.balance(&keys))??;
-    let have_dig = block_on(anchor.dig_balance(&keys))??;
+    let w = block_on(anchor.scan(&mnemonic))??;
+    let have_xch = block_on(anchor.balance(&w))??;
+    let have_dig = block_on(anchor.dig_balance(&w))??;
 
     if !ui.json() {
         ui.line(format!(

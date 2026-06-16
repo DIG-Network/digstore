@@ -127,7 +127,7 @@ fn select_dig_cats(dig_cats: &[Cat], amount: u64) -> Result<(Vec<Cat>, u64)> {
     }
     if sum < amount {
         return Err(ChainError::Chain(format!(
-            "insufficient DIG: need {amount} have {sum}"
+            "insufficient DIG: need {amount} have {sum}. Acquire DIG on TibetSwap: https://v2.tibetswap.io/"
         )));
     }
     Ok((selected, sum))
@@ -284,6 +284,25 @@ mod tests {
                 assert!(msg.contains("insufficient DIG"), "got: {msg}");
                 assert!(msg.contains("need 100000"), "got: {msg}");
                 assert!(msg.contains("have 70000"), "got: {msg}");
+            }
+            other => panic!("expected Chain error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shortfall_error_contains_tibetswap_link() {
+        let cats = vec![dig_cat(10_000, 1)];
+        let err = select_dig_cats(&cats, 50_000).unwrap_err();
+        match err {
+            ChainError::Chain(msg) => {
+                assert!(
+                    msg.contains("tibetswap") || msg.contains("TibetSwap"),
+                    "shortfall error must mention TibetSwap, got: {msg}"
+                );
+                assert!(
+                    msg.contains("https://v2.tibetswap.io/"),
+                    "shortfall error must include the TibetSwap URL, got: {msg}"
+                );
             }
             other => panic!("expected Chain error, got {other:?}"),
         }
