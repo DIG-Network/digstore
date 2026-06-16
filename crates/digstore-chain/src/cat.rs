@@ -13,12 +13,13 @@
 use crate::coinset::ChainReads;
 use crate::dig::{treasury_inner_puzzle_hash, DIG_ASSET_ID};
 use crate::error::{ChainError, Result};
-use crate::keys::WalletKeys;
+use crate::keys::{IndexedKeys, WalletKeys};
 use chia::puzzles::cat::CatArgs;
 use chia_protocol::{Bytes32, CoinSpend};
 use chia_wallet_sdk::driver::{Action, Cat, Id, Puzzle, Relation, SpendContext, Spends};
 use chia_wallet_sdk::prelude::TreeHash;
-use indexmap::indexmap;
+use datalayer_driver::PublicKey;
+use indexmap::{indexmap, IndexMap};
 
 /// The coinset puzzle hash where `owner_puzzle_hash`'s DIG CAT coins live.
 pub fn dig_cat_puzzle_hash(owner_puzzle_hash: Bytes32) -> Bytes32 {
@@ -48,6 +49,9 @@ pub async fn dig_balance(chain: &dyn ChainReads, owner_puzzle_hash: Bytes32) -> 
 ///     and which carries a `lineage_proof` (required to spend a CAT).
 ///
 /// This is `DigCoin::from_coin` with coinset reads swapped in for the Peer calls.
+///
+/// This is also available as `dig_cats_for` for multi-address callers that want
+/// to call per address and concatenate.
 pub async fn dig_cats(chain: &dyn ChainReads, owner_puzzle_hash: Bytes32) -> Result<Vec<Cat>> {
     let cat_ph = dig_cat_puzzle_hash(owner_puzzle_hash);
     let coins = chain.unspent_coins(cat_ph).await?;
@@ -186,6 +190,97 @@ pub fn build_dig_payment(
         .map_err(|e| ChainError::Chain(format!("apply DIG send action: {e}")))?;
 
     let index_map = indexmap! { owner_ph => keys.synthetic_pk };
+    spends
+        .finish_with_keys(&mut ctx, &deltas, Relation::AssertConcurrent, &index_map)
+        .map_err(|e| ChainError::Chain(format!("finish DIG payment spends: {e}")))?;
+
+    Ok(ctx.take())
+}
+
+/// Per-address alias for [`dig_cats`]: reconstruct DIG CAT coins for one owner
+/// puzzle hash. Intended for multi-address callers that call once per DIG-bearing
+/// address and concatenate the results.
+#[inline]
+pub async fn dig_cats_for(
+    chain: &dyn ChainReads,
+    owner_puzzle_hash: Bytes32,
+) -> Result<Vec<Cat>> {
+    dig_cats(chain, owner_puzzle_hash).await
+}
+
+/// Gather DIG cats across all scanned HD addresses and return them as a flat
+/// `Vec<Cat>` ready for [`build_dig_payment_multi`].
+///
+/// Only addresses that actually hold DIG (`a.dig` non-empty) are queried for
+/// lineage proofs, avoiding unnecessary coinset reads for empty addresses.
+pub async fn dig_cats_multi(
+    chain: &dyn ChainReads,
+    w: &crate::wallet::ScannedWallet,
+) -> Result<Vec<Cat>> {
+    let mut all = Vec::new();
+    for addr in &w.addrs {
+        if !addr.dig.is_empty() {
+            let cats = dig_cats_for(chain, addr.keys.owner_puzzle_hash).await?;
+            all.extend(cats);
+        }
+    }
+    Ok(all)
+}
+
+/// Multi-address variant of [`build_dig_payment`].
+///
+/// `dig_cats` may come from multiple HD addresses. `keys_by_ph` maps each
+/// participating `owner_puzzle_hash` to its `synthetic_pk`, so the inner spend
+/// for each CAT is authorized by the correct key. Change returns to `change_ph`
+/// (index 0's `owner_puzzle_hash`).
+///
+/// The bundle is UNSIGNED — the anchor signs the combined bundle with all keys.
+pub fn build_dig_payment_multi<'a>(
+    keys_iter: impl Iterator<Item = &'a IndexedKeys>,
+    change_ph: Bytes32,
+    dig_cats: &[Cat],
+    amount: u64,
+    store_id: Bytes32,
+) -> Result<Vec<CoinSpend>> {
+    let (selected, sum) = select_dig_cats(dig_cats, amount)?;
+    debug_assert!(sum >= amount, "selection must cover amount");
+
+    let mut ctx = SpendContext::new();
+    let treasury_ph = treasury_inner_puzzle_hash();
+
+    let memos = ctx
+        .memos(&[treasury_ph, store_id])
+        .map_err(|e| ChainError::Chain(format!("alloc memos: {e}")))?;
+
+    let actions = [Action::send(
+        Id::Existing(DIG_ASSET_ID),
+        treasury_ph,
+        amount,
+        memos,
+    )];
+
+    let mut spends = Spends::new(change_ph);
+    for cat in selected {
+        spends.add(cat);
+    }
+
+    let deltas = spends
+        .apply(&mut ctx, &actions)
+        .map_err(|e| ChainError::Chain(format!("apply DIG send action: {e}")))?;
+
+    // Build the key map covering all participating addresses.
+    let mut index_map: IndexMap<Bytes32, PublicKey> = IndexMap::new();
+    for k in keys_iter {
+        index_map.insert(k.owner_puzzle_hash, k.synthetic_pk);
+    }
+    // Ensure change_ph is always present (index 0).
+    // The iterator already includes index 0, but guard against an empty iterator.
+    if index_map.is_empty() {
+        return Err(ChainError::Chain(
+            "build_dig_payment_multi: keys_iter must not be empty".into(),
+        ));
+    }
+
     spends
         .finish_with_keys(&mut ctx, &deltas, Relation::AssertConcurrent, &index_map)
         .map_err(|e| ChainError::Chain(format!("finish DIG payment spends: {e}")))?;

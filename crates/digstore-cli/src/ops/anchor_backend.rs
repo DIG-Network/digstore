@@ -138,7 +138,7 @@ impl ChainAnchor for MockAnchor {
         Ok(w.dig_balance())
     }
 
-    async fn mint_empty_store(&self, _keys: &WalletKeys, _fee: u64) -> ChainResult<MintOutcome> {
+    async fn mint_empty_store(&self, _w: &ScannedWallet, _fee: u64) -> ChainResult<MintOutcome> {
         if let Some(msg) = &self.fail_mint {
             return Err(ChainError::Chain(msg.clone()));
         }
@@ -153,7 +153,7 @@ impl ChainAnchor for MockAnchor {
         &self,
         _launcher_id: Bytes32,
         _new_root: Bytes32,
-        _keys: &WalletKeys,
+        _w: &ScannedWallet,
         _fee: u64,
     ) -> ChainResult<UpdateOutcome> {
         if let Some(msg) = &self.fail_update {
@@ -214,22 +214,21 @@ pub fn warn_if_mocked(ui: &Ui, mocked: bool) {
 mod tests {
     use super::*;
 
-    fn dummy_keys() -> WalletKeys {
-        // The mock ignores keys entirely; derive real ones from a public vector.
-        digstore_chain::keys::derive_wallet_keys(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap()
+    const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon \
+        abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+        abandon abandon abandon abandon abandon art";
+
+    async fn dummy_wallet() -> ScannedWallet {
+        // The mock ignores the wallet contents; we just need a valid ScannedWallet.
+        MockAnchor::default().scan(ABANDON).await.unwrap()
     }
 
     #[tokio::test]
     async fn mint_returns_nondefault_and_unique_ids() {
         let m = MockAnchor::default();
-        let k = dummy_keys();
-        let a = m.mint_empty_store(&k, 0).await.unwrap();
-        let b = m.mint_empty_store(&k, 0).await.unwrap();
+        let w = dummy_wallet().await;
+        let a = m.mint_empty_store(&w, 0).await.unwrap();
+        let b = m.mint_empty_store(&w, 0).await.unwrap();
         assert_ne!(a.launcher_id, Bytes32::default());
         assert_ne!(a.launcher_id, b.launcher_id, "two mints must differ");
         assert_ne!(a.coin_id, b.coin_id);
@@ -261,7 +260,8 @@ mod tests {
             fail_mint: Some("boom".into()),
             ..MockAnchor::default()
         };
-        let err = m.mint_empty_store(&dummy_keys(), 0).await.unwrap_err();
+        let w = dummy_wallet().await;
+        let err = m.mint_empty_store(&w, 0).await.unwrap_err();
         assert!(matches!(err, ChainError::Chain(ref s) if s == "boom"));
     }
 

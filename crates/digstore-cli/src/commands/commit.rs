@@ -95,7 +95,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let coin_id = if resume {
         parse_bytes32(&state.coin_id, "coin_id")?
     } else {
-        let upd = block_on(anchor.update_root(launcher_id, new_root_b32, &keys, fee))
+        let upd = block_on(anchor.update_root(launcher_id, new_root_b32, &w, fee))
             .and_then(|r| r.map_err(|e| CliError::UpdateFailed(e.to_string())))?;
         let coin_hex = hex::encode(upd.new_coin_id.as_ref());
         anchor_ux::report_submitted(ui, "update", &coin_hex, ui.json());
