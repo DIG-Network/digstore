@@ -43,6 +43,7 @@ anstream = "0.6"
 anstyle = "1"
 ignore = "0.4"
 globset = "0.4"
+indicatif = "0.17"
 
 [dev-dependencies]
 assert_cmd = "2"

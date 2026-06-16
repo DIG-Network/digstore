@@ -67,9 +67,11 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     //    mint pays INIT_DIG (100 DIG) embedded in the on-chain bundle PLUS the
     //    singleton amount (1 mojo) + the XCH fee. Block before any spend if the
     //    wallet is short on EITHER asset; no files exist yet, so nothing rolls back.
+    let sp = ui.spinner("Scanning your wallet…");
     let w = block_on(anchor.scan(&mnemonic))??;
     let have_xch = block_on(anchor.balance(&w))??;
     let have_dig = block_on(anchor.dig_balance(&w))??;
+    sp.finish();
 
     if !ui.json() {
         ui.line(format!(
@@ -104,8 +106,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
 
     // 4. Mint the empty store singleton. The launcher id becomes the store_id.
     //    Pass the full scanned wallet so the mint gathers XCH + DIG from all addresses.
+    let sp = ui.spinner("Building & signing the mint…");
     let mint = block_on(anchor.mint_empty_store(&w, fee))
         .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
+    sp.finish();
     let store_id = {
         let mut a = [0u8; 32];
         a.copy_from_slice(mint.launcher_id.as_ref());

@@ -56,8 +56,15 @@ fn unlock_phrase(ui: &Ui) -> Result<(Zeroizing<String>, GlobalConfig), CliError>
                 return Err(CliError::NoSeed);
             }
             let enc = seed::load_seed(&seed_path)?;
-            let pass = resolve_passphrase(ui, "Enter your seed passphrase")?;
-            let phrase = seed::decrypt_seed(&enc, &pass)?;
+            // Try an empty passphrase first — seeds created without a passphrase
+            // decrypt silently so the user is never prompted unnecessarily.
+            let phrase = match seed::decrypt_seed(&enc, "") {
+                Ok(p) => p,
+                Err(_) => {
+                    let pass = resolve_passphrase(ui, "Enter your seed passphrase")?;
+                    seed::decrypt_seed(&enc, &pass)?
+                }
+            };
             // Best-effort session refresh so subsequent commands stay unlocked.
             let _ = unlock::write_session(&session_path, &phrase, cfg.unlock_ttl);
             phrase
