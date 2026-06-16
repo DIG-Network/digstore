@@ -60,8 +60,10 @@ pub enum ClientError {
     Decode(String),
     #[error("non-fast-forward (409)")]
     NonFastForward,
-    #[error("unauthorized ({0})")]
-    Unauthorized(u16),
+    /// Server returned 4xx/5xx with a JSON `{"error":…,"message":"…"}` body.
+    /// `message` is the human-readable server reason (or the raw body if not JSON).
+    #[error("remote rejected ({status}): {message}")]
+    Remote { status: u16, message: String },
 }
 
 #[cfg(test)]

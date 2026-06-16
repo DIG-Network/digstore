@@ -40,8 +40,20 @@ pub struct CloneSummary {
 pub(crate) fn map_remote_err(e: ClientError) -> CliError {
     match e {
         ClientError::NonFastForward => CliError::NonFastForward,
-        ClientError::Unauthorized(_) => {
-            CliError::Unauthorized("remote rejected credentials".into())
+        ClientError::Remote {
+            status: 401 | 403,
+            message,
+        } => CliError::Unauthorized(if message.is_empty() {
+            "remote rejected credentials".into()
+        } else {
+            message
+        }),
+        ClientError::Remote {
+            status: 404,
+            message: _,
+        } => CliError::NotFound("remote resource".into()),
+        ClientError::Remote { status, message } => {
+            CliError::Network(format!("remote rejected ({status}): {message}"))
         }
         ClientError::Status(404) => CliError::NotFound("remote resource".into()),
         ClientError::Status(code) => CliError::Network(format!("remote status {code}")),
