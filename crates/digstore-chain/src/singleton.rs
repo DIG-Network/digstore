@@ -12,6 +12,15 @@ use datalayer_driver::{
     DataStore, DataStoreInnerSpend, DataStoreMetadata, DelegatedPuzzle, PublicKey, SpendBundle,
     SuccessResponse,
 };
+
+/// An XCH coin tagged with the wallet address it belongs to, so the spend can
+/// be built with the correct `synthetic_pk` (each address has its own key).
+#[derive(Clone, Debug)]
+pub struct CoinWithKey {
+    pub coin: Coin,
+    pub synthetic_pk: PublicKey,
+    pub owner_puzzle_hash: Bytes32,
+}
 use hex_literal::hex;
 
 /// `sha256("datastore")` — the global launcher hint (kept as a second memo for
@@ -45,6 +54,9 @@ fn digstore_owner_hint(owner_puzzle_hash: Bytes32) -> Bytes32 {
 /// `[digstore_owner_hint(owner_ph), DATASTORE_LAUNCHER_HINT]` instead of just the launcher
 /// hint (datalayer_driver hardcodes a single memo and exposes no hint param). Byte-identical
 /// to chip35 (hub.dig.net) so both paths are discoverable by one owner-hint query.
+///
+/// Single-address variant: all coins share one synthetic key and change goes back to
+/// the same `owner_puzzle_hash`.
 #[allow(clippy::too_many_arguments)]
 fn mint_store_digstore(
     minter_synthetic_key: PublicKey,
@@ -128,6 +140,100 @@ fn mint_store_digstore(
     })
 }
 
+/// Multi-address variant of [`mint_store_digstore`].
+///
+/// `selected_coins` may span multiple HD addresses — each entry carries its own
+/// `synthetic_pk` and `owner_puzzle_hash`. Change is consolidated to `change_ph`
+/// (caller passes index 0's `owner_puzzle_hash`).
+///
+/// The lead coin's `coin_id` becomes the launcher parent id (and thus the
+/// `launcher_id`). The lead coin is spent with a `StandardLayer` for its own
+/// `synthetic_pk`; every other coin asserts concurrent spend with the lead coin
+/// using ITS OWN `StandardLayer` (one per distinct address).
+fn mint_store_digstore_multi(
+    selected_coins: Vec<CoinWithKey>,
+    root_hash: Bytes32,
+    change_ph: Bytes32,           // index 0 owner_puzzle_hash — change consolidates here
+    owner_puzzle_hash: Bytes32,   // store owner (index 0); used in the owner hint + DataStore
+    delegated_puzzles: Vec<DelegatedPuzzle>,
+    fee: u64,
+) -> std::result::Result<SuccessResponse, DriverError> {
+    assert!(!selected_coins.is_empty(), "selected_coins must be non-empty");
+
+    let total_amount_from_coins: u64 = selected_coins.iter().map(|c| c.coin.amount).sum();
+    let total_amount = fee + 1;
+
+    let mut ctx = SpendContext::new();
+
+    let lead = &selected_coins[0];
+    let lead_coin = lead.coin;
+    let lead_coin_name = lead_coin.coin_id();
+    let lead_p2 = StandardLayer::new(lead.synthetic_pk);
+
+    // Spend every non-lead coin: assert concurrent spend with the lead coin,
+    // using the coin's own StandardLayer (its own synthetic_pk).
+    for ck in selected_coins.iter().skip(1) {
+        let p2 = StandardLayer::new(ck.synthetic_pk);
+        p2.spend(
+            &mut ctx,
+            ck.coin,
+            Conditions::new().assert_concurrent_spend(lead_coin_name),
+        )?;
+    }
+
+    // Mint the singleton from the lead coin.
+    let (launch_singleton, datastore) = Launcher::new(lead_coin_name, 1).mint_datastore(
+        &mut ctx,
+        DataStoreMetadata {
+            root_hash,
+            label: None,
+            description: None,
+            bytes: None,
+            size_proof: None,
+        },
+        owner_puzzle_hash.into(),
+        delegated_puzzles,
+    )?;
+
+    // Inject the digstore owner hint into the launcher CREATE_COIN.
+    let launch_singleton = Conditions::new().extend(
+        launch_singleton
+            .into_iter()
+            .map(|cond| {
+                if let Condition::CreateCoin(cc) = cond {
+                    if cc.puzzle_hash == SINGLETON_LAUNCHER_PH {
+                        let hint = ctx.memos(&[
+                            digstore_owner_hint(owner_puzzle_hash),
+                            DATASTORE_LAUNCHER_HINT,
+                        ])?;
+                        return Ok(Condition::CreateCoin(CreateCoin {
+                            puzzle_hash: cc.puzzle_hash,
+                            amount: cc.amount,
+                            memos: hint,
+                        }));
+                    }
+                    return Ok(Condition::CreateCoin(cc));
+                }
+                Ok(cond)
+            })
+            .collect::<std::result::Result<Vec<_>, DriverError>>()?,
+    );
+
+    // Lead coin: launch the singleton + optional change back to index 0.
+    let lead_conditions = if total_amount_from_coins > total_amount {
+        let hint = ctx.hint(change_ph)?;
+        launch_singleton.create_coin(change_ph, total_amount_from_coins - total_amount, hint)
+    } else {
+        launch_singleton
+    };
+    lead_p2.spend(&mut ctx, lead_coin, lead_conditions)?;
+
+    Ok(SuccessResponse {
+        coin_spends: ctx.take(),
+        new_datastore: datastore,
+    })
+}
+
 /// A built, signed mint ready to broadcast.
 pub struct MintBuild {
     pub bundle: SpendBundle,
@@ -148,6 +254,8 @@ pub struct MintUnsigned {
 /// `root`. `unspent` are the wallet's spendable XCH coins; `fee` in mojos. The
 /// launcher id is derived intact from the mint; the caller signs (alone, or after
 /// concatenating other coin spends into one bundle).
+///
+/// Single-address variant (kept for tests + the single-key `build_mint` wrapper).
 pub fn build_mint_unsigned(
     keys: &WalletKeys,
     unspent: &[Coin],
@@ -174,6 +282,72 @@ pub fn build_mint_unsigned(
         launcher_id,
         datastore: new_datastore,
     })
+}
+
+/// Multi-address variant of [`build_mint_unsigned`].
+///
+/// `all_coins` contains ALL XCH coins across scanned HD addresses, each tagged with
+/// the address's `synthetic_pk` and `owner_puzzle_hash`. This function greedily
+/// selects enough coins to cover `fee + 1` mojos (using `select_coins` on the flat
+/// coin list), tags the selected set with their per-address keys, and builds the
+/// unsigned mint spends. Change consolidates to `change_ph` (index 0's
+/// `owner_puzzle_hash`). The store owner (in DataStore metadata) is also `change_ph`.
+pub fn build_mint_unsigned_multi(
+    all_coins: &[CoinWithKey],
+    change_ph: Bytes32,
+    root: Bytes32,
+    fee: u64,
+) -> Result<MintUnsigned> {
+    // Flatten to bare Coin slice for coin selection.
+    let flat: Vec<Coin> = all_coins.iter().map(|c| c.coin).collect();
+    let selected_flat = select_coins(&flat, fee + 1)
+        .map_err(|e| ChainError::Chain(format!("select_coins: {e}")))?;
+
+    // Re-attach per-address keys to the selected coins.
+    // Build a lookup: coin_id -> CoinWithKey (parent+ph identify a coin uniquely).
+    let selected_ids: std::collections::HashSet<Bytes32> =
+        selected_flat.iter().map(|c| c.coin_id()).collect();
+    let selected: Vec<CoinWithKey> = all_coins
+        .iter()
+        .filter(|c| selected_ids.contains(&c.coin.coin_id()))
+        .cloned()
+        .collect();
+
+    if selected.is_empty() {
+        return Err(ChainError::Chain(
+            "select_coins returned empty set for multi-address mint".into(),
+        ));
+    }
+
+    let SuccessResponse {
+        coin_spends,
+        new_datastore,
+    } = mint_store_digstore_multi(selected, root, change_ph, change_ph, vec![], fee)
+        .map_err(|e| ChainError::Chain(format!("mint_store_multi: {e}")))?;
+
+    let launcher_id = new_datastore.info.launcher_id;
+    Ok(MintUnsigned {
+        coin_spends,
+        launcher_id,
+        datastore: new_datastore,
+    })
+}
+
+/// Flatten the XCH coins across all scanned addresses into `Vec<CoinWithKey>`,
+/// suitable for passing to [`build_mint_unsigned_multi`].
+pub fn coins_with_keys_from_wallet(
+    w: &crate::wallet::ScannedWallet,
+) -> Vec<CoinWithKey> {
+    w.addrs
+        .iter()
+        .flat_map(|a| {
+            a.xch.iter().map(move |coin| CoinWithKey {
+                coin: *coin,
+                synthetic_pk: a.keys.synthetic_pk,
+                owner_puzzle_hash: a.keys.owner_puzzle_hash,
+            })
+        })
+        .collect()
 }
 
 /// Builds + signs a mint of an owner-only empty/initial store with `root`.
@@ -222,6 +396,8 @@ pub struct UpdateUnsigned {
 /// (singleton spend + XCH fee spend). `fee_coins` are the wallet's spendable XCH
 /// coins for the fee; `fee` mojos. The caller signs (alone or after concatenating
 /// other coin spends into one bundle).
+///
+/// Single-address variant (all fee coins share one synthetic key).
 pub fn build_update_unsigned(
     keys: &WalletKeys,
     store: DataStore,
@@ -248,6 +424,98 @@ pub fn build_update_unsigned(
     let coin_ids: Vec<Bytes32> = selected.iter().map(|c| c.coin_id()).collect();
     let mut coin_spends = add_fee(&keys.synthetic_pk, &selected, &coin_ids, fee)
         .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
+    coin_spends.extend(update_spends);
+
+    let new_coin_id = new_datastore.coin.coin_id();
+    Ok(UpdateUnsigned {
+        coin_spends,
+        new_coin_id,
+        datastore: new_datastore,
+    })
+}
+
+/// Multi-address variant of [`build_update_unsigned`].
+///
+/// `owner_pk` is index 0's `synthetic_pk` — used to authorize the singleton update
+/// (the store was minted by that key). `all_fee_coins` may span multiple HD
+/// addresses; each is spent under its own `synthetic_pk`, with change returning to
+/// `change_ph` (index 0's `owner_puzzle_hash`). If `fee == 0`, no fee coins are
+/// selected and `add_fee` is skipped.
+pub fn build_update_unsigned_multi(
+    owner_pk: PublicKey,
+    store: DataStore,
+    new_root: Bytes32,
+    all_fee_coins: &[CoinWithKey],
+    fee: u64,
+) -> Result<UpdateUnsigned> {
+    let SuccessResponse {
+        coin_spends: update_spends,
+        new_datastore,
+    } = update_store_metadata(
+        store,
+        new_root,
+        None,
+        None,
+        None,
+        None,
+        DataStoreInnerSpend::Owner(owner_pk),
+    )
+    .map_err(|e| ChainError::Chain(format!("update_store_metadata: {e}")))?;
+
+    let mut coin_spends = Vec::new();
+    if fee > 0 {
+        let flat: Vec<Coin> = all_fee_coins.iter().map(|c| c.coin).collect();
+        let selected_flat = select_coins(&flat, fee)
+            .map_err(|e| ChainError::Chain(format!("select_coins (fee): {e}")))?;
+        let selected_ids: std::collections::HashSet<Bytes32> =
+            selected_flat.iter().map(|c| c.coin_id()).collect();
+        let selected: Vec<CoinWithKey> = all_fee_coins
+            .iter()
+            .filter(|c| selected_ids.contains(&c.coin.coin_id()))
+            .cloned()
+            .collect();
+
+        // add_fee takes a single synthetic_pk for all coins; we spend each coin
+        // under its own StandardLayer to honour multi-address.
+        // Build per-coin fee spends manually using StandardLayer (same approach as
+        // mint_store_digstore_multi: each coin asserts concurrent spend, but here
+        // the fee instruction comes from add_fee). We use the first selected coin's
+        // key with add_fee (the fee reservation is on that coin), then spend the
+        // rest as assert_concurrent spends under their own keys.
+        //
+        // For the simple (and typical) case — one fee coin or all from one address —
+        // this collapses to the original behavior.
+        let lead = &selected[0];
+        let lead_flat: Vec<Coin> = vec![lead.coin];
+        let lead_coin_ids: Vec<Bytes32> = vec![lead.coin.coin_id()];
+        let mut fee_spends = add_fee(
+            &lead.synthetic_pk,
+            &lead_flat,
+            &lead_coin_ids,
+            fee,
+        )
+        .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
+
+        // Spend remaining fee coins: assert concurrent with the lead fee coin.
+        if selected.len() > 1 {
+            let lead_coin_name = lead.coin.coin_id();
+            let mut ctx = SpendContext::new();
+            for ck in selected.iter().skip(1) {
+                let p2 = StandardLayer::new(ck.synthetic_pk);
+                p2.spend(
+                    &mut ctx,
+                    ck.coin,
+                    Conditions::new().assert_concurrent_spend(lead_coin_name),
+                )
+                .map_err(|e| {
+                    ChainError::Chain(format!("fee coin extra spend: {e}"))
+                })?;
+            }
+            fee_spends.extend(ctx.take());
+        }
+
+        coin_spends.extend(fee_spends);
+    }
     coin_spends.extend(update_spends);
 
     let new_coin_id = new_datastore.coin.coin_id();

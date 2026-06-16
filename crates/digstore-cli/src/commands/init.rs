@@ -103,7 +103,8 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     }
 
     // 4. Mint the empty store singleton. The launcher id becomes the store_id.
-    let mint = block_on(anchor.mint_empty_store(&keys, fee))
+    //    Pass the full scanned wallet so the mint gathers XCH + DIG from all addresses.
+    let mint = block_on(anchor.mint_empty_store(&w, fee))
         .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
     let store_id = {
         let mut a = [0u8; 32];
