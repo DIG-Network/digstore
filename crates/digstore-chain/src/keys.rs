@@ -5,9 +5,11 @@
 
 use crate::error::{ChainError, Result};
 use bip39::Mnemonic;
+use chia::puzzles::{standard::StandardArgs, DeriveSynthetic};
 use datalayer_driver::{
     master_public_key_to_first_puzzle_hash, master_secret_key_to_wallet_synthetic_secret_key,
-    puzzle_hash_to_address, secret_key_to_public_key, Bytes32, PublicKey, SecretKey,
+    master_to_wallet_unhardened, puzzle_hash_to_address, secret_key_to_public_key, Bytes32,
+    PublicKey, SecretKey,
 };
 use zeroize::Zeroizing;
 
@@ -34,6 +36,47 @@ pub fn derive_wallet_keys(mnemonic: &str) -> Result<WalletKeys> {
         synthetic_pk,
         owner_puzzle_hash,
     })
+}
+
+/// Wallet keys for a single unhardened HD index. Index 0 byte-matches
+/// `derive_wallet_keys` (the legacy single-address path).
+#[derive(Clone)]
+pub struct IndexedKeys {
+    pub index: u32,
+    pub synthetic_sk: SecretKey,
+    pub synthetic_pk: PublicKey,
+    pub owner_puzzle_hash: Bytes32,
+}
+
+/// Derive the wallet keys for a range of unhardened indices.
+///
+/// For each index `i`, the path is the standard Chia unhardened wallet path
+/// (`m/12381/8444/2/i`), with the synthetic key offset applied
+/// (`DEFAULT_HIDDEN_PUZZLE_HASH`), yielding the p2-standard puzzle hash.
+///
+/// Index 0 byte-matches `derive_wallet_keys` — both use
+/// `master_to_wallet_unhardened(key, 0).derive_synthetic()`.
+pub fn derive_indexed_keys(
+    mnemonic: &str,
+    indices: std::ops::Range<u32>,
+) -> Result<Vec<IndexedKeys>> {
+    let m = Mnemonic::parse_normalized(mnemonic.trim())
+        .map_err(|e| ChainError::InvalidMnemonic(e.to_string()))?;
+    let seed = Zeroizing::new(m.to_seed(""));
+    let master_sk = SecretKey::from_seed(seed.as_ref());
+    let mut out = Vec::new();
+    for index in indices {
+        let synthetic_sk = master_to_wallet_unhardened(&master_sk, index).derive_synthetic();
+        let synthetic_pk = secret_key_to_public_key(&synthetic_sk);
+        let owner_puzzle_hash = StandardArgs::curry_tree_hash(synthetic_pk).into();
+        out.push(IndexedKeys {
+            index,
+            synthetic_sk,
+            synthetic_pk,
+            owner_puzzle_hash,
+        });
+    }
+    Ok(out)
 }
 
 /// The owner's mainnet receive address (`xch1…`), bech32m-encoded from the
@@ -91,5 +134,17 @@ mod tests {
         let b = derive_wallet_keys(ABANDON).unwrap();
         assert_eq!(a.owner_puzzle_hash, b.owner_puzzle_hash);
         assert_eq!(a.synthetic_pk.to_bytes(), b.synthetic_pk.to_bytes());
+    }
+
+    #[test]
+    fn indexed_keys_index0_matches_single() {
+        let single = derive_wallet_keys(ABANDON).unwrap();
+        let many = derive_indexed_keys(ABANDON, 0..3).unwrap();
+        assert_eq!(many.len(), 3);
+        assert_eq!(many[0].index, 0);
+        assert_eq!(many[0].owner_puzzle_hash, single.owner_puzzle_hash);
+        // distinct addresses per index
+        assert_ne!(many[0].owner_puzzle_hash, many[1].owner_puzzle_hash);
+        assert_ne!(many[1].owner_puzzle_hash, many[2].owner_puzzle_hash);
     }
 }
