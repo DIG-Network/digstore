@@ -27,15 +27,18 @@ pub fn confirm_with_ui(
     timeout_secs: u64,
     json: bool,
 ) -> Result<ConfirmState, CliError> {
-    if !json {
-        ui.line(format!(
-            "⛓  Anchoring on Chia mainnet… waiting for confirmation (timeout {timeout_secs}s)"
-        ));
-    }
+    // Show a spinner (hidden in json/non-tty/no-color mode) so the user can see
+    // that the CLI is alive during what can be a multi-minute wait.
+    let sp = ui.spinner(&format!(
+        "Waiting for blockchain confirmation (timeout {timeout_secs}s)…"
+    ));
 
     // `block_on` returns `Result<chain_result, CliError>`; the inner is
     // `Result<ConfirmState, ChainError>` → map into `CliError` via `?`.
     let state = crate::runtime::block_on(anchor.confirm(coin_id, timeout_secs))??;
+
+    // Clear the spinner line before printing the result so output is clean.
+    sp.finish();
 
     if !json {
         match &state {

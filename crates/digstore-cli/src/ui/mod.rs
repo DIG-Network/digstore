@@ -4,10 +4,44 @@
 pub mod theme;
 
 use std::io::{IsTerminal, Write};
+use std::time::Duration;
 
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
 
 use crate::ui::theme::{marker_line, verb_line, Marker};
+
+// ---------------------------------------------------------------------------
+// Spinner — RAII handle wrapping indicatif's ProgressBar.
+// ---------------------------------------------------------------------------
+
+/// An animated spinner returned by [`Ui::spinner`].
+///
+/// Drop to clear the spinner line silently, or call [`Spinner::finish`] /
+/// [`Spinner::finish_clear`] explicitly for controlled teardown.
+pub struct Spinner {
+    pb: ProgressBar,
+}
+
+impl Spinner {
+    /// Stop the spinner and clear its line (no message printed).
+    pub fn finish_clear(self) {
+        self.pb.finish_and_clear();
+    }
+
+    /// Stop the spinner, clear its line, then let the caller print a result via
+    /// the [`Ui`]. Pass the `Ui` and call `ui.success(msg)` / `ui.line(msg)` after
+    /// if you want to print something — this just clears the spinner line.
+    pub fn finish(self) {
+        self.pb.finish_and_clear();
+    }
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        self.pb.finish_and_clear();
+    }
+}
 
 /// `--color` mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -308,6 +342,30 @@ impl Ui {
             "n" | "no" => false,
             _ => default,
         }
+    }
+
+    /// Return an animated spinner that runs until the returned [`Spinner`] is
+    /// dropped or explicitly finished.
+    ///
+    /// **Gating**: returns a hidden (no-op) spinner when `--json` is set, when
+    /// stdout is not a TTY, or when color is disabled — so JSON/non-interactive
+    /// output is never polluted.
+    pub fn spinner(&self, msg: &str) -> Spinner {
+        let tty = std::io::stdout().is_terminal();
+        let pb = if !tty || self.json || !self.color {
+            ProgressBar::hidden()
+        } else {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                    .unwrap()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+            );
+            pb.set_message(msg.to_owned());
+            pb.enable_steady_tick(Duration::from_millis(90));
+            pb
+        };
+        Spinner { pb }
     }
 
     /// Render staged/free/limit capacity: numbers always (unless `--json`), with a

@@ -51,9 +51,11 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     //     commit pays COMMIT_DIG (10 DIG) embedded in the on-chain bundle PLUS the
     //     XCH fee. Block before the update if the wallet is short on EITHER asset;
     //     roots.log / staging are untouched on a block.
+    let sp = ui.spinner("Scanning your wallet…");
     let w = block_on(anchor.scan(&mnemonic))??;
     let have_xch = block_on(anchor.balance(&w))??;
     let have_dig = block_on(anchor.dig_balance(&w))??;
+    sp.finish();
 
     if !ui.json() {
         ui.line(format!(
@@ -95,8 +97,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let coin_id = if resume {
         parse_bytes32(&state.coin_id, "coin_id")?
     } else {
+        let sp = ui.spinner("Building & signing the update…");
         let upd = block_on(anchor.update_root(launcher_id, new_root_b32, &w, fee))
             .and_then(|r| r.map_err(|e| CliError::UpdateFailed(e.to_string())))?;
+        sp.finish();
         let coin_hex = hex::encode(upd.new_coin_id.as_ref());
         anchor_ux::report_submitted(ui, "update", &coin_hex, ui.json());
 
