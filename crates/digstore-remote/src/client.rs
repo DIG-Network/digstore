@@ -27,14 +27,44 @@ fn verify_delta_integrity(delta: &DeltaResponse) -> Result<(), ClientError> {
     Ok(())
 }
 
-/// Map a push finalize HTTP status (inline PUT or POST /module/complete) to a [`PushResult`].
-fn push_finalize_result(status: u16) -> Result<PushResult, ClientError> {
-    match status {
+/// Extract a human-readable message from a server error response body.
+/// Tries `{"message": "…"}` (and `{"error": "…"}` as fallback), then raw body.
+async fn extract_server_message(resp: reqwest::Response) -> String {
+    match resp.text().await {
+        Ok(body) if !body.is_empty() => {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+                    return msg.to_string();
+                }
+                if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+                    return err.to_string();
+                }
+            }
+            body
+        }
+        _ => String::new(),
+    }
+}
+
+/// Map a push finalize HTTP response to a [`PushResult`], surfacing the server
+/// body on failure.
+async fn push_finalize_result(resp: reqwest::Response) -> Result<PushResult, ClientError> {
+    match resp.status().as_u16() {
         200 | 201 => Ok(PushResult::Advanced),
         202 => Ok(PushResult::Pending),
-        401 | 403 => Err(ClientError::Unauthorized(status)),
         409 => Err(ClientError::NonFastForward),
-        other => Err(ClientError::Status(other)),
+        status @ (401 | 403) => {
+            let message = extract_server_message(resp).await;
+            Err(ClientError::Remote { status, message })
+        }
+        status => {
+            let message = extract_server_message(resp).await;
+            if message.is_empty() {
+                Err(ClientError::Status(status))
+            } else {
+                Err(ClientError::Remote { status, message })
+            }
+        }
     }
 }
 
@@ -374,9 +404,19 @@ impl DigClient {
             .map_err(|e| ClientError::Transport(e.to_string()))?;
         match iresp.status().as_u16() {
             200 => {}
-            401 | 403 => return Err(ClientError::Unauthorized(iresp.status().as_u16())),
             409 => return Err(ClientError::NonFastForward),
-            other => return Err(ClientError::Status(other)),
+            status @ (401 | 403) => {
+                let message = extract_server_message(iresp).await;
+                return Err(ClientError::Remote { status, message });
+            }
+            status => {
+                let message = extract_server_message(iresp).await;
+                return Err(if message.is_empty() {
+                    ClientError::Status(status)
+                } else {
+                    ClientError::Remote { status, message }
+                });
+            }
         }
         let init: serde_json::Value = iresp
             .json()
@@ -417,7 +457,7 @@ impl DigClient {
                     .send()
                     .await
                     .map_err(|e| ClientError::Transport(e.to_string()))?;
-                push_finalize_result(resp.status().as_u16())
+                push_finalize_result(resp).await
             }
             "presigned" => {
                 // (2b) PUT the bytes straight to the presigned S3 URL (no auth headers — the URL
@@ -455,7 +495,7 @@ impl DigClient {
                     .send()
                     .await
                     .map_err(|e| ClientError::Transport(e.to_string()))?;
-                push_finalize_result(resp.status().as_u16())
+                push_finalize_result(resp).await
             }
             other => Err(ClientError::Decode(format!(
                 "push-init: unknown mode {other:?}"
@@ -496,8 +536,18 @@ impl DigClient {
             .map_err(|e| ClientError::Transport(e.to_string()))?;
         match resp.status().as_u16() {
             201 => Ok(()),
-            401 | 403 => Err(ClientError::Unauthorized(resp.status().as_u16())),
-            other => Err(ClientError::Status(other)),
+            status @ (401 | 403) => {
+                let message = extract_server_message(resp).await;
+                Err(ClientError::Remote { status, message })
+            }
+            status => {
+                let message = extract_server_message(resp).await;
+                Err(if message.is_empty() {
+                    ClientError::Status(status)
+                } else {
+                    ClientError::Remote { status, message }
+                })
+            }
         }
     }
 
