@@ -259,6 +259,32 @@ pub async fn pair(base: &str) -> Result<PairResponse, CliError> {
         .map_err(|e| CliError::Network(format!("pair response: {e}")))
 }
 
+/// Claim a just-pushed store for the logged-in dighub account so it appears in the
+/// owner's dashboard. POST `/v1/stores/{id}/claim` with the session bearer token; the
+/// hub adopts the unowned pushed record and the anchor-watcher then verifies on-chain
+/// ownership (the store's owner hint) before it goes live. BEST-EFFORT: returns
+/// `Ok(false)` if not logged in or the call fails — the push already succeeded, so a
+/// claim failure must never fail the push.
+pub async fn claim_pushed_store(
+    store_id_hex: &str,
+    store_pubkey_hex: &str,
+) -> Result<bool, CliError> {
+    let Some(session) = valid_session() else {
+        return Ok(false);
+    };
+    let base = session.api_base.trim_end_matches('/');
+    let url = format!("{}/stores/{}/claim", base, store_id_hex);
+    let client = http_client()?;
+    let resp = client
+        .post(&url)
+        .bearer_auth(&session.access_token)
+        .json(&serde_json::json!({ "store_pubkey": store_pubkey_hex }))
+        .send()
+        .await
+        .map_err(|e| CliError::Network(format!("claim request: {e}")))?;
+    Ok(resp.status().is_success())
+}
+
 /// POST `/v1/auth/cli/poll` once and classify the outcome.
 pub async fn poll_once(base: &str, device_code: &str) -> Result<PollOutcome, CliError> {
     let client = http_client()?;
