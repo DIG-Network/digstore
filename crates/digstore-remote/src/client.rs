@@ -124,7 +124,12 @@ impl DigClient {
         // the module body, and optionally a bearer token) to an attacker-chosen
         // host, nor use redirects as an SSRF primitive. Redirects are a protocol
         // error here, surfaced as a non-success status.
+        // Send an explicit User-Agent: this reqwest build (default-features = false) sends NO
+        // default UA, and the rpc.dig.net WAF blocks no-User-Agent requests with a 403 before
+        // they reach the Lambda — which silently breaks every §21 remote call (fetch/clone/pull/
+        // push). A real UA makes the edge admit the request.
         let http = reqwest::Client::builder()
+            .user_agent(concat!("digstore/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());

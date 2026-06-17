@@ -36,7 +36,9 @@ pub fn unlock_wallet_keys(ui: &Ui) -> Result<(WalletKeys, GlobalConfig), CliErro
 /// Like [`unlock_wallet_keys`] but also returns the raw mnemonic phrase so the
 /// caller can pass it to `anchor.scan(mnemonic)` for a full HD wallet scan.
 /// The phrase is zeroized when the `Zeroizing<String>` is dropped.
-pub fn unlock_wallet_phrase(ui: &Ui) -> Result<(WalletKeys, Zeroizing<String>, GlobalConfig), CliError> {
+pub fn unlock_wallet_phrase(
+    ui: &Ui,
+) -> Result<(WalletKeys, Zeroizing<String>, GlobalConfig), CliError> {
     let (phrase, cfg) = unlock_phrase(ui)?;
     let keys = derive_wallet_keys(&phrase)?;
     Ok((keys, phrase, cfg))
