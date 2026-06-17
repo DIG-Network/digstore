@@ -14,7 +14,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: RemoteArgs) -> Result<(),
             };
             let url = match url {
                 Some(u) => u,
-                None => ui.require_input("Remote URL (dig://<store> or https://…)", "<url>")?,
+                None => {
+                    ui.require_input("Remote URL (e.g. https://<username>@rpc.dig.net)", "<url>")?
+                }
             };
             config::add_remote(ctx, &name, &url)?;
             ui.success(format!("added remote {name} -> {url}"));

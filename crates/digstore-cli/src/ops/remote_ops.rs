@@ -278,6 +278,42 @@ fn parse_store_url(url: &str) -> Result<(String, String), CliError> {
     )))
 }
 
+/// Parse a remote ORIGIN URL into its base (`<scheme>://host[:port]`), discarding any
+/// userinfo (`<username>@`) and path. Push/pull/revoke operate on the store in the
+/// current `.dig` dir, so the store id is taken from the LOCAL store config — the origin
+/// no longer carries it. The canonical origin is therefore `https://<username>@rpc.dig.net`
+/// (the `<username>@` is a cosmetic owner hint; the client strips it and authenticates with
+/// keys, never the username). Backward compatible with the old
+/// `https://host/stores/<id>` form — any path is ignored. Enforces the same transport
+/// policy as `parse_store_url` (https, or http only to loopback).
+fn parse_remote_base(url: &str) -> Result<String, CliError> {
+    let (scheme, rest) = url.split_once("://").ok_or_else(|| {
+        CliError::InvalidArgument(format!(
+            "expected a remote URL like https://<username>@rpc.dig.net, got {url}"
+        ))
+    })?;
+    // authority = up to the first '/'; strip any `userinfo@` prefix.
+    let authority = rest.split('/').next().unwrap_or("");
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
+    if host_port.is_empty() {
+        return Err(CliError::InvalidArgument(format!(
+            "remote URL missing host: {url}"
+        )));
+    }
+    let base = format!("{scheme}://{host_port}");
+    let scheme_ok = base.starts_with("https://") || is_loopback_http(&base);
+    if !scheme_ok {
+        return Err(CliError::InvalidArgument(format!(
+            "insecure or unsupported remote URL scheme in {base}: use https:// \
+             (http:// is allowed only for localhost)"
+        )));
+    }
+    Ok(base)
+}
+
 pub async fn clone_from(
     ctx: &CliContext,
     ui: &Ui,
@@ -437,7 +473,7 @@ pub async fn push_to(ctx: &CliContext, ui: &Ui, store_url: &str) -> Result<Bytes
     let module_path = store_ops::module_path_for(ctx, &cfg.store_id, Some(root))?;
     let module = fs::read(&module_path).map_err(|e| CliError::Other(e.into()))?;
 
-    let (base, _id) = parse_store_url(store_url)?;
+    let base = parse_remote_base(store_url)?;
     let client = authed_client(base)?;
 
     // Parent = the remote's current served root, or genesis on FIRST push. A store the remote
@@ -519,7 +555,7 @@ pub async fn revoke_to(
     reason: digstore_core::RevocationReason,
 ) -> Result<RevokeScope, CliError> {
     let cfg = ctx.load_config()?;
-    let (base, _id) = parse_store_url(store_url)?;
+    let base = parse_remote_base(store_url)?;
     let client = authed_client(base)?;
 
     let not_after = std::time::SystemTime::now()
@@ -549,7 +585,7 @@ pub async fn revoke_to(
 
 pub async fn pull_from(ctx: &CliContext, ui: &Ui, store_url: &str) -> Result<Bytes32, CliError> {
     let cfg = ctx.load_config()?;
-    let (base, _id) = parse_store_url(store_url)?;
+    let base = parse_remote_base(store_url)?;
     let client = authed_client(base)?;
 
     let local_root = store_ops::current_root(ctx)?;
@@ -683,5 +719,40 @@ mod tests {
         let (base, got) = parse_store_url(&format!("http://127.0.0.1:9000/stores/{id}")).unwrap();
         assert_eq!(base, "http://127.0.0.1:9000");
         assert_eq!(got, id);
+    }
+
+    #[test]
+    fn parse_remote_base_strips_userinfo_and_path() {
+        // Canonical new origin: https://<username>@rpc.dig.net (no store id).
+        assert_eq!(
+            parse_remote_base("https://alice@rpc.dig.net").unwrap(),
+            "https://rpc.dig.net"
+        );
+        // No username.
+        assert_eq!(
+            parse_remote_base("https://rpc.dig.net").unwrap(),
+            "https://rpc.dig.net"
+        );
+        // Backward compatible: old pathed store URL — path (incl. store id) is ignored.
+        let id = "ab".repeat(32);
+        assert_eq!(
+            parse_remote_base(&format!("https://bob@rpc.dig.net/stores/{id}")).unwrap(),
+            "https://rpc.dig.net"
+        );
+        // Loopback http allowed (dev), with port preserved.
+        assert_eq!(
+            parse_remote_base("http://127.0.0.1:9000").unwrap(),
+            "http://127.0.0.1:9000"
+        );
+    }
+
+    #[test]
+    fn parse_remote_base_rejects_insecure_and_malformed() {
+        // Plaintext http to a non-loopback host is rejected.
+        assert!(parse_remote_base("http://rpc.dig.net").is_err());
+        // Missing scheme.
+        assert!(parse_remote_base("rpc.dig.net").is_err());
+        // Missing host.
+        assert!(parse_remote_base("https://").is_err());
     }
 }
