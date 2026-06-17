@@ -148,6 +148,8 @@ pub fn valid_session() -> Option<Session> {
 pub struct PairResponse {
     pub user_code: String,
     pub verification_uri: String,
+    /// Opaque code the CLI polls with. WIRE FIELD is `device_token` (API §8).
+    #[serde(rename = "device_token")]
     pub device_code: String,
     pub interval: u64,
     pub expires_in: u64,
@@ -263,7 +265,7 @@ pub async fn poll_once(base: &str, device_code: &str) -> Result<PollOutcome, Cli
     let url = format!("{}/auth/cli/poll", base.trim_end_matches('/'));
     let resp = client
         .post(&url)
-        .json(&serde_json::json!({ "device_code": device_code }))
+        .json(&serde_json::json!({ "device_token": device_code }))
         .send()
         .await
         .map_err(|e| CliError::Network(format!("poll request: {e}")))?;
