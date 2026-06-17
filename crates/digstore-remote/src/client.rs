@@ -384,8 +384,16 @@ impl DigClient {
         let program_hash = digstore_core::sha256(module).to_hex();
 
         // (1) push-init: negotiate inline vs presigned.
+        // First push: the remote has no head, so parent_root MUST be empty (the server matches
+        // an empty parent against its `current == None`). The genesis/all-zero root is NOT a real
+        // parent — send it as empty, or the server rejects with a spurious non-fast-forward.
+        let parent_field = if parent == &Bytes32::default() {
+            String::new()
+        } else {
+            parent.to_hex()
+        };
         let init_body = serde_json::json!({
-            "parent_root": parent.to_hex(),
+            "parent_root": parent_field,
             "new_root": new_root_hex,
             "program_hash": program_hash,
             "size_bytes": module.len() as u64,
