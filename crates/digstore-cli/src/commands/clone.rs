@@ -52,7 +52,7 @@ pub fn run(ws_ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(
         .enable_all()
         .build()
         .map_err(|e| CliError::Other(e.into()))?;
-    let summary = rt.block_on(remote_ops::clone_from(ctx, &store_url))?;
+    let summary = rt.block_on(remote_ops::clone_from(ctx, ui, &store_url))?;
 
     // Register the cloned store and make it active if it is the first one.
     let first = workspace.stores.is_empty();

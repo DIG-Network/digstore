@@ -344,6 +344,30 @@ impl Ui {
         }
     }
 
+    /// Return a bytes-progress bar for a transfer of `total_bytes`.
+    ///
+    /// Template: `msg [####----] 42.1/135.0 MB  1.2 MB/s  eta 1m23s`
+    ///
+    /// **Gating**: identical to [`Ui::spinner`] — hidden when `--json` is set,
+    /// stdout is not a TTY, or color is disabled. The returned [`ProgressBar`]
+    /// is always safe to call `set_position`/`finish_and_clear` on regardless.
+    pub fn progress_bar(&self, total_bytes: u64, msg: &str) -> ProgressBar {
+        let tty = std::io::stdout().is_terminal();
+        if !tty || self.json || !self.color {
+            return ProgressBar::hidden();
+        }
+        let pb = ProgressBar::new(total_bytes);
+        pb.set_style(
+            ProgressStyle::with_template(
+                "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes}  {bytes_per_sec}  eta {eta}",
+            )
+            .unwrap()
+            .progress_chars("##-"),
+        );
+        pb.set_message(msg.to_owned());
+        pb
+    }
+
     /// Return an animated spinner that runs until the returned [`Spinner`] is
     /// dropped or explicitly finished.
     ///
