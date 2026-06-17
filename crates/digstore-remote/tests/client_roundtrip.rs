@@ -39,13 +39,17 @@ async fn clone_downloads_and_verifies_module() {
     let base = spawn_server(be).await;
     let client = DigClient::new(base);
     let (root, bytes) = client
-        .clone_store(&id, |b, r| {
-            if b.len() == 64 && *r == b32(0x10) {
-                Ok(())
-            } else {
-                Err("size mismatch".into())
-            }
-        })
+        .clone_store(
+            &id,
+            |b, r| {
+                if b.len() == 64 && *r == b32(0x10) {
+                    Ok(())
+                } else {
+                    Err("size mismatch".into())
+                }
+            },
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(root, b32(0x10));
@@ -57,7 +61,10 @@ async fn pull_up_to_date_when_local_equals_head() {
     let (be, id, _hex) = one_store();
     let base = spawn_server(be).await;
     let client = DigClient::new(base);
-    let res = client.pull(&id, Some(b32(0x10)), false).await.unwrap();
+    let res = client
+        .pull(&id, Some(b32(0x10)), false, None)
+        .await
+        .unwrap();
     assert!(matches!(res, PullResult::UpToDate));
 }
 
@@ -75,7 +82,10 @@ async fn pull_downloads_module_when_behind() {
     );
     let base = spawn_server(be).await;
     let client = DigClient::new(base);
-    let res = client.pull(&id, Some(b32(0x10)), false).await.unwrap();
+    let res = client
+        .pull(&id, Some(b32(0x10)), false, None)
+        .await
+        .unwrap();
     match res {
         PullResult::Module { root, bytes } => {
             assert_eq!(root, b32(0x12));
@@ -106,7 +116,7 @@ async fn pull_delta_path_returns_new_chunks() {
     );
     let base = spawn_server(be).await;
     let client = DigClient::new(base);
-    let res = client.pull(&id, Some(b32(0x10)), true).await.unwrap();
+    let res = client.pull(&id, Some(b32(0x10)), true, None).await.unwrap();
     match res {
         PullResult::Delta { root, delta } => {
             assert_eq!(root, b32(0x13));
@@ -135,6 +145,7 @@ async fn push_signs_and_advances_head() {
             None,
             &pk.to_hex(),
             |msg| digstore_crypto::bls_sign(&sk, msg),
+            None,
         )
         .await
         .unwrap();
@@ -160,6 +171,7 @@ async fn push_pending_returns_pending_and_pull_sees_confirmed_not_pending() {
             None,
             &pk.to_hex(),
             |msg| digstore_crypto::bls_sign(&sk, msg),
+            None,
         )
         .await
         .unwrap();
@@ -191,6 +203,7 @@ async fn push_non_fast_forward_is_client_error() {
             None,
             &pk.to_hex(),
             |msg| digstore_crypto::bls_sign(&sk, msg),
+            None,
         )
         .await;
     assert!(matches!(

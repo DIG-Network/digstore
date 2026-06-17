@@ -18,6 +18,7 @@ use digstore_remote::{
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::{identity, store_ops};
+use crate::ui::Ui;
 
 /// Build a `DigClient` for `base` carrying the CLI's per-request signing identity
 /// (paper §21.9), so EVERY remote request (clone/pull/push/fetch/tombstone) is
@@ -277,7 +278,11 @@ fn parse_store_url(url: &str) -> Result<(String, String), CliError> {
     )))
 }
 
-pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummary, CliError> {
+pub async fn clone_from(
+    ctx: &CliContext,
+    ui: &Ui,
+    store_url: &str,
+) -> Result<CloneSummary, CliError> {
     if ctx.config_path().exists() {
         return Err(CliError::InvalidArgument(
             "dig dir already has a store; clone into an empty dir".into(),
@@ -300,21 +305,35 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     // CurrentRoot and the served root. A server returning an arbitrary/foreign/
     // corrupted module therefore fails closed instead of being installed and
     // executed. Publisher authorization of the head is checked separately below.
+    let pb = ui.progress_bar(0, "Downloading");
     let (etag_root, module) = client
-        .clone_store(&store_id, |bytes, served_root| {
-            let id = digstore_compiler::verify_module_root(bytes, &store_id)
-                .map_err(|e| format!("module identity verification failed: {e:?}"))?;
-            if id.root != *served_root {
-                return Err(format!(
-                    "module content root {} != served root {}",
-                    id.root.to_hex(),
-                    served_root.to_hex()
-                ));
-            }
-            Ok(())
-        })
+        .clone_store(
+            &store_id,
+            |bytes, served_root| {
+                let id = digstore_compiler::verify_module_root(bytes, &store_id)
+                    .map_err(|e| format!("module identity verification failed: {e:?}"))?;
+                if id.root != *served_root {
+                    return Err(format!(
+                        "module content root {} != served root {}",
+                        id.root.to_hex(),
+                        served_root.to_hex()
+                    ));
+                }
+                Ok(())
+            },
+            Some(&|done: u64, total: u64| {
+                if pb.length().unwrap_or(0) == 0 && total > 0 {
+                    pb.set_length(total);
+                }
+                pb.set_position(done);
+            }),
+        )
         .await
-        .map_err(map_remote_err)?;
+        .map_err(|e| {
+            pb.finish_and_clear();
+            map_remote_err(e)
+        })?;
+    pb.finish_and_clear();
     if etag_root != remote_root {
         return Err(CliError::VerificationFailed(
             "descriptor root and module ETag disagree".into(),
@@ -411,7 +430,7 @@ pub async fn clone_from(ctx: &CliContext, store_url: &str) -> Result<CloneSummar
     })
 }
 
-pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliError> {
+pub async fn push_to(ctx: &CliContext, ui: &Ui, store_url: &str) -> Result<Bytes32, CliError> {
     let cfg = ctx.load_config()?;
     let root = store_ops::current_root(ctx)?
         .ok_or_else(|| CliError::NotFound("no committed root to push".into()))?;
@@ -438,6 +457,8 @@ pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliEr
     // host this store auto-creates its record on first push, keyed by this key.
     let publisher_pubkey = hex::encode(sk.public_key().to_bytes().0);
     let store_id = cfg.store_id;
+    let total = module.len() as u64;
+    let pb = ui.progress_bar(total, "Uploading");
     let result = client
         .push(
             &store_id,
@@ -452,9 +473,16 @@ pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliEr
                 debug_assert_eq!(*msg, push_auth_message(&root, &store_id));
                 digstore_crypto::bls::bls_sign(&sk, msg)
             },
+            Some(&|done: u64, _total: u64| {
+                pb.set_position(done);
+            }),
         )
         .await
-        .map_err(map_remote_err)?;
+        .map_err(|e| {
+            pb.finish_and_clear();
+            map_remote_err(e)
+        })?;
+    pb.finish_and_clear();
     match result {
         PushResult::Advanced | PushResult::Pending => Ok(root),
     }
@@ -519,7 +547,7 @@ pub async fn revoke_to(
     })
 }
 
-pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliError> {
+pub async fn pull_from(ctx: &CliContext, ui: &Ui, store_url: &str) -> Result<Bytes32, CliError> {
     let cfg = ctx.load_config()?;
     let (base, _id) = parse_store_url(store_url)?;
     let client = authed_client(base)?;
@@ -555,10 +583,25 @@ pub async fn pull_from(ctx: &CliContext, store_url: &str) -> Result<Bytes32, Cli
         }
     }
 
+    let pb = ui.progress_bar(0, "Downloading");
     let result = client
-        .pull(&cfg.store_id, local_root, false)
+        .pull(
+            &cfg.store_id,
+            local_root,
+            false,
+            Some(&|done: u64, total: u64| {
+                if pb.length().unwrap_or(0) == 0 && total > 0 {
+                    pb.set_length(total);
+                }
+                pb.set_position(done);
+            }),
+        )
         .await
-        .map_err(map_remote_err)?;
+        .map_err(|e| {
+            pb.finish_and_clear();
+            map_remote_err(e)
+        })?;
+    pb.finish_and_clear();
     match result {
         PullResult::UpToDate => Ok(local_root.unwrap_or(Bytes32([0u8; 32]))),
         PullResult::Module { root, bytes } => {

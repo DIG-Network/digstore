@@ -10,7 +10,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PullArgs) -> Result<(), C
         .enable_all()
         .build()
         .map_err(|e| CliError::Other(e.into()))?;
-    let root = rt.block_on(remote_ops::pull_from(ctx, &base))?;
+    let root = rt.block_on(remote_ops::pull_from(ctx, ui, &base))?;
     if ui.json() {
         ui.emit_json(&serde_json::json!({ "root": root.to_hex() }));
     } else {
