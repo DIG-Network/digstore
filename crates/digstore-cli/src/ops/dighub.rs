@@ -118,11 +118,6 @@ pub fn clear_session() -> Result<(), CliError> {
     clear_session_in(&identity_dir()?)
 }
 
-/// The current logged-in handle, if a session exists and has a handle set.
-pub fn current_handle() -> Option<String> {
-    load_session().and_then(|s| s.handle)
-}
-
 impl Session {
     /// Whether the session's token has expired (best-effort; only if `expires_in`
     /// is known). A session with no `expires_in` is treated as non-expiring here.
@@ -408,36 +403,6 @@ pub fn ensure_logged_in(ui: &crate::ui::Ui) -> Result<Session, CliError> {
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Origin URL handling
-// ---------------------------------------------------------------------------
-
-/// The default origin URL for `digstore remote add origin` with no URL, given a
-/// session handle: `https://<handle>@rpc.dig.net`.
-pub fn default_origin_url(handle: &str) -> String {
-    format!("https://{handle}@rpc.dig.net")
-}
-
-/// Inject a session handle as `userinfo@` into a remote URL when it has none.
-/// Cosmetic — returns the URL unchanged if it already has userinfo, has no
-/// recognizable `scheme://host`, or anything is off. `https://rpc.dig.net` ->
-/// `https://<handle>@rpc.dig.net`.
-pub fn inject_handle(url: &str, handle: &str) -> String {
-    if let Some((scheme, rest)) = url.split_once("://") {
-        // Already has userinfo (`user@host…`) before the first `/`?
-        let authority_end = rest.find('/').unwrap_or(rest.len());
-        let authority = &rest[..authority_end];
-        if authority.contains('@') {
-            return url.to_string();
-        }
-        if authority.is_empty() {
-            return url.to_string();
-        }
-        return format!("{scheme}://{handle}@{rest}");
-    }
-    url.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,35 +527,5 @@ mod tests {
                 "expected terminal failure for {code}"
             );
         }
-    }
-
-    #[test]
-    fn default_origin_url_uses_handle() {
-        assert_eq!(default_origin_url("alice"), "https://alice@rpc.dig.net");
-    }
-
-    #[test]
-    fn inject_handle_when_no_userinfo() {
-        assert_eq!(
-            inject_handle("https://rpc.dig.net", "alice"),
-            "https://alice@rpc.dig.net"
-        );
-        assert_eq!(
-            inject_handle("https://rpc.dig.net/path", "bob"),
-            "https://bob@rpc.dig.net/path"
-        );
-    }
-
-    #[test]
-    fn inject_handle_leaves_existing_userinfo() {
-        assert_eq!(
-            inject_handle("https://carol@rpc.dig.net", "alice"),
-            "https://carol@rpc.dig.net"
-        );
-    }
-
-    #[test]
-    fn inject_handle_passthrough_when_unparseable() {
-        assert_eq!(inject_handle("rpc.dig.net", "alice"), "rpc.dig.net");
     }
 }
