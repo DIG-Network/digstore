@@ -250,7 +250,9 @@ pub struct CatArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore remote add origin https://host/stores/<storeID>")]
+#[command(
+    after_help = "EXAMPLES:\n  digstore remote add origin https://<username>@rpc.dig.net\n\nThe store id is taken from the local store on push/pull, so the origin omits it."
+)]
 pub struct RemoteArgs {
     #[command(subcommand)]
     pub action: RemoteAction,
