@@ -20,7 +20,12 @@ fn parse_reason(s: &str) -> Result<RevocationReason, CliError> {
 }
 
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: RevokeArgs) -> Result<(), CliError> {
-    dighub::ensure_logged_in(ui)?;
+    // Product gate: require a dighub account only for a DIGHUB remote (*.dig.net). Revoking on a
+    // self-hosted / loopback node needs no dighub account.
+    let gate_base = config::resolve_remote_url(ctx, &args.remote).unwrap_or_default();
+    if dighub::is_dighub_remote(&gate_base) {
+        dighub::ensure_logged_in(ui)?;
+    }
     let reason = parse_reason(&args.reason)?;
 
     // Exactly one of --root / --all must be given (clap already rejects both).

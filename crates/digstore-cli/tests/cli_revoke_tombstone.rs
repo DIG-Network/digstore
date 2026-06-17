@@ -152,6 +152,7 @@ fn revoke_command_publishes_then_clone_fails_closed() {
             &root,
             "--reason",
             "compromise",
+            "--yes",
             "origin",
         ])
         .assert()
@@ -178,7 +179,7 @@ fn revoke_all_command_refuses_the_whole_store() {
         .assert()
         .success();
     dig(&src)
-        .args(["revoke", "--all", "--reason", "takedown", "origin"])
+        .args(["revoke", "--all", "--reason", "takedown", "--yes", "origin"])
         .assert()
         .success();
 

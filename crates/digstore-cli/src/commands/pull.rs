@@ -69,7 +69,16 @@ fn out_file_name(resource_key: &str) -> String {
 }
 
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PullArgs) -> Result<(), CliError> {
-    dighub::ensure_logged_in(ui)?;
+    // Product gate: require a dighub account only for a DIGHUB remote (*.dig.net). A URN pull or a
+    // remote name resolving to a self-hosted / loopback node needs no dighub account.
+    let gate_base = if args.remote.starts_with("urn:") {
+        config::resolve_remote_url(ctx, "origin").unwrap_or_else(|_| "https://rpc.dig.net".into())
+    } else {
+        config::resolve_remote_url(ctx, &args.remote).unwrap_or_default()
+    };
+    if dighub::is_dighub_remote(&gate_base) {
+        dighub::ensure_logged_in(ui)?;
+    }
     match route(&args.remote)? {
         PullRoute::UrnResource(urn) => pull_urn_resource(ctx, ui, &args, urn),
         PullRoute::UrnWholeStore(urn) => {
