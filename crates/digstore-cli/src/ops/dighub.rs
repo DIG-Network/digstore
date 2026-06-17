@@ -36,6 +36,25 @@ pub fn api_base() -> String {
     }
 }
 
+/// Whether a resolved remote URL points at a dighub-managed host (the public network:
+/// `*.dig.net`). The login gate applies ONLY to these — pushing/pulling to a self-hosted
+/// or loopback node needs no dighub account, so those proceed without a session (and CI /
+/// scripts against a local `digstore serve` are never blocked).
+pub fn is_dighub_remote(url: &str) -> bool {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split('/').next().unwrap_or("");
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
+    let host = host_port
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(host_port)
+        .to_ascii_lowercase();
+    host == "dig.net" || host.ends_with(".dig.net")
+}
+
 // ---------------------------------------------------------------------------
 // Session storage
 // ---------------------------------------------------------------------------
@@ -458,6 +477,21 @@ pub fn ensure_logged_in(ui: &crate::ui::Ui) -> Result<Session, CliError> {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn is_dighub_remote_matches_only_dig_net_hosts() {
+        // dighub-managed (gated): the login gate applies.
+        assert!(is_dighub_remote("https://rpc.dig.net"));
+        assert!(is_dighub_remote("https://rpc.dig.net/stores/abc"));
+        assert!(is_dighub_remote("https://alice@rpc.dig.net"));
+        assert!(is_dighub_remote("https://hub.dig.net/v1"));
+        assert!(is_dighub_remote("https://dig.net"));
+        // NOT dighub (no gate): self-hosted / loopback / look-alike hosts.
+        assert!(!is_dighub_remote("http://127.0.0.1:9000/stores/abc"));
+        assert!(!is_dighub_remote("https://localhost:8080"));
+        assert!(!is_dighub_remote("https://my-node.example.com/stores/abc"));
+        assert!(!is_dighub_remote("https://notdig.net.evil.com")); // suffix must be a real label
+    }
 
     // `DIG_IDENTITY_DIR` / `DIG_API_BASE` are process-global; serialize tests that
     // mutate them.

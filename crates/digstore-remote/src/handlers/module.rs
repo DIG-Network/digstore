@@ -145,14 +145,19 @@ pub async fn post_upload_init(
     if !verify_push_signature(&head.public_key, &new_root, &store_id, &sig) {
         return RemoteError::Unauthorized("bad BLS signature".into()).into_response();
     }
-    // Fast-forward: the declared parent must equal the served head.
+    // Fast-forward: the declared parent must equal the served head. An EMPTY parent_root means
+    // "first push — fast-forward from genesis (no head yet)" (the client sends it empty rather than
+    // the all-zero root); accept it iff the served head is genesis. This mirrors the rpc.dig.net
+    // retrieval's empty-parent convention so a first push to a self-hosted `digstore serve` node
+    // (and the integration tests) is not rejected with a spurious non-fast-forward.
     let parent = init
         .get("parent_root")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let parent_ok = match parse_b32(parent) {
-        Ok(p) => p == head.served_root,
-        Err(_) => false,
+    let parent_ok = if parent.is_empty() {
+        head.served_root == Bytes32::default()
+    } else {
+        matches!(parse_b32(parent), Ok(p) if p == head.served_root)
     };
     if !parent_ok {
         return RemoteError::NonFastForward.into_response();
