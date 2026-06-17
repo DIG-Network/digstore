@@ -25,6 +25,7 @@ chia-sdk-coinset = "0.30"
 # can replicate chip35's mint with the digstore-scoped owner hint memo (datalayer_driver's
 # mint_store hardcodes a single launcher hint and exposes no hint parameter).
 chia-wallet-sdk = { version = "0.30", features = ["chip-0035"] }
+hex = "0.4"
 hex-literal = "0.4"
 indexmap = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -32,4 +33,3 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 tempfile = "3"
-hex = "0.4"
