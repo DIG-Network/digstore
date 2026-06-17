@@ -38,6 +38,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
 hex = "0.4"
+base64 = "0.22"
 getrandom = "0.2"
 anstream = "0.6"
 anstyle = "1"

@@ -76,6 +76,18 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
+/// Best-effort extract of a JWT's `exp` claim (unix seconds) from its payload segment,
+/// so the session can record the token's REAL expiry. Returns `None` for a malformed token.
+fn jwt_exp(token: &str) -> Option<u64> {
+    use base64::Engine;
+    let payload_b64 = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    v.get("exp")?.as_u64()
+}
+
 // The `*_in(dir)` variants take the session directory explicitly so the storage
 // logic is unit-testable without the process-global `DIG_IDENTITY_DIR` env var
 // (which other test modules also mutate concurrently). The public functions just
@@ -119,11 +131,17 @@ pub fn clear_session() -> Result<(), CliError> {
 }
 
 impl Session {
-    /// Whether the session's token has expired (best-effort; only if `expires_in`
-    /// is known). A session with no `expires_in` is treated as non-expiring here.
+    /// Whether the session's token has expired. Prefers the recorded `expires_in`; for
+    /// sessions saved before that was recorded (`expires_in == None`), falls back to the
+    /// token's own `exp` claim so a dead token is detected and the gate re-prompts a login
+    /// instead of silently failing authed calls. Only a token with NO parseable `exp` is
+    /// treated as non-expiring.
     pub fn is_expired(&self) -> bool {
-        match self.expires_in {
-            Some(ttl) => now_unix() >= self.obtained_at.saturating_add(ttl),
+        if let Some(ttl) = self.expires_in {
+            return now_unix() >= self.obtained_at.saturating_add(ttl);
+        }
+        match jwt_exp(&self.access_token) {
+            Some(exp) => now_unix() >= exp,
             None => false,
         }
     }
@@ -376,13 +394,18 @@ async fn poll_loop(base: &str, pairing: &PairResponse) -> Result<Session, CliErr
                 access_token,
                 handle,
             } => {
+                let now = now_unix();
+                // Record the token's REAL expiry (from its `exp` claim) so `is_valid()` is honest
+                // and the gate re-prompts a login once the token actually expires — instead of
+                // treating a dead token as valid and failing authed calls silently.
+                let expires_in = jwt_exp(&access_token).map(|exp| exp.saturating_sub(now));
                 return Ok(Session {
                     access_token,
                     handle,
                     account_ph: None,
                     api_base: base.trim_end_matches('/').to_string(),
-                    obtained_at: now_unix(),
-                    expires_in: None,
+                    obtained_at: now,
+                    expires_in,
                 });
             }
             PollOutcome::Failed(msg) => return Err(CliError::Unauthorized(msg)),
