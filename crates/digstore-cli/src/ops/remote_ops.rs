@@ -229,6 +229,37 @@ async fn verify_chain_root(
     Ok(())
 }
 
+/// The store singleton's CURRENT on-chain root (the tip of the launcher's lineage),
+/// resolved from `store_id` (the launcher id). Used when a content URN pins NO
+/// generation: the default root is the chain tip — the authority — NOT a
+/// server-reported `current_root`. Honors DIGSTORE_ANCHOR_MOCK for offline tests.
+pub async fn onchain_tip_root(store_id: &Bytes32) -> Result<Bytes32, CliError> {
+    if std::env::var_os("DIGSTORE_ANCHOR_MOCK").is_some() {
+        if std::env::var_os("DIGSTORE_ANCHOR_MOCK_CHAIN_UNREACHABLE").is_some() {
+            return Err(CliError::VerificationFailed(
+                "could not read the store's on-chain root (chain unreachable)".into(),
+            ));
+        }
+        return match std::env::var("DIGSTORE_ANCHOR_MOCK_CHAIN_ROOT") {
+            Ok(hex) => Bytes32::from_hex(&hex)
+                .map_err(|_| CliError::Other(anyhow::anyhow!("bad DIGSTORE_ANCHOR_MOCK_CHAIN_ROOT hex"))),
+            Err(_) => Err(CliError::VerificationFailed(
+                "on-chain root unavailable under DIGSTORE_ANCHOR_MOCK (set DIGSTORE_ANCHOR_MOCK_CHAIN_ROOT)".into(),
+            )),
+        };
+    }
+    let chain = digstore_chain::coinset::Coinset::mainnet();
+    let launcher = chia_protocol::Bytes32::new(store_id.0);
+    let root = digstore_chain::singleton::current_root(&chain, launcher)
+        .await
+        .map_err(|e| {
+            CliError::VerificationFailed(format!("could not read the store's on-chain root: {e}"))
+        })?;
+    let mut a = [0u8; 32];
+    a.copy_from_slice(root.as_ref());
+    Ok(Bytes32(a))
+}
+
 /// True if `base` is an `http://` URL pointing at the loopback interface.
 /// Plaintext transport is permitted ONLY to loopback (local dev/tests); every
 /// other host must use TLS so store contents and push credentials are not sent
