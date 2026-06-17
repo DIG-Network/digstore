@@ -291,10 +291,18 @@ pub struct PushArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore pull origin")]
+#[command(
+    after_help = "Pulls EITHER a whole store from a remote, OR a single resource by URN over the\nnetwork (fetch ciphertext + merkle proof by retrieval key, verify against the\ntrusted root, auto-decrypt with the URN-derived key, write the plaintext).\n\nEXAMPLES:\n  digstore pull origin\n  digstore pull urn:dig:chia:<storeID>/docs/readme.md\n  digstore pull urn:dig:chia:<storeID>/logo.png --out logo.png\n  digstore pull urn:dig:chia:<storeID>:<root>/index.html --out index.html"
+)]
 pub struct PullArgs {
+    /// A configured remote name (default `origin`) for a whole-store sync, OR a `urn:dig:…/<path>`
+    /// resource URN for a network content-read by retrieval key.
     #[arg(default_value = "origin")]
     pub remote: String,
+    /// For a resource URN: write the decrypted plaintext to this path (default: a file named after
+    /// the resource key's last path segment in the current directory).
+    #[arg(long, short)]
+    pub out: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

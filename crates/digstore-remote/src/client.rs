@@ -5,7 +5,9 @@ use crate::wire::{
     DeltaNegotiateRequest, DeltaResponse, RootHistory, StoreDescriptor, TombstoneRequest,
 };
 use base64::Engine;
-use digstore_core::{Bytes32, Bytes96, Encode, Tombstone};
+use digstore_core::{
+    Bytes32, Bytes96, ContentResponse, Decode, Decoder, Encode, MerkleProof, Tombstone,
+};
 
 /// Verify that every chunk in a server-supplied delta actually hashes to the
 /// content address it is advertised under. Chunks are content-addressed by
@@ -626,6 +628,172 @@ impl DigClient {
         verify_delta_integrity(&delta)?;
         Ok(delta)
     }
+
+    /// NETWORK content-read by retrieval key: fetch a resource's CIPHERTEXT + its merkle inclusion
+    /// proof from the remote and reassemble them into a [`ContentResponse`] for client-side verify +
+    /// decrypt. This is the read-by-URN counterpart of clone/pull (which sync a whole `.dig`).
+    ///
+    /// TRANSPORT — `dig.getContent` JSON-RPC (POST), NOT the §21 `GET /content/{key}`:
+    ///   * `dig.getContent` is the NETWORK-STANDARD content interface every node speaks (the same
+    ///     one `hub.dig.net/apps/web/lib/dig-client.js` consumes); it returns the ciphertext, the
+    ///     inclusion proof, the per-chunk lengths, AND the served roothash in one parseable JSON
+    ///     envelope, and pages large resources via `next_offset`/`complete`.
+    ///   * the legacy §21 `GET /stores/{id}/content/{key}` splits the proof into an
+    ///     `X-Dig-Inclusion-Proof` header from the raw-octet body and is a diagnostic-only fallback
+    ///     (the rpc.dig.net distribution disables caching for it); no client uses it.
+    /// So we mirror `dig-client.js` exactly. The RPC is the browser path and is UNauthenticated; the
+    /// §21.9 identity headers are not required here (and are not sent — the RPC POST is not a §21
+    /// store route). `base_url` is the RPC host root (e.g. `https://rpc.dig.net`).
+    ///
+    /// WIRE DECODE (mirrors `dig-client.js`):
+    ///   * `ciphertext`      — base64 of the raw ciphertext; reassembled across all pages.
+    ///   * `inclusion_proof` — base64 of the codec-encoded [`MerkleProof`] (== `MerkleProof::to_bytes`,
+    ///     the SAME framing the host's `encode_inclusion_proof` emits) → decode with `MerkleProof::decode`.
+    ///   * `chunk_lens`      — per-chunk CIPHERTEXT lengths of the FULL resource, sent ONCE on the
+    ///     first window (offset 0); captured there and carried through.
+    ///   * `roothash`        — the served generation root, echoed as `root` in the result.
+    ///
+    /// `root` (when `Some`) pins the read to one generation (hex in the request); `None` lets the
+    /// server resolve the store's latest confirmed root. The returned `ContentResponse` carries the
+    /// SEALED ciphertext + the (untrusted) proof + the served roothash; the CALLER verifies the proof
+    /// against its own chain-anchored trusted root and decrypts — this method performs NO crypto.
+    pub async fn get_content(
+        &self,
+        store_id: &Bytes32,
+        retrieval_key: &Bytes32,
+        root: Option<&Bytes32>,
+    ) -> Result<ContentResponse, ClientError> {
+        let store_hex = store_id.to_hex();
+        let rk_hex = retrieval_key.to_hex();
+        let root_hex = root.map(|r| r.to_hex());
+
+        // Reassemble the (paged) ciphertext, capturing the proof + chunk_lens + roothash. The
+        // server caps each window at ~3 MiB and streams via next_offset; loop until `complete`.
+        let mut ciphertext: Vec<u8> = Vec::new();
+        let mut offset: u64 = 0;
+        let mut chunk_lens: Vec<u32> = Vec::new();
+        let mut proof_b64 = String::new();
+        let mut roothash_hex = String::new();
+        loop {
+            let mut params = serde_json::json!({
+                "store_id": store_hex,
+                "retrieval_key": rk_hex,
+                "offset": offset,
+            });
+            if let Some(rh) = &root_hex {
+                params["root"] = serde_json::json!(rh);
+            }
+            let body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "dig.getContent",
+                "params": params,
+            });
+            // POST to the RPC host root (the dig RPC is not under /stores/…). No §21.9 auth (the
+            // RPC is the public browser path); the WAF-safe User-Agent is on the builder.
+            let resp = self
+                .http
+                .post(self.url(""))
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ClientError::Transport(e.to_string()))?;
+            if !resp.status().is_success() {
+                return Err(ClientError::Status(resp.status().as_u16()));
+            }
+            let env: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| ClientError::Decode(e.to_string()))?;
+            if let Some(err) = env.get("error") {
+                let msg = err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("dig.getContent error")
+                    .to_string();
+                let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+                // -32004 == "resource not available at the requested root" (a genuine infra miss).
+                return Err(if code == -32004 {
+                    ClientError::Status(404)
+                } else {
+                    ClientError::Remote {
+                        status: 502,
+                        message: msg,
+                    }
+                });
+            }
+            let result = env
+                .get("result")
+                .ok_or_else(|| ClientError::Decode("dig.getContent: missing result".into()))?;
+
+            // ciphertext (base64 of raw bytes) for this window.
+            let chunk_b64 = result
+                .get("ciphertext")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let chunk = base64::engine::general_purpose::STANDARD
+                .decode(chunk_b64)
+                .map_err(|_| ClientError::Decode("bad base64 ciphertext".into()))?;
+            ciphertext.extend_from_slice(&chunk);
+
+            // The proof + chunk_lens + roothash come on the first window (offset 0); keep the
+            // first non-empty proof we see (the server sends it on every window).
+            if proof_b64.is_empty() {
+                if let Some(p) = result.get("inclusion_proof").and_then(|v| v.as_str()) {
+                    proof_b64 = p.to_string();
+                }
+            }
+            if chunk_lens.is_empty() {
+                if let Some(arr) = result.get("chunk_lens").and_then(|v| v.as_array()) {
+                    chunk_lens = arr
+                        .iter()
+                        .filter_map(|n| n.as_u64().map(|n| n as u32))
+                        .collect();
+                }
+            }
+            if roothash_hex.is_empty() {
+                if let Some(rh) = result.get("root").and_then(|v| v.as_str()) {
+                    roothash_hex = rh.to_string();
+                }
+            }
+
+            let complete = result
+                .get("complete")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let next = result.get("next_offset").and_then(|v| v.as_u64());
+            match (complete, next) {
+                (false, Some(n)) => offset = n,
+                _ => break,
+            }
+        }
+
+        // Decode the inclusion proof: base64 → codec `MerkleProof` (the same framing the host's
+        // `encode_inclusion_proof`/`MerkleProof::to_bytes` emits). An empty/garbage proof yields a
+        // proof that will not verify against the trusted root — the caller's verify gate catches it.
+        let merkle_proof = decode_inclusion_proof(&proof_b64)?;
+        let roothash = Bytes32::from_hex(&roothash_hex)
+            .or_else(|_| root.map(|r| Ok(*r)).unwrap_or(Err(())))
+            .map_err(|_| ClientError::Decode("dig.getContent: missing/invalid roothash".into()))?;
+
+        Ok(ContentResponse {
+            ciphertext,
+            merkle_proof,
+            roothash,
+            chunk_lens,
+        })
+    }
+}
+
+/// Decode a base64'd, codec-encoded [`MerkleProof`] (the `inclusion_proof` field / the host's
+/// `X-Dig-Inclusion-Proof` value). Round-trips with `MerkleProof::to_bytes` + base64.
+fn decode_inclusion_proof(b64: &str) -> Result<MerkleProof, ClientError> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|_| ClientError::Decode("bad base64 inclusion proof".into()))?;
+    let mut dec = Decoder::new(&bytes);
+    MerkleProof::decode(&mut dec)
+        .map_err(|e| ClientError::Decode(format!("inclusion proof: {e:?}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -730,4 +898,54 @@ async fn download_with_progress(
         }
     }
     Ok(buf)
+}
+
+#[cfg(test)]
+mod content_tests {
+    use super::*;
+    use digstore_core::merkle::ProofStep;
+
+    /// The `inclusion_proof` wire field is base64 of the codec-encoded `MerkleProof`
+    /// (== `MerkleProof::to_bytes`). Encode → b64 → `decode_inclusion_proof` must reproduce it
+    /// byte-for-byte, including the path steps — this is the exact decode `get_content` performs.
+    #[test]
+    fn inclusion_proof_b64_round_trips() {
+        let proof = MerkleProof {
+            leaf: Bytes32([7u8; 32]),
+            path: vec![
+                ProofStep {
+                    hash: Bytes32([1u8; 32]),
+                    is_left: false,
+                },
+                ProofStep {
+                    hash: Bytes32([2u8; 32]),
+                    is_left: true,
+                },
+            ],
+            root: Bytes32([9u8; 32]),
+        };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(proof.to_bytes());
+        let decoded = decode_inclusion_proof(&b64).unwrap();
+        assert_eq!(decoded, proof);
+    }
+
+    /// An empty proof string (the server's empty-proof case) decodes to an EMPTY-input error, never
+    /// a panic — `get_content` surfaces it as a Decode error, and a present-but-emptied proof would
+    /// in any case fail the caller's merkle gate.
+    #[test]
+    fn empty_inclusion_proof_is_a_decode_error() {
+        assert!(matches!(
+            decode_inclusion_proof(""),
+            Err(ClientError::Decode(_))
+        ));
+    }
+
+    /// Non-base64 garbage is a Decode error, not a panic.
+    #[test]
+    fn garbage_inclusion_proof_is_a_decode_error() {
+        assert!(matches!(
+            decode_inclusion_proof("!!!not base64!!!"),
+            Err(ClientError::Decode(_))
+        ));
+    }
 }
