@@ -51,11 +51,14 @@ pub fn list_remotes(ctx: &CliContext) -> Result<BTreeMap<String, String>, CliErr
 }
 
 pub fn resolve_remote_url(ctx: &CliContext, name: &str) -> Result<String, CliError> {
-    let raw = list_remotes(ctx)?
-        .get(name)
-        .cloned()
-        .ok_or_else(|| CliError::NotFound(format!("remote {name}")))?;
-    Ok(normalize_remote_url(&raw))
+    match list_remotes(ctx)?.get(name).cloned() {
+        Some(raw) => Ok(normalize_remote_url(&raw)),
+        // `origin` defaults to the public RPC even when never `remote add`-ed: identity is the
+        // owner puzzle hash (keys authenticate the push), so the canonical origin is fixed and
+        // needs no per-store configuration. Other names must be explicitly added.
+        None if name == "origin" => Ok("https://rpc.dig.net".to_string()),
+        None => Err(CliError::NotFound(format!("remote {name}"))),
+    }
 }
 
 /// The default network RPC host a bare `dig://` resolves to.
