@@ -33,8 +33,30 @@ pub fn seed_mock_env(cmd: &mut Command, dir: &std::path::Path) {
         });
         std::fs::write(&session, serde_json::to_vec(&body).unwrap()).unwrap();
     }
+    // Network/account commands (push, pull, clone, revoke) are gated behind a
+    // dighub login. Point the dighub session dir (`DIG_IDENTITY_DIR`, the same dir
+    // the identity key uses) at a per-project location and pre-write a valid
+    // `session.json`, so the offline suite satisfies the gate exactly the way a
+    // logged-in user would. The token is a throwaway test string (the gate is a
+    // product check, not push crypto — push still uses the store/identity keys).
+    let id_dir = dir.join(".digid");
+    std::fs::create_dir_all(&id_dir).unwrap();
+    let session_json = id_dir.join("session.json");
+    if !session_json.exists() {
+        let body = serde_json::json!({
+            "access_token": "test-token",
+            "handle": "tester",
+            "account_ph": null,
+            "api_base": "https://hub.dig.net/v1",
+            "obtained_at": 1_700_000_000u64,
+            "expires_in": null,
+        });
+        std::fs::write(&session_json, serde_json::to_vec(&body).unwrap()).unwrap();
+    }
+
     cmd.env("DIGSTORE_HOME", &home)
-        .env("DIGSTORE_ANCHOR_MOCK", "1");
+        .env("DIGSTORE_ANCHOR_MOCK", "1")
+        .env("DIG_IDENTITY_DIR", &id_dir);
 }
 
 /// A `digstore` invocation against the temp project `dir`. The workspace lives at

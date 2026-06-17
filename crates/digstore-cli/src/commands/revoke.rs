@@ -4,6 +4,7 @@ use crate::cli::RevokeArgs;
 use crate::config;
 use crate::context::CliContext;
 use crate::error::CliError;
+use crate::ops::dighub;
 use crate::ops::remote_ops::{self, RevokeScope};
 
 fn parse_reason(s: &str) -> Result<RevocationReason, CliError> {
@@ -19,6 +20,7 @@ fn parse_reason(s: &str) -> Result<RevocationReason, CliError> {
 }
 
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: RevokeArgs) -> Result<(), CliError> {
+    dighub::ensure_logged_in(ui)?;
     let reason = parse_reason(&args.reason)?;
 
     // Exactly one of --root / --all must be given (clap already rejects both).

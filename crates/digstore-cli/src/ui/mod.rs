@@ -255,6 +255,12 @@ impl Ui {
         self.assume_yes
     }
 
+    /// Public view of [`Ui::interactive`]: true only when we can safely prompt the
+    /// user (interactive TTY, not `--non-interactive`/`--quiet`/`--json`).
+    pub fn can_prompt(&self) -> bool {
+        self.interactive()
+    }
+
     /// A confirmation that MUST be satisfied to proceed (destructive/costly actions). `--yes`
     /// auto-approves. Interactive: a y/N prompt defaulting to No. Non-interactive without `--yes`:
     /// a hard error — so automation can never silently proceed past a dangerous action.

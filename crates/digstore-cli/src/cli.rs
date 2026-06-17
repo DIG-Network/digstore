@@ -97,6 +97,12 @@ pub enum Command {
     Anchor(AnchorArgs),
     /// Show wallet XCH + DIG balance.
     Balance(BalanceArgs),
+    /// Log in to your dighub account via device pairing.
+    Login(LoginArgs),
+    /// Show the current dighub login (handle / token presence).
+    Whoami(WhoamiArgs),
+    /// Log out of dighub (clear the stored session).
+    Logout(LogoutArgs),
 }
 
 #[derive(Debug, Args)]
@@ -433,6 +439,20 @@ pub enum AnchorAction {
         module: std::path::PathBuf,
     },
 }
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Pairs this device with your dighub account (RFC-8628 style): prints a code,\nyou approve it in the web app, then the scoped session token is stored. The token\nproves a dighub account; it has NO on-chain authority and never signs/anchors.\n\nEXAMPLES:\n  digstore login\n  digstore login --json"
+)]
+pub struct LoginArgs {}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore whoami\n  digstore whoami --json")]
+pub struct WhoamiArgs {}
+
+#[derive(Debug, Args)]
+#[command(after_help = "EXAMPLES:\n  digstore logout")]
+pub struct LogoutArgs {}
 
 #[derive(Debug, Args)]
 #[command(
