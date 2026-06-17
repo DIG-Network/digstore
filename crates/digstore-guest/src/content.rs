@@ -37,19 +37,27 @@ pub struct GateConfig {
 }
 
 impl GateConfig {
-    /// Build the gate config the wasm ABI uses: attestation is always required
-    /// (§12.2), and the JWT gate is driven by the store's embedded AuthInfo
-    /// (`requires_jwt`, §6.2) rather than being hardcoded. When AuthInfo requests
-    /// a JWT, the gate enforces both claims and the JWKS signature (§6.3); the
-    /// expected issuer is taken from AuthInfo's `jwks_url` host when present (left
-    /// `None` here so the issuer/audience claim filters stay opt-in until a store
-    /// advertises them explicitly).
+    /// Build the gate config the wasm ABI uses.
+    ///
+    /// Host attestation is DISABLED: dighub content is public and must be servable
+    /// by ANY node, so the guest does NOT gate real content on the serving host's
+    /// BLS key being in an embedded trusted set. Tying serving to a per-node trusted
+    /// key also forced each node to re-key the module — which rewrites the `.dig`
+    /// and so the program hash (the execution-proof identity must be identical on
+    /// every node). Dropping the gate keeps a single, stable program hash network-
+    /// wide AND lets anonymous nodes serve. The privacy property is UNAFFECTED: the
+    /// oblivious decoy-on-miss path (an absent retrieval key still returns an
+    /// indistinguishable non-verifying decoy) is independent of attestation.
+    ///
+    /// The JWT gate is unchanged — it is driven by the store's embedded AuthInfo
+    /// (`requires_jwt`, §6.2), so a store that opts into JWT auth still enforces the
+    /// claims + JWKS signature (§6.3).
     pub fn from_embedded(ds: &DataSection) -> GateConfig {
         let require_jwt = embedded_auth_info(ds)
             .map(|i| i.requires_jwt)
             .unwrap_or(false);
         GateConfig {
-            require_attestation: true,
+            require_attestation: false,
             require_jwt,
             expected_iss: None,
             expected_aud: None,

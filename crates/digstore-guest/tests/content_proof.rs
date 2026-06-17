@@ -41,6 +41,22 @@ fn gate_config() -> GateConfig {
 }
 
 #[test]
+fn from_embedded_does_not_require_host_attestation() {
+    // dighub content is PUBLIC and must be servable by ANY node. The production gate
+    // (GateConfig::from_embedded, used by the wasm ABI) must therefore NOT gate real content
+    // on the serving host's BLS key — otherwise anonymous nodes serve only decoys, and each
+    // node would have to re-key the module (changing the anchored program hash). Regression guard.
+    let table = encode_key_table(&[]);
+    let pool = fixtures::pack_pool(&[]);
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let ds = DataSection::parse(&blob).unwrap();
+    assert!(
+        !GateConfig::from_embedded(&ds).require_attestation,
+        "production content gate must not require host attestation (any node serves)"
+    );
+}
+
+#[test]
 fn hit_returns_real_content_response() {
     let key = Bytes32([0x11; 32]);
     let entry = KeyTableEntry {
