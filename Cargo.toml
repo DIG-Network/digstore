@@ -5,7 +5,7 @@ exclude = ["crates/digstore-prover/guest", "crates/dig-client-wasm"]
 
 [workspace.package]
 edition = "2021"
-version = "0.5.11"
+version = "0.5.12"
 license = "GPL-2.0-only"
 
 [workspace.dependencies]
