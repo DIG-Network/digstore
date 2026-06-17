@@ -110,7 +110,10 @@ async fn hd_live_balance_aggregates_across_addresses() {
         .sum();
 
     println!("--- index-0 only (OLD behaviour) ---");
-    println!("  address : {}", owner_address(&derive_wallet_keys(&mnemonic).expect("derive")));
+    println!(
+        "  address : {}",
+        owner_address(&derive_wallet_keys(&mnemonic).expect("derive"))
+    );
     println!("  XCH     : {}", format_xch(xch0));
     println!("  DIG     : {}", format_dig(dig0));
 

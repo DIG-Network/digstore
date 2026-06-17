@@ -87,8 +87,8 @@ impl ChainAnchor for MockAnchor {
     async fn scan(&self, _mnemonic: &str) -> ChainResult<ScannedWallet> {
         // The mock returns a synthetic ScannedWallet that carries the configured
         // balance_mojos and dig_base_units via the aggregate accessors.
-        use digstore_chain::wallet::AddressCoins;
         use digstore_chain::keys::derive_wallet_keys;
+        use digstore_chain::wallet::AddressCoins;
         // Use a fixed test-vector mnemonic to derive stable index-0 keys.
         const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon \
             abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
@@ -193,7 +193,16 @@ pub fn build_anchor() -> (Box<dyn ChainAnchor>, bool) {
 /// [`CliError::NoSeed`] from `unlock_wallet_phrase`.
 pub fn prepare_anchor(
     ui: &Ui,
-) -> Result<(WalletKeys, Zeroizing<String>, Box<dyn ChainAnchor>, bool, u64), crate::error::CliError> {
+) -> Result<
+    (
+        WalletKeys,
+        Zeroizing<String>,
+        Box<dyn ChainAnchor>,
+        bool,
+        u64,
+    ),
+    crate::error::CliError,
+> {
     let (keys, phrase, gcfg) = crate::ops::wallet::unlock_wallet_phrase(ui)?;
     let (anchor, mocked) = build_anchor();
     warn_if_mocked(ui, mocked);
@@ -271,9 +280,14 @@ mod tests {
             balance_mojos: 12345,
             ..MockAnchor::default()
         };
-        let w = m.scan("abandon abandon abandon abandon abandon abandon abandon abandon \
+        let w = m
+            .scan(
+                "abandon abandon abandon abandon abandon abandon abandon abandon \
             abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon \
-            abandon abandon abandon abandon abandon art").await.unwrap();
+            abandon abandon abandon abandon abandon art",
+            )
+            .await
+            .unwrap();
         assert_eq!(m.balance(&w).await.unwrap(), 12345);
     }
 

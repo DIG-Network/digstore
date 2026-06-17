@@ -27,17 +27,28 @@ pub struct ScannedWallet {
 impl ScannedWallet {
     /// Total XCH (mojos) across all scanned addresses.
     pub fn xch_balance(&self) -> u64 {
-        self.addrs.iter().flat_map(|a| &a.xch).map(|c| c.amount).sum()
+        self.addrs
+            .iter()
+            .flat_map(|a| &a.xch)
+            .map(|c| c.amount)
+            .sum()
     }
 
     /// Total DIG (base units) across all scanned addresses.
     pub fn dig_balance(&self) -> u64 {
-        self.addrs.iter().flat_map(|a| &a.dig).map(|c| c.amount).sum()
+        self.addrs
+            .iter()
+            .flat_map(|a| &a.dig)
+            .map(|c| c.amount)
+            .sum()
     }
 
     /// All synthetic secret keys for kept addresses (for signing).
     pub fn signing_keys(&self) -> Vec<SecretKey> {
-        self.addrs.iter().map(|a| a.keys.synthetic_sk.clone()).collect()
+        self.addrs
+            .iter()
+            .map(|a| a.keys.synthetic_sk.clone())
+            .collect()
     }
 }
 
@@ -57,7 +68,9 @@ pub async fn scan_wallet(chain: &dyn ChainReads, mnemonic: &str) -> Result<Scann
 
         for k in keys {
             let xch = chain.unspent_coins(k.owner_puzzle_hash).await?;
-            let dig = chain.unspent_coins(dig_cat_puzzle_hash(k.owner_puzzle_hash)).await?;
+            let dig = chain
+                .unspent_coins(dig_cat_puzzle_hash(k.owner_puzzle_hash))
+                .await?;
 
             let has_coins = !xch.is_empty() || !dig.is_empty();
             let is_index_zero = k.index == 0;
@@ -134,7 +147,11 @@ mod tests {
 
         let w = scan_wallet(&mock, ABANDON).await.unwrap();
 
-        assert_eq!(w.xch_balance(), 3_000_000, "XCH should sum index 0 + index 2");
+        assert_eq!(
+            w.xch_balance(),
+            3_000_000,
+            "XCH should sum index 0 + index 2"
+        );
         assert_eq!(w.dig_balance(), 500_000, "DIG should sum index 1");
     }
 
@@ -175,14 +192,10 @@ mod tests {
         // Seed index 0 and index 1 with XCH so both are kept.
         let ph0 = ph(0);
         let ph1 = ph(1);
-        mock.coins_by_ph.insert(
-            ph0,
-            vec![Coin::new(Bytes32::from([20u8; 32]), ph0, 100)],
-        );
-        mock.coins_by_ph.insert(
-            ph1,
-            vec![Coin::new(Bytes32::from([21u8; 32]), ph1, 200)],
-        );
+        mock.coins_by_ph
+            .insert(ph0, vec![Coin::new(Bytes32::from([20u8; 32]), ph0, 100)]);
+        mock.coins_by_ph
+            .insert(ph1, vec![Coin::new(Bytes32::from([21u8; 32]), ph1, 200)]);
 
         let w = scan_wallet(&mock, ABANDON).await.unwrap();
 

@@ -153,12 +153,15 @@ fn mint_store_digstore(
 fn mint_store_digstore_multi(
     selected_coins: Vec<CoinWithKey>,
     root_hash: Bytes32,
-    change_ph: Bytes32,           // index 0 owner_puzzle_hash — change consolidates here
-    owner_puzzle_hash: Bytes32,   // store owner (index 0); used in the owner hint + DataStore
+    change_ph: Bytes32, // index 0 owner_puzzle_hash — change consolidates here
+    owner_puzzle_hash: Bytes32, // store owner (index 0); used in the owner hint + DataStore
     delegated_puzzles: Vec<DelegatedPuzzle>,
     fee: u64,
 ) -> std::result::Result<SuccessResponse, DriverError> {
-    assert!(!selected_coins.is_empty(), "selected_coins must be non-empty");
+    assert!(
+        !selected_coins.is_empty(),
+        "selected_coins must be non-empty"
+    );
 
     let total_amount_from_coins: u64 = selected_coins.iter().map(|c| c.coin.amount).sum();
     let total_amount = fee + 1;
@@ -335,9 +338,7 @@ pub fn build_mint_unsigned_multi(
 
 /// Flatten the XCH coins across all scanned addresses into `Vec<CoinWithKey>`,
 /// suitable for passing to [`build_mint_unsigned_multi`].
-pub fn coins_with_keys_from_wallet(
-    w: &crate::wallet::ScannedWallet,
-) -> Vec<CoinWithKey> {
+pub fn coins_with_keys_from_wallet(w: &crate::wallet::ScannedWallet) -> Vec<CoinWithKey> {
     w.addrs
         .iter()
         .flat_map(|a| {
@@ -488,13 +489,8 @@ pub fn build_update_unsigned_multi(
         let lead = &selected[0];
         let lead_flat: Vec<Coin> = vec![lead.coin];
         let lead_coin_ids: Vec<Bytes32> = vec![lead.coin.coin_id()];
-        let mut fee_spends = add_fee(
-            &lead.synthetic_pk,
-            &lead_flat,
-            &lead_coin_ids,
-            fee,
-        )
-        .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
+        let mut fee_spends = add_fee(&lead.synthetic_pk, &lead_flat, &lead_coin_ids, fee)
+            .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
 
         // Spend remaining fee coins: assert concurrent with the lead fee coin.
         if selected.len() > 1 {
@@ -507,9 +503,7 @@ pub fn build_update_unsigned_multi(
                     ck.coin,
                     Conditions::new().assert_concurrent_spend(lead_coin_name),
                 )
-                .map_err(|e| {
-                    ChainError::Chain(format!("fee coin extra spend: {e}"))
-                })?;
+                .map_err(|e| ChainError::Chain(format!("fee coin extra spend: {e}")))?;
             }
             fee_spends.extend(ctx.take());
         }

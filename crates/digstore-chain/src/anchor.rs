@@ -357,14 +357,19 @@ mod tests {
         mock.coins_by_ph
             .insert(ph0, vec![Coin::new(Bytes32::default(), ph0, 5_000_000)]);
         // XCH at index 2
-        mock.coins_by_ph
-            .insert(ph2, vec![Coin::new(Bytes32::new([2u8; 32]), ph2, 3_000_000)]);
+        mock.coins_by_ph.insert(
+            ph2,
+            vec![Coin::new(Bytes32::new([2u8; 32]), ph2, 3_000_000)],
+        );
 
         let anchor = CoinsetAnchor::new(mock);
         let w = anchor.scan(ABANDON).await.unwrap();
 
         // Wallet must cover multiple addresses (indices 0 and 2 kept; index 1 empty).
-        assert!(w.addrs.len() >= 2, "expected ≥2 addresses in scanned wallet");
+        assert!(
+            w.addrs.len() >= 2,
+            "expected ≥2 addresses in scanned wallet"
+        );
         // signing_keys covers all kept addresses.
         assert_eq!(w.signing_keys().len(), w.addrs.len());
 
@@ -378,7 +383,11 @@ mod tests {
         );
         // All XCH coins are tagged with their address's synthetic_pk.
         for ck in &all_xch {
-            assert_ne!(ck.synthetic_pk.to_bytes(), [0u8; 48], "synthetic_pk must be set");
+            assert_ne!(
+                ck.synthetic_pk.to_bytes(),
+                [0u8; 48],
+                "synthetic_pk must be set"
+            );
         }
 
         // mint_empty_store: no DIG coins anywhere → dig_cats_multi returns empty

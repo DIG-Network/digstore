@@ -201,10 +201,7 @@ pub fn build_dig_payment(
 /// puzzle hash. Intended for multi-address callers that call once per DIG-bearing
 /// address and concatenate the results.
 #[inline]
-pub async fn dig_cats_for(
-    chain: &dyn ChainReads,
-    owner_puzzle_hash: Bytes32,
-) -> Result<Vec<Cat>> {
+pub async fn dig_cats_for(chain: &dyn ChainReads, owner_puzzle_hash: Bytes32) -> Result<Vec<Cat>> {
     dig_cats(chain, owner_puzzle_hash).await
 }
 
