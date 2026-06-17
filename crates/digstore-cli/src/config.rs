@@ -171,6 +171,23 @@ mod tests {
     }
 
     #[test]
+    fn resolve_remote_url_origin_defaults_to_public_rpc() {
+        // With NO remotes configured, `origin` falls back to the canonical public RPC
+        // (identity is the owner puzzle hash, so origin needs no per-store config).
+        let (_td, ctx) = ctx();
+        assert!(list_remotes(&ctx).unwrap().is_empty());
+        assert_eq!(
+            resolve_remote_url(&ctx, "origin").unwrap(),
+            "https://rpc.dig.net"
+        );
+        // A non-origin unknown name still errors (must be explicitly added).
+        match resolve_remote_url(&ctx, "upstream") {
+            Err(CliError::NotFound(_)) => {}
+            other => panic!("expected NotFound for unknown non-origin remote, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn dig_scheme_resolves_to_https_store_url() {
         let id = "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb";
         // Bare 64-hex store id → default network RPC + /stores/<id>.

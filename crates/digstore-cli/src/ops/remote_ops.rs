@@ -497,6 +497,40 @@ pub async fn clone_from(
     })
 }
 
+/// Fetch the dighub serving NODE's BLS host pubkey, published at `GET {api_base}/node` as
+/// `{ "node_pubkey": "<48-byte hex>" }`. A pushed module must be re-keyed to trust this key or
+/// `serve_blind` on the node decoys every resource (Digstore §12.2). Mirrors the value the
+/// compile-worker embeds via `DIGHUB_NODE_PUBKEY`.
+async fn fetch_node_pubkey() -> Result<Bytes48, CliError> {
+    let url = format!("{}/node", crate::ops::dighub::api_base());
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("digstore/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| CliError::Network(format!("http client: {e}")))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| CliError::Network(format!("fetch node key ({url}): {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CliError::Network(format!(
+            "node-key endpoint {url} returned HTTP {}",
+            resp.status().as_u16()
+        )));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| CliError::Network(format!("node-key response: {e}")))?;
+    let hex = v
+        .get("node_pubkey")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().trim_start_matches("0x"))
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| CliError::Network("node-key response missing node_pubkey".into()))?;
+    Bytes48::from_hex(hex).map_err(|_| CliError::Network("node_pubkey is not 48-byte hex".into()))
+}
+
 pub async fn push_to(ctx: &CliContext, ui: &Ui, store_url: &str) -> Result<Bytes32, CliError> {
     let cfg = ctx.load_config()?;
     let root = store_ops::current_root(ctx)?
@@ -506,6 +540,25 @@ pub async fn push_to(ctx: &CliContext, ui: &Ui, store_url: &str) -> Result<Bytes
 
     let base = parse_remote_base(store_url)?;
     let client = authed_client(base)?;
+
+    // Re-key the module to TRUST the serving node's BLS host key BEFORE upload. Digstore §12.2:
+    // `serve_blind` returns indistinguishable decoys for EVERY resource unless the requesting
+    // node's key is in the module's trusted set — so a module built with only the local host key
+    // is unreadable once served by rpc.dig.net. The node publishes its pubkey at `GET {api}/node`
+    // (the SAME value the compile-worker embeds via DIGHUB_NODE_PUBKEY). Re-keying preserves the
+    // content, current root, and merkle proofs byte-for-byte (only the TrustedKeys section
+    // changes); program_hash = sha256(bytes) is recomputed from the re-keyed bytes by the push.
+    // Fail LOUD if the node key is unavailable — pushing an un-rekeyed module would publish
+    // content the host can only ever decoy.
+    let node_pubkey = fetch_node_pubkey().await?;
+    let module = digstore_compiler::rekey_module_trusted(
+        &module,
+        &[digstore_core::TrustedHostKey {
+            public_key: node_pubkey.0,
+            label: format!("dig-host-key-v1:{}", node_pubkey.to_hex()),
+        }],
+    )
+    .map_err(|e| CliError::Other(anyhow::anyhow!("re-key module to the serving node: {e:?}")))?;
 
     // Parent = the remote's current served root, or genesis on FIRST push. A store the remote
     // has never received content for has no confirmed generation, so its descriptor read 404s —
