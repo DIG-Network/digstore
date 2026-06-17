@@ -191,6 +191,7 @@ pub fn build_anchor() -> (Box<dyn ChainAnchor>, bool) {
 /// warn loudly if mocked, and surface the configured `fee`. Returns
 /// `(keys, mnemonic, anchor, mocked, fee)`. A missing seed surfaces as
 /// [`CliError::NoSeed`] from `unlock_wallet_phrase`.
+#[allow(clippy::type_complexity)]
 pub fn prepare_anchor(
     ui: &Ui,
 ) -> Result<

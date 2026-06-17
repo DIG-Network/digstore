@@ -641,6 +641,7 @@ impl DigClient {
     ///   * the legacy §21 `GET /stores/{id}/content/{key}` splits the proof into an
     ///     `X-Dig-Inclusion-Proof` header from the raw-octet body and is a diagnostic-only fallback
     ///     (the rpc.dig.net distribution disables caching for it); no client uses it.
+    ///
     /// So we mirror `dig-client.js` exactly. The RPC is the browser path and is UNauthenticated; the
     /// §21.9 identity headers are not required here (and are not sent — the RPC POST is not a §21
     /// store route). `base_url` is the RPC host root (e.g. `https://rpc.dig.net`).
@@ -825,7 +826,7 @@ fn upload_stream_body(
     // callback inside an async context.
     let chunks: Vec<bytes::Bytes> = owned
         .chunks(UPLOAD_CHUNK_SIZE)
-        .map(|c| bytes::Bytes::copy_from_slice(c))
+        .map(bytes::Bytes::copy_from_slice)
         .collect();
 
     if let Some(cb) = on_progress {
@@ -881,20 +882,15 @@ async fn download_with_progress(
         cb(0, total);
     }
 
-    loop {
-        match resp
-            .chunk()
-            .await
-            .map_err(|e| ClientError::Transport(e.to_string()))?
-        {
-            Some(chunk) => {
-                done += chunk.len() as u64;
-                buf.extend_from_slice(&chunk);
-                if let Some(cb) = on_progress {
-                    cb(done, total);
-                }
-            }
-            None => break,
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| ClientError::Transport(e.to_string()))?
+    {
+        done += chunk.len() as u64;
+        buf.extend_from_slice(&chunk);
+        if let Some(cb) = on_progress {
+            cb(done, total);
         }
     }
     Ok(buf)
