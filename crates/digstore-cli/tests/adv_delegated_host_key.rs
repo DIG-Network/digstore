@@ -1,15 +1,15 @@
-//! ADVERSARIAL verification of DELEGATED serving (the dighub fix): a module compiled with
-//! `init_store(.., host_key_override = Some(P))` embeds an EXTERNAL host key `P` as its sole
-//! trusted key (Digstore §12.2), so it is servable ONLY by the node holding the matching secret
-//! `S` — NOT by the local store's own (untrusted) signing key.
+//! Verification that dighub content is servable by ANY node (the public-serve model).
 //!
-//! This is the exact dighub serving model: the compile-worker compiles content the RETRIEVAL host
-//! (which holds the node BLS secret) will serve. Without embedding the node's public key, the
-//! retrieval host fails attestation and `serve_blind` returns decoys for every resource — the root
-//! cause of "content won't decrypt in the browser". This test proves the override fixes it:
-//!   • served by the delegated key S → HIT: proof verifies to the trusted root + decrypts to the
-//!     original bytes;
-//!   • served by the local store key (≠ P) → DECOY: the real client integrity gate rejects it.
+//! The host-key attestation gate was REMOVED (digstore-guest `GateConfig::from_embedded`
+//! `require_attestation = false`): `serve_blind` no longer gates real content on the serving host's
+//! BLS key being in the module's embedded trusted set, so content is servable by ANY node — anonymous
+//! or otherwise — with a single, stable program_hash network-wide (re-keying per node would change the
+//! program_hash, which is the execution-proof identity and MUST be identical on every node).
+//!
+//! This test proves the new contract: a module compiled with one host key override is served as REAL,
+//! verifying, decryptable content by BOTH the matching ("delegated") key AND a completely different
+//! (formerly "untrusted") local key. The oblivious property is unaffected — a resource MISS still
+//! returns an indistinguishable non-verifying decoy (covered by `digstore-host`'s `dighost_serve`).
 
 use std::sync::Arc;
 
@@ -46,22 +46,81 @@ fn host_deps(store_id: Bytes32, signing_seed: &[u8]) -> HostDeps {
     }
 }
 
+/// Serve `req` from `module` using a host whose BLS identity is derived from `signing_seed`, and
+/// assert the response is REAL content: the proof's leaf is `sha256(ciphertext)`, the proof verifies
+/// to `trusted_root`, and the ciphertext GCM-decrypts (per the resource chunk plan) to `original`.
+#[allow(clippy::too_many_arguments)]
+fn assert_serves_real(
+    module: &[u8],
+    store_id: Bytes32,
+    urn: &Urn,
+    trusted_root: Bytes32,
+    chunk_lens: &[usize],
+    signing_seed: &[u8],
+    original: &[u8],
+    who: &str,
+) {
+    let req = serve::request_for(urn);
+    let mut rt = HostRuntime::new(
+        module,
+        HostImportsConfig::default(),
+        ExecutionLimits::default(),
+        host_deps(store_id, signing_seed),
+    )
+    .expect("host instantiates the compiled module");
+    let resp_bytes = rt.serve_content(&req).expect("serve_content Ok");
+    let mut dec = Decoder::new(&resp_bytes);
+    let resp = ContentResponse::decode(&mut dec).expect("decodes as ContentResponse");
+    assert_eq!(
+        resp.merkle_proof.leaf,
+        digstore_crypto::sha256(&resp.ciphertext),
+        "{who}: served leaf must equal sha256(served ciphertext)"
+    );
+    assert!(
+        resp.merkle_proof.verify(),
+        "{who}: served proof must verify"
+    );
+    assert_eq!(
+        resp.merkle_proof.root, trusted_root,
+        "{who}: served proof must root at the trusted root"
+    );
+    let key = digstore_cli::ops::client_crypto::derive_decryption_key(urn, None);
+    let plan: Vec<usize> = if chunk_lens.is_empty() {
+        vec![resp.ciphertext.len()]
+    } else {
+        chunk_lens.to_vec()
+    };
+    let mut recovered = Vec::new();
+    let mut p = 0usize;
+    for len in plan {
+        let pt = digstore_crypto::decrypt_chunk(&key, &resp.ciphertext[p..p + len])
+            .expect("GCM tag verifies on served ciphertext");
+        p += len;
+        recovered.extend_from_slice(&pt);
+    }
+    assert_eq!(
+        recovered, original,
+        "{who}: served bytes must decrypt to the original"
+    );
+}
+
 #[test]
-fn delegated_host_key_serves_for_node_secret_but_decoys_local() {
-    // The DELEGATED serving identity (e.g. the dighub retrieval node): a secret the compile tier
-    // never holds — only its PUBLIC half is embedded as the module's trusted key.
+fn any_host_serves_real_content_with_attestation_disabled() {
+    // A host key embedded as the module's "trusted" key (the historical delegated-serve identity).
+    // With attestation disabled it carries no special privilege — it must serve exactly like any
+    // other host key.
     let serving_seed = [0x42u8; 32];
     let serving_pubkey = BlsSecretKey::from_seed(&serving_seed)
         .public_key()
         .to_bytes();
 
-    // ---- 1. Build a store whose TRUSTED host key is the external serving key ----
+    // ---- Build a store (embedding `serving_pubkey` as the trusted key, as the compile-worker did) --
     let td = tempfile::tempdir().unwrap();
     let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
     store_ops::init_store(&ctx, false, None, None, None, Some(serving_pubkey)).unwrap();
 
     let original: Vec<u8> =
-        b"DELEGATED-SERVE PAYLOAD: only the node key may release this. 0123456789".to_vec();
+        b"PUBLIC-SERVE PAYLOAD: any node may release this. 0123456789abcdef".to_vec();
     let f = td.path().join("known.txt");
     std::fs::write(&f, &original).unwrap();
     store_ops::add_path(&ctx, &f, Some("known".into())).unwrap();
@@ -69,6 +128,7 @@ fn delegated_host_key_serves_for_node_secret_but_decoys_local() {
     let store_id = ctx.find_store_id().unwrap();
     let trusted_root = res.roothash;
     let module = std::fs::read(&res.output_path).unwrap();
+    let chunk_lens = store_ops::resource_chunk_lens(&ctx, &trusted_root, "known").unwrap();
 
     let urn = Urn {
         chain: "chia".into(),
@@ -76,54 +136,20 @@ fn delegated_host_key_serves_for_node_secret_but_decoys_local() {
         root_hash: None,
         resource_key: Some("known".into()),
     };
-    let req = serve::request_for(&urn);
 
-    // ---- 2. Served by the DELEGATED key S (pubkey == embedded P) -> HIT + decrypts ----
-    let mut rt_node = HostRuntime::new(
+    // ---- 1. Served by the embedded ("delegated") key -> REAL content ----
+    assert_serves_real(
         &module,
-        HostImportsConfig::default(),
-        ExecutionLimits::default(),
-        host_deps(store_id, &serving_seed),
-    )
-    .expect("host instantiates the compiled module");
-    let resp_bytes = rt_node.serve_content(&req).expect("serve_content Ok");
-    let mut dec = Decoder::new(&resp_bytes);
-    let resp = ContentResponse::decode(&mut dec).expect("decodes as ContentResponse");
-    assert_eq!(
-        resp.merkle_proof.leaf,
-        digstore_crypto::sha256(&resp.ciphertext),
-        "served leaf must equal sha256(served ciphertext)"
-    );
-    assert!(
-        resp.merkle_proof.verify(),
-        "delegated-host proof must verify"
-    );
-    assert_eq!(
-        resp.merkle_proof.root, trusted_root,
-        "delegated-host proof must root at the trusted root"
-    );
-    // Client GCM-decrypt the delegated-served bytes -> original.
-    let key = digstore_cli::ops::client_crypto::derive_decryption_key(&urn, None);
-    let lens = store_ops::resource_chunk_lens(&ctx, &trusted_root, "known").unwrap();
-    let plan: Vec<usize> = if lens.is_empty() {
-        vec![resp.ciphertext.len()]
-    } else {
-        lens
-    };
-    let mut recovered = Vec::new();
-    let mut p = 0usize;
-    for len in plan {
-        let pt = digstore_crypto::decrypt_chunk(&key, &resp.ciphertext[p..p + len])
-            .expect("GCM tag verifies on delegated-served ciphertext");
-        p += len;
-        recovered.extend_from_slice(&pt);
-    }
-    assert_eq!(
-        recovered, original,
-        "delegated-served bytes must decrypt to the original"
+        store_id,
+        &urn,
+        trusted_root,
+        &chunk_lens,
+        &serving_seed,
+        &original,
+        "embedded-key host",
     );
 
-    // ---- 3. Served by the LOCAL store key (≠ P) -> DECOY rejected by the client gate ----
+    // ---- 2. Served by the LOCAL store key (≠ embedded key) -> ALSO REAL content (any node serves) --
     let local_seed = std::fs::read(ctx.dig_dir.join("signing_key.bin")).unwrap();
     assert_ne!(
         BlsSecretKey::from_seed(&local_seed)
@@ -131,27 +157,28 @@ fn delegated_host_key_serves_for_node_secret_but_decoys_local() {
             .to_bytes()
             .0,
         serving_pubkey.0,
-        "the local signing key must NOT be the trusted serving key (delegation precondition)"
+        "the local signing key must differ from the embedded key (so this exercises a non-embedded host)"
     );
-    let mut rt_local = HostRuntime::new(
+    assert_serves_real(
         &module,
-        HostImportsConfig::default(),
-        ExecutionLimits::default(),
-        host_deps(store_id, &local_seed),
-    )
-    .expect("host instantiates the compiled module");
-    let decoy_bytes = rt_local
-        .serve_content(&req)
-        .expect("serve_content Ok (decoy)");
-    let mut dec2 = Decoder::new(&decoy_bytes);
-    let decoy = ContentResponse::decode(&mut dec2).expect("decoy decodes");
-    let gate = digstore_cli::ops::client_crypto::verify_chunk_inclusion(
-        &decoy.ciphertext,
-        &decoy.merkle_proof,
-        &trusted_root,
+        store_id,
+        &urn,
+        trusted_root,
+        &chunk_lens,
+        &local_seed,
+        &original,
+        "local/non-embedded host",
     );
-    assert!(
-        gate.is_err(),
-        "REFUTATION: an UNTRUSTED host's serve verified to the trusted root (attestation gate broken)"
+
+    // ---- 3. Served by a THIRD, totally unrelated key -> ALSO REAL (anonymous node serves) ----
+    assert_serves_real(
+        &module,
+        store_id,
+        &urn,
+        trusted_root,
+        &chunk_lens,
+        &[0xABu8; 32],
+        &original,
+        "anonymous host",
     );
 }
