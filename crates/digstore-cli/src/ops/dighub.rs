@@ -523,6 +523,64 @@ mod tests {
         assert!(!s.is_valid());
     }
 
+    /// Build a JWT-shaped `<hdr>.<payload>.<sig>` token whose payload is
+    /// base64url-no-pad of the given JSON body. Header/sig are arbitrary (jwt_exp only
+    /// reads the middle segment).
+    fn jwt_with_payload(payload_json: &str) -> String {
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
+        format!("aGRy.{b64}.c2ln")
+    }
+
+    #[test]
+    fn jwt_exp_extracts_exp_claim() {
+        let tok = jwt_with_payload(r#"{"exp": 1234567890}"#);
+        assert_eq!(jwt_exp(&tok), Some(1_234_567_890));
+    }
+
+    #[test]
+    fn jwt_exp_none_for_malformed_token() {
+        // Not three dot-separated segments / no payload.
+        assert_eq!(jwt_exp("not-a-jwt"), None);
+        // Middle segment is not valid base64url.
+        assert_eq!(jwt_exp("a.!!!.c"), None);
+        // Payload decodes but is not JSON with a numeric `exp`.
+        assert_eq!(jwt_exp(&jwt_with_payload(r#"{"sub":"x"}"#)), None);
+    }
+
+    #[test]
+    fn is_expired_prefers_recorded_ttl() {
+        // expires_in set + past obtained_at+ttl → expired.
+        let mut s = sample_session();
+        s.obtained_at = 0;
+        s.expires_in = Some(1);
+        assert!(s.is_expired());
+    }
+
+    #[test]
+    fn is_expired_falls_back_to_token_exp_when_no_ttl() {
+        // No recorded expires_in: a token whose `exp` is in the PAST is expired (fallback).
+        let mut s = sample_session();
+        s.expires_in = None;
+        s.access_token = jwt_with_payload(r#"{"exp": 1}"#); // unix=1s, long past
+        assert!(s.is_expired());
+
+        // A token whose `exp` is far in the future is NOT expired.
+        let mut s2 = sample_session();
+        s2.expires_in = None;
+        s2.access_token = jwt_with_payload(r#"{"exp": 9999999999}"#);
+        assert!(!s2.is_expired());
+    }
+
+    #[test]
+    fn is_expired_false_when_no_parseable_exp() {
+        // No expires_in AND no parseable exp claim → treated as non-expiring.
+        let mut s = sample_session();
+        s.expires_in = None;
+        s.access_token = "opaque-token-no-jwt".into();
+        assert!(!s.is_expired());
+    }
+
     #[test]
     fn classify_poll_pending() {
         let v = serde_json::json!({ "error": "authorization_pending" });
