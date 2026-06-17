@@ -4,9 +4,11 @@ use crate::cli::CloneArgs;
 use crate::config;
 use crate::context::CliContext;
 use crate::error::CliError;
-use crate::ops::remote_ops;
+use crate::ops::{dighub, remote_ops};
 
 pub fn run(ws_ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(), CliError> {
+    // Product gate: require a dighub account before contacting a remote.
+    dighub::ensure_logged_in(ui)?;
     // `clone` CREATES a store, like `init`: install it as the workspace's
     // `default` store under `<workspace>/stores/default/` and register it in
     // workspace.toml. The incoming context is workspace-only.

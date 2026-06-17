@@ -18,6 +18,8 @@ pub mod init;
 pub mod keys;
 pub mod lock;
 pub mod log;
+pub mod login;
+pub mod logout;
 pub mod pull;
 pub mod push;
 pub mod remote;
@@ -31,6 +33,7 @@ pub mod unstage;
 pub mod update;
 pub mod urn;
 pub mod use_store;
+pub mod whoami;
 
 pub fn dispatch(cli: Cli) -> Result<(), CliError> {
     let ui = crate::ui::Ui::from_flags(
@@ -98,6 +101,11 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Command::Seed(a) => return seed::run(&ui, a),
         Command::Lock(_) => return lock::run(&ui),
+        // dighub account commands: workspace-independent (the session lives next to
+        // the identity key, not in any store).
+        Command::Login(a) => return login::run(&ui, a),
+        Command::Whoami(a) => return whoami::run(&ui, a),
+        Command::Logout(a) => return logout::run(&ui, a),
         // `balance` is wallet-only (it derives keys from the seed and queries the
         // anchor backend); it needs no store, like `seed`/`lock`.
         Command::Balance(_) => {
@@ -148,7 +156,10 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         | Command::Update(_)
         | Command::Seed(_)
         | Command::Lock(_)
-        | Command::Balance(_) => {
+        | Command::Balance(_)
+        | Command::Login(_)
+        | Command::Whoami(_)
+        | Command::Logout(_) => {
             unreachable!("handled above")
         }
     }

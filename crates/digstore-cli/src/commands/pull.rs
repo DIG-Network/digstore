@@ -2,9 +2,10 @@ use crate::cli::PullArgs;
 use crate::config;
 use crate::context::CliContext;
 use crate::error::CliError;
-use crate::ops::remote_ops;
+use crate::ops::{dighub, remote_ops};
 
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PullArgs) -> Result<(), CliError> {
+    dighub::ensure_logged_in(ui)?;
     let base = config::resolve_remote_url(ctx, &args.remote)?;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
