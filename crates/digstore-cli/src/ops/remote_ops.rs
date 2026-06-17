@@ -421,10 +421,17 @@ pub async fn push_to(ctx: &CliContext, store_url: &str) -> Result<Bytes32, CliEr
     let (base, _id) = parse_store_url(store_url)?;
     let client = authed_client(base)?;
 
-    // Parent = the remote's current served root (genesis if fresh).
-    let info = client.fetch(&cfg.store_id).await.map_err(map_remote_err)?;
-    let parent = Bytes32::from_hex(&info.descriptor.current_root)
-        .map_err(|_| CliError::VerificationFailed("bad descriptor root".into()))?;
+    // Parent = the remote's current served root, or genesis on FIRST push. A store the remote
+    // has never received content for has no confirmed generation, so its descriptor read 404s —
+    // that is not an error, it just means the parent is genesis (all-zero root).
+    let parent = match client.fetch(&cfg.store_id).await {
+        Ok(info) => Bytes32::from_hex(&info.descriptor.current_root)
+            .map_err(|_| CliError::VerificationFailed("bad descriptor root".into()))?,
+        Err(ClientError::Status(404)) | Err(ClientError::Remote { status: 404, .. }) => {
+            Bytes32::default()
+        }
+        Err(e) => return Err(map_remote_err(e)),
+    };
 
     let sk = store_ops::load_signing_key(ctx)?;
     // The publisher's 48-byte G1 public key (hex), sent in push-init so a remote that does not yet
