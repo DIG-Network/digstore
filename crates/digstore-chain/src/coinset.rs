@@ -67,6 +67,52 @@ fn classify_coin_spend(
     )))
 }
 
+/// Builds the JSON body for a `get_fee_estimate` POST request.
+///
+/// Extracted so that the serialization logic can be unit-tested without a network.
+fn build_fee_estimate_body(
+    bundle: &SpendBundle,
+    target_secs: u64,
+    spend_count: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "spend_bundle": {
+            "coin_spends": bundle.coin_spends.iter().map(|cs| {
+                serde_json::json!({
+                    "coin": {
+                        "amount": cs.coin.amount,
+                        "parent_coin_info": format!("0x{}", hex::encode(cs.coin.parent_coin_info.to_bytes())),
+                        "puzzle_hash": format!("0x{}", hex::encode(cs.coin.puzzle_hash.to_bytes())),
+                    },
+                    "puzzle_reveal": format!("0x{}", hex::encode(cs.puzzle_reveal.to_vec())),
+                    "solution": format!("0x{}", hex::encode(cs.solution.to_vec())),
+                })
+            }).collect::<Vec<serde_json::Value>>(),
+            "aggregated_signature": format!("0x{}", hex::encode(bundle.aggregated_signature.to_bytes())),
+        },
+        "target_times": [target_secs],
+        "spend_count": spend_count,
+    })
+}
+
+/// Parses `estimates[0]` from a `get_fee_estimate` JSON response.
+///
+/// Returns 0 on any failure (success=false, missing field, wrong type) — fail-open.
+fn parse_fee_estimate_response(json: &serde_json::Value) -> u64 {
+    if !json
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return 0;
+    }
+    json.get("estimates")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
+
 /// Minimal chain interface anchoring needs (reads + broadcast).
 #[async_trait::async_trait]
 pub trait ChainReads: Send + Sync {
@@ -75,6 +121,14 @@ pub trait ChainReads: Send + Sync {
     async fn coin_spend(&self, coin_id: Bytes32, spent_height: u32) -> Result<Option<CoinSpend>>;
     async fn peak_height(&self) -> Result<u32>;
     async fn push(&self, bundle: SpendBundle) -> Result<()>;
+    /// Estimate the fee (mojos) required to confirm `bundle` within `target_secs` seconds.
+    ///
+    /// Calls coinset's `get_fee_estimate` endpoint with `target_times = [target_secs]` and
+    /// `spend_count = bundle.coin_spends.len()`.  Returns `estimates[0]` on success.
+    ///
+    /// **Fail-open**: any network error, non-success response, or parse failure returns
+    /// `Ok(0)` — fee estimation must never block a mint or commit.
+    async fn estimate_fee(&self, bundle: &SpendBundle, target_secs: u64) -> Result<u64>;
 }
 
 /// Production impl over coinset.org.
@@ -190,6 +244,30 @@ impl ChainReads for Coinset {
 
         Ok(())
     }
+
+    async fn estimate_fee(&self, bundle: &SpendBundle, target_secs: u64) -> Result<u64> {
+        // The chia-sdk-coinset CoinsetClient does not expose get_fee_estimate, so we
+        // issue a raw POST using the same reqwest client pattern it uses internally.
+        // Fail-open: any error returns Ok(0) so estimation never blocks a mint/commit.
+        let url = format!("{}/get_fee_estimate", self.client.base_url());
+        let spend_count = bundle.coin_spends.len();
+
+        let body = build_fee_estimate_body(bundle, target_secs, spend_count);
+
+        let http = reqwest::Client::new();
+        let result: reqwest::Result<serde_json::Value> = async {
+            let resp = http.post(&url).json(&body).send().await?;
+            resp.json::<serde_json::Value>().await
+        }
+        .await;
+
+        let json = match result {
+            Ok(v) => v,
+            Err(_) => return Ok(0), // network error → fail-open
+        };
+
+        Ok(parse_fee_estimate_response(&json))
+    }
 }
 
 #[cfg(test)]
@@ -233,6 +311,11 @@ pub(crate) mod mock {
                 .expect("MockChain pushed mutex poisoned")
                 .push(bundle);
             Ok(())
+        }
+
+        async fn estimate_fee(&self, _bundle: &SpendBundle, _target_secs: u64) -> Result<u64> {
+            // Mock always returns 0 (fail-open / empty-mempool simulation).
+            Ok(0)
         }
     }
 }
@@ -334,5 +417,55 @@ mod tests {
         let got = classify_coin_record(true, None, Some(info)).unwrap();
         assert_eq!(got.map(|c| c.confirmed_block_index), Some(100));
         assert!(classify_coin_record(true, None, None).unwrap().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Fee estimate parsing tests (no live network — pure logic).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_fee_estimate_success_extracts_estimates_0() {
+        let json = serde_json::json!({
+            "success": true,
+            "estimates": [12345678_u64, 99999999_u64],
+            "current_fee_rate": 5,
+        });
+        assert_eq!(parse_fee_estimate_response(&json), 12_345_678);
+    }
+
+    #[test]
+    fn parse_fee_estimate_success_false_returns_0() {
+        let json = serde_json::json!({
+            "success": false,
+            "error": "node not synced",
+            "estimates": [999_u64],
+        });
+        assert_eq!(parse_fee_estimate_response(&json), 0);
+    }
+
+    #[test]
+    fn parse_fee_estimate_missing_success_returns_0() {
+        let json = serde_json::json!({ "estimates": [100_u64] });
+        assert_eq!(parse_fee_estimate_response(&json), 0);
+    }
+
+    #[test]
+    fn parse_fee_estimate_empty_estimates_returns_0() {
+        let json = serde_json::json!({ "success": true, "estimates": [] });
+        assert_eq!(parse_fee_estimate_response(&json), 0);
+    }
+
+    #[test]
+    fn parse_fee_estimate_missing_estimates_returns_0() {
+        let json = serde_json::json!({ "success": true });
+        assert_eq!(parse_fee_estimate_response(&json), 0);
+    }
+
+    #[tokio::test]
+    async fn mock_chain_estimate_fee_returns_0() {
+        let m = MockChain::default();
+        let bundle = SpendBundle::aggregate(&[]);
+        let est = m.estimate_fee(&bundle, 60).await.unwrap();
+        assert_eq!(est, 0, "MockChain estimate_fee must be fail-open (0)");
     }
 }
