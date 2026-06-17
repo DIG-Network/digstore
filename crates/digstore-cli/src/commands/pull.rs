@@ -131,18 +131,13 @@ fn pull_urn_resource(
     let (pubkey_hex, sign) = identity::request_signer()?;
     let client = DigClient::new(base).with_identity(RequestIdentity { pubkey_hex, sign });
 
-    // Trusted root: the URN's pinned root, else the store's current on-chain root from the remote
-    // descriptor (the SAME root the resource is verified against).
+    // Trusted root: the URN's pinned generation, else the TIP of the store singleton's
+    // on-chain lineage. When the URN names no generation we default to the chain tip — the
+    // authority — NOT a server-reported root, so the proof is verified against what the
+    // chain actually anchors.
     let trusted_root: Bytes32 = match urn.root_hash {
         Some(r) => r,
-        None => {
-            let info = rt
-                .block_on(client.fetch(&urn.store_id))
-                .map_err(remote_ops::map_remote_err)?;
-            Bytes32::from_hex(&info.descriptor.current_root).map_err(|_| {
-                CliError::VerificationFailed("remote returned a bad current_root".into())
-            })?
-        }
+        None => rt.block_on(remote_ops::onchain_tip_root(&urn.store_id))?,
     };
 
     let retrieval_key = urn.retrieval_key();
