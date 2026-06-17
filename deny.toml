@@ -24,6 +24,7 @@ ignore = [
     "RUSTSEC-2024-0436", # paste: no longer maintained (transitive)
     "RUSTSEC-2025-0052", # async-std: discontinued (httpmock dev-dependency, tests only)
     "RUSTSEC-2025-0055", # tracing/ANSI-escape log-injection advisory (transitive)
+    "RUSTSEC-2025-0119", # number_prefix: unmaintained (transitive via indicatif progress bars; display-only)
 ]
 
 [bans]
