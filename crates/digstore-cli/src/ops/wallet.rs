@@ -125,7 +125,6 @@ mod tests {
             false,
             false,
             false,
-            false,
         )
     }
 

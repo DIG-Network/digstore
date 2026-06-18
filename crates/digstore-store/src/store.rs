@@ -10,6 +10,7 @@ use digstore_chunker::chunk_slice;
 use digstore_core::serving::concat_output;
 use digstore_core::{
     Bytes32, ChunkerConfig, GenerationState, MerkleTree, SecretSalt, StoreConfig, Urn, Visibility,
+    CHAIN,
 };
 use std::path::Path;
 
@@ -171,7 +172,7 @@ impl<C: Clock> Store<C> {
         for rec in &records {
             // root_hash: None -> retrieval key is root-independent (documented).
             let urn = Urn {
-                chain: "chia".to_string(),
+                chain: CHAIN.to_string(),
                 store_id: self.config.store_id,
                 root_hash: None,
                 resource_key: Some(rec.resource_key.clone()),

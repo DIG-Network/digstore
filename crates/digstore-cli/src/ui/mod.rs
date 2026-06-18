@@ -56,8 +56,6 @@ pub struct Ui {
     color: bool,
     json: bool,
     quiet: bool,
-    #[allow(dead_code)]
-    verbose: bool,
     /// Forced non-interactive (the `--non-interactive` flag): never prompt, fail fast.
     non_interactive: bool,
     /// Auto-approve confirmations (the `--yes`/`-y` flag).
@@ -79,7 +77,6 @@ impl Ui {
         color: ColorChoice,
         json: bool,
         quiet: bool,
-        verbose: bool,
         stdout_is_tty: bool,
         env_no_color: bool,
         env_clicolor_force: bool,
@@ -105,7 +102,6 @@ impl Ui {
             color,
             json,
             quiet,
-            verbose,
             non_interactive: false,
             assume_yes: false,
         }
@@ -116,7 +112,6 @@ impl Ui {
         color: ColorChoice,
         json: bool,
         quiet: bool,
-        verbose: bool,
         non_interactive: bool,
         assume_yes: bool,
     ) -> Self {
@@ -127,7 +122,6 @@ impl Ui {
             color,
             json,
             quiet,
-            verbose,
             std::io::stdout().is_terminal(),
             no_color,
             force,
@@ -431,32 +425,32 @@ mod tests {
 
     #[test]
     fn json_forces_color_off() {
-        let ui = Ui::resolve(ColorChoice::Always, true, false, false, true, false, false);
+        let ui = Ui::resolve(ColorChoice::Always, true, false, true, false, false);
         assert!(!ui.color());
         assert!(ui.json());
     }
 
     #[test]
     fn never_disables_even_on_tty() {
-        let ui = Ui::resolve(ColorChoice::Never, false, false, false, true, false, false);
+        let ui = Ui::resolve(ColorChoice::Never, false, false, true, false, false);
         assert!(!ui.color());
     }
 
     #[test]
     fn auto_follows_tty() {
-        assert!(Ui::resolve(ColorChoice::Auto, false, false, false, true, false, false).color());
-        assert!(!Ui::resolve(ColorChoice::Auto, false, false, false, false, false, false).color());
+        assert!(Ui::resolve(ColorChoice::Auto, false, false, true, false, false).color());
+        assert!(!Ui::resolve(ColorChoice::Auto, false, false, false, false, false).color());
     }
 
     #[test]
     fn no_color_env_wins_over_auto_tty() {
-        let ui = Ui::resolve(ColorChoice::Auto, false, false, false, true, true, false);
+        let ui = Ui::resolve(ColorChoice::Auto, false, false, true, true, false);
         assert!(!ui.color());
     }
 
     #[test]
     fn clicolor_force_enables_without_tty() {
-        let ui = Ui::resolve(ColorChoice::Auto, false, false, false, false, false, true);
+        let ui = Ui::resolve(ColorChoice::Auto, false, false, false, false, true);
         assert!(ui.color());
     }
 

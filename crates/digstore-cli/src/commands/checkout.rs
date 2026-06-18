@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use digstore_core::{Bytes32, Urn};
+use digstore_core::{Bytes32, Urn, CHAIN};
 
 use crate::cli::CheckoutArgs;
 use crate::context::CliContext;
@@ -63,7 +63,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CheckoutArgs) -> Result<(
     let mut count = 0usize;
     for key in keys {
         let urn = Urn {
-            chain: "chia".into(),
+            chain: CHAIN.into(),
             store_id,
             root_hash: Some(root),
             resource_key: Some(key.clone()),

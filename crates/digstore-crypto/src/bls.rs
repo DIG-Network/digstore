@@ -151,6 +151,20 @@ pub fn validate_public_key(pk: &Bytes48) -> Result<(), BlsError> {
 /// Role tag for push-authorization signatures (`sign_push` / `verify_push`).
 pub const PUSH_DST: &[u8] = b"digstore:push:v1";
 /// Role tag for node execution-proof signatures (`sign_node`).
+///
+/// NOTE: these bytes (`b"digstore:node:v1"`) intentionally COINCIDE with
+/// `digstore_core::merkle::NODE_TAG`. This is safe — it is not a cross-domain
+/// collision — because the two tags live in disjoint preimage shapes that are
+/// never compared: `NODE_TAG` prefixes a fixed-length `SHA-256(tag || left(32)
+/// || right(32))` Merkle-node fold (80-byte preimage), whereas `NODE_DST`
+/// prefixes a BLS AugScheme signing message of `tag || program_hash(32) ||
+/// public_output(32) || chia_header_hash(32) || height(4) || public_input(var)`
+/// (≥116 bytes, and AugScheme additionally binds the signer's public key). No
+/// code path ever verifies a Merkle fold as a BLS message or vice-versa, so the
+/// shared bytes cannot enable a replay. The DISTINCT-tag guarantee in the block
+/// comment above is about the BLS *roles* (push / node / attestation / tomb /
+/// req), which DO use mutually distinct tags; it makes no claim against the
+/// Merkle domain.
 pub const NODE_DST: &[u8] = b"digstore:node:v1";
 /// Role tag for root-revocation tombstone signatures (`sign_tombstone` /
 /// `verify_tombstone`, SECURITY.md residual #1 Layer 1). Distinct from the

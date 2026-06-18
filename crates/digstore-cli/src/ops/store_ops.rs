@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use digstore_chunker::{chunk_slice, Chunk};
 use digstore_core::{
     AuthenticationInfo, Bytes32, Bytes48, ChunkerConfig, GenerationState, MerkleTree, SecretSalt,
-    StoreConfig, TrustedHostKey, Urn, Visibility, MAX_STORE_BYTES,
+    StoreConfig, TrustedHostKey, Urn, Visibility, CHAIN, MAX_STORE_BYTES,
 };
 use digstore_store::{
     ChunkRef, GenerationManifest, KeyTableRecord, RootHistory, StagingArea, Store, SystemClock,
@@ -79,7 +79,7 @@ fn chunker() -> ChunkerConfig {
 /// The client must reconstruct this same URN (root dropped) when decrypting.
 pub fn canonical_resource_urn(store_id: Bytes32, resource_key: &str) -> Urn {
     Urn {
-        chain: "chia".to_string(),
+        chain: CHAIN.to_string(),
         store_id,
         root_hash: None,
         resource_key: Some(resource_key.to_string()),
@@ -493,7 +493,7 @@ pub fn preview_urns(
         // Retrieval key is ALWAYS from the rootless canonical URN.
         let rootless = canonical_resource_urn(cfg.store_id, &r.key);
         let display = Urn {
-            chain: "chia".to_string(),
+            chain: CHAIN.to_string(),
             store_id: cfg.store_id,
             root_hash: pinned_root,
             resource_key: Some(r.key.clone()),
@@ -994,7 +994,7 @@ pub fn finalize_commit(
         let mut txt = String::new();
         for rec in &manifest.key_table {
             let pinned = Urn {
-                chain: "chia".to_string(),
+                chain: CHAIN.to_string(),
                 store_id: cfg.store_id,
                 root_hash: Some(root),
                 resource_key: Some(rec.resource_key.clone()),

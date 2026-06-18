@@ -22,7 +22,6 @@ fn main() {
         cli.color,
         cli.json,
         cli.quiet,
-        cli.verbose,
         cli.non_interactive,
         cli.yes,
     );
