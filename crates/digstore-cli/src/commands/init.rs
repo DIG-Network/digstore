@@ -56,6 +56,19 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     if !private {
         private = ui.confirm("Make this a private (salted) project?", false);
     }
+    // The on-chain project NAME (CHIP-0035 singleton metadata `label`) + description. Prompted
+    // when no --label was given; left unset (None) when blank, so displays fall back to the store id.
+    let mut label = args.label.clone().filter(|s| !s.trim().is_empty());
+    if label.is_none() {
+        label = ui
+            .prompt_line(
+                "Project name (shown in DIGHUb; leave blank to use the store id)",
+                "",
+            )
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+    }
+    let description = args.description.clone().filter(|s| !s.trim().is_empty());
 
     // --- HARD GATE: seed → balance → mint, all BEFORE any local files. ---
 
@@ -107,7 +120,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     // 4. Mint the empty store singleton. The launcher id becomes the store_id.
     //    Pass the full scanned wallet so the mint gathers XCH + DIG from all addresses.
     let sp = ui.spinner("Building & signing the mint…");
-    let mint = block_on(anchor.mint_empty_store(&w, fee))
+    let mint = block_on(anchor.mint_empty_store(&w, label.clone(), description.clone(), fee))
         .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
     sp.finish();
     let store_id = {
@@ -130,7 +143,16 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         json: ctx.json,
         verbose: ctx.verbose,
     };
-    let res = store_ops::init_store(&store_ctx, private, None, Some(store_id), None, None)?;
+    let res = store_ops::init_store(
+        &store_ctx,
+        private,
+        None,
+        Some(store_id),
+        None,
+        None,
+        label.clone(),
+        description.clone(),
+    )?;
 
     // Persist the on-chain anchor state (Pending until confirmed).
     let coin_id_hex = hex::encode(mint.coin_id.as_ref());

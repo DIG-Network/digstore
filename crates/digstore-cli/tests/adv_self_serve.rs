@@ -56,7 +56,7 @@ fn adversarial_real_module_self_serves_with_verifying_proof() {
     // ---- 1. Build a REAL store: init + add a known file + commit -> real .wasm
     let td = tempfile::tempdir().unwrap();
     let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
-    store_ops::init_store(&ctx, false, None, None, None, None).unwrap();
+    store_ops::init_store(&ctx, false, None, None, None, None, None, None).unwrap();
 
     let original: Vec<u8> =
         b"ADVERSARIAL PAYLOAD: prove the module serves its own content. 0123456789".to_vec();

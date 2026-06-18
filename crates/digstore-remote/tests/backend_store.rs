@@ -24,6 +24,8 @@ fn config_at(tmp: &std::path::Path, store_id: Bytes32) -> StoreConfig {
         data_dir: tmp.to_string_lossy().to_string(),
         max_size: 16 * 1024 * 1024,
         visibility: Visibility::Public,
+        label: None,
+        description: None,
     }
 }
 

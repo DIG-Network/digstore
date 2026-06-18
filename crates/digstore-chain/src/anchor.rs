@@ -43,13 +43,23 @@ pub trait ChainAnchor: Send + Sync {
     async fn dig_balance(&self, w: &ScannedWallet) -> Result<u64>;
     /// Mint an empty (root = 0) owner-only store using the full scanned wallet;
     /// gathers XCH + DIG across ALL HD addresses and signs with all keys. Broadcasts.
-    async fn mint_empty_store(&self, w: &ScannedWallet, fee: u64) -> Result<MintOutcome>;
+    /// `label`/`description` are written into the CHIP-0035 singleton metadata.
+    async fn mint_empty_store(
+        &self,
+        w: &ScannedWallet,
+        label: Option<String>,
+        description: Option<String>,
+        fee: u64,
+    ) -> Result<MintOutcome>;
     /// Sync the current singleton for `launcher_id`, build+broadcast a root update.
     /// Uses the full scanned wallet for fee coins and DIG across all HD addresses.
+    /// `label`/`description` are RE-SENT (the update replaces metadata) so they persist.
     async fn update_root(
         &self,
         launcher_id: Bytes32,
         new_root: Bytes32,
+        label: Option<String>,
+        description: Option<String>,
         w: &ScannedWallet,
         fee: u64,
     ) -> Result<UpdateOutcome>;
@@ -88,7 +98,13 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         Ok(w.dig_balance())
     }
 
-    async fn mint_empty_store(&self, w: &ScannedWallet, fee: u64) -> Result<MintOutcome> {
+    async fn mint_empty_store(
+        &self,
+        w: &ScannedWallet,
+        label: Option<String>,
+        description: Option<String>,
+        fee: u64,
+    ) -> Result<MintOutcome> {
         // Index 0 is the store owner and change destination.
         let change_ph = w.addrs[0].keys.owner_puzzle_hash;
 
@@ -101,8 +117,14 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         let build_mint_bundle = |effective_fee: u64| -> Result<(SpendBundle, Bytes32, Bytes32)> {
             // 1) UNSIGNED mint coin spends: gather XCH across ALL scanned addresses.
             let all_xch = coins_with_keys_from_wallet(w);
-            let mint =
-                build_mint_unsigned_multi(&all_xch, change_ph, Bytes32::default(), effective_fee)?;
+            let mint = build_mint_unsigned_multi(
+                &all_xch,
+                change_ph,
+                Bytes32::default(),
+                label.clone(),
+                description.clone(),
+                effective_fee,
+            )?;
             let coin_id = mint.datastore.coin.coin_id();
             let launcher_id = mint.launcher_id;
 
@@ -161,6 +183,8 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         &self,
         launcher_id: Bytes32,
         new_root: Bytes32,
+        label: Option<String>,
+        description: Option<String>,
         w: &ScannedWallet,
         fee: u64,
     ) -> Result<UpdateOutcome> {
@@ -185,6 +209,8 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
                 owner_pk,
                 store.clone(),
                 new_root,
+                label.clone(),
+                description.clone(),
                 &all_xch,
                 effective_fee,
             )?;
@@ -372,7 +398,10 @@ mod tests {
         let anchor = CoinsetAnchor::new(mock);
         // Scan to get a ScannedWallet, then call mint with it.
         let w = anchor.scan(ABANDON).await.unwrap();
-        let err = anchor.mint_empty_store(&w, 0).await.unwrap_err();
+        let err = anchor
+            .mint_empty_store(&w, None, None, 0)
+            .await
+            .unwrap_err();
         match err {
             crate::error::ChainError::Chain(msg) => {
                 assert!(msg.contains("insufficient DIG"), "got: {msg}");
@@ -449,7 +478,10 @@ mod tests {
 
         // mint_empty_store: no DIG coins anywhere → dig_cats_multi returns empty
         // → insufficient DIG. Proves the whole multi-address mint path is wired.
-        let err = anchor.mint_empty_store(&w, 0).await.unwrap_err();
+        let err = anchor
+            .mint_empty_store(&w, None, None, 0)
+            .await
+            .unwrap_err();
         match err {
             crate::error::ChainError::Chain(msg) => {
                 assert!(msg.contains("insufficient DIG"), "got: {msg}");

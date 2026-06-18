@@ -47,6 +47,13 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let launcher_id = parse_bytes32(&state.store_id, "store_id")?;
     let new_root_b32 = Bytes32::new(prepared.root.0);
 
+    // Preserve the on-chain project name/description across this update: `update_root` REPLACES the
+    // singleton metadata, so re-send the label/description persisted in config.toml (set at init),
+    // or they would be cleared on commit.
+    let store_cfg = digstore_store::load_config(ctx.config_path()).ok();
+    let label = store_cfg.as_ref().and_then(|c| c.label.clone());
+    let description = store_cfg.as_ref().and_then(|c| c.description.clone());
+
     // 3b. Preflight balance for BOTH assets, with up-front cost disclosure. A
     //     commit pays COMMIT_DIG (100 DIG) embedded in the on-chain bundle PLUS the
     //     XCH fee. Block before the update if the wallet is short on EITHER asset;
@@ -98,8 +105,15 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
         parse_bytes32(&state.coin_id, "coin_id")?
     } else {
         let sp = ui.spinner("Building & signing the update…");
-        let upd = block_on(anchor.update_root(launcher_id, new_root_b32, &w, fee))
-            .and_then(|r| r.map_err(|e| CliError::UpdateFailed(e.to_string())))?;
+        let upd = block_on(anchor.update_root(
+            launcher_id,
+            new_root_b32,
+            label.clone(),
+            description.clone(),
+            &w,
+            fee,
+        ))
+        .and_then(|r| r.map_err(|e| CliError::UpdateFailed(e.to_string())))?;
         sp.finish();
         let coin_hex = hex::encode(upd.new_coin_id.as_ref());
         anchor_ux::report_submitted(ui, "update", &coin_hex, ui.json());

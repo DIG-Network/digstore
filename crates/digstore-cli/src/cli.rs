@@ -113,6 +113,13 @@ pub enum Command {
 pub struct InitArgs {
     /// Project name (default: "default").
     pub name: Option<String>,
+    /// Display name written to the on-chain project metadata (shown in DIGHUb). Optional —
+    /// prompted at init if not given; when left unset, displays fall back to the store id.
+    #[arg(long)]
+    pub label: Option<String>,
+    /// Project description written to the on-chain metadata (optional).
+    #[arg(long)]
+    pub description: Option<String>,
     #[arg(long)]
     pub private: bool,
     /// Content root (the build-output directory this store captures).

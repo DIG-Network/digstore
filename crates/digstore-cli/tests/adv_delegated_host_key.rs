@@ -117,7 +117,17 @@ fn any_host_serves_real_content_with_attestation_disabled() {
     // ---- Build a store (embedding `serving_pubkey` as the trusted key, as the compile-worker did) --
     let td = tempfile::tempdir().unwrap();
     let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
-    store_ops::init_store(&ctx, false, None, None, None, Some(serving_pubkey)).unwrap();
+    store_ops::init_store(
+        &ctx,
+        false,
+        None,
+        None,
+        None,
+        Some(serving_pubkey),
+        None,
+        None,
+    )
+    .unwrap();
 
     let original: Vec<u8> =
         b"PUBLIC-SERVE PAYLOAD: any node may release this. 0123456789abcdef".to_vec();

@@ -37,7 +37,7 @@ fn host_runtime_neither_decrypts_nor_inspects_the_payload() {
     // ---- Build a REAL store with a DISTINCTIVE plaintext we can scan for.
     let td = tempfile::tempdir().unwrap();
     let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
-    store_ops::init_store(&ctx, false, None, None, None, None).unwrap();
+    store_ops::init_store(&ctx, false, None, None, None, None, None, None).unwrap();
 
     // A long, unique, high-entropy-looking ASCII marker so an accidental match is
     // implausible. This exact run must NEVER appear in served (ciphertext) bytes.

@@ -38,6 +38,8 @@ fn store_config_constructs() {
         data_dir: "/var/dig".into(),
         max_size: 1024,
         visibility: Visibility::Public,
+        label: None,
+        description: None,
     };
     assert_eq!(cfg.max_size, 1024);
 }
