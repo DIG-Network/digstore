@@ -49,12 +49,12 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     let mut private = args.private;
     if content_root.is_none() {
         content_root = ui.prompt_line(
-            "Relative path to the build/content directory this store captures",
+            "Relative path to the build/content directory this project captures",
             ".",
         );
     }
     if !private {
-        private = ui.confirm("Make this a private (salted) store?", false);
+        private = ui.confirm("Make this a private (salted) project?", false);
     }
 
     // --- HARD GATE: seed → balance → mint, all BEFORE any local files. ---
@@ -75,7 +75,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
 
     if !ui.json() {
         ui.line(format!(
-            "⛓  Minting a store on Chia mainnet costs {} DIG + up to {} XCH (fee).",
+            "⛓  Minting a project on Chia mainnet costs {} DIG + up to {} XCH (fee).",
             format_dig(dig::INIT_DIG),
             format_xch(fee)
         ));
@@ -186,13 +186,13 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         }));
     } else {
         ui.success(format!(
-            "Initialized store '{}' ({})",
+            "Initialized project '{}' ({})",
             name,
             store_id.to_hex()
         ));
         ui.line(format!("  content root: {content_root_display}"));
         if first {
-            ui.line("  set as active store");
+            ui.line("  set as active project");
         }
         ui.line(format!(
             "  trusted host key: {}",

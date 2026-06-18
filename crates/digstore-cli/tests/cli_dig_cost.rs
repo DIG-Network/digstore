@@ -69,12 +69,12 @@ fn commit_insufficient_dig_exits_12_and_keeps_staging() {
         .code(12)
         .stderr(predicate::str::contains("DIG"));
 
-    // No generation finalized.
+    // No deployment finalized.
     dig(&dir)
         .args(["log"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("generation").not());
+        .stdout(predicate::str::contains("deployment").not());
 
     // Staging intact: the file is still staged.
     dig(&dir)

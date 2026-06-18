@@ -30,7 +30,7 @@ fn commit_creates_module_and_log_lists_it() {
         .args(["log"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("generation 0"));
+        .stdout(predicate::str::contains("deployment 0"));
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn commit_on_pending_init_is_refused_clearly() {
         .args(["log"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("generation").not());
+        .stdout(predicate::str::contains("deployment").not());
 }
 
 /// The anchor.toml status + last_root for the default store.
@@ -151,7 +151,7 @@ fn commit_anchors_and_finalizes_on_confirm() {
         .args(["log"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("generation 0"));
+        .stdout(predicate::str::contains("deployment 0"));
 
     // anchor.toml reflects the confirmed update at the committed root.
     let (status, last_root) = anchor_status_and_root(&dir);
@@ -217,7 +217,7 @@ fn commit_blocks_until_confirmed_and_does_not_finalize_on_timeout() {
         .args(["log"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("generation").not());
+        .stdout(predicate::str::contains("deployment").not());
 
     // Staging intact: the file is still staged.
     dig(&dir)
@@ -276,7 +276,7 @@ fn commit_resumes_pending_update_idempotently() {
         .args(["log"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("generation 0"));
+        .stdout(predicate::str::contains("deployment 0"));
     let (status, last_root) = anchor_status_and_root(&dir);
     assert_eq!(status, "confirmed");
     assert_eq!(last_root, pending_root);
@@ -318,7 +318,7 @@ fn commit_resubmit_forces_fresh_update_from_pending() {
         .args(["log"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("generation 0"));
+        .stdout(predicate::str::contains("deployment 0"));
     let (status, _) = anchor_status_and_root(&dir);
     assert_eq!(status, "confirmed");
 }
