@@ -453,6 +453,10 @@ pub async fn clone_from(
         data_dir: ctx.dig_dir.display().to_string(),
         max_size: MAX_STORE_BYTES,
         visibility: Visibility::Public,
+        // A clone reads the on-chain label/description lazily for display; the local config
+        // starts without them (displays fall back to the store id until refreshed).
+        label: None,
+        description: None,
     };
     digstore_store::save_config(ctx.config_path(), &cfg)
         .map_err(|e| CliError::Other(anyhow::anyhow!("save config: {e}")))?;

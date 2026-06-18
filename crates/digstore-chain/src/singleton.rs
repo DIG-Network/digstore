@@ -62,6 +62,8 @@ fn mint_store_digstore(
     minter_synthetic_key: PublicKey,
     selected_coins: Vec<Coin>,
     root_hash: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
     owner_puzzle_hash: Bytes32,
     delegated_puzzles: Vec<DelegatedPuzzle>,
     fee: u64,
@@ -90,8 +92,8 @@ fn mint_store_digstore(
         &mut ctx,
         DataStoreMetadata {
             root_hash,
-            label: None,
-            description: None,
+            label,
+            description,
             bytes: None,
             size_proof: None,
         },
@@ -150,9 +152,12 @@ fn mint_store_digstore(
 /// `launcher_id`). The lead coin is spent with a `StandardLayer` for its own
 /// `synthetic_pk`; every other coin asserts concurrent spend with the lead coin
 /// using ITS OWN `StandardLayer` (one per distinct address).
+#[allow(clippy::too_many_arguments)]
 fn mint_store_digstore_multi(
     selected_coins: Vec<CoinWithKey>,
     root_hash: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
     change_ph: Bytes32, // index 0 owner_puzzle_hash — change consolidates here
     owner_puzzle_hash: Bytes32, // store owner (index 0); used in the owner hint + DataStore
     delegated_puzzles: Vec<DelegatedPuzzle>,
@@ -189,8 +194,8 @@ fn mint_store_digstore_multi(
         &mut ctx,
         DataStoreMetadata {
             root_hash,
-            label: None,
-            description: None,
+            label,
+            description,
             bytes: None,
             size_proof: None,
         },
@@ -263,6 +268,8 @@ pub fn build_mint_unsigned(
     keys: &WalletKeys,
     unspent: &[Coin],
     root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
     fee: u64,
 ) -> Result<MintUnsigned> {
     let selected = select_coins(unspent, fee + 1)
@@ -274,6 +281,8 @@ pub fn build_mint_unsigned(
         keys.synthetic_pk,
         selected,
         root,
+        label,
+        description,
         keys.owner_puzzle_hash,
         vec![],
         fee,
@@ -299,6 +308,8 @@ pub fn build_mint_unsigned_multi(
     all_coins: &[CoinWithKey],
     change_ph: Bytes32,
     root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
     fee: u64,
 ) -> Result<MintUnsigned> {
     // Flatten to bare Coin slice for coin selection.
@@ -325,8 +336,17 @@ pub fn build_mint_unsigned_multi(
     let SuccessResponse {
         coin_spends,
         new_datastore,
-    } = mint_store_digstore_multi(selected, root, change_ph, change_ph, vec![], fee)
-        .map_err(|e| ChainError::Chain(format!("mint_store_multi: {e}")))?;
+    } = mint_store_digstore_multi(
+        selected,
+        root,
+        label,
+        description,
+        change_ph,
+        change_ph,
+        vec![],
+        fee,
+    )
+    .map_err(|e| ChainError::Chain(format!("mint_store_multi: {e}")))?;
 
     let launcher_id = new_datastore.info.launcher_id;
     Ok(MintUnsigned {
@@ -357,13 +377,15 @@ pub fn build_mint(
     keys: &WalletKeys,
     unspent: &[Coin],
     root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
     fee: u64,
 ) -> Result<MintBuild> {
     let MintUnsigned {
         coin_spends,
         launcher_id,
         datastore,
-    } = build_mint_unsigned(keys, unspent, root, fee)?;
+    } = build_mint_unsigned(keys, unspent, root, label, description, fee)?;
     let signature = sign_coin_spends(
         &coin_spends,
         std::slice::from_ref(&keys.synthetic_sk),
@@ -403,17 +425,21 @@ pub fn build_update_unsigned(
     keys: &WalletKeys,
     store: DataStore,
     new_root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
     fee_coins: &[Coin],
     fee: u64,
 ) -> Result<UpdateUnsigned> {
+    // `update_store_metadata` REPLACES the singleton metadata, so label/description must be
+    // re-sent on every update or they'd be cleared. Callers pass the values persisted at init.
     let SuccessResponse {
         coin_spends: update_spends,
         new_datastore,
     } = update_store_metadata(
         store,
         new_root,
-        None,
-        None,
+        label,
+        description,
         None,
         None,
         DataStoreInnerSpend::Owner(keys.synthetic_pk),
@@ -446,17 +472,20 @@ pub fn build_update_unsigned_multi(
     owner_pk: PublicKey,
     store: DataStore,
     new_root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
     all_fee_coins: &[CoinWithKey],
     fee: u64,
 ) -> Result<UpdateUnsigned> {
+    // Re-send label/description (update REPLACES metadata; see build_update_unsigned).
     let SuccessResponse {
         coin_spends: update_spends,
         new_datastore,
     } = update_store_metadata(
         store,
         new_root,
-        None,
-        None,
+        label,
+        description,
         None,
         None,
         DataStoreInnerSpend::Owner(owner_pk),
@@ -526,6 +555,8 @@ pub fn build_update(
     keys: &WalletKeys,
     store: DataStore,
     new_root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
     fee_coins: &[Coin],
     fee: u64,
 ) -> Result<UpdateBuild> {
@@ -533,7 +564,7 @@ pub fn build_update(
         coin_spends,
         new_coin_id,
         datastore,
-    } = build_update_unsigned(keys, store, new_root, fee_coins, fee)?;
+    } = build_update_unsigned(keys, store, new_root, label, description, fee_coins, fee)?;
     let signature = sign_coin_spends(
         &coin_spends,
         std::slice::from_ref(&keys.synthetic_sk),
@@ -622,9 +653,17 @@ mod tests {
         // to build_update with no fee coins.
         let keys = derive_wallet_keys(ABANDON).unwrap();
         let coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1_000_000);
-        let mb = build_mint(&keys, &[coin], Bytes32::default(), 0).unwrap();
+        let mb = build_mint(&keys, &[coin], Bytes32::default(), None, None, 0).unwrap();
         // Now call build_update with an empty fee_coins slice and a nonzero fee.
-        let result = build_update(&keys, mb.datastore, Bytes32::new([1u8; 32]), &[], 1_000);
+        let result = build_update(
+            &keys,
+            mb.datastore,
+            Bytes32::new([1u8; 32]),
+            None,
+            None,
+            &[],
+            1_000,
+        );
         assert!(result.is_err(), "expected error with empty fee coins");
     }
 
@@ -634,16 +673,41 @@ mod tests {
         // A synthetic funding coin at the owner puzzle hash (mint_store builds
         // the spend purely; it does not check on-chain existence).
         let coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1_000_000);
-        let mb = build_mint(&keys, &[coin], Bytes32::default(), 1_000).unwrap();
+        let mb = build_mint(&keys, &[coin], Bytes32::default(), None, None, 1_000).unwrap();
         assert!(!mb.bundle.coin_spends.is_empty());
         assert_ne!(mb.launcher_id, Bytes32::default()); // a real launcher id was derived
+    }
+
+    #[test]
+    fn build_mint_embeds_label_and_description_in_metadata() {
+        // The on-chain project name (label) + description must land in the singleton's
+        // DataStoreMetadata, not be dropped — this is the write half of the feature.
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1_000_000);
+        let mb = build_mint(
+            &keys,
+            &[coin],
+            Bytes32::default(),
+            Some("My Project".to_string()),
+            Some("A test description".to_string()),
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(
+            mb.datastore.info.metadata.label.as_deref(),
+            Some("My Project")
+        );
+        assert_eq!(
+            mb.datastore.info.metadata.description.as_deref(),
+            Some("A test description")
+        );
     }
 
     #[test]
     fn build_mint_errors_when_insufficient_coins() {
         let keys = derive_wallet_keys(ABANDON).unwrap();
         let coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1); // < fee+1
-        assert!(build_mint(&keys, &[coin], Bytes32::default(), 1_000).is_err());
+        assert!(build_mint(&keys, &[coin], Bytes32::default(), None, None, 1_000).is_err());
     }
 }
 
@@ -717,7 +781,7 @@ mod sync_tests {
         let keys = derive_wallet_keys(phrase.trim()).unwrap();
         let fee_coins = chain.unspent_coins(keys.owner_puzzle_hash).await.unwrap();
         let new_root = Bytes32::new([7u8; 32]);
-        let built = build_update(&keys, store, new_root, &fee_coins, 1_000).unwrap();
+        let built = build_update(&keys, store, new_root, None, None, &fee_coins, 1_000).unwrap();
         assert!(!built.bundle.coin_spends.is_empty());
         assert_eq!(built.datastore.info.metadata.root_hash, new_root);
         println!("built update; new coin id = {:?}", built.new_coin_id);

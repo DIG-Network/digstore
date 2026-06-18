@@ -56,6 +56,8 @@ fn config(dir: &std::path::Path) -> StoreConfig {
         data_dir: dir.to_string_lossy().to_string(),
         max_size: 10_000_000,
         visibility: Visibility::Public,
+        label: None,
+        description: None,
     }
 }
 

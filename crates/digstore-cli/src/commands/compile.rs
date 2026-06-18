@@ -146,6 +146,9 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: CompileArgs) -> Result<(), CliError>
         Some(store_id),
         salt_override,
         host_key_override,
+        // Headless compile: no chain, no on-chain metadata.
+        None,
+        None,
     )?;
 
     // 4. Stage every file under the content root.

@@ -13,6 +13,10 @@ struct ConfigToml {
     visibility: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     secret_salt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 impl ConfigToml {
@@ -27,6 +31,8 @@ impl ConfigToml {
             max_size: cfg.max_size,
             visibility,
             secret_salt,
+            label: cfg.label.clone(),
+            description: cfg.description.clone(),
         }
     }
 
@@ -58,6 +64,8 @@ impl ConfigToml {
             data_dir: self.data_dir,
             max_size: self.max_size,
             visibility,
+            label: self.label,
+            description: self.description,
         })
     }
 }
@@ -115,6 +123,8 @@ mod tests {
             data_dir: "/data".to_string(),
             max_size: 1_000_000,
             visibility: Visibility::Public,
+            label: None,
+            description: None,
         }
     }
 
@@ -154,6 +164,36 @@ mod tests {
         assert!(text.contains("store_id = \""));
         assert!(text.contains("visibility = \"public\""));
         assert!(text.contains(&"22".repeat(32)));
+    }
+
+    #[test]
+    fn label_and_description_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut cfg = public_cfg();
+        cfg.label = Some("My Project".to_string());
+        cfg.description = Some("A test store".to_string());
+        save_config(&path, &cfg).unwrap();
+        let loaded = load_config(&path).unwrap();
+        assert_eq!(loaded.label.as_deref(), Some("My Project"));
+        assert_eq!(loaded.description.as_deref(), Some("A test store"));
+    }
+
+    #[test]
+    fn legacy_config_without_label_loads_as_none() {
+        // A config.toml written before label/description existed must still load
+        // (backward compatibility for stores created by older digstore versions).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let sid = "22".repeat(32); // a valid 64-hex store id
+        std::fs::write(
+            &path,
+            format!("store_id = \"{sid}\"\ndata_dir = \"/data\"\nmax_size = 1\nvisibility = \"public\"\n"),
+        )
+        .unwrap();
+        let loaded = load_config(&path).unwrap();
+        assert_eq!(loaded.label, None);
+        assert_eq!(loaded.description, None);
     }
 
     #[test]

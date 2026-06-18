@@ -33,6 +33,11 @@ pub struct StoreConfig {
     pub data_dir: String,
     pub max_size: u64,
     pub visibility: Visibility,
+    /// Human-friendly project name, written to the on-chain CHIP-0035 singleton
+    /// metadata `label` at mint and preserved across updates. `None` until set.
+    pub label: Option<String>,
+    /// Project description, written to the singleton metadata `description`.
+    pub description: Option<String>,
 }
 
 /// Logical generation identifier.
