@@ -15,7 +15,7 @@ pub fn run(
     if ui.json() {
         ui.emit_json(&serde_json::json!({ "active": args.name, "content_root": ws.content_root(&args.name) }));
     } else {
-        ui.success(format!("active store is now '{}'", args.name));
+        ui.success(format!("active project is now '{}'", args.name));
         ui.line(format!("  content root: {cr}"));
     }
     Ok(())

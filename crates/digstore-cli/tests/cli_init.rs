@@ -22,7 +22,7 @@ fn init_creates_store_and_trusted_key() {
         .arg("init")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Initialized store"));
+        .stdout(predicate::str::contains("Initialized project"));
     // Multi-store layout: with the workspace at <dir>/.dig, the default store's
     // files live under <dir>/.dig/stores/default/.
     let store = common::store_dir(&dir);

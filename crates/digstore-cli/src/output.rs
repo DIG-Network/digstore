@@ -31,7 +31,7 @@ pub fn render_status(s: &StatusView, ui: &crate::ui::Ui) {
         return;
     }
     match &s.root {
-        Some(r) => ui.line(format!("● generation root {}", &r[..r.len().min(12)])),
+        Some(r) => ui.line(format!("● deployment root {}", &r[..r.len().min(12)])),
         None => ui.line("No commits yet"),
     }
     ui.capacity(s.staged_bytes, s.limit_bytes);
@@ -63,7 +63,7 @@ pub fn render_log(entries: &[LogEntry], json: bool) -> String {
     let mut out = String::new();
     for e in entries {
         out.push_str(&format!(
-            "generation {}  root {}  ts {}\n",
+            "deployment {}  root {}  ts {}\n",
             e.id, e.root, e.timestamp
         ));
     }

@@ -22,8 +22,8 @@ pub struct Cli {
     /// Suppress progress and hints.
     #[arg(short, long, global = true)]
     pub quiet: bool,
-    /// Operate on a specific store by name (overrides the active store).
-    #[arg(long = "store", global = true)]
+    /// Operate on a specific project by name (overrides the active project).
+    #[arg(long = "store", visible_alias = "project", global = true)]
     pub store_name: Option<String>,
     /// Operating directory for add/urn/status (overrides the store's content root).
     #[arg(short = 'C', long = "cwd", global = true)]
@@ -42,42 +42,43 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Initialize a new store in the current directory.
+    /// Initialize a new project in the current directory.
     Init(InitArgs),
     /// Stage files, directories, or glob patterns for the next commit.
     Add(AddArgs),
-    /// Commit the staged content as a new generation root.
+    /// Commit the staged content as a new deployment (generation root).
     Commit(CommitArgs),
     /// Compile a directory into a hostable module + root, with NO chain/wallet
     /// (headless). The caller anchors the printed root on-chain separately.
     Compile(CompileArgs),
-    /// Show the active store, its content root, and pending staged changes.
+    /// Show the active project, its content root, and pending staged changes.
     Status(StatusArgs),
-    /// Show the store's generation (commit) history.
+    /// Show the project's deployment history.
     Log(LogArgs),
-    /// Show what changed between two generation roots.
+    /// Show what changed between two deployment roots.
     Diff(DiffArgs),
-    /// Materialize a generation root's content into an output directory.
+    /// Materialize a deployment root's content into an output directory.
     Checkout(CheckoutArgs),
     /// Stream a resource out by URN (decrypted) or retrieval key (encrypted).
     Cat(CatArgs),
-    /// Manage remote endpoints for this store (add, list, remove).
+    /// Manage remote endpoints for this project (add, list, remove).
     Remote(RemoteArgs),
-    /// Clone a store from a remote into the current directory.
+    /// Clone a project from a remote into the current directory.
     Clone(CloneArgs),
-    /// Push the local store's content and signed head to a remote.
+    /// Push the local project's content and signed head to a remote.
     Push(PushArgs),
     /// Pull the latest content and signed head from a remote.
     Pull(PullArgs),
-    /// Revoke a published root (or the whole store) with a signed tombstone.
+    /// Revoke a published root (or the whole project) with a signed tombstone.
     Revoke(RevokeArgs),
-    /// Run a dig:// remote node serving the active store (clone/pull/push, §21).
+    /// Run a dig:// remote node serving the active project (clone/pull/push, §21).
     Serve(ServeArgs),
-    /// List the stores in this workspace.
+    /// List the projects in this workspace.
+    #[command(visible_alias = "projects")]
     Stores(StoresArgs),
-    /// Switch the active store by name.
+    /// Switch the active project by name.
     Use(UseArgs),
-    /// Show or set the active store's content root directory.
+    /// Show or set the active project's content root directory.
     Dir(DirArgs),
     /// Clear the staging area (discard all staged entries).
     Unstage(UnstageArgs),
@@ -93,7 +94,7 @@ pub enum Command {
     Seed(SeedArgs),
     /// Lock the seed (clear the cached-unlock session).
     Lock(LockArgs),
-    /// Resume or inspect the store's on-chain anchor.
+    /// Resume or inspect the project's on-chain anchor.
     Anchor(AnchorArgs),
     /// Show wallet XCH + DIG balance.
     Balance(BalanceArgs),
@@ -110,7 +111,7 @@ pub enum Command {
     after_help = "Costs 100 DIG + an XCH fee (paid on-chain at mint).\n\nEXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
 )]
 pub struct InitArgs {
-    /// Store name (default: "default").
+    /// Project name (default: "default").
     pub name: Option<String>,
     #[arg(long)]
     pub private: bool,
@@ -169,13 +170,13 @@ pub struct CommitArgs {
     after_help = "Headless: NO wallet, NO chain, NO signing. Stages <in>, computes the\ngeneration root, and writes the compiled module to <out>. The caller anchors\nthe printed root on-chain (e.g. via a wallet) separately.\n\nEXAMPLES:\n  digstore compile --in ./content --out ./module.dig --store-id <64-hex> --json"
 )]
 pub struct CompileArgs {
-    /// Directory of files to compile into the store generation (the content root).
+    /// Directory of files to compile into the project deployment (the content root).
     #[arg(long)]
     pub r#in: PathBuf,
     /// Path to write the compiled module to.
     #[arg(long)]
     pub out: PathBuf,
-    /// The on-chain store id (launcher id, 64-hex) this generation belongs to.
+    /// The on-chain store id (launcher id, 64-hex) this deployment belongs to.
     #[arg(long = "store-id")]
     pub store_id: String,
     /// Compile as a private (salted) store. Provide --salt for a deterministic root.
@@ -379,7 +380,7 @@ pub struct UrnArgs {
     after_help = "EXAMPLES:\n  digstore keys\n  digstore keys --root <hex>\n  digstore keys --json"
 )]
 pub struct KeysArgs {
-    /// Generation root to list (hex); defaults to the current root.
+    /// Deployment root to list (hex); defaults to the current root.
     #[arg(long)]
     pub root: Option<String>,
 }
@@ -678,5 +679,34 @@ mod tests {
             Command::Cat(c) => assert!(c.salt.is_some()),
             _ => panic!("expected cat"),
         }
+    }
+
+    // --- Terminology alignment with hub.dig.net (store→project): additive,
+    // backward-compatible aliases. The old names MUST keep working. ---
+
+    #[test]
+    fn projects_is_alias_for_stores() {
+        let cli = Cli::try_parse_from(["digstore", "projects"]).unwrap();
+        assert!(matches!(cli.command, Command::Stores(_)));
+    }
+
+    #[test]
+    fn stores_command_still_works() {
+        // backward-compat guard: the original command name is unchanged.
+        let cli = Cli::try_parse_from(["digstore", "stores"]).unwrap();
+        assert!(matches!(cli.command, Command::Stores(_)));
+    }
+
+    #[test]
+    fn project_flag_is_alias_for_store() {
+        let cli = Cli::try_parse_from(["digstore", "--project", "site", "status"]).unwrap();
+        assert_eq!(cli.store_name.as_deref(), Some("site"));
+    }
+
+    #[test]
+    fn store_flag_still_works() {
+        // backward-compat guard: the original --store flag is unchanged.
+        let cli = Cli::try_parse_from(["digstore", "--store", "site", "status"]).unwrap();
+        assert_eq!(cli.store_name.as_deref(), Some("site"));
     }
 }
