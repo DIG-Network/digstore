@@ -388,10 +388,9 @@ pub async fn clone_from(
                 }
                 Ok(())
             },
-            Some(&|done: u64, total: u64| {
-                if pb.length().unwrap_or(0) == 0 && total > 0 {
-                    pb.set_length(total);
-                }
+            // Indeterminate bar: feed cumulative bytes only (no total/percent). The
+            // callback's `total` is intentionally ignored — we never set a length.
+            Some(&|done: u64, _total: u64| {
                 pb.set_position(done);
             }),
         )
@@ -660,10 +659,9 @@ pub async fn pull_from(ctx: &CliContext, ui: &Ui, store_url: &str) -> Result<Byt
             &cfg.store_id,
             local_root,
             false,
-            Some(&|done: u64, total: u64| {
-                if pb.length().unwrap_or(0) == 0 && total > 0 {
-                    pb.set_length(total);
-                }
+            // Indeterminate bar: feed cumulative bytes only (no total/percent). The
+            // callback's `total` is intentionally ignored — we never set a length.
+            Some(&|done: u64, _total: u64| {
                 pb.set_position(done);
             }),
         )

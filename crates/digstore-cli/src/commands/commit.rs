@@ -188,7 +188,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                     outcome.output_size
                 ));
                 ui.line(format!("  anchored on mainnet (coin {coin_hex})"));
-                ui.hint("digstore push origin");
+                // Offer to publish this deployment to DIGHub. Never blocks/prompts in
+                // --json/non-TTY runs (see `maybe_offer_push`).
+                maybe_offer_push(ctx, ui, &args);
             }
             Ok(())
         }
@@ -201,6 +203,57 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                 ));
             }
             Err(CliError::ConfirmTimeout)
+        }
+    }
+}
+
+/// After a deployment confirms (human-mode success branch only), decide whether to
+/// publish it to DIGHub and, if so, run the existing push path. This is the ONLY
+/// place commit pushes; it never duplicates the push logic — it calls
+/// [`crate::commands::push::run`] with the default (`origin`) remote, exactly as
+/// `digstore push origin` would.
+///
+/// Decision (mirrors the `ui.spinner`/`progress_bar` TTY/json gating so it never
+/// blocks automation):
+/// - `--no-push`: never push; keep the `digstore push origin` hint.
+/// - `--push`: push without asking (works non-interactively too).
+/// - interactive (TTY, not json): ask `Push this deployment to DIGHub now? [y/N]`
+///   (default No); push on yes, keep the hint on no.
+/// - non-interactive (no flag): do nothing but print the hint — never prompt/block.
+///
+/// A push failure here NEVER fails the commit: the deployment is already confirmed
+/// on-chain and finalized locally. We surface a clear error line and the hint so the
+/// user can retry with `digstore push origin`.
+fn maybe_offer_push(ctx: &CliContext, ui: &crate::ui::Ui, args: &CommitArgs) {
+    // Explicit opt-out, or a non-interactive run with no `--push`: just leave the hint.
+    if args.no_push || (!args.push && !ui.can_prompt()) {
+        ui.hint("digstore push origin");
+        return;
+    }
+
+    // `--push` pushes unconditionally; otherwise ask (we are interactive here).
+    let do_push = args.push || ui.confirm("Push this deployment to DIGHub now?", false);
+    if !do_push {
+        // User declined: keep the hint so they know how to publish later.
+        ui.hint("digstore push origin");
+        return;
+    }
+
+    // Reuse the existing push path — the same target as `digstore push origin`.
+    // Its own (now-indeterminate) progress bar runs while it works; on success it
+    // prints "pushed root … to origin".
+    match crate::commands::push::run(
+        ctx,
+        ui,
+        crate::cli::PushArgs {
+            remote: "origin".to_string(),
+        },
+    ) {
+        Ok(()) => {}
+        Err(e) => {
+            // Do NOT fail the (already-confirmed) commit: report and keep the hint.
+            ui.error(&e);
+            ui.hint("digstore push origin");
         }
     }
 }
