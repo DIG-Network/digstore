@@ -36,6 +36,9 @@
   button.ghost:hover{background:var(--surface-2)}
   textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
        border-radius:12px;padding:14px;font-size:14px;font-family:ui-monospace,monospace;resize:vertical;min-height:96px}
+  input.pw{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+       border-radius:12px;padding:14px;font-size:14px}
+  input.pw:focus,textarea:focus{outline:none;border-color:var(--accent)}
   .seed{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:16px;
        font-family:ui-monospace,monospace;font-size:14px;line-height:1.9;word-spacing:6px;color:var(--text)}
   .warn{color:#f0b86a;font-size:13px;margin:14px 0;line-height:1.5}
@@ -78,7 +81,10 @@
     <p class="sub">Write these 24 words down and keep them safe and offline. Anyone with them controls your funds. DIG never sees them.</p>
     <div class="seed" id="seedWords"></div>
     <p class="warn">⚠ This phrase is shown once. Store it before continuing.</p>
-    <button class="primary" id="btnSavedSeed">I've saved it — open wallet</button>
+    <div class="label">Set a password (encrypts your wallet on this device)</div>
+    <input type="password" id="createPw" class="pw" placeholder="At least 8 characters" autocomplete="new-password">
+    <div class="err" id="createErr"></div>
+    <button class="primary" id="btnSavedSeed">I've saved it — create wallet</button>
     <button class="ghost" id="btnBackWelcome1">Back</button>
   </div>
 
@@ -87,9 +93,20 @@
     <h1>Restore wallet</h1>
     <p class="sub">Enter your 12/24-word recovery phrase, separated by spaces.</p>
     <textarea id="restoreInput" placeholder="word1 word2 word3 …" spellcheck="false" autocomplete="off"></textarea>
+    <div class="label">Set a password (encrypts your wallet on this device)</div>
+    <input type="password" id="restorePw" class="pw" placeholder="At least 8 characters" autocomplete="new-password">
     <div class="err" id="restoreErr"></div>
     <button class="primary" id="btnRestoreGo">Open wallet</button>
     <button class="ghost" id="btnBackWelcome2">Back</button>
+  </div>
+
+  <!-- UNLOCK -->
+  <div class="card hidden" id="view-unlock">
+    <h1>Welcome back</h1>
+    <p class="sub">Enter your password to unlock your DIG Wallet on this device.</p>
+    <input type="password" id="unlockPw" class="pw" placeholder="Password" autocomplete="current-password">
+    <div class="err" id="unlockErr"></div>
+    <button class="primary" id="btnUnlock">Unlock</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -145,21 +162,34 @@ $('#btnRestore').onclick = () => show('view-restore');
 $('#btnBackWelcome1').onclick = () => show('view-welcome');
 $('#btnBackWelcome2').onclick = () => show('view-welcome');
 $('#btnSavedSeed').onclick = async () => {
-  try{ await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:window._seed})}); window._seed=null; show('view-dash'); refreshBalance(); }
-  catch(e){ alert(e.message); }
+  $('#createErr').textContent='';
+  const pw = $('#createPw').value;
+  if(pw.length<8){ $('#createErr').textContent='Password must be at least 8 characters'; return; }
+  try{ await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:window._seed,password:pw})}); window._seed=null; show('view-dash'); refreshBalance(); }
+  catch(e){ $('#createErr').textContent=e.message; }
 };
 $('#btnRestoreGo').onclick = async () => {
   $('#restoreErr').textContent='';
-  try{ await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:$('#restoreInput').value})}); show('view-dash'); refreshBalance(); }
+  const pw = $('#restorePw').value;
+  if(pw.length<8){ $('#restoreErr').textContent='Password must be at least 8 characters'; return; }
+  try{ await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:$('#restoreInput').value,password:pw})}); show('view-dash'); refreshBalance(); }
   catch(e){ $('#restoreErr').textContent=e.message; }
+};
+$('#btnUnlock').onclick = async () => {
+  $('#unlockErr').textContent='';
+  try{ await api('/api/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:$('#unlockPw').value})}); show('view-dash'); refreshBalance(); }
+  catch(e){ $('#unlockErr').textContent=e.message; }
 };
 $('#btnRefresh').onclick = refreshBalance;
 $('#btnLock').onclick = async () => { await api('/api/lock',{method:'POST'}); show('view-welcome'); };
 $('#copyAddr').onclick = () => { navigator.clipboard.writeText($('#addr').textContent); $('#copyAddr').textContent='Copied'; setTimeout(()=>$('#copyAddr').textContent='Copy',1200); };
 
 (async function init(){
-  try{ const s = await api('/api/status'); if(s.has_wallet){ $('#addr').textContent=s.address; show('view-dash'); refreshBalance(); } else { show('view-welcome'); } }
-  catch(e){ show('view-welcome'); }
+  try{ const s = await api('/api/status');
+    if(s.state==='unlocked'){ $('#addr').textContent=s.address; show('view-dash'); refreshBalance(); }
+    else if(s.state==='locked'){ show('view-unlock'); $('#unlockPw').focus(); }
+    else { show('view-welcome'); }
+  } catch(e){ show('view-welcome'); }
 })();
 </script>
 </body>
