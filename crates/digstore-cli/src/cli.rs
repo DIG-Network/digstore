@@ -170,6 +170,15 @@ pub struct CommitArgs {
     /// confirm. Without it, a re-run reuses the pending update.
     #[arg(long)]
     pub resubmit: bool,
+    /// After the deployment confirms, push it to DIGHub (the default remote) WITHOUT
+    /// asking. For scripting/CI. Mutually exclusive with `--no-push`. Default: ask
+    /// when interactive, do nothing when not.
+    #[arg(long, conflicts_with = "no_push")]
+    pub push: bool,
+    /// Never ask to push and never push after the deployment confirms (keeps only the
+    /// `digstore push origin` hint). Mutually exclusive with `--push`.
+    #[arg(long)]
+    pub no_push: bool,
 }
 
 #[derive(Debug, Args)]
@@ -623,6 +632,49 @@ mod tests {
             Command::Commit(c) => assert!(!c.resubmit),
             _ => panic!("expected commit"),
         }
+    }
+
+    #[test]
+    fn parses_commit_push_flag() {
+        let cli = Cli::try_parse_from(["digstore", "commit", "--push"]).unwrap();
+        match cli.command {
+            Command::Commit(c) => {
+                assert!(c.push);
+                assert!(!c.no_push);
+            }
+            _ => panic!("expected commit"),
+        }
+    }
+
+    #[test]
+    fn parses_commit_no_push_flag() {
+        let cli = Cli::try_parse_from(["digstore", "commit", "--no-push"]).unwrap();
+        match cli.command {
+            Command::Commit(c) => {
+                assert!(c.no_push);
+                assert!(!c.push);
+            }
+            _ => panic!("expected commit"),
+        }
+    }
+
+    #[test]
+    fn commit_push_default_is_neither_flag() {
+        // Default = ask when interactive, do nothing when not. Neither flag set.
+        let cli = Cli::try_parse_from(["digstore", "commit"]).unwrap();
+        match cli.command {
+            Command::Commit(c) => {
+                assert!(!c.push);
+                assert!(!c.no_push);
+            }
+            _ => panic!("expected commit"),
+        }
+    }
+
+    #[test]
+    fn commit_push_and_no_push_are_mutually_exclusive() {
+        let err = Cli::try_parse_from(["digstore", "commit", "--push", "--no-push"]);
+        assert!(err.is_err(), "--push and --no-push are mutually exclusive");
     }
 
     #[test]

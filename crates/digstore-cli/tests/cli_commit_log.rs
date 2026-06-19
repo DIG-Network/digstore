@@ -1,7 +1,30 @@
 mod common;
-use common::{dig, tmp_dig};
+use common::{dig, store_id_and_root, tmp_dig, TestServer};
 use predicates::prelude::*;
 use tempfile::TempDir;
+
+/// Read the store's host public key (48 bytes) from trusted_keys.json — needed to
+/// stand up a `TestServer` that hosts the store so `commit --push` can fast-forward it.
+fn host_pubkey(dir: &TempDir) -> [u8; 48] {
+    let text = std::fs::read_to_string(common::store_dir(dir).join("trusted_keys.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let hex = v[0]["public_key"].as_str().unwrap();
+    let bytes = hex::decode(hex).unwrap();
+    bytes.try_into().unwrap()
+}
+
+/// The root the in-process server is currently serving for `store_id`, or `None`
+/// if the server has never received content (still at genesis / all-zero root).
+fn server_served_root(server: &TestServer, store_id_hex: &str) -> Option<String> {
+    use digstore_remote::RemoteBackend;
+    let store_id = digstore_core::Bytes32::from_hex(store_id_hex).unwrap();
+    let head = server.backend().head_state(&store_id).ok()?;
+    if head.served_root == digstore_core::Bytes32([0u8; 32]) {
+        None
+    } else {
+        Some(head.served_root.to_hex())
+    }
+}
 
 #[test]
 fn commit_creates_module_and_log_lists_it() {
@@ -321,4 +344,198 @@ fn commit_resubmit_forces_fresh_update_from_pending() {
         .stdout(predicate::str::contains("deployment 0"));
     let (status, _) = anchor_status_and_root(&dir);
     assert_eq!(status, "confirmed");
+}
+
+// ---------------------------------------------------------------------------
+// `commit` offers to publish the confirmed deployment to DIGHub.
+// The offline harness runs non-interactively (stdin/stdout are not a TTY), so the
+// interactive prompt is gated off — only the explicit `--push` flag pushes. These
+// tests exercise: --push pushes to the in-process §21 server; --no-push and the
+// non-interactive default do NOT push (and never hang); --json output is unchanged.
+// ---------------------------------------------------------------------------
+
+/// `commit --push` pushes the confirmed deployment to the default remote (`origin`),
+/// fast-forwarding the in-process §21 test server to the committed root — the same
+/// target as `digstore push origin`, but without a separate command.
+#[test]
+fn commit_push_flag_pushes_to_remote() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let pk = host_pubkey(&dir);
+    let (store_id, _genesis) = {
+        // store_id is stable from init; read it before any commit (root is genesis here).
+        let cfg = std::fs::read_to_string(common::store_dir(&dir).join("config.toml")).unwrap();
+        let line = cfg.lines().find(|l| l.contains("store_id")).unwrap();
+        (line.split('"').nth(1).unwrap().to_string(), String::new())
+    };
+
+    // Empty server hosting the store so a first push fast-forwards from genesis.
+    let server = TestServer::start_empty(&store_id, pk);
+    let store_url = format!("{}/stores/{}", server.base_url(), store_id);
+    dig(&dir)
+        .args(["remote", "add", "origin", &store_url])
+        .assert()
+        .success();
+
+    assert!(
+        server_served_root(&server, &store_id).is_none(),
+        "server starts at genesis (nothing pushed yet)"
+    );
+
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, b"push me").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+
+    dig(&dir)
+        .args(["commit", "-m", "first", "--push"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("committed root"))
+        .stdout(predicate::str::contains("pushed root"));
+
+    // The server now serves the committed root.
+    let (_sid, committed) = store_id_and_root(&dir);
+    assert_eq!(
+        server_served_root(&server, &store_id).as_deref(),
+        Some(committed.as_str()),
+        "commit --push fast-forwarded the remote to the committed root"
+    );
+}
+
+/// `commit --no-push` finalizes the deployment but does NOT push, does NOT prompt,
+/// and does NOT hang. The remote stays at genesis and the usual hint is shown.
+#[test]
+fn commit_no_push_flag_does_not_push() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let pk = host_pubkey(&dir);
+    let cfg = std::fs::read_to_string(common::store_dir(&dir).join("config.toml")).unwrap();
+    let store_id = cfg
+        .lines()
+        .find(|l| l.contains("store_id"))
+        .unwrap()
+        .split('"')
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    let server = TestServer::start_empty(&store_id, pk);
+    let store_url = format!("{}/stores/{}", server.base_url(), store_id);
+    dig(&dir)
+        .args(["remote", "add", "origin", &store_url])
+        .assert()
+        .success();
+
+    std::fs::write(dir.path().join("a.txt"), b"keep local").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+
+    dig(&dir)
+        .args(["commit", "-m", "first", "--no-push"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("committed root"))
+        .stdout(predicate::str::contains("pushed root").not())
+        .stdout(predicate::str::contains("digstore push origin"));
+
+    assert!(
+        server_served_root(&server, &store_id).is_none(),
+        "commit --no-push must not push: the remote stays at genesis"
+    );
+}
+
+/// Non-interactive default (no flag, no TTY): commit must NOT prompt and must NOT
+/// push — it behaves exactly as before, printing the `digstore push origin` hint.
+/// This is the critical non-interactive-safety guard.
+#[test]
+fn commit_non_interactive_default_does_not_push_or_hang() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let pk = host_pubkey(&dir);
+    let cfg = std::fs::read_to_string(common::store_dir(&dir).join("config.toml")).unwrap();
+    let store_id = cfg
+        .lines()
+        .find(|l| l.contains("store_id"))
+        .unwrap()
+        .split('"')
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    let server = TestServer::start_empty(&store_id, pk);
+    let store_url = format!("{}/stores/{}", server.base_url(), store_id);
+    dig(&dir)
+        .args(["remote", "add", "origin", &store_url])
+        .assert()
+        .success();
+
+    std::fs::write(dir.path().join("a.txt"), b"default behaviour").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+
+    // No --push / --no-push. assert_cmd closes stdin, so a stray prompt would hang
+    // (the test would time out / read EOF) — proving the gate holds.
+    dig(&dir)
+        .args(["commit", "-m", "first"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("committed root"))
+        .stdout(predicate::str::contains("pushed root").not())
+        .stdout(predicate::str::contains("digstore push origin"));
+
+    assert!(
+        server_served_root(&server, &store_id).is_none(),
+        "non-interactive default must not push"
+    );
+}
+
+/// `--json` commit output is unchanged by the push feature: it carries the same
+/// fields, emits no prompt/hint, and never pushes (no `--push` given).
+#[test]
+fn commit_json_output_unchanged_and_never_pushes() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let pk = host_pubkey(&dir);
+    let cfg = std::fs::read_to_string(common::store_dir(&dir).join("config.toml")).unwrap();
+    let store_id = cfg
+        .lines()
+        .find(|l| l.contains("store_id"))
+        .unwrap()
+        .split('"')
+        .nth(1)
+        .unwrap()
+        .to_string();
+
+    let server = TestServer::start_empty(&store_id, pk);
+    let store_url = format!("{}/stores/{}", server.base_url(), store_id);
+    dig(&dir)
+        .args(["remote", "add", "origin", &store_url])
+        .assert()
+        .success();
+
+    std::fs::write(dir.path().join("a.txt"), b"json content").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+
+    let out = dig(&dir)
+        .args(["commit", "-m", "first", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "json commit should succeed");
+    // Output is a single JSON object with the established fields — no prompt/hint text.
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["anchor_status"].as_str().unwrap(), "confirmed");
+    assert!(v["root"].as_str().unwrap().len() == 64);
+    assert!(v.get("module").is_some());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("Push this deployment"),
+        "json mode must never prompt"
+    );
+    assert!(
+        !stdout.contains("pushed root"),
+        "json commit without --push must not push"
+    );
+
+    assert!(
+        server_served_root(&server, &store_id).is_none(),
+        "json commit without --push must not push"
+    );
 }

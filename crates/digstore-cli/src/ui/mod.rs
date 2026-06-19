@@ -11,6 +11,12 @@ use serde::Serialize;
 
 use crate::ui::theme::{marker_line, verb_line, Marker};
 
+/// Template for the indeterminate transfer bar (see [`Ui::progress_bar`]). Bytes +
+/// rate only — deliberately NO `{percent}`/`{bar}`/`{total_bytes}`/`{eta}`, because the
+/// total transfer size is unknown ahead of time. Named so it can be asserted in tests.
+pub(crate) const TRANSFER_SPINNER_TEMPLATE: &str =
+    "{spinner:.cyan} {msg} {bytes} ({bytes_per_sec})";
+
 // ---------------------------------------------------------------------------
 // Spinner — RAII handle wrapping indicatif's ProgressBar.
 // ---------------------------------------------------------------------------
@@ -344,27 +350,36 @@ impl Ui {
         }
     }
 
-    /// Return a bytes-progress bar for a transfer of `total_bytes`.
+    /// Return an INDETERMINATE bytes-progress spinner for a transfer.
     ///
-    /// Template: `msg [####----] 42.1/135.0 MB  1.2 MB/s  eta 1m23s`
+    /// We cannot know the total byte count of an upload/download ahead of time, so this
+    /// is a spinner — NO percentage, NO `total`, NO ETA. It shows the bytes transferred
+    /// so far and the transfer rate, plus a steady tick so the user can see progress:
+    ///
+    /// Template: `⠹ msg 42.1 MB (1.2 MB/s)`
+    ///
+    /// Feed it with `pb.set_position(done)` (cumulative bytes so far → `{bytes}`) or
+    /// `pb.inc(delta)`; do NOT call `set_length` (there is no meaningful total). The
+    /// `_total_bytes` argument is ignored (kept so callers need not change) — it exists
+    /// only because the underlying transfer callbacks still report a (often-zero) total.
     ///
     /// **Gating**: identical to [`Ui::spinner`] — hidden when `--json` is set,
     /// stdout is not a TTY, or color is disabled. The returned [`ProgressBar`]
-    /// is always safe to call `set_position`/`finish_and_clear` on regardless.
-    pub fn progress_bar(&self, total_bytes: u64, msg: &str) -> ProgressBar {
+    /// is always safe to call `set_position`/`inc`/`finish_and_clear` on regardless.
+    pub fn progress_bar(&self, _total_bytes: u64, msg: &str) -> ProgressBar {
         let tty = std::io::stdout().is_terminal();
         if !tty || self.json || !self.color {
             return ProgressBar::hidden();
         }
-        let pb = ProgressBar::new(total_bytes);
+        // A no-length (indeterminate) spinner-style bar: bytes + rate, no total/percent.
+        let pb = ProgressBar::new_spinner();
         pb.set_style(
-            ProgressStyle::with_template(
-                "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes}  {bytes_per_sec}  eta {eta}",
-            )
-            .unwrap()
-            .progress_chars("##-"),
+            ProgressStyle::with_template(TRANSFER_SPINNER_TEMPLATE)
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
         );
         pb.set_message(msg.to_owned());
+        pb.enable_steady_tick(Duration::from_millis(90));
         pb
     }
 
@@ -460,5 +475,48 @@ mod tests {
         assert!(s.contains("47.2 MB"));
         assert!(s.contains("52.8 MB free"));
         assert!(s.contains("100.0 MB"));
+    }
+
+    /// The transfer bar is INDETERMINATE: its template must NOT imply a known total
+    /// (no percentage, no bar, no total_bytes, no eta) — only bytes-so-far + rate.
+    /// Regression: percentage/total bars were misleading because the upload/download
+    /// total is unknown ahead of time.
+    #[test]
+    fn transfer_bar_template_is_indeterminate() {
+        let t = TRANSFER_SPINNER_TEMPLATE;
+        // No total / percentage / bar / eta tokens.
+        assert!(
+            !t.contains("{percent}"),
+            "template must not show a percentage"
+        );
+        assert!(!t.contains("{bar"), "template must not draw a progress bar");
+        assert!(
+            !t.contains("{total_bytes}"),
+            "template must not show a total size"
+        );
+        assert!(!t.contains("{eta"), "template must not show an ETA");
+        // Does show bytes transferred + rate, and a spinner tick.
+        assert!(
+            t.contains("{bytes}"),
+            "template should show bytes transferred"
+        );
+        assert!(
+            t.contains("{bytes_per_sec}"),
+            "template should show the transfer rate"
+        );
+        assert!(t.contains("{spinner"), "template should animate a spinner");
+        // The template is valid for indicatif.
+        assert!(ProgressStyle::with_template(t).is_ok());
+    }
+
+    /// A valid template guarantees `progress_bar` never panics on construction, and a
+    /// hidden (non-TTY) bar is still safe to drive with `set_position`.
+    #[test]
+    fn progress_bar_hidden_is_drivable() {
+        let ui = Ui::resolve(ColorChoice::Never, false, false, false, false, false);
+        let pb = ui.progress_bar(0, "Uploading");
+        pb.set_position(123);
+        pb.inc(7);
+        pb.finish_and_clear();
     }
 }
