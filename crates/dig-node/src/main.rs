@@ -34,6 +34,8 @@ use std::sync::Arc;
 
 use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
 use base64::Engine;
+use digstore_chain::coinset::Coinset;
+use digstore_chain::singleton::sync_datastore;
 use digstore_core::codec::{Decode, Encode};
 use digstore_core::wire::ContentResponse;
 use digstore_core::Bytes32;
@@ -314,6 +316,30 @@ impl Node {
             .map_err(|e| e.to_string())?;
         resp.json::<Value>().await.map_err(|e| e.to_string())
     }
+
+    /// `dig.getAnchoredRoot`: resolve a store's CHIP-0035 chain-anchored TIP root by
+    /// walking its DataStore singleton lineage on coinset.org — NEVER from the
+    /// serving node (`digstore_chain::singleton::sync_datastore`). This is the
+    /// trusted-root source for the browser's mandatory dig:// root pinning: a
+    /// rootless `dig://` URN must verify `proof.root == anchored_root` instead of
+    /// trusting the rpc-served "latest" root (which a compromised rpc could forge —
+    /// the dig:// verifier must never fail open). Returns a JSON-RPC envelope with
+    /// `result.root` (64-hex) on success, or a `-32602`/`-32000` error.
+    async fn anchored_root(&self, params: &Value, id: Value) -> Value {
+        let Ok(store_id) = parse_store_id_arg(params) else {
+            return json!({"jsonrpc":"2.0","id":id,"error":{
+                "code":-32602,
+                "message":"params.store_id must be a 32-byte (64-hex) launcher id"}});
+        };
+        match sync_datastore(&resolution_coinset(), store_id).await {
+            Ok(store) => json!({"jsonrpc":"2.0","id":id,"result":{
+                "store_id": hex::encode(store_id),
+                "root": hex::encode(store.info.metadata.root_hash)}}),
+            Err(e) => json!({"jsonrpc":"2.0","id":id,"error":{
+                "code":-32000,
+                "message":format!("resolve anchored root: {e}")}}),
+        }
+    }
 }
 
 /// Bump a file's mtime to "now" so the LRU treats it as freshly used.
@@ -321,9 +347,38 @@ fn touch(path: &Path) {
     let _ = filetime::set_file_mtime(path, filetime::FileTime::now());
 }
 
+/// Coinset client used to resolve chain-anchored roots. `DIG_NODE_COINSET`
+/// overrides the API base (tests / alternate endpoints); defaults to mainnet
+/// (api.coinset.org).
+fn resolution_coinset() -> Coinset {
+    match std::env::var("DIG_NODE_COINSET") {
+        Ok(url) if !url.is_empty() => Coinset::with_url(url),
+        _ => Coinset::mainnet(),
+    }
+}
+
+/// Parse a `params.store_id` field into a canonical 32-byte (64-hex) launcher id
+/// (`chia_protocol::Bytes32`, as `sync_datastore` expects). Returns `Err(())` for a
+/// missing, mis-sized, or non-hex value.
+fn parse_store_id_arg(params: &Value) -> Result<chia_protocol::Bytes32, ()> {
+    let s = params.get("store_id").and_then(|v| v.as_str()).ok_or(())?;
+    if s.len() != 64 {
+        return Err(());
+    }
+    let bytes = hex::decode(s).map_err(|_| ())?;
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| ())?;
+    Ok(chia_protocol::Bytes32::new(arr))
+}
+
 async fn rpc(State(node): State<Arc<Node>>, Json(req): Json<Value>) -> impl IntoResponse {
     let id = req.get("id").cloned().unwrap_or(json!(1));
     let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    // dig.getAnchoredRoot: resolve a store's chain-anchored tip root (the TRUSTED
+    // root for the browser's mandatory dig:// root-pinning — see anchored_root).
+    if method == "dig.getAnchoredRoot" {
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        return Json(node.anchored_root(&params, id).await);
+    }
     if method != "dig.getContent" {
         return Json(json!({"jsonrpc":"2.0","id":id,
             "error":{"code":-32601,"message":"method not found"}}));
@@ -674,6 +729,31 @@ mod tests {
         assert_eq!(std::fs::read(&served_path).unwrap(), b"DIGMODULE");
         // … and nothing is cached under the (unmatched) requested root.
         assert!(!module_path(&node.cache_dir, &store.to_hex(), &requested.to_hex()).exists());
+    }
+
+    // -- Anchored-root resolution (dig.getAnchoredRoot) ------------------------
+
+    #[test]
+    fn parse_store_id_arg_accepts_only_canonical_launcher_ids() {
+        let ok = json!({ "store_id": "ab".repeat(32) });
+        assert!(parse_store_id_arg(&ok).is_ok());
+        assert!(parse_store_id_arg(&json!({})).is_err()); // missing
+        assert!(parse_store_id_arg(&json!({ "store_id": "ab".repeat(31) })).is_err()); // short
+        assert!(parse_store_id_arg(&json!({ "store_id": "zz".repeat(32) })).is_err()); // non-hex
+        assert!(parse_store_id_arg(&json!({ "store_id": 123 })).is_err()); // wrong type
+    }
+
+    #[tokio::test]
+    async fn anchored_root_rejects_bad_store_id_without_touching_chain() {
+        // A malformed store_id is rejected with a JSON-RPC -32602 BEFORE any chain
+        // read, so the trusted-root endpoint validates input up front.
+        let (node, _td) = test_node(None);
+        let resp = node
+            .anchored_root(&json!({ "store_id": "nope" }), json!(7))
+            .await;
+        assert_eq!(resp["id"], json!(7));
+        assert_eq!(resp["error"]["code"], json!(-32602));
+        assert!(resp.get("result").is_none());
     }
 
     #[tokio::test]

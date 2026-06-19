@@ -2138,6 +2138,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chia-protocol",
+ "digstore-chain",
  "digstore-core",
  "digstore-crypto",
  "digstore-host",
