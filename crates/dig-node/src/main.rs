@@ -62,7 +62,9 @@ fn cache_dir() -> PathBuf {
 /// under `<cache>/modules/` — populated out-of-band (a local digstore store, or
 /// authed whole-store sync) and served via `serve_blind`.
 fn module_path(dir: &Path, store_hex: &str, root_hex: &str) -> PathBuf {
-    dir.join("modules").join(store_hex).join(format!("{root_hex}.module"))
+    dir.join("modules")
+        .join(store_hex)
+        .join(format!("{root_hex}.module"))
 }
 
 /// Filesystem-safe filename for one cached proxy-response window, keyed by
@@ -90,10 +92,7 @@ fn response_key(store: &str, root: &str, rk: &str, offset: usize) -> String {
 /// Decide which cached files to evict so total bytes fit under `cap`. LRU:
 /// evict oldest (smallest mtime) first, stopping as soon as the remaining total
 /// is at/under `cap`. `entries` is (path, mtime, size); returns paths to delete.
-fn plan_eviction(
-    entries: &[(PathBuf, std::time::SystemTime, u64)],
-    cap: u64,
-) -> Vec<PathBuf> {
+fn plan_eviction(entries: &[(PathBuf, std::time::SystemTime, u64)], cap: u64) -> Vec<PathBuf> {
     let total: u64 = entries.iter().map(|(_, _, sz)| *sz).sum();
     if total <= cap {
         return Vec::new();
@@ -131,8 +130,8 @@ fn build_result(resp: &ContentResponse, offset: usize) -> Value {
     // The proof + chunk_lens are sent on the FIRST window only (the client keeps
     // the first non-empty proof). Match rpc.dig.net / the digstore client.
     if start == 0 {
-        result["inclusion_proof"] = json!(base64::engine::general_purpose::STANDARD
-            .encode(resp.merkle_proof.to_bytes()));
+        result["inclusion_proof"] =
+            json!(base64::engine::general_purpose::STANDARD.encode(resp.merkle_proof.to_bytes()));
         result["chunk_lens"] = json!(resp.chunk_lens);
     }
     result
@@ -194,9 +193,7 @@ impl Node {
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
                 if let Ok(md) = e.metadata() {
-                    let mtime = md
-                        .modified()
-                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    let mtime = md.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                     entries.push((e.path(), mtime, md.len()));
                 }
             }
@@ -232,7 +229,10 @@ async fn rpc(State(node): State<Arc<Node>>, Json(req): Json<Value>) -> impl Into
             "error":{"code":-32601,"message":"method not found"}}));
     }
     let params = req.get("params").cloned().unwrap_or(json!({}));
-    let store_hex = params.get("store_id").and_then(|v| v.as_str()).unwrap_or("");
+    let store_hex = params
+        .get("store_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let root_hex = params.get("root").and_then(|v| v.as_str()).unwrap_or("");
     let rk_hex = params
         .get("retrieval_key")
