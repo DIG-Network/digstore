@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en" data-theme="dig">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DIG Wallet</title>
+<style>
+  :root{
+    --bg:#0b0c0e; --surface:#15161c; --surface-2:#1d1f28; --border:#2a2c38;
+    --text:#e8eaed; --muted:#9aa0ad; --accent:#5800d6; --accent-2:#8a4dff;
+    --good:#5ece71; --radius:16px; --shadow:0 8px 40px rgba(0,0,0,.45);
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+  }
+  html[data-theme="chia"]{ --accent:#3aac59; --accent-2:#5ece71; }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 700px at 70% -10%,rgba(88,0,214,.18),transparent 60%),var(--bg);
+       color:var(--text);font-family:var(--font);min-height:100vh;display:flex;flex-direction:column}
+  html[data-theme="chia"] body{background:radial-gradient(1200px 700px at 70% -10%,rgba(58,172,89,.18),transparent 60%),var(--bg)}
+  header{display:flex;align-items:center;gap:12px;padding:18px 28px;border-bottom:1px solid var(--border)}
+  .logo{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+        display:grid;place-items:center;font-weight:800;color:#fff;font-size:16px}
+  .brand{font-weight:700;letter-spacing:.2px;font-size:17px}
+  .spacer{flex:1}
+  .theme-toggle{background:var(--surface-2);border:1px solid var(--border);color:var(--muted);
+       border-radius:999px;padding:6px 12px;font-size:12px;cursor:pointer}
+  main{flex:1;display:flex;align-items:center;justify-content:center;padding:32px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+        box-shadow:var(--shadow);width:100%;max-width:480px;padding:30px}
+  h1{font-size:22px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 22px;line-height:1.5}
+  button.primary{width:100%;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border:0;
+       border-radius:12px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;transition:filter .15s}
+  button.primary:hover{filter:brightness(1.08)}
+  button.ghost{width:100%;background:transparent;color:var(--text);border:1px solid var(--border);
+       border-radius:12px;padding:13px;font-size:14px;cursor:pointer;margin-top:12px}
+  button.ghost:hover{background:var(--surface-2)}
+  textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+       border-radius:12px;padding:14px;font-size:14px;font-family:ui-monospace,monospace;resize:vertical;min-height:96px}
+  .seed{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:16px;
+       font-family:ui-monospace,monospace;font-size:14px;line-height:1.9;word-spacing:6px;color:var(--text)}
+  .warn{color:#f0b86a;font-size:13px;margin:14px 0;line-height:1.5}
+  .bal-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:8px 0 20px}
+  .bal{background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:18px}
+  .bal .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+  .bal .v{font-size:26px;font-weight:700;margin-top:6px}
+  .bal .v small{font-size:13px;color:var(--muted);font-weight:500}
+  .addr{display:flex;gap:8px;align-items:center;background:var(--surface-2);border:1px solid var(--border);
+       border-radius:12px;padding:12px 14px;font-family:ui-monospace,monospace;font-size:13px;word-break:break-all}
+  .addr .copy{margin-left:auto;flex:0 0 auto;background:var(--accent);color:#fff;border:0;border-radius:8px;
+       padding:6px 12px;font-size:12px;cursor:pointer}
+  .row{display:flex;gap:12px;margin-top:18px}
+  .row button{flex:1}
+  .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:18px 0 8px}
+  .err{color:#ff7a7a;font-size:13px;margin-top:12px;min-height:16px}
+  .hidden{display:none}
+  .spin{color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Ð</div>
+  <div class="brand">DIG Wallet</div>
+  <div class="spacer"></div>
+  <button class="theme-toggle" id="themeBtn">Chia theme</button>
+</header>
+<main>
+  <!-- WELCOME -->
+  <div class="card hidden" id="view-welcome">
+    <h1>Your keys, your Chia.</h1>
+    <p class="sub">A built-in, self-custodial Chia wallet. Create a new wallet or restore one from its 24-word recovery phrase.</p>
+    <button class="primary" id="btnCreate">Create new wallet</button>
+    <button class="ghost" id="btnRestore">Restore from recovery phrase</button>
+  </div>
+
+  <!-- CREATE: show seed -->
+  <div class="card hidden" id="view-create">
+    <h1>Your recovery phrase</h1>
+    <p class="sub">Write these 24 words down and keep them safe and offline. Anyone with them controls your funds. DIG never sees them.</p>
+    <div class="seed" id="seedWords"></div>
+    <p class="warn">⚠ This phrase is shown once. Store it before continuing.</p>
+    <button class="primary" id="btnSavedSeed">I've saved it — open wallet</button>
+    <button class="ghost" id="btnBackWelcome1">Back</button>
+  </div>
+
+  <!-- RESTORE -->
+  <div class="card hidden" id="view-restore">
+    <h1>Restore wallet</h1>
+    <p class="sub">Enter your 12/24-word recovery phrase, separated by spaces.</p>
+    <textarea id="restoreInput" placeholder="word1 word2 word3 …" spellcheck="false" autocomplete="off"></textarea>
+    <div class="err" id="restoreErr"></div>
+    <button class="primary" id="btnRestoreGo">Open wallet</button>
+    <button class="ghost" id="btnBackWelcome2">Back</button>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div class="card hidden" id="view-dash">
+    <h1>Balance</h1>
+    <p class="sub" id="dashSub">Scanning the chain via coinset.org…</p>
+    <div class="bal-grid">
+      <div class="bal"><div class="k">XCH</div><div class="v" id="xchBal">—</div></div>
+      <div class="bal"><div class="k">DIG</div><div class="v" id="digBal">—</div></div>
+    </div>
+    <div class="label">Receive address</div>
+    <div class="addr"><span id="addr">—</span><button class="copy" id="copyAddr">Copy</button></div>
+    <div class="row">
+      <button class="primary" id="btnRefresh">Refresh</button>
+      <button class="ghost" id="btnLock">Lock</button>
+    </div>
+    <div class="err" id="dashErr"></div>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const show = id => { document.querySelectorAll('.card').forEach(c=>c.classList.add('hidden')); $('#'+id).classList.remove('hidden'); };
+async function api(path, opts){ const r = await fetch(path, opts); if(!r.ok){ let m='request failed'; try{m=(await r.json()).error||m}catch(e){} throw new Error(m);} return r.status===204?null:r.json(); }
+
+// theme toggle (DIG ⇄ Chia)
+$('#themeBtn').onclick = () => {
+  const el = document.documentElement;
+  const chia = el.getAttribute('data-theme')==='chia';
+  el.setAttribute('data-theme', chia?'dig':'chia');
+  $('#themeBtn').textContent = chia?'Chia theme':'DIG theme';
+};
+
+function fmtXch(mojos){ return (mojos/1e12).toLocaleString(undefined,{maximumFractionDigits:12}); }
+function fmtDig(units){ return (units/1e3).toLocaleString(undefined,{maximumFractionDigits:3}); }
+
+async function refreshBalance(){
+  $('#dashErr').textContent=''; $('#dashSub').textContent='Scanning the chain via coinset.org…';
+  $('#xchBal').textContent='…'; $('#digBal').textContent='…';
+  try{
+    const b = await api('/api/balance');
+    $('#addr').textContent = b.address;
+    $('#xchBal').innerHTML = fmtXch(b.xch_mojos)+' <small>XCH</small>';
+    $('#digBal').innerHTML = fmtDig(b.dig_units)+' <small>DIG</small>';
+    $('#dashSub').textContent='Live balance from coinset.org (mainnet).';
+  }catch(e){ $('#dashErr').textContent=e.message; $('#dashSub').textContent='Could not reach the chain.'; }
+}
+
+$('#btnCreate').onclick = async () => {
+  try{ const g = await api('/api/generate',{method:'POST'}); $('#seedWords').textContent=g.mnemonic; window._seed=g.mnemonic; show('view-create'); }
+  catch(e){ alert(e.message); }
+};
+$('#btnRestore').onclick = () => show('view-restore');
+$('#btnBackWelcome1').onclick = () => show('view-welcome');
+$('#btnBackWelcome2').onclick = () => show('view-welcome');
+$('#btnSavedSeed').onclick = async () => {
+  try{ await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:window._seed})}); window._seed=null; show('view-dash'); refreshBalance(); }
+  catch(e){ alert(e.message); }
+};
+$('#btnRestoreGo').onclick = async () => {
+  $('#restoreErr').textContent='';
+  try{ await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:$('#restoreInput').value})}); show('view-dash'); refreshBalance(); }
+  catch(e){ $('#restoreErr').textContent=e.message; }
+};
+$('#btnRefresh').onclick = refreshBalance;
+$('#btnLock').onclick = async () => { await api('/api/lock',{method:'POST'}); show('view-welcome'); };
+$('#copyAddr').onclick = () => { navigator.clipboard.writeText($('#addr').textContent); $('#copyAddr').textContent='Copied'; setTimeout(()=>$('#copyAddr').textContent='Copy',1200); };
+
+(async function init(){
+  try{ const s = await api('/api/status'); if(s.has_wallet){ $('#addr').textContent=s.address; show('view-dash'); refreshBalance(); } else { show('view-welcome'); } }
+  catch(e){ show('view-welcome'); }
+})();
+</script>
+</body>
+</html>

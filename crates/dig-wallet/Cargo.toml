@@ -1,0 +1,20 @@
+[package]
+name = "dig-wallet"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "DIG Browser built-in Chia wallet sidecar: a local axum server (using digstore-chain + chia-wallet-sdk over coinset.org) that serves a Sage-mirroring wallet UI. Native Rust so BLS signing works; the browser opens it at 127.0.0.1."
+
+[[bin]]
+name = "dig-wallet"
+path = "src/main.rs"
+
+[dependencies]
+digstore-chain = { path = "../digstore-chain" }
+chia-protocol = "0.26"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+axum = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+zeroize = "1"
