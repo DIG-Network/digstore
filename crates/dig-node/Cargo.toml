@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 digstore-host = { path = "../digstore-host" }
 digstore-core = { path = "../digstore-core" }
+digstore-remote = { path = "../digstore-remote" }
 chia-protocol = "0.26"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 axum = "0.7"
@@ -21,3 +22,7 @@ base64 = "0.22"
 hex = "0.4"
 filetime = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+tempfile = "3"
+digstore-crypto = { path = "../digstore-crypto" }

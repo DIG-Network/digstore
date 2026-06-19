@@ -19,6 +19,7 @@ pub mod client;
 pub mod error;
 pub mod etag;
 pub mod handlers;
+pub mod identity;
 pub mod ratelimit;
 pub mod server;
 pub mod wire;
