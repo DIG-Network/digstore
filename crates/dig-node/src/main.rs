@@ -112,58 +112,6 @@ fn plan_eviction(
     victims
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::{Duration, UNIX_EPOCH};
-
-    #[test]
-    fn response_key_is_stable_and_safe() {
-        let k = response_key("aa", "bb", "cc", 0);
-        assert_eq!(k, "aa_bb_cc_0.json");
-        // Different offset → different file (so windows don't collide).
-        assert_ne!(k, response_key("aa", "bb", "cc", 100));
-        // Non-hex input is neutralized (no path traversal in the filename).
-        let bad = response_key("../../etc", "bb", "cc", 0);
-        assert!(!bad.contains('/') && !bad.contains('.') || bad.ends_with(".json"));
-        assert!(!bad.contains(".."));
-    }
-
-    #[test]
-    fn evicts_nothing_when_under_cap() {
-        let t = UNIX_EPOCH + Duration::from_secs(10);
-        let entries = vec![(PathBuf::from("a"), t, 100), (PathBuf::from("b"), t, 100)];
-        assert!(plan_eviction(&entries, 1000).is_empty());
-    }
-
-    #[test]
-    fn evicts_oldest_first_until_under_cap() {
-        let old = UNIX_EPOCH + Duration::from_secs(1);
-        let mid = UNIX_EPOCH + Duration::from_secs(2);
-        let new = UNIX_EPOCH + Duration::from_secs(3);
-        // total 300, cap 150 → must drop 'old' (100) and 'mid' (100) → 100 left.
-        let entries = vec![
-            (PathBuf::from("new"), new, 100),
-            (PathBuf::from("old"), old, 100),
-            (PathBuf::from("mid"), mid, 100),
-        ];
-        let victims = plan_eviction(&entries, 150);
-        assert_eq!(victims, vec![PathBuf::from("old"), PathBuf::from("mid")]);
-    }
-
-    #[test]
-    fn stops_as_soon_as_under_cap() {
-        let old = UNIX_EPOCH + Duration::from_secs(1);
-        let new = UNIX_EPOCH + Duration::from_secs(2);
-        // total 300, cap 250 → dropping just 'old' (100) leaves 200 ≤ 250.
-        let entries = vec![
-            (PathBuf::from("old"), old, 100),
-            (PathBuf::from("new"), new, 200),
-        ];
-        assert_eq!(plan_eviction(&entries, 250), vec![PathBuf::from("old")]);
-    }
-}
-
 /// Build the JSON-RPC `result` object for one window of a decoded ContentResponse.
 fn build_result(resp: &ContentResponse, offset: usize) -> Value {
     let total = resp.ciphertext.len();
@@ -363,4 +311,56 @@ async fn main() {
         dir.display()
     );
     axum::serve(listener, app).await.expect("dig-node server");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn response_key_is_stable_and_safe() {
+        let k = response_key("aa", "bb", "cc", 0);
+        assert_eq!(k, "aa_bb_cc_0.json");
+        // Different offset → different file (so windows don't collide).
+        assert_ne!(k, response_key("aa", "bb", "cc", 100));
+        // Non-hex input is neutralized (no path traversal in the filename).
+        let bad = response_key("../../etc", "bb", "cc", 0);
+        assert!(!bad.contains('/'));
+        assert!(!bad.contains(".."));
+    }
+
+    #[test]
+    fn evicts_nothing_when_under_cap() {
+        let t = UNIX_EPOCH + Duration::from_secs(10);
+        let entries = vec![(PathBuf::from("a"), t, 100), (PathBuf::from("b"), t, 100)];
+        assert!(plan_eviction(&entries, 1000).is_empty());
+    }
+
+    #[test]
+    fn evicts_oldest_first_until_under_cap() {
+        let old = UNIX_EPOCH + Duration::from_secs(1);
+        let mid = UNIX_EPOCH + Duration::from_secs(2);
+        let new = UNIX_EPOCH + Duration::from_secs(3);
+        // total 300, cap 150 → must drop 'old' (100) and 'mid' (100) → 100 left.
+        let entries = vec![
+            (PathBuf::from("new"), new, 100),
+            (PathBuf::from("old"), old, 100),
+            (PathBuf::from("mid"), mid, 100),
+        ];
+        let victims = plan_eviction(&entries, 150);
+        assert_eq!(victims, vec![PathBuf::from("old"), PathBuf::from("mid")]);
+    }
+
+    #[test]
+    fn stops_as_soon_as_under_cap() {
+        let old = UNIX_EPOCH + Duration::from_secs(1);
+        let new = UNIX_EPOCH + Duration::from_secs(2);
+        // total 300, cap 250 → dropping just 'old' (100) leaves 200 ≤ 250.
+        let entries = vec![
+            (PathBuf::from("old"), old, 100),
+            (PathBuf::from("new"), new, 200),
+        ];
+        assert_eq!(plan_eviction(&entries, 250), vec![PathBuf::from("old")]);
+    }
 }
