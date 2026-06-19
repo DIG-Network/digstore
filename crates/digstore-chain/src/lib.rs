@@ -9,6 +9,7 @@ pub mod error;
 mod fs_util;
 pub mod keys;
 pub mod seed;
+pub mod send;
 pub mod singleton;
 pub mod unlock;
 pub mod wallet;

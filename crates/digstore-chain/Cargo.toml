@@ -33,3 +33,6 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 tempfile = "3"
+# Decode a built coin spend's conditions in the send tests (verify the payment output).
+clvmr = "0.14"
+clvm-traits = "0.26"

@@ -2209,6 +2209,8 @@ dependencies = [
  "chia-sdk-coinset",
  "chia-sha2 0.26.0",
  "chia-wallet-sdk",
+ "clvm-traits",
+ "clvmr",
  "datalayer-driver",
  "dirs",
  "getrandom 0.2.17",

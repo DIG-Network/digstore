@@ -10,8 +10,14 @@
 //! seed is stored **encrypted at rest** (Argon2 + AES-GCM via
 //! `digstore_chain::seed`) so the wallet persists across restarts and unlocks
 //! with the password. Shows the live XCH + DIG balance scanned from coinset.org.
-//! (The send/sign flow is the next increment — it spends real mainnet funds, so
-//! it is deliberately not exercised unattended.)
+//!
+//! Send/sign (`POST /api/send`): builds + BLS-signs a standard XCH payment via
+//! `digstore_chain::send` (AugScheme, §11.3) drawing coins across the HD wallet.
+//! Because a broadcast spends REAL mainnet funds, it is **gated twice**: the
+//! request must set `broadcast: true` AND the process must run with
+//! `DIG_WALLET_ALLOW_BROADCAST=1`. Otherwise the endpoint performs a **dry run** —
+//! it returns the fully signed bundle (proof the signing path works) and pushes
+//! NOTHING. The default is dry-run, so the flow can be exercised unattended safely.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,11 +29,12 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use digstore_chain::coinset::Coinset;
+use digstore_chain::coinset::{ChainReads, Coinset};
 use digstore_chain::keys::{derive_wallet_keys, owner_address};
 use digstore_chain::seed::{
     decrypt_seed, encrypt_seed, generate_mnemonic, validate_mnemonic, EncryptedSeed,
 };
+use digstore_chain::send::{build_xch_send, decode_xch_address};
 use digstore_chain::wallet::scan_wallet;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -228,6 +235,123 @@ async fn lock(State(st): State<Arc<AppState>>) -> impl IntoResponse {
     StatusCode::NO_CONTENT
 }
 
+#[derive(Deserialize)]
+struct SendReq {
+    /// Recipient mainnet address (`xch1…`).
+    to: String,
+    /// Amount to send, in mojos (1 XCH = 1e12 mojos).
+    amount_mojos: u64,
+    /// Network fee in mojos (0 = no fee).
+    #[serde(default)]
+    fee_mojos: u64,
+    /// Request an actual on-chain broadcast. Ignored unless the process also runs
+    /// with `DIG_WALLET_ALLOW_BROADCAST=1`; otherwise the send is a dry run.
+    #[serde(default)]
+    broadcast: bool,
+}
+
+#[derive(Serialize)]
+struct SendResp {
+    /// "signed" — built + signed but NOT broadcast (dry run; nothing was spent); or
+    /// "broadcast" — the signed bundle was pushed to mainnet (real funds spent).
+    status: &'static str,
+    to: String,
+    amount_mojos: u64,
+    fee_mojos: u64,
+    /// Change returned to the wallet, in mojos.
+    change_mojos: u64,
+    /// Total mojos of the selected input coins.
+    inputs_mojos: u64,
+    /// Number of input coin spends in the bundle.
+    coin_spends: usize,
+    /// Hex of the aggregated BLS signature over the spend — proof the bundle is
+    /// fully signed and ready to broadcast.
+    aggregated_signature: String,
+}
+
+/// What to do with a built+signed send bundle. Kept as a pure decision so the
+/// safety gate (never broadcast unattended) is unit-tested independently of the
+/// network path.
+#[derive(Debug, PartialEq, Eq)]
+enum SendAction {
+    /// Built + signed, push nothing (default / `broadcast:false`).
+    DryRun,
+    /// Both the request and the env opted in — push to mainnet.
+    Broadcast,
+    /// `broadcast:true` requested but broadcasting is disabled — refuse (do not push).
+    RefusedDisabled,
+}
+
+/// Broadcasting requires BOTH an explicit `broadcast:true` request AND the process
+/// env opt-in (`DIG_WALLET_ALLOW_BROADCAST=1`). Anything else is a dry run; an
+/// explicit request while disabled is refused (never silently downgraded).
+fn send_action(req_broadcast: bool, env_enabled: bool) -> SendAction {
+    match (req_broadcast, env_enabled) {
+        (true, true) => SendAction::Broadcast,
+        (true, false) => SendAction::RefusedDisabled,
+        (false, _) => SendAction::DryRun,
+    }
+}
+
+/// Build + BLS-sign a standard XCH payment. **Spends real mainnet funds only when
+/// explicitly enabled.** Broadcasting requires BOTH `broadcast: true` in the request
+/// AND `DIG_WALLET_ALLOW_BROADCAST=1` in the environment; otherwise the endpoint
+/// returns the fully signed bundle as a dry run and pushes nothing. A `broadcast:
+/// true` request while broadcasting is disabled is refused (403) — never silently
+/// downgraded — so the caller knows the spend did not happen.
+async fn send(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<SendReq>,
+) -> Result<Json<SendResp>, (StatusCode, Json<ErrResp>)> {
+    let recipient_ph =
+        decode_xch_address(&req.to).map_err(|e| err(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let mnemonic = {
+        let s = st.session.lock().await;
+        match s.as_ref() {
+            Some(w) => w.mnemonic.clone(),
+            None => return Err(err(StatusCode::UNAUTHORIZED, "wallet is locked")),
+        }
+    };
+    let chain = Coinset::mainnet();
+    let scanned = scan_wallet(&chain, &mnemonic)
+        .await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}")))?;
+    let (bundle, plan) = build_xch_send(&scanned, recipient_ph, req.amount_mojos, req.fee_mojos)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let broadcast_enabled =
+        std::env::var("DIG_WALLET_ALLOW_BROADCAST").ok().as_deref() == Some("1");
+    let status = match send_action(req.broadcast, broadcast_enabled) {
+        SendAction::Broadcast => {
+            chain
+                .push(bundle.clone())
+                .await
+                .map_err(|e| err(StatusCode::BAD_GATEWAY, format!("push_tx: {e}")))?;
+            "broadcast"
+        }
+        SendAction::RefusedDisabled => {
+            // Refuse rather than silently dry-run, so the caller is not misled into
+            // thinking funds moved.
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "broadcasting is disabled — set DIG_WALLET_ALLOW_BROADCAST=1 to spend real mainnet funds",
+            ));
+        }
+        SendAction::DryRun => "signed", // signed, not pushed
+    };
+
+    Ok(Json(SendResp {
+        status,
+        to: req.to,
+        amount_mojos: req.amount_mojos,
+        fee_mojos: req.fee_mojos,
+        change_mojos: plan.change,
+        inputs_mojos: plan.inputs,
+        coin_spends: bundle.coin_spends.len(),
+        aggregated_signature: hex::encode(bundle.aggregated_signature.to_bytes()),
+    }))
+}
+
 async fn index() -> Html<&'static str> {
     Html(UI_HTML)
 }
@@ -242,6 +366,7 @@ async fn main() {
         .route("/api/import", post(import))
         .route("/api/unlock", post(unlock))
         .route("/api/balance", get(balance))
+        .route("/api/send", post(send))
         .route("/api/lock", post(lock))
         .with_state(state);
 
@@ -261,3 +386,24 @@ async fn main() {
 /// The Sage-mirroring wallet UI (single self-contained page). Dark, luxury,
 /// DIG-purple / Chia-green accents.
 const UI_HTML: &str = include_str!("ui.html");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_send_is_a_dry_run_never_broadcasts() {
+        // No broadcast requested → never push, regardless of the env opt-in. This is
+        // the safe default that lets the signing path run unattended.
+        assert_eq!(send_action(false, false), SendAction::DryRun);
+        assert_eq!(send_action(false, true), SendAction::DryRun);
+    }
+
+    #[test]
+    fn broadcast_requires_both_request_and_env_optin() {
+        // Explicit request but env disabled → refused (NOT a silent dry run, NOT a push).
+        assert_eq!(send_action(true, false), SendAction::RefusedDisabled);
+        // Both opted in → the only path that actually broadcasts.
+        assert_eq!(send_action(true, true), SendAction::Broadcast);
+    }
+}
