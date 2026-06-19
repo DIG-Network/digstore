@@ -1,0 +1,16 @@
+[package]
+name = "dig-resolver"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "Resolve a DIG store's current (tip) root from coinset.org by walking its CHIP-0035 DataStore singleton lineage. Prints the 64-hex root to stdout. Used by the DIG Browser to resolve rootless dig:// addresses behind the scenes."
+
+[[bin]]
+name = "dig-resolver"
+path = "src/main.rs"
+
+[dependencies]
+digstore-chain = { path = "../digstore-chain" }
+chia-protocol = "0.26"
+hex = "0.4"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
