@@ -1,0 +1,23 @@
+[package]
+name = "dig-node"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "DIG Browser local node sidecar: a loopback JSON-RPC server (dig.getContent, the same contract as rpc.dig.net) that serves dig:// content from LOCAL .dig store modules first (via digstore_host::serve_blind), falling back to rpc.dig.net on a miss, and caching synced stores with an LRU size cap (default 1 GiB). Native Rust so the compiled-module serve path works."
+
+[[bin]]
+name = "dig-node"
+path = "src/main.rs"
+
+[dependencies]
+digstore-host = { path = "../digstore-host" }
+digstore-core = { path = "../digstore-core" }
+chia-protocol = "0.26"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+axum = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+hex = "0.4"
+filetime = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
