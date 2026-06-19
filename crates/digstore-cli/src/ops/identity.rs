@@ -8,76 +8,34 @@
 //!   * is stable per machine/user (persisted under the OS config dir), so it is
 //!     genuinely "the user", the way an SSH key identifies a git user.
 //!
-//! The public key (hex) is the `<user>` in a `dig://<user>@host/<storeId>` origin;
-//! the secret seed is the only persisted material (the BLS key is reconstructed via
-//! `from_seed`). `DIG_IDENTITY_DIR` overrides the location (tests / multi-identity).
+//! The persistence + seed→key derivation + signer construction live in
+//! [`digstore_remote::identity`] — the SINGLE source of truth shared with the DIG
+//! Browser's `dig-node` sidecar, so the CLI and the browser authenticate to
+//! rpc.dig.net identically. This module is a thin wrapper that maps the shared
+//! crate's `io::Error` onto [`CliError`] so the CLI surfaces a uniform error type.
 
-use std::path::PathBuf;
-
-use digstore_core::{Bytes48, Bytes96};
-use digstore_crypto::bls::SecretKey;
+use digstore_core::Bytes48;
 
 use crate::error::CliError;
-use crate::ops::store_ops::{random_seed, write_secret_file};
-
-/// Directory holding the user-global identity key: `<config_dir>/dig/`
-/// (e.g. `~/.config/dig` on Linux, `%APPDATA%\dig` on Windows). `DIG_IDENTITY_DIR`
-/// overrides it.
-fn identity_dir() -> Result<PathBuf, CliError> {
-    if let Some(d) = std::env::var_os("DIG_IDENTITY_DIR") {
-        return Ok(PathBuf::from(d));
-    }
-    let base = dirs::config_dir().ok_or_else(|| {
-        CliError::Other(anyhow::anyhow!(
-            "no OS config directory available for the dig identity key"
-        ))
-    })?;
-    Ok(base.join("dig"))
-}
-
-fn identity_key_path() -> Result<PathBuf, CliError> {
-    Ok(identity_dir()?.join("identity_key.bin"))
-}
 
 /// Load the user's identity SEED (the only persisted material), generating +
 /// persisting one on first use. Returns the 32-byte seed and the 48-byte G1
-/// public key. The seed is `Copy`, so signer closures can capture it and
-/// reconstruct the key per call (trivially `Send + Sync`).
+/// public key. Delegates to [`digstore_remote::identity::load_or_create_seed`].
 pub fn load_or_create_seed() -> Result<([u8; 32], Bytes48), CliError> {
-    let path = identity_key_path()?;
-    let seed: [u8; 32] = if path.exists() {
-        let bytes = std::fs::read(&path).map_err(|e| CliError::Other(e.into()))?;
-        bytes.try_into().map_err(|_| {
-            CliError::Other(anyhow::anyhow!("identity_key.bin is not a 32-byte seed"))
-        })?
-    } else {
-        let seed = random_seed();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| CliError::Other(e.into()))?;
-        }
-        write_secret_file(&path, &seed).map_err(|e| CliError::Other(e.into()))?;
-        seed
-    };
-    let pk = SecretKey::from_seed(&seed).public_key().to_bytes();
-    Ok((seed, pk))
+    digstore_remote::identity::load_or_create_seed().map_err(|e| CliError::Other(e.into()))
 }
 
 /// The identity public key (48-byte hex), creating the key if absent. This is the
 /// `<user>` embedded in a `dig://<user>@host/<storeId>` origin.
 pub fn identity_pubkey_hex() -> Result<String, CliError> {
-    Ok(load_or_create_seed()?.1.to_hex())
+    digstore_remote::identity::identity_pubkey_hex().map_err(|e| CliError::Other(e.into()))
 }
 
 /// Build the per-request signer for the remote `DigClient` (paper §21.9): the
 /// identity pubkey hex and a BLS signer over the 32-byte canonical request
-/// message. The seed is captured and the key reconstructed per call so the
-/// closure is trivially `Send + Sync`.
+/// message. Delegates to [`digstore_remote::identity::request_signer`].
 pub fn request_signer() -> Result<(String, digstore_remote::RequestSignFn), CliError> {
-    let (seed, pk) = load_or_create_seed()?;
-    let signer = move |msg: &[u8; 32]| -> Bytes96 {
-        digstore_crypto::bls::bls_sign(&SecretKey::from_seed(&seed), msg)
-    };
-    Ok((pk.to_hex(), Box::new(signer)))
+    digstore_remote::identity::request_signer().map_err(|e| CliError::Other(e.into()))
 }
 
 #[cfg(test)]
