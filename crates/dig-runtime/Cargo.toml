@@ -1,0 +1,14 @@
+[package]
+name = "dig-runtime"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "DIG browser native in-process runtime: a cdylib (dig_runtime.dll) the browser loads at startup to run the DIG node (and, later, wallet) on background threads INSIDE the browser process — no sidecar."
+
+[lib]
+name = "dig_runtime"
+crate-type = ["cdylib"]
+
+[dependencies]
+dig-node = { path = "../dig-node" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
