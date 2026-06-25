@@ -41,6 +41,22 @@ jobs:
           rustup show   # installs the toolchain pinned in rust-toolchain.toml (channel + components + targets)
           rustc --version && cargo --version
 
+      # The workspace now pulls in wasmtime/cranelift (dig-node) on top of the full
+      # crate graph, and build+test of all targets overran the stock ubuntu runner's
+      # ~14 GB free disk ("No space left on device"). Reclaim the large preinstalled
+      # SDKs we never use (~25 GB: .NET, Android, GHC, CodeQL) before the build.
+      # Linux only — Windows runners have ample disk and no apt/docker here.
+      - name: Free disk space (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-}" || true
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Cache cargo + target
         uses: actions/cache@v4
         with:
