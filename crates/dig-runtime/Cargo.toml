@@ -11,4 +11,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 dig-node = { path = "../dig-node" }
+dig-wallet = { path = "../dig-wallet" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
