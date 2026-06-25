@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en" data-theme="dig">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DIG Settings</title>
+<style>
+  :root{
+    --bg:#0b0c0e; --surface:#15161c; --surface-2:#1d1f28; --border:#2a2c38;
+    --text:#e8eaed; --muted:#9aa0ad; --accent:#5800d6; --accent-2:#8a4dff;
+    --good:#5ece71; --radius:16px; --shadow:0 8px 40px rgba(0,0,0,.45);
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 700px at 70% -10%,rgba(88,0,214,.18),transparent 60%),var(--bg);
+       color:var(--text);font-family:var(--font);min-height:100vh;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:18px 28px;border-bottom:1px solid var(--border)}
+  .logo{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+        display:grid;place-items:center;font-weight:800;color:#fff;font-size:16px}
+  .brand{font-weight:700;letter-spacing:.2px;font-size:17px}
+  .spacer{flex:1}
+  main{flex:1;display:flex;justify-content:center;padding:40px 24px}
+  .col{width:100%;max-width:560px}
+  .page-title{font-size:26px;margin:0 0 4px;font-weight:700}
+  .page-sub{color:var(--muted);font-size:14px;margin:0 0 28px;line-height:1.5}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+        box-shadow:var(--shadow);padding:26px;margin-bottom:20px}
+  .card h2{font-size:17px;margin:0 0 6px;display:flex;align-items:center;gap:10px}
+  .chip{display:inline-flex;align-items:center;gap:5px;background:rgba(94,206,113,.14);color:var(--good);
+        border:1px solid rgba(94,206,113,.35);border-radius:999px;padding:2px 10px;font-size:11px;font-weight:600;
+        text-transform:uppercase;letter-spacing:.5px}
+  .card .desc{color:var(--muted);font-size:13.5px;line-height:1.6;margin:0 0 22px}
+  .usage{margin:18px 0 6px}
+  .usage .nums{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:8px}
+  .usage .nums b{color:var(--text);font-weight:600}
+  .bar{height:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .bar > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-2));
+        border-radius:999px;transition:width .35s ease}
+  .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:24px 0 10px}
+  .slider-row{display:flex;align-items:center;gap:16px}
+  input[type=range]{flex:1;accent-color:var(--accent);height:4px}
+  .capbox{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  input.num{width:90px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+        border-radius:10px;padding:10px 12px;font-size:15px;text-align:right;font-variant-numeric:tabular-nums}
+  input.num:focus{outline:none;border-color:var(--accent)}
+  .unit{color:var(--muted);font-size:14px}
+  .row{display:flex;gap:12px;margin-top:24px}
+  button.primary{flex:1;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border:0;
+       border-radius:12px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;transition:filter .15s}
+  button.primary:hover{filter:brightness(1.08)}
+  button.primary:disabled{filter:grayscale(.6) brightness(.7);cursor:default}
+  button.ghost{flex:0 0 auto;background:transparent;color:var(--text);border:1px solid var(--border);
+       border-radius:12px;padding:13px 18px;font-size:14px;cursor:pointer}
+  button.ghost:hover{background:var(--surface-2)}
+  .status{font-size:13px;margin-top:14px;min-height:16px;color:var(--good)}
+  .status.err{color:#ff7a7a}
+  .foot{color:var(--muted);font-size:12px;text-align:center;margin-top:8px;line-height:1.6}
+  a{color:var(--accent-2);text-decoration:none}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Ð</div>
+  <div class="brand">DIG Settings</div>
+  <div class="spacer"></div>
+</header>
+<main>
+  <div class="col">
+    <h1 class="page-title">DIG protocol</h1>
+    <p class="page-sub">Settings for how this browser participates in the DIG Network as a native node.</p>
+
+    <div class="card">
+      <h2>Local cache <span class="chip">● Local-first</span></h2>
+      <p class="desc">
+        Your browser is a DIG node. When you open a <b>dig://</b> site, it downloads that store's
+        <code>.dig</code> file to a local cache and serves it from your machine — instantly, and verified
+        against the chain. Pages served from this cache show a <b>local</b> badge in the address bar.
+        When the cache is full, the least-recently-visited stores are evicted first (LRU).
+      </p>
+
+      <div class="usage">
+        <div class="nums"><span>Cache used</span><span><b id="usedTxt">—</b> of <b id="capTxt">—</b></span></div>
+        <div class="bar"><i id="usedBar"></i></div>
+      </div>
+
+      <div class="label">Storage limit</div>
+      <div class="slider-row">
+        <input type="range" id="capRange" min="1" max="200" step="1" value="1">
+        <div class="capbox">
+          <input class="num" id="capNum" type="number" min="0.06" step="0.5" value="1">
+          <span class="unit">GB</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="primary" id="btnSave" disabled>Save</button>
+        <button class="ghost" id="btnClear">Clear cache</button>
+      </div>
+      <div class="status" id="status"></div>
+    </div>
+
+    <p class="foot">Need to publish data to the DIG Network? Use <a href="https://hub.dig.net/" target="_blank" rel="noopener">hub.dig.net</a>.</p>
+  </div>
+</main>
+<script>
+const GiB = 1024 * 1024 * 1024;
+const $ = id => document.getElementById(id);
+let savedCapGb = null;
+
+function fmtBytes(n){
+  if(n >= GiB) return (n / GiB).toFixed(n >= 10*GiB ? 0 : 2) + ' GB';
+  if(n >= 1024*1024) return (n / (1024*1024)).toFixed(0) + ' MB';
+  if(n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+  return n + ' B';
+}
+
+function render(cfg){
+  const capGb = cfg.cache_cap_bytes / GiB;
+  savedCapGb = capGb;
+  $('usedTxt').textContent = fmtBytes(cfg.cache_used_bytes);
+  $('capTxt').textContent = fmtBytes(cfg.cache_cap_bytes);
+  const pct = cfg.cache_cap_bytes ? Math.min(100, 100 * cfg.cache_used_bytes / cfg.cache_cap_bytes) : 0;
+  $('usedBar').style.width = pct + '%';
+  setCap(capGb, false);
+  $('btnSave').disabled = true;
+}
+
+function setCap(gb, dirty){
+  const g = Math.max(0.06, gb);
+  $('capNum').value = Number.isInteger(g) ? g : g.toFixed(2);
+  $('capRange').value = Math.min(200, Math.max(1, Math.round(g)));
+  if(dirty !== false) $('btnSave').disabled = Math.abs(g - savedCapGb) < 1e-6;
+}
+
+async function load(){
+  try{
+    const r = await fetch('/api/dig-config');
+    render(await r.json());
+  }catch(e){ status('Could not reach the DIG node.', true); }
+}
+
+function status(msg, isErr){
+  const el = $('status');
+  el.textContent = msg;
+  el.className = 'status' + (isErr ? ' err' : '');
+}
+
+$('capRange').addEventListener('input', e => setCap(parseFloat(e.target.value), true));
+$('capNum').addEventListener('input', e => setCap(parseFloat(e.target.value || '0'), true));
+
+$('btnSave').addEventListener('click', async () => {
+  const gb = parseFloat($('capNum').value || '0');
+  const bytes = Math.round(gb * GiB);
+  $('btnSave').disabled = true;
+  status('Saving…');
+  try{
+    const r = await fetch('/api/dig-config', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({cache_cap_bytes: bytes})
+    });
+    if(!r.ok) throw new Error(await r.text());
+    render(await r.json());
+    status('Saved.');
+  }catch(e){ status('Save failed: ' + e.message, true); $('btnSave').disabled = false; }
+});
+
+$('btnClear').addEventListener('click', async () => {
+  status('Clearing…');
+  try{
+    const r = await fetch('/api/dig-cache/clear', {method:'POST'});
+    if(!r.ok && r.status !== 204) throw new Error(await r.text());
+    await load();
+    status('Cache cleared.');
+  }catch(e){ status('Clear failed: ' + e.message, true); }
+});
+
+load();
+</script>
+</body>
+</html>

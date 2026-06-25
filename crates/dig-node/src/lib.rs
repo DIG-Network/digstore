@@ -55,7 +55,6 @@ const DEFAULT_CACHE_CAP: u64 = 1024 * 1024 * 1024; // 1 GiB
 /// private — callers only need the constructor + the dispatch.
 pub struct Node {
     cache_dir: PathBuf,
-    cache_cap: u64,
     http: reqwest::Client,
     /// Upstream rpc.dig.net base URL for the JSON-RPC proxy and the §21 module
     /// sync. Defaults to [`RPC_FALLBACK`]; overridden by `DIG_NODE_UPSTREAM` (a
@@ -83,6 +82,71 @@ fn cache_dir() -> PathBuf {
                 .unwrap_or_else(|_| ".".to_string());
             PathBuf::from(root).join("DigNode").join("cache")
         })
+}
+
+/// Path to the shared DIG node config (cache cap, etc.) — next to the cache dir.
+pub fn config_path() -> PathBuf {
+    let dir = cache_dir();
+    dir.parent()
+        .map(|p| p.join("config.json"))
+        .unwrap_or_else(|| dir.join("config.json"))
+}
+
+/// The local-cache size cap in bytes. Read from config.json (set via the DIG
+/// settings page), falling back to `DIG_NODE_CACHE_CAP`, then the 1 GiB default.
+/// Read dynamically so a settings change takes effect without a restart.
+pub fn cache_cap_bytes() -> u64 {
+    if let Ok(txt) = std::fs::read_to_string(config_path()) {
+        if let Ok(v) = serde_json::from_str::<Value>(&txt) {
+            if let Some(cap) = v.get("cache_cap_bytes").and_then(|c| c.as_u64()) {
+                if cap > 0 {
+                    return cap;
+                }
+            }
+        }
+    }
+    std::env::var("DIG_NODE_CACHE_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_CACHE_CAP)
+}
+
+/// Persist the cache size cap (bytes) to config.json (the DIG settings page).
+pub fn set_cache_cap_bytes(cap: u64) -> std::io::Result<()> {
+    let path = config_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut v: Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| json!({}));
+    v["cache_cap_bytes"] = json!(cap);
+    std::fs::write(&path, serde_json::to_vec_pretty(&v).unwrap_or_default())
+}
+
+/// Total bytes currently held in the local cache (modules + response windows).
+pub fn cache_used_bytes() -> u64 {
+    fn walk(p: &Path, total: &mut u64) {
+        if let Ok(rd) = std::fs::read_dir(p) {
+            for e in rd.flatten() {
+                let path = e.path();
+                if path.is_dir() {
+                    walk(&path, total);
+                } else if let Ok(md) = e.metadata() {
+                    *total += md.len();
+                }
+            }
+        }
+    }
+    let mut total = 0u64;
+    walk(&cache_dir(), &mut total);
+    total
+}
+
+/// Delete all locally cached DIG content (the settings "clear cache" action).
+pub fn clear_cache() {
+    let _ = std::fs::remove_dir_all(cache_dir());
 }
 
 /// Path of a cached store module for (store_id, root), if present. Modules live
@@ -238,7 +302,10 @@ impl Node {
                 }
             }
         }
-        for victim in plan_eviction(&entries, self.cache_cap) {
+        // Read the cap dynamically so changes from the DIG settings page apply
+        // without restarting the browser. `self.cache_cap` is the startup default.
+        let cap = cache_cap_bytes();
+        for victim in plan_eviction(&entries, cap) {
             let _ = std::fs::remove_file(victim);
         }
     }
@@ -504,10 +571,6 @@ impl Node {
     pub fn from_env() -> Arc<Node> {
         let dir = cache_dir();
         let _ = std::fs::create_dir_all(&dir);
-        let cap = std::env::var("DIG_NODE_CACHE_CAP")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(DEFAULT_CACHE_CAP);
         // Load the persistent §21.9 identity (best-effort). Present → authenticated
         // whole-store sync is enabled; absent → the node still serves local modules
         // and proxies per-resource.
@@ -526,7 +589,6 @@ impl Node {
         };
         Arc::new(Node {
             cache_dir: dir,
-            cache_cap: cap,
             http: reqwest::Client::builder()
                 .user_agent("dig-node/0.1")
                 .build()
@@ -628,7 +690,6 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let node = Node {
             cache_dir: td.path().to_path_buf(),
-            cache_cap: DEFAULT_CACHE_CAP,
             http: reqwest::Client::new(),
             upstream: RPC_FALLBACK.to_string(),
             cache_lock: Mutex::new(()),

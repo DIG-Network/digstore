@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 digstore-chain = { path = "../digstore-chain" }
+dig-node = { path = "../dig-node" }
 chia-protocol = "0.26"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 axum = "0.7"
