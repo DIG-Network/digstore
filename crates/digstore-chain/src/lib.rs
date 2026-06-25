@@ -2,6 +2,7 @@
 
 pub mod anchor;
 pub mod cat;
+pub mod chip0002;
 pub mod coinset;
 pub mod config;
 pub mod dig;
