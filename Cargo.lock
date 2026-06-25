@@ -2163,6 +2163,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dig-runtime"
+version = "0.1.0"
+dependencies = [
+ "dig-node",
+ "tokio",
+]
+
+[[package]]
 name = "dig-wallet"
 version = "0.1.0"
 dependencies = [

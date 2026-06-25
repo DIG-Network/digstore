@@ -5,6 +5,10 @@ edition = "2021"
 license = "GPL-2.0-only"
 description = "DIG Browser local node sidecar: a loopback JSON-RPC server (dig.getContent, the same contract as rpc.dig.net) that serves dig:// content from LOCAL .dig store modules first (via digstore_host::serve_blind), falling back to rpc.dig.net on a miss, and caching synced stores with an LRU size cap (default 1 GiB). Native Rust so the compiled-module serve path works."
 
+[lib]
+name = "dig_node"
+path = "src/lib.rs"
+
 [[bin]]
 name = "dig-node"
 path = "src/main.rs"
