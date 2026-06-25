@@ -356,6 +356,63 @@ async fn index() -> Html<&'static str> {
     Html(UI_HTML)
 }
 
+/// The DIG protocol settings page (loopback). The browser opens it at
+/// `dig://settings`, which the dig:// loader redirects here.
+async fn settings_page() -> Html<&'static str> {
+    Html(SETTINGS_HTML)
+}
+
+/// Current local-cache configuration: the LRU capacity ceiling and the bytes
+/// currently on disk. Both come from `dig-node`, the single source of truth for
+/// the native cache (so the CLI, the loader, and this UI agree).
+#[derive(serde::Serialize)]
+struct DigConfig {
+    cache_cap_bytes: u64,
+    cache_used_bytes: u64,
+}
+
+async fn dig_config_get() -> Json<DigConfig> {
+    Json(DigConfig {
+        cache_cap_bytes: dig_node::cache_cap_bytes(),
+        cache_used_bytes: dig_node::cache_used_bytes(),
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct SetDigConfig {
+    cache_cap_bytes: u64,
+}
+
+/// Clamp a requested cache cap to a sane minimum. A fat-fingered "0" must not
+/// disable caching entirely (that would defeat local-first and hammer
+/// rpc.dig.net), so the cap floors at 64 MiB.
+fn floored_cache_cap(requested: u64) -> u64 {
+    const MIN_CAP: u64 = 64 * 1024 * 1024;
+    requested.max(MIN_CAP)
+}
+
+async fn dig_config_set(Json(req): Json<SetDigConfig>) -> impl IntoResponse {
+    let cap = floored_cache_cap(req.cache_cap_bytes);
+    match dig_node::set_cache_cap_bytes(cap) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(DigConfig {
+                cache_cap_bytes: cap,
+                cache_used_bytes: dig_node::cache_used_bytes(),
+            }),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Purge the entire local DIG cache. Content stays available — it just falls
+/// back to rpc.dig.net on next visit and re-warms the cache.
+async fn dig_cache_clear() -> impl IntoResponse {
+    dig_node::clear_cache();
+    StatusCode::NO_CONTENT
+}
+
 /// Serve the DIG wallet (loopback only) to completion. Driven either by the
 /// standalone `dig-wallet` binary OR in-process by `dig-runtime` on the browser's
 /// tokio runtime (no sidecar). The wallet UI is an interactive web page, so it is
@@ -365,6 +422,7 @@ pub async fn run() {
     let state = Arc::new(AppState::default());
     let app = Router::new()
         .route("/", get(index))
+        .route("/settings", get(settings_page))
         .route("/api/status", get(status))
         .route("/api/generate", post(generate))
         .route("/api/import", post(import))
@@ -372,6 +430,8 @@ pub async fn run() {
         .route("/api/balance", get(balance))
         .route("/api/send", post(send))
         .route("/api/lock", post(lock))
+        .route("/api/dig-config", get(dig_config_get).post(dig_config_set))
+        .route("/api/dig-cache/clear", post(dig_cache_clear))
         .with_state(state);
 
     // Bind loopback only — the wallet must never be reachable off-host.
@@ -391,6 +451,10 @@ pub async fn run() {
 /// DIG-purple / Chia-green accents.
 const UI_HTML: &str = include_str!("ui.html");
 
+/// The DIG protocol settings page (single self-contained page). Same dark luxury
+/// DIG aesthetic as the wallet; first setting is the native local-cache threshold.
+const SETTINGS_HTML: &str = include_str!("settings.html");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,5 +473,23 @@ mod tests {
         assert_eq!(send_action(true, false), SendAction::RefusedDisabled);
         // Both opted in → the only path that actually broadcasts.
         assert_eq!(send_action(true, true), SendAction::Broadcast);
+    }
+
+    #[test]
+    fn cache_cap_is_floored_so_caching_cant_be_disabled() {
+        // A 0 / tiny request must not disable the cache (which would defeat
+        // local-first and hammer rpc.dig.net) — it floors to the 64 MiB minimum.
+        assert_eq!(floored_cache_cap(0), 64 * 1024 * 1024);
+        assert_eq!(floored_cache_cap(1), 64 * 1024 * 1024);
+        // A request above the floor is honoured verbatim.
+        assert_eq!(floored_cache_cap(5 * 1024 * 1024 * 1024), 5 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn settings_page_wires_the_cache_config_api() {
+        // The served settings page must talk to the same config endpoints the
+        // handlers expose, or the UI silently no-ops.
+        assert!(SETTINGS_HTML.contains("/api/dig-config"));
+        assert!(SETTINGS_HTML.contains("/api/dig-cache/clear"));
     }
 }
