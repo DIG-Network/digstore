@@ -50,7 +50,10 @@ const WINDOW: usize = 3 * 1024 * 1024;
 /// Default LRU cap for the on-disk module cache.
 const DEFAULT_CACHE_CAP: u64 = 1024 * 1024 * 1024; // 1 GiB
 
-struct Node {
+/// The DIG node state. Public so `dig-runtime` can construct one ([`Node::from_env`])
+/// and drive it via [`handle_rpc`] in-process inside the browser. Fields stay
+/// private — callers only need the constructor + the dispatch.
+pub struct Node {
     cache_dir: PathBuf,
     cache_cap: u64,
     http: reqwest::Client,
@@ -381,18 +384,46 @@ fn parse_store_id_arg(params: &Value) -> Result<chia_protocol::Bytes32, ()> {
     Ok(chia_protocol::Bytes32::new(arr))
 }
 
+/// Axum route: a thin wrapper over [`handle_rpc`] for the standalone `dig-node`
+/// binary. The DIG browser does NOT use this — it calls `handle_rpc` directly
+/// in-process via the `dig-runtime` FFI, with no loopback server.
 async fn rpc(State(node): State<Arc<Node>>, Json(req): Json<Value>) -> impl IntoResponse {
+    Json(handle_rpc(&node, req).await)
+}
+
+/// String-in / string-out convenience over [`handle_rpc`] for FFI callers
+/// (`dig-runtime`): parse the JSON-RPC request text, dispatch, return the
+/// response as JSON text. Keeps serde out of the FFI crate so the browser side
+/// is a plain `*const c_char -> *mut c_char` call.
+pub async fn handle_rpc_json(node: &Node, req_json: &str) -> String {
+    let req: Value = match serde_json::from_str(req_json) {
+        Ok(v) => v,
+        Err(e) => {
+            return json!({"jsonrpc":"2.0","id":null,
+                "error":{"code":-32700,"message":format!("parse error: {e}")}})
+            .to_string()
+        }
+    };
+    handle_rpc(node, req).await.to_string()
+}
+
+/// Core JSON-RPC dispatch — the actual DIG node. Takes the request Value and
+/// returns the response Value. This is the single source of truth shared by the
+/// axum route (standalone bin) AND the in-process FFI (`dig-runtime`), so the
+/// browser process can *be* the node: its dig:// handler calls this directly,
+/// no HTTP, no socket, no sidecar.
+pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     let id = req.get("id").cloned().unwrap_or(json!(1));
     let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
     // dig.getAnchoredRoot: resolve a store's chain-anchored tip root (the TRUSTED
     // root for the browser's mandatory dig:// root-pinning — see anchored_root).
     if method == "dig.getAnchoredRoot" {
         let params = req.get("params").cloned().unwrap_or(json!({}));
-        return Json(node.anchored_root(&params, id).await);
+        return node.anchored_root(&params, id).await;
     }
     if method != "dig.getContent" {
-        return Json(json!({"jsonrpc":"2.0","id":id,
-            "error":{"code":-32601,"message":"method not found"}}));
+        return json!({"jsonrpc":"2.0","id":id,
+            "error":{"code":-32601,"message":"method not found"}});
     }
     let params = req.get("params").cloned().unwrap_or(json!({}));
     let store_hex = params
@@ -409,7 +440,7 @@ async fn rpc(State(node): State<Arc<Node>>, Json(req): Json<Value>) -> impl Into
     // 1. LOCAL-FIRST: serve from a cached compiled module (no network at all).
     if let (Ok(rk), false) = (decode_rk(rk_hex), root_hex.is_empty()) {
         if let Some(resp) = node.serve_local(store_hex, root_hex, &rk) {
-            return Json(json!({"jsonrpc":"2.0","id":id,"result":build_result(&resp, offset)}));
+            return json!({"jsonrpc":"2.0","id":id,"result":build_result(&resp, offset)});
         }
         // 1b. AUTHENTICATED WHOLE-STORE SYNC (§21.9): on a module-cache miss, pull
         //     the whole `.dig` from rpc.dig.net's auth-gated §21 endpoint, cache
@@ -417,7 +448,7 @@ async fn rpc(State(node): State<Arc<Node>>, Json(req): Json<Value>) -> impl Into
         //     falls through to the per-resource proxy below.
         if node.sync_module(store_hex, root_hex).await {
             if let Some(resp) = node.serve_local(store_hex, root_hex, &rk) {
-                return Json(json!({"jsonrpc":"2.0","id":id,"result":build_result(&resp, offset)}));
+                return json!({"jsonrpc":"2.0","id":id,"result":build_result(&resp, offset)});
             }
         }
     }
@@ -425,20 +456,21 @@ async fn rpc(State(node): State<Arc<Node>>, Json(req): Json<Value>) -> impl Into
     // 2. RESPONSE CACHE: a window we previously proxied for this exact request.
     let key = response_key(store_hex, root_hex, rk_hex, offset);
     if let Some(result) = node.serve_cached_response(&key) {
-        return Json(json!({"jsonrpc":"2.0","id":id,"result":result}));
+        return json!({"jsonrpc":"2.0","id":id,"result":result});
     }
 
     // 3. MISS: proxy to rpc.dig.net, then cache the result window (LRU-capped)
-    //    so the next load of this resource is served locally.
+    //    so the next load of this resource is served locally. (rpc.dig.net is the
+    //    remote DIG network, not a local server — the in-process node IS local.)
     match node.proxy(&req).await {
         Ok(v) => {
             if let Some(result) = v.get("result") {
                 node.store_response(&key, result).await;
             }
-            Json(v)
+            v
         }
-        Err(e) => Json(json!({"jsonrpc":"2.0","id":id,
-            "error":{"code":-32000,"message":format!("upstream: {e}")}})),
+        Err(e) => json!({"jsonrpc":"2.0","id":id,
+            "error":{"code":-32000,"message":format!("upstream: {e}")}}),
     }
 }
 
@@ -452,45 +484,52 @@ fn decode_rk(hex_str: &str) -> Result<[u8; 32], ()> {
     Ok(a)
 }
 
-/// Run the DIG node service to completion (binds the loopback listener + serves
-/// `dig.getContent` / `dig.getAnchoredRoot`). Async so it can be driven either by
-/// the standalone `dig-node` binary OR in-process by `dig-runtime` on a tokio
-/// runtime inside the browser process (no sidecar).
-pub async fn run() {
-    let dir = cache_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let cap = std::env::var("DIG_NODE_CACHE_CAP")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_CACHE_CAP);
-    // Load the persistent §21.9 identity (best-effort). Present → authenticated
-    // whole-store sync is enabled; absent → the node still serves local modules
-    // and proxies per-resource.
-    let identity_seed = match identity::load_or_create_seed() {
-        Ok((seed, pk)) => {
-            println!(
-                "dig-node identity {} (authenticated §21 whole-store sync enabled)",
-                pk.to_hex()
-            );
-            Some(seed)
-        }
-        Err(e) => {
-            eprintln!("dig-node: no identity key ({e}); authenticated §21 sync disabled");
-            None
-        }
-    };
-    let node = Arc::new(Node {
-        cache_dir: dir.clone(),
-        cache_cap: cap,
-        http: reqwest::Client::builder()
-            .user_agent("dig-node/0.1")
-            .build()
-            .expect("http client"),
-        upstream: std::env::var("DIG_NODE_UPSTREAM").unwrap_or_else(|_| RPC_FALLBACK.to_string()),
-        cache_lock: Mutex::new(()),
-        identity_seed,
-    });
+impl Node {
+    /// Build a node from the environment (cache dir/cap, §21 identity, upstream).
+    /// Used by both the standalone bin's [`run`] and the in-process `dig-runtime`.
+    pub fn from_env() -> Arc<Node> {
+        let dir = cache_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let cap = std::env::var("DIG_NODE_CACHE_CAP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_CACHE_CAP);
+        // Load the persistent §21.9 identity (best-effort). Present → authenticated
+        // whole-store sync is enabled; absent → the node still serves local modules
+        // and proxies per-resource.
+        let identity_seed = match identity::load_or_create_seed() {
+            Ok((seed, pk)) => {
+                println!(
+                    "dig-node identity {} (authenticated §21 whole-store sync enabled)",
+                    pk.to_hex()
+                );
+                Some(seed)
+            }
+            Err(e) => {
+                eprintln!("dig-node: no identity key ({e}); authenticated §21 sync disabled");
+                None
+            }
+        };
+        Arc::new(Node {
+            cache_dir: dir,
+            cache_cap: cap,
+            http: reqwest::Client::builder()
+                .user_agent("dig-node/0.1")
+                .build()
+                .expect("http client"),
+            upstream: std::env::var("DIG_NODE_UPSTREAM")
+                .unwrap_or_else(|_| RPC_FALLBACK.to_string()),
+            cache_lock: Mutex::new(()),
+            identity_seed,
+        })
+    }
+}
 
+/// Run the DIG node as a standalone loopback server (the `dig-node` binary only —
+/// the browser does NOT use this; it calls [`handle_rpc`] in-process via the
+/// `dig-runtime` FFI). Binds 127.0.0.1:`DIG_NODE_PORT` (default 9778).
+pub async fn run() {
+    let node = Node::from_env();
     let app = Router::new().route("/", post(rpc)).with_state(node);
 
     let port: u16 = std::env::var("DIG_NODE_PORT")
@@ -501,11 +540,7 @@ pub async fn run() {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("dig-node: cannot bind {addr}: {e}"));
-    println!(
-        "dig-node listening on http://{addr} (cache {} MiB cap at {})",
-        cap / (1024 * 1024),
-        dir.display()
-    );
+    println!("dig-node listening on http://{addr}");
     axum::serve(listener, app).await.expect("dig-node server");
 }
 
