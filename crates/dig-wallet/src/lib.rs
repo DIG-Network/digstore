@@ -413,6 +413,134 @@ async fn dig_cache_clear() -> impl IntoResponse {
     StatusCode::NO_CONTENT
 }
 
+// ---- WalletConnect / CHIP-0002 dapp signer ----------------------------------
+//
+// The in-page WalletConnect client (loopback UI) pairs with dapps over the WC
+// relay and forwards each CHIP-0002 / chia request here. The cryptographic core
+// lives in `digstore_chain::chip0002` (byte-exact to Sage); this layer is just
+// routing + the unlocked-session gate.
+
+/// A single WC request forwarded from the in-page WC client.
+#[derive(Deserialize)]
+struct WcRequest {
+    method: String,
+    #[serde(default)]
+    params: serde_json::Value,
+}
+
+/// Sage's default `getPublicKeys` window, and the most keys we will derive for
+/// one request (a dapp must not be able to force unbounded derivation).
+const DEFAULT_PUBKEYS: u32 = 10;
+const MAX_PUBKEYS: u32 = 1000;
+/// Wallet indices searched when matching a `publicKey` / covering coin spends.
+const KEY_SEARCH_WINDOW: u32 = 100;
+
+/// Resolve `{offset?, limit?}` for `chip0002_getPublicKeys`: Sage's defaults,
+/// with the limit clamped so a dapp can't make us derive unboundedly.
+fn pubkey_window(params: &serde_json::Value) -> (u32, u32) {
+    let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(MAX_PUBKEYS as u64) as u32)
+        .unwrap_or(DEFAULT_PUBKEYS);
+    (offset, limit)
+}
+
+/// Whether a WC method requires an unlocked wallet. The handshake methods
+/// (`chainId`, `connect`) are answered without one; anything that reads keys or
+/// signs requires an unlocked session.
+fn wc_method_needs_wallet(method: &str) -> bool {
+    !matches!(method, "chip0002_chainId" | "chip0002_connect")
+}
+
+fn wc_err(code: StatusCode, msg: impl Into<String>) -> (StatusCode, String) {
+    (code, msg.into())
+}
+
+/// Dispatch one WalletConnect / CHIP-0002 request to the native signer, returning
+/// the bare result value Sage would return (the in-page WC client wraps it into
+/// the WC response). Signing methods require an unlocked wallet.
+async fn wc_dispatch(
+    st: &AppState,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    use serde_json::json;
+
+    if !wc_method_needs_wallet(method) {
+        return Ok(match method {
+            "chip0002_chainId" => json!("mainnet"),
+            "chip0002_connect" => json!(true),
+            _ => unreachable!("non-wallet method list is exhaustive"),
+        });
+    }
+
+    let mnemonic = {
+        let s = st.session.lock().await;
+        match s.as_ref() {
+            Some(w) => w.mnemonic.clone(),
+            None => return Err(wc_err(StatusCode::UNAUTHORIZED, "wallet is locked")),
+        }
+    };
+    let bad = |e: digstore_chain::error::ChainError| wc_err(StatusCode::BAD_REQUEST, e.to_string());
+
+    match method {
+        "chip0002_getPublicKeys" => {
+            let (offset, limit) = pubkey_window(&params);
+            let keys =
+                digstore_chain::chip0002::wallet_public_keys(&mnemonic, offset, limit).map_err(bad)?;
+            Ok(json!(keys))
+        }
+        "chip0002_signMessage" => {
+            let message = params
+                .get("message")
+                .and_then(|m| m.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'message'"))?;
+            let public_key = params
+                .get("publicKey")
+                .and_then(|m| m.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'publicKey'"))?;
+            let sig = digstore_chain::chip0002::sign_message_by_public_key(
+                &mnemonic,
+                public_key,
+                message.as_bytes(),
+                KEY_SEARCH_WINDOW,
+            )
+            .map_err(bad)?;
+            Ok(json!(sig))
+        }
+        "chip0002_signCoinSpends" => {
+            let spends_val = params
+                .get("coinSpends")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let spends: Vec<digstore_chain::chip0002::WcCoinSpend> =
+                serde_json::from_value(spends_val)
+                    .map_err(|e| wc_err(StatusCode::BAD_REQUEST, format!("bad coinSpends: {e}")))?;
+            let sig =
+                digstore_chain::chip0002::sign_wc_coin_spends(&mnemonic, &spends, KEY_SEARCH_WINDOW)
+                    .map_err(bad)?;
+            Ok(json!(sig))
+        }
+        "chia_getAddress" => {
+            let keys = digstore_chain::keys::derive_wallet_keys(&mnemonic).map_err(bad)?;
+            Ok(json!({ "address": digstore_chain::keys::owner_address(&keys) }))
+        }
+        other => Err(wc_err(
+            StatusCode::NOT_IMPLEMENTED,
+            format!("unsupported WC method: {other}"),
+        )),
+    }
+}
+
+async fn wc_request(State(st): State<Arc<AppState>>, Json(req): Json<WcRequest>) -> impl IntoResponse {
+    match wc_dispatch(&st, &req.method, req.params).await {
+        Ok(data) => (StatusCode::OK, Json(serde_json::json!({ "data": data }))).into_response(),
+        Err((code, msg)) => (code, Json(serde_json::json!({ "error": msg }))).into_response(),
+    }
+}
+
 /// Serve the DIG wallet (loopback only) to completion. Driven either by the
 /// standalone `dig-wallet` binary OR in-process by `dig-runtime` on the browser's
 /// tokio runtime (no sidecar). The wallet UI is an interactive web page, so it is
@@ -432,6 +560,7 @@ pub async fn run() {
         .route("/api/lock", post(lock))
         .route("/api/dig-config", get(dig_config_get).post(dig_config_set))
         .route("/api/dig-cache/clear", post(dig_cache_clear))
+        .route("/api/wc/request", post(wc_request))
         .with_state(state);
 
     // Bind loopback only — the wallet must never be reachable off-host.
@@ -483,6 +612,33 @@ mod tests {
         assert_eq!(floored_cache_cap(1), 64 * 1024 * 1024);
         // A request above the floor is honoured verbatim.
         assert_eq!(floored_cache_cap(5 * 1024 * 1024 * 1024), 5 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn pubkey_window_defaults_and_clamps() {
+        // No params → Sage's default first 10 keys at offset 0.
+        assert_eq!(pubkey_window(&serde_json::Value::Null), (0, 10));
+        // Explicit offset/limit honoured.
+        assert_eq!(
+            pubkey_window(&serde_json::json!({"offset": 5, "limit": 3})),
+            (5, 3)
+        );
+        // An absurd limit is clamped so a dapp can't make us derive forever.
+        let (off, lim) = pubkey_window(&serde_json::json!({"limit": 100000}));
+        assert_eq!(off, 0);
+        assert!(lim <= MAX_PUBKEYS, "limit clamped to {MAX_PUBKEYS}");
+    }
+
+    #[test]
+    fn wc_methods_that_need_a_wallet() {
+        // Public handshake methods never need an unlocked wallet…
+        assert!(!wc_method_needs_wallet("chip0002_chainId"));
+        assert!(!wc_method_needs_wallet("chip0002_connect"));
+        // …but anything that reads keys or signs does.
+        assert!(wc_method_needs_wallet("chip0002_getPublicKeys"));
+        assert!(wc_method_needs_wallet("chip0002_signMessage"));
+        assert!(wc_method_needs_wallet("chip0002_signCoinSpends"));
+        assert!(wc_method_needs_wallet("chia_getAddress"));
     }
 
     #[test]
