@@ -57,6 +57,17 @@
   .err{color:#ff7a7a;font-size:13px;margin-top:12px;min-height:16px}
   .hidden{display:none}
   .spin{color:var(--muted);font-size:13px}
+  .conns{margin-top:22px;border-top:1px solid var(--border);padding-top:18px}
+  .conn{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);
+        border-radius:12px;padding:11px 14px;margin-top:8px;font-size:13px}
+  .conn .o{flex:1;word-break:break-all;font-family:ui-monospace,monospace}
+  .conn.pending{border-color:var(--accent-2)}
+  .conn .req{flex:0 0 auto;font-size:11px;color:var(--accent-2);text-transform:uppercase;letter-spacing:.5px;margin-right:2px}
+  .conn button{flex:0 0 auto;border:0;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer}
+  .conn .ok{background:var(--accent);color:#fff}
+  .conn .no{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  .conn .dot{width:7px;height:7px;border-radius:50%;background:var(--good);flex:0 0 auto}
+  .conns .empty{color:var(--muted);font-size:13px;margin-top:6px}
 </style>
 </head>
 <body>
@@ -124,6 +135,12 @@
       <button class="ghost" id="btnLock">Lock</button>
     </div>
     <div class="err" id="dashErr"></div>
+
+    <div id="connections" class="conns hidden">
+      <div class="label">Connected apps</div>
+      <div id="connPending"></div>
+      <div id="connApproved"></div>
+    </div>
   </div>
 </main>
 <script>
@@ -180,13 +197,38 @@ $('#btnUnlock').onclick = async () => {
   try{ await api('/api/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:$('#unlockPw').value})}); show('view-dash'); refreshBalance(); }
   catch(e){ $('#unlockErr').textContent=e.message; }
 };
-$('#btnRefresh').onclick = refreshBalance;
+// --- Connected dapps (CHIP-0002 / window.chia) ---
+function esc(s){ return s.replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+async function refreshConnections(){
+  let c; try{ c = await api('/api/wc/connections'); }catch(e){ return; }
+  const wrap = $('#connections'), pend = $('#connPending'), appr = $('#connApproved');
+  const has = (c.pending&&c.pending.length) || (c.approved&&c.approved.length);
+  wrap.classList.toggle('hidden', !has);
+  pend.innerHTML = (c.pending||[]).map(o =>
+    `<div class="conn pending"><span class="req">Wants to connect</span><span class="o">${esc(o)}</span>`+
+    `<button class="ok" data-approve="${esc(o)}">Approve</button>`+
+    `<button class="no" data-reject="${esc(o)}">Reject</button></div>`).join('');
+  appr.innerHTML = (c.approved||[]).map(o =>
+    `<div class="conn"><span class="dot"></span><span class="o">${esc(o)}</span>`+
+    `<button class="no" data-revoke="${esc(o)}">Disconnect</button></div>`).join('');
+}
+document.addEventListener('click', async (e) => {
+  const t = e.target;
+  const body = o => ({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({origin:o})});
+  if(t.dataset.approve){ await api('/api/wc/approve', body(t.dataset.approve)); refreshConnections(); }
+  else if(t.dataset.reject){ await api('/api/wc/reject', body(t.dataset.reject)); refreshConnections(); }
+  else if(t.dataset.revoke){ await api('/api/wc/revoke', body(t.dataset.revoke)); refreshConnections(); }
+});
+// Poll for connect requests while the dashboard is visible.
+setInterval(() => { if(!$('#view-dash').classList.contains('hidden')) refreshConnections(); }, 2000);
+
+$('#btnRefresh').onclick = () => { refreshBalance(); refreshConnections(); };
 $('#btnLock').onclick = async () => { await api('/api/lock',{method:'POST'}); show('view-welcome'); };
 $('#copyAddr').onclick = () => { navigator.clipboard.writeText($('#addr').textContent); $('#copyAddr').textContent='Copied'; setTimeout(()=>$('#copyAddr').textContent='Copy',1200); };
 
 (async function init(){
   try{ const s = await api('/api/status');
-    if(s.state==='unlocked'){ $('#addr').textContent=s.address; show('view-dash'); refreshBalance(); }
+    if(s.state==='unlocked'){ $('#addr').textContent=s.address; show('view-dash'); refreshBalance(); refreshConnections(); }
     else if(s.state==='locked'){ show('view-unlock'); $('#unlockPw').focus(); }
     else { show('view-welcome'); }
   } catch(e){ show('view-welcome'); }
