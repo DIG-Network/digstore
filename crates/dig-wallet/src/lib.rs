@@ -19,13 +19,14 @@
 //! it returns the fully signed bundle (proof the signing path works) and pushes
 //! NOTHING. The default is dry-run, so the flow can be exercised unattended safely.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
     extract::State,
-    http::StatusCode,
-    response::{Html, IntoResponse},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -49,6 +50,51 @@ struct Session {
 #[derive(Default)]
 struct AppState {
     session: Mutex<Option<Session>>,
+    approvals: Mutex<Approvals>,
+}
+
+/// Per-origin dapp connection state. `approved` is the user's allow-list (which
+/// web origins may use the wallet), persisted to disk so it survives restarts.
+/// `pending` holds origins that called `connect` and are awaiting the user's
+/// approval in the wallet UI (in-memory — a pending request doesn't outlive the
+/// session).
+struct Approvals {
+    approved: BTreeSet<String>,
+    pending: BTreeSet<String>,
+}
+
+impl Default for Approvals {
+    fn default() -> Self {
+        Approvals {
+            approved: load_approved(),
+            pending: BTreeSet::new(),
+        }
+    }
+}
+
+impl Approvals {
+    /// The wallet's own loopback origin is implicitly trusted (the wallet UI
+    /// itself), so it never needs a connect handshake.
+    fn is_approved(&self, origin: &str) -> bool {
+        is_self_origin(origin) || self.approved.contains(origin)
+    }
+}
+
+/// The loopback port the wallet serves on (default 9777; `DIG_WALLET_PORT`).
+fn wallet_port() -> u16 {
+    std::env::var("DIG_WALLET_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(9777)
+}
+
+/// True only for the wallet's OWN page origin (exact host + port) — the UI is
+/// trusted. Deliberately NOT all of 127.0.0.1: another local app on a different
+/// port must still go through the approval gate, or any localhost process could
+/// spend the wallet unprompted.
+fn is_self_origin(origin: &str) -> bool {
+    let port = wallet_port();
+    origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}")
 }
 
 /// Path to the encrypted seed file (per-user, off the profile dir).
@@ -57,6 +103,34 @@ fn seed_path() -> PathBuf {
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
     PathBuf::from(base).join("DigWallet").join("seed.bin")
+}
+
+/// Path to the persisted dapp allow-list (next to the seed file).
+fn connections_path() -> PathBuf {
+    seed_path()
+        .parent()
+        .map(|p| p.join("connections.json"))
+        .unwrap_or_else(|| PathBuf::from("connections.json"))
+}
+
+/// Load the approved-origins allow-list from disk (empty if absent/corrupt).
+fn load_approved() -> BTreeSet<String> {
+    std::fs::read(connections_path())
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok())
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// Persist the approved-origins allow-list.
+fn save_approved(approved: &BTreeSet<String>) {
+    let path = connections_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(&approved.iter().collect::<Vec<_>>()) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 fn wallet_exists() -> bool {
@@ -454,6 +528,43 @@ fn wc_method_needs_wallet(method: &str) -> bool {
     !matches!(method, "chip0002_chainId" | "chip0002_connect")
 }
 
+/// The per-origin permission decision for a WC request. A dapp's web origin
+/// (from the unspoofable HTTP `Origin` header) must be explicitly approved by the
+/// user before it can read keys or request signatures.
+#[derive(Debug, PartialEq, Eq)]
+enum Gate {
+    /// No origin approval needed (e.g. `chainId`).
+    Public,
+    /// Origin is approved — proceed.
+    Allowed,
+    /// `connect` from an unapproved origin — record it as pending and ask the user.
+    NeedsApproval,
+    /// A key/sign method from an unapproved origin — refuse; it must `connect` first.
+    Forbidden,
+}
+
+/// Decide what to do with `method` from an origin that is (or isn't) approved.
+/// Pure so the consent policy is unit-tested independently of HTTP/state.
+fn wc_gate(method: &str, origin_approved: bool) -> Gate {
+    match method {
+        "chip0002_chainId" => Gate::Public,
+        "chip0002_connect" => {
+            if origin_approved {
+                Gate::Allowed
+            } else {
+                Gate::NeedsApproval
+            }
+        }
+        _ => {
+            if origin_approved {
+                Gate::Allowed
+            } else {
+                Gate::Forbidden
+            }
+        }
+    }
+}
+
 fn wc_err(code: StatusCode, msg: impl Into<String>) -> (StatusCode, String) {
     (code, msg.into())
 }
@@ -534,11 +645,129 @@ async fn wc_dispatch(
     }
 }
 
-async fn wc_request(State(st): State<Arc<AppState>>, Json(req): Json<WcRequest>) -> impl IntoResponse {
-    match wc_dispatch(&st, &req.method, req.params).await {
-        Ok(data) => (StatusCode::OK, Json(serde_json::json!({ "data": data }))).into_response(),
-        Err((code, msg)) => (code, Json(serde_json::json!({ "error": msg }))).into_response(),
+/// The dapp's web origin, from the unspoofable HTTP `Origin` header (page JS
+/// cannot forge it on a cross-origin fetch). Empty if absent.
+fn origin_of(headers: &HeaderMap) -> String {
+    headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// A JSON response carrying the CORS header a dapp page needs to read it. Security
+/// is the per-origin approval gate, not CORS, so the origin is reflected.
+fn cors_json(origin: &str, status: StatusCode, body: serde_json::Value) -> Response {
+    let mut resp = (status, Json(body)).into_response();
+    let h = resp.headers_mut();
+    if let Ok(v) = HeaderValue::from_str(if origin.is_empty() { "null" } else { origin }) {
+        h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
     }
+    h.insert(header::VARY, HeaderValue::from_static("Origin"));
+    resp
+}
+
+/// CORS preflight for the dapp-facing `/api/wc/request` endpoint.
+async fn wc_preflight(headers: HeaderMap) -> Response {
+    let origin = origin_of(&headers);
+    let mut resp = StatusCode::NO_CONTENT.into_response();
+    let h = resp.headers_mut();
+    if let Ok(v) = HeaderValue::from_str(if origin.is_empty() { "null" } else { &origin }) {
+        h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
+    }
+    h.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("POST, OPTIONS"),
+    );
+    h.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("content-type"),
+    );
+    h.insert(header::VARY, HeaderValue::from_static("Origin"));
+    resp
+}
+
+/// The dapp-facing WalletConnect endpoint. Applies the per-origin consent gate,
+/// then dispatches to the native signer, always with CORS so the dapp can read
+/// the reply.
+async fn wc_request(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<WcRequest>,
+) -> Response {
+    let origin = origin_of(&headers);
+    let approved = st.approvals.lock().await.is_approved(&origin);
+
+    match wc_gate(&req.method, approved) {
+        Gate::NeedsApproval => {
+            if !origin.is_empty() {
+                st.approvals.lock().await.pending.insert(origin.clone());
+            }
+            return cors_json(
+                &origin,
+                StatusCode::ACCEPTED,
+                serde_json::json!({ "status": "pending" }),
+            );
+        }
+        Gate::Forbidden => {
+            return cors_json(
+                &origin,
+                StatusCode::FORBIDDEN,
+                serde_json::json!({
+                    "error": "origin not connected — call chip0002_connect and approve it in the DIG wallet"
+                }),
+            );
+        }
+        Gate::Public | Gate::Allowed => {}
+    }
+
+    match wc_dispatch(&st, &req.method, req.params).await {
+        Ok(data) => cors_json(&origin, StatusCode::OK, serde_json::json!({ "data": data })),
+        Err((code, msg)) => cors_json(&origin, code, serde_json::json!({ "error": msg })),
+    }
+}
+
+/// The dapp connections the wallet UI shows: approved allow-list + pending requests.
+#[derive(Serialize)]
+struct ConnectionsResp {
+    approved: Vec<String>,
+    pending: Vec<String>,
+}
+
+async fn wc_connections(State(st): State<Arc<AppState>>) -> Json<ConnectionsResp> {
+    let a = st.approvals.lock().await;
+    Json(ConnectionsResp {
+        approved: a.approved.iter().cloned().collect(),
+        pending: a.pending.iter().cloned().collect(),
+    })
+}
+
+#[derive(Deserialize)]
+struct OriginReq {
+    origin: String,
+}
+
+/// Approve a pending dapp origin (user action in the wallet) — persists it.
+async fn wc_approve(State(st): State<Arc<AppState>>, Json(req): Json<OriginReq>) -> impl IntoResponse {
+    let mut a = st.approvals.lock().await;
+    a.pending.remove(&req.origin);
+    a.approved.insert(req.origin.clone());
+    save_approved(&a.approved);
+    StatusCode::NO_CONTENT
+}
+
+/// Reject a pending dapp origin (drop it without approving).
+async fn wc_reject(State(st): State<Arc<AppState>>, Json(req): Json<OriginReq>) -> impl IntoResponse {
+    st.approvals.lock().await.pending.remove(&req.origin);
+    StatusCode::NO_CONTENT
+}
+
+/// Revoke a previously-approved dapp origin — persists the removal.
+async fn wc_revoke(State(st): State<Arc<AppState>>, Json(req): Json<OriginReq>) -> impl IntoResponse {
+    let mut a = st.approvals.lock().await;
+    a.approved.remove(&req.origin);
+    save_approved(&a.approved);
+    StatusCode::NO_CONTENT
 }
 
 /// Serve the DIG wallet (loopback only) to completion. Driven either by the
@@ -560,15 +789,15 @@ pub async fn run() {
         .route("/api/lock", post(lock))
         .route("/api/dig-config", get(dig_config_get).post(dig_config_set))
         .route("/api/dig-cache/clear", post(dig_cache_clear))
-        .route("/api/wc/request", post(wc_request))
+        .route("/api/wc/request", post(wc_request).options(wc_preflight))
+        .route("/api/wc/connections", get(wc_connections))
+        .route("/api/wc/approve", post(wc_approve))
+        .route("/api/wc/reject", post(wc_reject))
+        .route("/api/wc/revoke", post(wc_revoke))
         .with_state(state);
 
     // Bind loopback only — the wallet must never be reachable off-host.
-    let port: u16 = std::env::var("DIG_WALLET_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(9777);
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("127.0.0.1:{}", wallet_port());
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("dig-wallet: cannot bind {addr}: {e}"));
@@ -627,6 +856,36 @@ mod tests {
         let (off, lim) = pubkey_window(&serde_json::json!({"limit": 100000}));
         assert_eq!(off, 0);
         assert!(lim <= MAX_PUBKEYS, "limit clamped to {MAX_PUBKEYS}");
+    }
+
+    #[test]
+    fn only_the_exact_wallet_origin_is_self_trusted() {
+        // The wallet's own page origin is trusted (it serves the UI)…
+        assert!(is_self_origin("http://127.0.0.1:9777"));
+        assert!(is_self_origin("http://localhost:9777"));
+        // …but NOT some other local server on a different port (that would let any
+        // localhost app spend the wallet without approval).
+        assert!(!is_self_origin("http://127.0.0.1:8099"));
+        assert!(!is_self_origin("http://127.0.0.1"));
+        assert!(!is_self_origin("https://example.com"));
+        assert!(!is_self_origin(""));
+    }
+
+    #[test]
+    fn wc_origin_gate() {
+        // chainId is public — no origin approval needed.
+        assert_eq!(wc_gate("chip0002_chainId", false), Gate::Public);
+        // connect from an unapproved origin must ask the user; from an approved
+        // origin it just succeeds.
+        assert_eq!(wc_gate("chip0002_connect", false), Gate::NeedsApproval);
+        assert_eq!(wc_gate("chip0002_connect", true), Gate::Allowed);
+        // Any key/sign method is forbidden until the origin is approved.
+        assert_eq!(wc_gate("chip0002_signMessage", false), Gate::Forbidden);
+        assert_eq!(wc_gate("chip0002_signCoinSpends", false), Gate::Forbidden);
+        assert_eq!(wc_gate("chip0002_getPublicKeys", false), Gate::Forbidden);
+        assert_eq!(wc_gate("chia_getAddress", false), Gate::Forbidden);
+        // …and allowed once approved.
+        assert_eq!(wc_gate("chip0002_signMessage", true), Gate::Allowed);
     }
 
     #[test]
