@@ -288,8 +288,19 @@ impl Node {
         };
         let (served_root, bytes) = match client.clone_store(&store_id, verify, None).await {
             Ok(v) => v,
-            Err(_) => return false,
+            Err(e) => {
+                // Best-effort: log WHY (e.g. a §21 401/403 = the identity is not
+                // authorized to clone this store) so the silent fallback to the
+                // per-resource proxy is diagnosable, then give up on the sync.
+                eprintln!("dig-node: §21 whole-store sync for {store_hex} skipped: {e}");
+                return false;
+            }
         };
+        eprintln!(
+            "dig-node: §21 whole-store sync for {store_hex} ok — served root {} ({} bytes)",
+            served_root.to_hex(),
+            bytes.len()
+        );
 
         // Cache under the SERVED root (which may differ from want_root if the
         // remote head advanced between resolve and sync). Best-effort write.
