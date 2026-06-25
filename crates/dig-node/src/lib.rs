@@ -437,10 +437,20 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         .unwrap_or("");
     let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
+    // Tag the result with where it was served from so the browser can show a
+    // "local" chip: "local" = from this device's cache (a compiled module or a
+    // previously-cached window), "remote" = freshly fetched from rpc.dig.net.
+    let local = |id: &Value, mut result: Value| -> Value {
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("source".into(), json!("local"));
+        }
+        json!({"jsonrpc":"2.0","id":id,"result":result})
+    };
+
     // 1. LOCAL-FIRST: serve from a cached compiled module (no network at all).
     if let (Ok(rk), false) = (decode_rk(rk_hex), root_hex.is_empty()) {
         if let Some(resp) = node.serve_local(store_hex, root_hex, &rk) {
-            return json!({"jsonrpc":"2.0","id":id,"result":build_result(&resp, offset)});
+            return local(&id, build_result(&resp, offset));
         }
         // 1b. AUTHENTICATED WHOLE-STORE SYNC (§21.9): on a module-cache miss, pull
         //     the whole `.dig` from rpc.dig.net's auth-gated §21 endpoint, cache
@@ -448,7 +458,7 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         //     falls through to the per-resource proxy below.
         if node.sync_module(store_hex, root_hex).await {
             if let Some(resp) = node.serve_local(store_hex, root_hex, &rk) {
-                return json!({"jsonrpc":"2.0","id":id,"result":build_result(&resp, offset)});
+                return local(&id, build_result(&resp, offset));
             }
         }
     }
@@ -456,16 +466,20 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     // 2. RESPONSE CACHE: a window we previously proxied for this exact request.
     let key = response_key(store_hex, root_hex, rk_hex, offset);
     if let Some(result) = node.serve_cached_response(&key) {
-        return json!({"jsonrpc":"2.0","id":id,"result":result});
+        return local(&id, result);
     }
 
     // 3. MISS: proxy to rpc.dig.net, then cache the result window (LRU-capped)
     //    so the next load of this resource is served locally. (rpc.dig.net is the
     //    remote DIG network, not a local server — the in-process node IS local.)
     match node.proxy(&req).await {
-        Ok(v) => {
+        Ok(mut v) => {
             if let Some(result) = v.get("result") {
                 node.store_response(&key, result).await;
+            }
+            // Mark this window as freshly fetched from the network.
+            if let Some(result) = v.get_mut("result").and_then(|r| r.as_object_mut()) {
+                result.insert("source".into(), json!("remote"));
             }
             v
         }
