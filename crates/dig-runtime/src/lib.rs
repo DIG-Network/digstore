@@ -36,6 +36,11 @@ fn runtime() -> &'static DigRuntime {
             .build()
             .expect("dig-runtime: tokio runtime");
         let node = Node::from_env();
+        // Bring up the built-in Chia wallet in-process too (loopback UI on 9777;
+        // native BLS signing in this same process). The dig:// content path uses
+        // direct FFI (dig_rpc); the wallet is an interactive web UI, so it is
+        // served over loopback — still in-process, no sidecar exe.
+        rt.spawn(dig_wallet::run());
         DigRuntime { rt, node }
     })
 }
