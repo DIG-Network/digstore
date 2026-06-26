@@ -52,6 +52,11 @@ const HEADER_LEN: usize = 4 + 1 + 4;
 const ROW_LEN: usize = 2 + 4 + 4;
 
 /// Logical section identifiers (`u16`, D1).
+///
+/// Capsule terminology (see `SYSTEM.md` → "Core concept — the capsule"):
+/// `(StoreId, CurrentRoot)` = the current capsule (the store's latest immutable
+/// generation, named `storeId:rootHash`); `RootHistory` = the ordered sequence
+/// of all capsules (every root the store has committed, oldest → newest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum SectionId {

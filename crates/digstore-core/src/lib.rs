@@ -4,6 +4,7 @@ extern crate alloc;
 
 pub mod abi;
 pub mod bytes;
+pub mod capsule;
 pub mod codec;
 pub mod config;
 pub mod crypto;
@@ -19,6 +20,7 @@ pub mod wire;
 
 pub use abi::{is_error, pack_ptr_len, unpack_ptr_len};
 pub use bytes::{Bytes32, Bytes48, Bytes96};
+pub use capsule::Capsule;
 pub use codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 pub use crypto::{decrypt_chunk, derive_decryption_key, encrypt_chunk};
 pub use error::{CoreError, ErrorCode};
