@@ -99,8 +99,10 @@ pub fn offer_cost(offer: &Offer) -> OfferCost {
 /// returning the combined, ready-to-broadcast [`SpendBundle`] (maker + taker spends,
 /// aggregated signature).
 ///
-/// `funds` are the wallet's spendable XCH + CAT coins (from a live scan). `change_ph`
-/// is where surplus/change returns (the wallet's primary owner puzzle hash). `fee`
+/// `funds` are the wallet's spendable XCH + CAT coins (from a live scan).
+/// `change_keys` is the address that surplus/change AND the received NFT return to
+/// (the wallet's primary address) — passed explicitly (not searched in `funds`) so
+/// the take still works when the change address itself holds no funding coins. `fee`
 /// is an optional network fee in mojos. `for_testnet` selects the `agg_sig_me`
 /// network for signing (mainnet in production; the simulator test sets it true).
 ///
@@ -115,7 +117,7 @@ pub fn offer_cost(offer: &Offer) -> OfferCost {
 pub fn take_offer(
     offer_str: &str,
     funds: TakerFunds<'_>,
-    change_ph: Bytes32,
+    change_keys: &IndexedKeys,
     fee: u64,
     for_testnet: bool,
 ) -> Result<SpendBundle> {
@@ -149,14 +151,16 @@ pub fn take_offer(
 
     // Build the taker side: change/surplus returns to the wallet, and the offered
     // coins (the badge NFT) are claimed by spending the maker's settlement coins.
+    let change_ph = change_keys.owner_puzzle_hash;
     let mut spends = Spends::new(change_ph);
     spends.add(offer.offered_coins().clone());
 
     // The wallet's funding coins. `finish_with_keys` looks each input's inner
     // (p2) puzzle hash up in the key map, so record every participating address's
-    // synthetic key as we add its coins.
+    // synthetic key as we add its coins. The change address's key is seeded first
+    // so change/NFT routing to it always has a key, even if it funds nothing.
     let mut key_map: IndexMap<Bytes32, PublicKey> = IndexMap::new();
-    key_map.insert(change_ph, change_synthetic_key(&funds, change_ph)?);
+    key_map.insert(change_ph, change_keys.synthetic_pk);
     for (coin, keys) in &funds.xch {
         spends.add(*coin);
         key_map.insert(keys.owner_puzzle_hash, keys.synthetic_pk);
@@ -192,25 +196,6 @@ pub fn take_offer(
 
     // Aggregate the maker's signed half with the taker's into one bundle.
     Ok(offer.take(taker_bundle))
-}
-
-/// The synthetic key for the change address. The change puzzle hash is the wallet's
-/// primary owner ph; find the matching key among the funding coins (it is always
-/// present because index 0 is always scanned), erroring clearly if the caller
-/// supplied a `change_ph` that no funding key controls.
-fn change_synthetic_key(funds: &TakerFunds<'_>, change_ph: Bytes32) -> Result<PublicKey> {
-    funds
-        .xch
-        .iter()
-        .map(|(_, k)| *k)
-        .chain(funds.cats.iter().map(|(_, k)| *k))
-        .find(|k| k.owner_puzzle_hash == change_ph)
-        .map(|k| k.synthetic_pk)
-        .ok_or_else(|| {
-            ChainError::Chain(
-                "change address has no funding key — pass a change_ph the wallet controls".into(),
-            )
-        })
 }
 
 /// The distinct synthetic secret keys for all funding coins (the taker's signing
@@ -257,7 +242,6 @@ pub async fn build_take_offer(
         .into_iter()
         .next()
         .ok_or_else(|| ChainError::Chain("could not derive wallet key".into()))?;
-    let change_ph = primary.owner_puzzle_hash;
 
     // Scan the HD wallet for spendable XCH + DIG, then reconstruct each DIG-bearing
     // address's CATs WITH lineage proofs (raw scan coins lack the proof needed to
@@ -285,7 +269,7 @@ pub async fn build_take_offer(
     }
 
     let funds = TakerFunds { xch, cats };
-    let bundle = take_offer(offer_str, funds, change_ph, fee, for_testnet)?;
+    let bundle = take_offer(offer_str, funds, &primary, fee, for_testnet)?;
 
     // Recompute the cost from the offer for the caller's response (cheap re-decode).
     let cost = offer_cost(&decode_offer_string(offer_str)?);
@@ -469,7 +453,7 @@ mod tests {
             xch: vec![],
             cats: vec![(taker_cat, &taker)],
         };
-        let bundle = take_offer(&offer_str, funds, taker.owner_puzzle_hash, 0, true)?;
+        let bundle = take_offer(&offer_str, funds, &taker, 0, true)?;
 
         // The assembled bundle must be a single valid transaction on the simulator:
         // the maker's signed NFT spend + the taker's signed CAT payment, atomic.
@@ -489,21 +473,59 @@ mod tests {
     }
 
     #[test]
-    fn take_refuses_change_address_with_no_funding_key() {
-        // A change_ph the wallet does not control has no signing key — refuse with a
-        // clear message rather than build an unsignable spend. (Pure unit: no chain.)
+    fn take_offer_rejects_non_offer_string_before_touching_funds() {
+        // A non-offer string is rejected up front (no decode, no spend build), so the
+        // hub gets an honest "not a Chia offer" rather than a deep failure. Pure unit:
+        // no chain, no funds needed.
         let taker = derive_indexed_keys(ABANDON, 0..1).unwrap()[0].clone();
         let funds = TakerFunds {
-            xch: vec![(
-                Coin::new(Bytes32::from([9u8; 32]), taker.owner_puzzle_hash, 1000),
-                &taker,
-            )],
+            xch: vec![],
             cats: vec![],
         };
-        let err = change_synthetic_key(&funds, Bytes32::from([0xEEu8; 32])).unwrap_err();
+        let err = take_offer("definitely not an offer", funds, &taker, 0, true).unwrap_err();
         assert!(
-            matches!(&err, ChainError::Chain(m) if m.contains("no funding key")),
+            matches!(&err, ChainError::Chain(m) if m.contains("not a Chia offer")),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn take_succeeds_when_the_change_address_holds_no_funding_coins() -> anyhow::Result<()> {
+        // The change/receive address (index 0) may itself hold no funding coins —
+        // the wallet's DIG can live at a later HD index. The take must still work,
+        // routing the NFT + change to index 0 using its explicitly-passed key. This
+        // guards the regression where the change key was searched only among funds.
+        let mut sim = Simulator::new();
+        let mut ctx = SpendContext::new();
+
+        let keys = derive_indexed_keys(ABANDON, 0..2)?;
+        let change = keys[0].clone(); // primary/receive address — funds NOTHING here
+        let payer = keys[1].clone(); // a later address that actually holds the DIG CAT
+        let price: u64 = 100_000;
+
+        let (payer_cat, cat_asset_id) = issue_cat_to(
+            &mut sim,
+            &mut ctx,
+            payer.owner_puzzle_hash,
+            payer.synthetic_pk,
+            &payer.synthetic_sk,
+            price,
+        )?;
+        let offer_str = make_nft_for_cat_offer(&mut sim, &mut ctx, cat_asset_id, price)?;
+
+        let funds = TakerFunds {
+            xch: vec![],
+            cats: vec![(payer_cat, &payer)],
+        };
+        // change_keys = index 0 (holds no coins); the CAT is paid from index 1.
+        let bundle = take_offer(&offer_str, funds, &change, 0, true)?;
+        sim.new_transaction(bundle)?;
+
+        // The NFT routes to the change address even though it funded nothing.
+        assert!(
+            !sim.hinted_coins(change.owner_puzzle_hash).is_empty(),
+            "the badge NFT should land at the change/receive address"
+        );
+        Ok(())
     }
 }
