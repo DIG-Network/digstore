@@ -488,6 +488,33 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         let params = req.get("params").cloned().unwrap_or(json!({}));
         return node.anchored_root(&params, id).await;
     }
+    // cache.* — the local-cache config for the chrome://settings DIG section.
+    // The browser's Mojo handler reaches these via the in-process CallDigRpc FFI;
+    // dig-node owns the cache, so it is the single source of truth (same fns the
+    // dig-wallet /api/dig-config endpoint uses).
+    if method == "cache.getConfig" {
+        return json!({"jsonrpc":"2.0","id":id,"result":{
+            "cap_bytes": cache_cap_bytes(),
+            "used_bytes": cache_used_bytes()}});
+    }
+    if method == "cache.setCapBytes" {
+        let requested = req
+            .get("params")
+            .and_then(|p| p.get("cap_bytes"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        // Floor at 64 MiB so a stray 0 can't disable caching (mirrors dig-wallet).
+        let cap = requested.max(64 * 1024 * 1024);
+        return match set_cache_cap_bytes(cap) {
+            Ok(()) => json!({"jsonrpc":"2.0","id":id,"result":{"cap_bytes": cap}}),
+            Err(e) => json!({"jsonrpc":"2.0","id":id,
+                "error":{"code":-32000,"message": e.to_string()}}),
+        };
+    }
+    if method == "cache.clear" {
+        clear_cache();
+        return json!({"jsonrpc":"2.0","id":id,"result":{}});
+    }
     if method != "dig.getContent" {
         return json!({"jsonrpc":"2.0","id":id,
             "error":{"code":-32601,"message":"method not found"}});
