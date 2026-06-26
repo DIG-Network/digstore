@@ -480,6 +480,164 @@ impl Node {
                 "message":format!("resolve anchored root: {e}")}}),
         }
     }
+
+    // -- Cached-store management (the DIG-settings cache manager, task #32) -----
+    //
+    // Every cached module is one CAPSULE — the canonical `(store_id, root_hash)`
+    // identity (`digstore_core::Capsule`, rendered `storeId:rootHash`). The
+    // on-disk cache key IS that capsule: each module lives at
+    // `module_path(store_hex, root_hex)` = `<cache>/modules/<storeId>/<root>.module`,
+    // so listing/removing/fetching are all keyed by capsule identity.
+
+    /// List every cached capsule (`storeId:rootHash`) with its on-disk size and
+    /// last-used time. Walks `<cache>/modules/<storeId_hex>/<root_hex>.module`
+    /// (the same layout `module_path`/`serve_local`/`sync_module_from` use),
+    /// reusing the directory-enumerate pattern from [`cache_used_bytes`] and
+    /// [`Node::evict_if_needed`]. `last_used_unix_ms` is the file mtime (the LRU
+    /// recency stamp bumped by [`touch`] on every local serve), in Unix epoch ms.
+    pub async fn cache_list_cached(&self) -> Vec<CachedCapsule> {
+        let modules_root = self.cache_dir.join("modules");
+        let mut out = Vec::new();
+        // Outer level: one directory per store id (hex). Inner: `<root>.module`.
+        let Ok(stores) = std::fs::read_dir(&modules_root) else {
+            return out; // no modules cached yet
+        };
+        for store_entry in stores.flatten() {
+            if !store_entry.path().is_dir() {
+                continue;
+            }
+            let Some(store_hex) = store_entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            let Ok(modules) = std::fs::read_dir(store_entry.path()) else {
+                continue;
+            };
+            for m in modules.flatten() {
+                let path = m.path();
+                // A capsule module is `<root_hex>.module`; skip anything else.
+                let Some(root_hex) = path
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .and_then(|f| f.strip_suffix(".module"))
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                let Ok(md) = m.metadata() else { continue };
+                let last_used_unix_ms = md
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                out.push(CachedCapsule {
+                    store_id: store_hex.clone(),
+                    root: root_hex,
+                    size_bytes: md.len(),
+                    last_used_unix_ms,
+                });
+            }
+        }
+        out
+    }
+
+    /// Remove one cached capsule's module by `(store_id_hex, root_hex)`. Returns
+    /// `Ok(true)` if a module was unlinked, `Ok(false)` if it was already absent
+    /// (idempotent), or `Err` for invalid input.
+    ///
+    /// PATH-TRAVERSAL DEFENSE: the hex inputs are validated 64-hex (mirroring the
+    /// `response_key`/`sync_eligible` sanitization), then the resolved path is
+    /// canonicalized and asserted to live UNDER the cache dir before any unlink —
+    /// so a crafted `store_id`/`root` can never delete a file outside the cache.
+    /// Holds the existing `cache_lock` for the unlink so it can't race eviction.
+    /// (Async because that lock is a `tokio::sync::Mutex`, acquired with `.await`.)
+    pub async fn cache_remove_cached(
+        &self,
+        store_id_hex: &str,
+        root_hex: &str,
+    ) -> Result<bool, String> {
+        fn is_hex64(s: &str) -> bool {
+            s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+        }
+        if !is_hex64(store_id_hex) {
+            return Err(format!("invalid store_id (want 64-hex): {store_id_hex}"));
+        }
+        if !is_hex64(root_hex) {
+            return Err(format!("invalid root (want 64-hex): {root_hex}"));
+        }
+        let path = module_path(&self.cache_dir, store_id_hex, root_hex);
+
+        let _guard = self.cache_lock.lock().await;
+        if !path.exists() {
+            return Ok(false); // nothing to remove — idempotent no-op
+        }
+        // Canonicalize and confirm the target is contained by the cache dir. With
+        // 64-hex inputs this always holds; the check is defense-in-depth so the
+        // unlink can never reach outside the cache even if the layout changes.
+        let canon = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+        let cache_canon = std::fs::canonicalize(&self.cache_dir).map_err(|e| e.to_string())?;
+        if !canon.starts_with(&cache_canon) {
+            return Err("refusing to remove a path outside the cache dir".to_string());
+        }
+        std::fs::remove_file(&canon).map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    /// Fetch and cache one capsule on demand over the §21 authenticated
+    /// whole-store sync path (the same `sync_module_from` / `DigClient::clone_store`
+    /// the local-first miss path uses, signed with the startup `identity_seed`).
+    /// Returns `(size_bytes, served_root_hex)` on success.
+    ///
+    /// If the capsule is already cached it returns its size without re-downloading
+    /// (the RPC reports `already_cached`). The cache write itself happens inside
+    /// `sync_module_from`, which already serializes via the module path; this also
+    /// holds the `cache_lock` around the call so concurrent on-demand fetches of
+    /// the same capsule don't race each other.
+    pub async fn cache_fetch_and_cache(
+        &self,
+        store_id_hex: &str,
+        root_hex: &str,
+    ) -> Result<(u64, String), String> {
+        // Already cached → report its size, no network.
+        let existing = module_path(&self.cache_dir, store_id_hex, root_hex);
+        if let Ok(md) = std::fs::metadata(&existing) {
+            return Ok((md.len(), root_hex.to_string()));
+        }
+        // Serialize on-demand writes so two fetches of the same capsule don't race.
+        let _guard = self.cache_lock.lock().await;
+        // sync_module_from returns true only when the served root == requested
+        // root; either way the module lands under its SERVED root, so we read the
+        // file back to report size + confirm the capsule is now present.
+        let matched = self
+            .sync_module_from(&self.upstream, store_id_hex, root_hex)
+            .await;
+        let path = module_path(&self.cache_dir, store_id_hex, root_hex);
+        match std::fs::metadata(&path) {
+            Ok(md) => Ok((md.len(), root_hex.to_string())),
+            Err(_) if matched => {
+                // matched but no file: should not happen, surface it.
+                Err("sync reported a match but the module is not cached".to_string())
+            }
+            Err(_) => Err(format!(
+                "could not fetch capsule {store_id_hex}:{root_hex} (no §21 identity, \
+                 not authorized, or served root differs)"
+            )),
+        }
+    }
+}
+
+/// One cached capsule, as returned by [`Node::cache_list_cached`]. Identity is the
+/// `(store_id, root)` capsule (`digstore_core::Capsule`, `storeId:rootHash`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CachedCapsule {
+    /// Store id (lowercase 64-hex) — the directory name under `<cache>/modules/`.
+    pub store_id: String,
+    /// Generation root hash (lowercase 64-hex) — the `<root>.module` file stem.
+    pub root: String,
+    /// On-disk size of the cached module, in bytes.
+    pub size_bytes: u64,
+    /// Last-used time (file mtime, the LRU recency stamp) in Unix epoch ms.
+    pub last_used_unix_ms: u64,
 }
 
 /// Bump a file's mtime to "now" so the LRU treats it as freshly used.
@@ -573,6 +731,63 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     if method == "cache.clear" {
         clear_cache();
         return json!({"jsonrpc":"2.0","id":id,"result":{}});
+    }
+    // cache.listCached / removeCached / fetchAndCache — the cached-store manager
+    // (task #32). Each cached module is a CAPSULE (storeId:rootHash), so these are
+    // keyed by capsule identity (`digstore_core::Capsule`).
+    if method == "cache.listCached" {
+        let cached: Vec<Value> = node
+            .cache_list_cached()
+            .await
+            .into_iter()
+            .map(|c| {
+                json!({
+                    // The canonical capsule string identity (storeId:rootHash),
+                    // identical to digstore_core::Capsule::canonical().
+                    "capsule": format!("{}:{}", c.store_id, c.root),
+                    "store_id": c.store_id,
+                    "root": c.root,
+                    "size_bytes": c.size_bytes,
+                    "last_used_unix_ms": c.last_used_unix_ms,
+                })
+            })
+            .collect();
+        return json!({"jsonrpc":"2.0","id":id,"result":{"cached": cached}});
+    }
+    if method == "cache.removeCached" {
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        let store_hex = params
+            .get("store_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let root_hex = params.get("root").and_then(|v| v.as_str()).unwrap_or("");
+        return match node.cache_remove_cached(store_hex, root_hex).await {
+            Ok(removed) => json!({"jsonrpc":"2.0","id":id,"result":{"removed": removed}}),
+            Err(e) => json!({"jsonrpc":"2.0","id":id,
+                "error":{"code":-32602,"message": e}}),
+        };
+    }
+    if method == "cache.fetchAndCache" {
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        let store_hex = params
+            .get("store_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let root_hex = params.get("root").and_then(|v| v.as_str()).unwrap_or("");
+        // Was it already present before this call? (so we can report
+        // already_cached vs a fresh cached, per the spec's status field.)
+        let already = module_path(&node.cache_dir, store_hex, root_hex).exists();
+        return match node.cache_fetch_and_cache(store_hex, root_hex).await {
+            Ok((size_bytes, served_root)) => json!({"jsonrpc":"2.0","id":id,"result":{
+                "status": if already { "already_cached" } else { "cached" },
+                "size_bytes": size_bytes,
+                "served_root": served_root}}),
+            // A failed fetch is reported in-band (status:"failed") so the settings
+            // manager can show it without treating it as a transport error.
+            Err(e) => json!({"jsonrpc":"2.0","id":id,"result":{
+                "status": "failed",
+                "message": e}}),
+        };
     }
     if method != "dig.getContent" {
         return json!({"jsonrpc":"2.0","id":id,
@@ -1059,5 +1274,171 @@ mod tests {
         assert!(cleared["result"].is_object());
 
         std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    // -- Cached-store management RPCs (the DIG-settings cache manager, task #32) -
+
+    /// Write a fake cached module for capsule (store, root) at the real
+    /// `module_path` location so the management primitives see it. Returns the
+    /// path written.
+    fn seed_module(node: &Node, store_hex: &str, root_hex: &str, bytes: &[u8]) -> PathBuf {
+        let path = module_path(&node.cache_dir, store_hex, root_hex);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn list_cached_reports_capsules_with_size_and_mtime() {
+        // cache.listCached enumerates every cached `.module` as a capsule
+        // (storeId:rootHash) with its on-disk size and last-used time.
+        let (node, _td) = test_node(None);
+        let store_a = "aa".repeat(32);
+        let root_a = "11".repeat(32);
+        let store_b = "bb".repeat(32);
+        let root_b = "22".repeat(32);
+        seed_module(&node, &store_a, &root_a, b"module-a-bytes"); // 14 bytes
+        seed_module(&node, &store_b, &root_b, b"bb"); // 2 bytes
+
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"cache.listCached"}),
+        )
+        .await;
+        let items = resp["result"]["cached"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "both cached capsules are listed");
+
+        // Find capsule A and assert its identity + stats.
+        let a = items
+            .iter()
+            .find(|c| c["store_id"].as_str() == Some(store_a.as_str()))
+            .expect("capsule A present");
+        assert_eq!(a["root"].as_str(), Some(root_a.as_str()));
+        assert_eq!(a["size_bytes"].as_u64(), Some(14));
+        assert!(a["last_used_unix_ms"].as_u64().is_some());
+        // The canonical capsule string identity is carried verbatim.
+        assert_eq!(
+            a["capsule"].as_str(),
+            Some(format!("{store_a}:{root_a}").as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn list_cached_is_empty_when_no_modules() {
+        let (node, _td) = test_node(None);
+        let cached = node.cache_list_cached().await;
+        assert!(cached.is_empty(), "no modules → empty capsule list");
+    }
+
+    #[tokio::test]
+    async fn remove_cached_deletes_the_capsule_module() {
+        let (node, _td) = test_node(None);
+        let store = "cc".repeat(32);
+        let root = "33".repeat(32);
+        let path = seed_module(&node, &store, &root, b"to-be-removed");
+        assert!(path.exists());
+
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"cache.removeCached",
+                   "params":{"store_id": store, "root": root}}),
+        )
+        .await;
+        assert!(resp["result"]["removed"].as_bool() == Some(true));
+        assert!(!path.exists(), "the module file is unlinked");
+    }
+
+    #[tokio::test]
+    async fn remove_cached_rejects_path_traversal() {
+        // A non-hex store id that tries to escape the cache dir is refused and
+        // never deletes anything outside it.
+        let (node, _td) = test_node(None);
+        let err = node
+            .cache_remove_cached("../../etc", &"33".repeat(32))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("invalid") || err.contains("hex"),
+            "traversal attempt rejected as invalid input, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_cached_missing_module_is_not_an_error() {
+        // Removing a capsule that isn't cached is a no-op success (removed:false),
+        // so the settings manager can call it idempotently.
+        let (node, _td) = test_node(None);
+        let removed = node
+            .cache_remove_cached(&"dd".repeat(32), &"44".repeat(32))
+            .await
+            .unwrap();
+        assert!(!removed, "absent capsule → removed:false");
+    }
+
+    #[tokio::test]
+    async fn fetch_and_cache_syncs_a_capsule_on_demand() {
+        // cache.fetchAndCache pulls a whole store over the §21 authed sync path and
+        // lands it in the cache, reporting the served root + size.
+        let module = b"freshly-fetched-module".to_vec();
+        let (base, store_hex) = spawn_authed_remote(module.clone()).await;
+        let (mut node, _td) = test_node(Some([5u8; 32]));
+        node.upstream = base; // point the on-demand fetch at the authed remote
+        let root_hex = "10".repeat(32); // the served genesis root
+
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"cache.fetchAndCache",
+                   "params":{"store_id": store_hex, "root": root_hex}}),
+        )
+        .await;
+        assert_eq!(resp["result"]["status"].as_str(), Some("cached"));
+        assert_eq!(
+            resp["result"]["served_root"].as_str(),
+            Some(root_hex.as_str())
+        );
+        assert_eq!(
+            resp["result"]["size_bytes"].as_u64(),
+            Some(module.len() as u64)
+        );
+
+        let cached = std::fs::read(module_path(&node.cache_dir, &store_hex, &root_hex)).unwrap();
+        assert_eq!(cached, module, "fetched module is cached for local-first");
+
+        // A second fetch of the now-present capsule reports already_cached without
+        // re-downloading.
+        let again = node
+            .cache_fetch_and_cache(&store_hex, &root_hex)
+            .await
+            .unwrap();
+        assert_eq!(again.0, module.len() as u64);
+        let again_resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":2,"method":"cache.fetchAndCache",
+                   "params":{"store_id": store_hex, "root": root_hex}}),
+        )
+        .await;
+        assert_eq!(
+            again_resp["result"]["status"].as_str(),
+            Some("already_cached")
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_and_cache_without_identity_fails() {
+        // No §21 identity → the authed sync can't run, so the fetch reports failed
+        // rather than silently succeeding.
+        let (node, _td) = test_node(None);
+        let store = "ee".repeat(32);
+        let root = "55".repeat(32);
+        let err = node.cache_fetch_and_cache(&store, &root).await.unwrap_err();
+        assert!(!err.is_empty(), "fetch without identity surfaces an error");
+
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"cache.fetchAndCache",
+                   "params":{"store_id": store, "root": root}}),
+        )
+        .await;
+        assert_eq!(resp["result"]["status"].as_str(), Some("failed"));
     }
 }
