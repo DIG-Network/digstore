@@ -149,6 +149,65 @@ pub fn clear_cache() {
     let _ = std::fs::remove_dir_all(cache_dir());
 }
 
+/// The config key for the WalletConnect projectId (the native wallet acts as a
+/// WC responder; the relay needs a Reown/WalletConnect Cloud projectId).
+const WC_PROJECT_ID_KEY: &str = "wc_project_id";
+
+/// Resolve the effective WalletConnect projectId from the two sources, in
+/// precedence order: a persisted config value wins; otherwise the
+/// `DIG_WALLET_WC_PROJECT_ID` env var is the initial/default; otherwise none.
+///
+/// Pure (no disk/env) so the precedence policy is unit-tested directly. A blank
+/// persisted value is treated as "unset" so it falls through to the env default
+/// rather than pinning an empty id.
+fn resolve_wc_project_id(persisted: Option<&str>, env: Option<&str>) -> Option<String> {
+    let clean = |s: &str| {
+        let t = s.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    };
+    persisted.and_then(clean).or_else(|| env.and_then(clean))
+}
+
+/// The projectId persisted in config.json, if any (blank → `None`).
+fn persisted_wc_project_id() -> Option<String> {
+    let txt = std::fs::read_to_string(config_path()).ok()?;
+    let v: Value = serde_json::from_str(&txt).ok()?;
+    v.get(WC_PROJECT_ID_KEY)
+        .and_then(|p| p.as_str())
+        .map(str::to_string)
+}
+
+/// The effective WalletConnect projectId: persisted config value if set, else the
+/// `DIG_WALLET_WC_PROJECT_ID` env var, else `None`. Read dynamically so a settings
+/// change applies without restarting the browser.
+pub fn wc_project_id() -> Option<String> {
+    let persisted = persisted_wc_project_id();
+    let env = std::env::var("DIG_WALLET_WC_PROJECT_ID").ok();
+    resolve_wc_project_id(persisted.as_deref(), env.as_deref())
+}
+
+/// Persist the WalletConnect projectId to config.json (the DIG settings page).
+/// A blank value clears the persisted override (falling back to the env default).
+pub fn set_wc_project_id(id: &str) -> std::io::Result<()> {
+    let path = config_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut v: Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| json!({}));
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        if let Some(obj) = v.as_object_mut() {
+            obj.remove(WC_PROJECT_ID_KEY);
+        }
+    } else {
+        v[WC_PROJECT_ID_KEY] = json!(trimmed);
+    }
+    std::fs::write(&path, serde_json::to_vec_pretty(&v).unwrap_or_default())
+}
+
 /// Path of a cached store module for (store_id, root), if present. Modules live
 /// under `<cache>/modules/` — populated out-of-band (a local digstore store, or
 /// authed whole-store sync) and served via `serve_blind`.
@@ -662,6 +721,34 @@ mod tests {
         let bad = response_key("../../etc", "bb", "cc", 0);
         assert!(!bad.contains('/'));
         assert!(!bad.contains(".."));
+    }
+
+    #[test]
+    fn wc_project_id_precedence_persisted_over_env_over_none() {
+        // Persisted value wins over the env default.
+        assert_eq!(
+            resolve_wc_project_id(Some("persisted"), Some("from_env")),
+            Some("persisted".to_string())
+        );
+        // No persisted value → fall back to the env default.
+        assert_eq!(
+            resolve_wc_project_id(None, Some("from_env")),
+            Some("from_env".to_string())
+        );
+        // A blank persisted value is treated as unset (falls through to env),
+        // never pinning an empty id.
+        assert_eq!(
+            resolve_wc_project_id(Some("   "), Some("from_env")),
+            Some("from_env".to_string())
+        );
+        // Nothing configured anywhere → None (the "not configured" UI state).
+        assert_eq!(resolve_wc_project_id(None, None), None);
+        assert_eq!(resolve_wc_project_id(Some(""), Some("")), None);
+        // Values are trimmed.
+        assert_eq!(
+            resolve_wc_project_id(Some("  abc  "), None),
+            Some("abc".to_string())
+        );
     }
 
     #[test]

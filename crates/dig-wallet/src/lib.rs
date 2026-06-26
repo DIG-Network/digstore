@@ -430,6 +430,20 @@ async fn index() -> Html<&'static str> {
     Html(UI_HTML)
 }
 
+/// The bundled WalletConnect responder (esbuild IIFE exposing `window.DigWC`).
+/// Served as a static asset the wallet page loads with `<script src>`. Checked in
+/// (regenerated via `wc/build.mjs`) so the crate builds offline — no npm at build
+/// time. Loopback only, same as the rest of the wallet.
+async fn wc_bundle_js() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        WC_BUNDLE_JS,
+    )
+}
+
 /// The DIG protocol settings page (loopback). The browser opens it at
 /// `dig://settings`, which the dig:// loader redirects here.
 async fn settings_page() -> Html<&'static str> {
@@ -485,6 +499,160 @@ async fn dig_config_set(Json(req): Json<SetDigConfig>) -> impl IntoResponse {
 async fn dig_cache_clear() -> impl IntoResponse {
     dig_node::clear_cache();
     StatusCode::NO_CONTENT
+}
+
+// ---- DIG settings: WalletConnect projectId, public key, key export ----------
+//
+// These endpoints back the DIG settings page (`dig://settings`). Two of them
+// touch secrets and so are restricted to the wallet's OWN loopback origin
+// (`is_self_origin`): the master mnemonic export and the projectId setter. They
+// are deliberately NOT routed through `/api/wc/request`, so no dapp / injected
+// `window.chia` / WC session can reach them — see `wc_dispatch`, whose method
+// set has no export/projectId/key-material path.
+
+/// The effective WalletConnect projectId surfaced to the settings page.
+#[derive(Serialize)]
+struct WcProjectIdResp {
+    /// The effective projectId (persisted config > `DIG_WALLET_WC_PROJECT_ID`),
+    /// or `null` when none is configured.
+    project_id: Option<String>,
+    /// `true` iff a projectId is configured (relay can pair); drives the
+    /// "WalletConnect not configured" UI state when `false`.
+    configured: bool,
+}
+
+/// Current effective WalletConnect projectId (config value, else env default).
+/// Readable by the wallet UI so the in-page WC responder can boot the relay with
+/// it (or show the "not configured" state).
+async fn wc_project_id_get() -> Json<WcProjectIdResp> {
+    let id = dig_node::wc_project_id();
+    Json(WcProjectIdResp {
+        configured: id.is_some(),
+        project_id: id,
+    })
+}
+
+#[derive(Deserialize)]
+struct SetWcProjectId {
+    project_id: String,
+}
+
+/// Persist the WalletConnect projectId (DIG settings). Restricted to the wallet's
+/// own origin — only the settings UI may change it, never a dapp. A blank value
+/// clears the override (falls back to the env default).
+async fn wc_project_id_set(headers: HeaderMap, Json(req): Json<SetWcProjectId>) -> Response {
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "settings are wallet-local only").into_response();
+    }
+    match dig_node::set_wc_project_id(&req.project_id) {
+        Ok(()) => {
+            let id = dig_node::wc_project_id();
+            (
+                StatusCode::OK,
+                Json(WcProjectIdResp {
+                    configured: id.is_some(),
+                    project_id: id,
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// The wallet's public identity, safe to display in plain text.
+#[derive(Serialize)]
+struct PubKeyResp {
+    /// The owner (first synthetic) public key, hex (no `0x`) — the same value
+    /// `chip0002_getPublicKeys`/`derive_wallet_keys` exposes.
+    public_key: String,
+    /// The owner mainnet receive address (`xch1…`).
+    address: String,
+}
+
+/// The wallet's public key + address (read-only, plain text in DIG settings).
+/// Requires an unlocked session; public keys are not secret, but we still gate
+/// to the wallet's own origin so it is never served to a dapp page.
+async fn wallet_pubkey(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "wallet-local only").into_response();
+    }
+    let mnemonic = {
+        let s = st.session.lock().await;
+        match s.as_ref() {
+            Some(w) => w.mnemonic.clone(),
+            None => return (StatusCode::UNAUTHORIZED, "wallet is locked").into_response(),
+        }
+    };
+    match derive_wallet_keys(&mnemonic) {
+        Ok(keys) => (
+            StatusCode::OK,
+            Json(PubKeyResp {
+                public_key: hex::encode(keys.synthetic_pk.to_bytes()),
+                address: owner_address(&keys),
+            }),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ExportReq {
+    /// The wallet password — re-entered to authorize revealing the master secret.
+    password: String,
+}
+
+#[derive(Serialize)]
+struct ExportResp {
+    /// The 24-word master mnemonic. THE master secret — anyone with it controls
+    /// the funds. Served only to the wallet's own origin, only on a correct
+    /// password, and never to any dapp-facing path.
+    mnemonic: String,
+}
+
+/// Reveal the wallet's recovery phrase for backup. The most sensitive endpoint:
+///
+/// * **Self-origin only** — restricted to the wallet's own loopback origin via
+///   the unspoofable `Origin` header, so a dapp page can never call it.
+/// * **Password-gated** — the on-disk encrypted seed is decrypted with the
+///   password supplied *in this request* (not the live session), so revealing
+///   the master secret always requires re-proving the password.
+/// * **Unreachable from dapps** — it is its own route, NOT a `wc_dispatch`
+///   method, so no `/api/wc/request`, injected provider, or WC session can hit it.
+///
+/// The mnemonic is never logged. The UI reveals it transiently (reveal-then-hide).
+async fn export(headers: HeaderMap, Json(req): Json<ExportReq>) -> Response {
+    // Gate 1: only the wallet's own UI origin may ever ask to export.
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "export is wallet-local only").into_response();
+    }
+    // Gate 2: re-decrypt the on-disk seed with the supplied password. A wrong
+    // password fails decryption (AEAD) — there is no other way to recover it.
+    let bytes = match std::fs::read(seed_path()) {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::NOT_FOUND, "no wallet on this device").into_response(),
+    };
+    let enc = match EncryptedSeed::from_bytes(&bytes) {
+        Ok(e) => e,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("corrupt seed file: {e}"),
+            )
+                .into_response()
+        }
+    };
+    match decrypt_seed(&enc, &req.password) {
+        Ok(m) => (
+            StatusCode::OK,
+            Json(ExportResp {
+                mnemonic: m.to_string(),
+            }),
+        )
+            .into_response(),
+        Err(_) => (StatusCode::UNAUTHORIZED, "wrong password").into_response(),
+    }
 }
 
 // ---- WalletConnect / CHIP-0002 dapp signer ----------------------------------
@@ -974,6 +1142,7 @@ pub async fn run() {
     let state = Arc::new(AppState::default());
     let app = Router::new()
         .route("/", get(index))
+        .route("/wc-bundle.js", get(wc_bundle_js))
         .route("/settings", get(settings_page))
         .route("/api/status", get(status))
         .route("/api/generate", post(generate))
@@ -984,6 +1153,12 @@ pub async fn run() {
         .route("/api/lock", post(lock))
         .route("/api/dig-config", get(dig_config_get).post(dig_config_set))
         .route("/api/dig-cache/clear", post(dig_cache_clear))
+        .route(
+            "/api/wc/project-id",
+            get(wc_project_id_get).post(wc_project_id_set),
+        )
+        .route("/api/wallet/pubkey", get(wallet_pubkey))
+        .route("/api/export", post(export))
         .route("/api/wc/request", post(wc_request).options(wc_preflight))
         .route("/api/wc/connections", get(wc_connections))
         .route("/api/wc/approve", post(wc_approve))
@@ -1007,6 +1182,11 @@ const UI_HTML: &str = include_str!("ui.html");
 /// The DIG protocol settings page (single self-contained page). Same dark luxury
 /// DIG aesthetic as the wallet; first setting is the native local-cache threshold.
 const SETTINGS_HTML: &str = include_str!("settings.html");
+
+/// The bundled WalletConnect responder client (`window.DigWC`), generated by
+/// `wc/build.mjs` (esbuild). Checked in so the crate builds offline; served at
+/// `/wc-bundle.js`.
+const WC_BUNDLE_JS: &str = include_str!("wc-bundle.js");
 
 #[cfg(test)]
 mod tests {
@@ -1135,5 +1315,210 @@ mod tests {
         // handlers expose, or the UI silently no-ops.
         assert!(SETTINGS_HTML.contains("/api/dig-config"));
         assert!(SETTINGS_HTML.contains("/api/dig-cache/clear"));
+    }
+
+    #[test]
+    fn wallet_page_hosts_the_walletconnect_responder() {
+        // The wallet page must load the bundled responder and expose the
+        // "Connect a dapp" pairing surface; the bundle must be the real client
+        // (exposes window.DigWC), and the page must read the effective projectId
+        // from DIG settings so the relay boots with it.
+        assert!(
+            UI_HTML.contains("/wc-bundle.js"),
+            "page loads the WC bundle"
+        );
+        assert!(UI_HTML.contains("DigWC"), "page uses the responder API");
+        assert!(
+            UI_HTML.contains("/api/wc/project-id"),
+            "page reads the effective projectId"
+        );
+        // The bundle is the actual esbuild output, not a stub.
+        assert!(
+            WC_BUNDLE_JS.contains("var DigWC") && WC_BUNDLE_JS.len() > 100_000,
+            "wc-bundle.js is the real bundled SignClient"
+        );
+    }
+
+    #[test]
+    fn settings_page_wires_the_new_settings_apis() {
+        // The settings page must talk to the projectId, export, import, and
+        // public-key endpoints, or those features silently no-op.
+        assert!(SETTINGS_HTML.contains("/api/wc/project-id"));
+        assert!(SETTINGS_HTML.contains("/api/export"));
+        assert!(SETTINGS_HTML.contains("/api/import"));
+        assert!(SETTINGS_HTML.contains("/api/wallet/pubkey"));
+    }
+
+    // -- Key export is unreachable from every dapp-facing path -----------------
+
+    /// The master mnemonic must NEVER be reachable through the WC / injected
+    /// `window.chia` dispatch. `wc_dispatch` is the single dapp-facing signer
+    /// surface; with the wallet UNLOCKED (so the locked-gate isn't what stops it),
+    /// every export-flavoured method name is rejected as unsupported (501) — never
+    /// served. (Locked, it 401s first; either way no key material comes back.)
+    #[tokio::test]
+    async fn export_is_not_a_dispatchable_wc_method() {
+        const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+        let st = AppState::default();
+        // Unlock a session so the unlocked-gate is satisfied; now an unsupported
+        // method can only fall through to the explicit 501 arm.
+        *st.session.lock().await = Some(Session {
+            mnemonic: Zeroizing::new(ABANDON.to_string()),
+            address: "xch1test".to_string(),
+        });
+        for method in [
+            "export",
+            "exportMnemonic",
+            "chip0002_export",
+            "getMnemonic",
+            "getSecretKeys",
+            "chia_export",
+            "revealSeed",
+        ] {
+            let r = wc_dispatch(&st, method, serde_json::Value::Null).await;
+            match r {
+                Err((code, _)) => assert_eq!(
+                    code,
+                    StatusCode::NOT_IMPLEMENTED,
+                    "dapp-facing dispatch must reject {method} as unsupported"
+                ),
+                Ok(v) => panic!("{method} must not be dispatchable, got {v:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn wc_dispatch_method_set_has_no_export_path() {
+        // Guard the source of truth: the dapp-facing dispatcher must never RETURN
+        // the recovery phrase or reach the export/decrypt path. (`mnemonic` as a
+        // local signing secret is fine; what must not appear is returning it or
+        // decrypting the seed.) If someone wires export into the dapp surface,
+        // this fails.
+        let src = include_str!("lib.rs");
+        let dispatch = src
+            .split("async fn wc_dispatch")
+            .nth(1)
+            .expect("wc_dispatch present")
+            .split("\nasync fn ")
+            .next()
+            .unwrap();
+        for forbidden in [
+            "ExportResp",
+            "/api/export",
+            "decrypt_seed",
+            "mnemonic.to_string()",
+            "fn export",
+        ] {
+            assert!(
+                !dispatch.contains(forbidden),
+                "wc_dispatch must not reference {forbidden} (would leak the recovery phrase to dapps)"
+            );
+        }
+    }
+
+    // -- Export endpoint: self-origin + password gates -------------------------
+
+    /// Build a HeaderMap carrying an Origin (the unspoofable dapp/page origin).
+    fn origin_headers(origin: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+        h
+    }
+
+    async fn body_json(resp: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// End-to-end of the export gate against a real on-disk encrypted seed:
+    /// * a non-self origin is refused (403) even with the right password;
+    /// * the self origin with a WRONG password is refused (401);
+    /// * the self origin with the CORRECT password yields the exact mnemonic.
+    ///
+    /// Points the seed file at a throwaway tempdir via LOCALAPPDATA — no other
+    /// dig-wallet test reads that env, so the process-global set is safe here.
+    #[tokio::test]
+    async fn export_requires_self_origin_and_correct_password() {
+        // Public BIP-39 test vector (NOT a real wallet).
+        const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+        const PW: &str = "correct horse battery";
+
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("LOCALAPPDATA", td.path());
+        // Encrypt + persist the seed exactly as `import` does.
+        let enc = encrypt_seed(ABANDON, PW).unwrap();
+        let path = seed_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, enc.to_bytes()).unwrap();
+
+        let dapp = "https://evil.example.com";
+        let self_origin = format!("http://127.0.0.1:{}", wallet_port());
+
+        // A dapp origin is refused even with the correct password.
+        let r = export(
+            origin_headers(dapp),
+            Json(ExportReq {
+                password: PW.to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+
+        // Self origin + wrong password → 401, no mnemonic.
+        let r = export(
+            origin_headers(&self_origin),
+            Json(ExportReq {
+                password: "wrong".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+
+        // Self origin + correct password → the exact mnemonic.
+        let r = export(
+            origin_headers(&self_origin),
+            Json(ExportReq {
+                password: PW.to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let body = body_json(r).await;
+        assert_eq!(body["mnemonic"], ABANDON);
+
+        std::env::remove_var("LOCALAPPDATA");
+    }
+
+    /// The projectId setter is wallet-local only: a dapp origin cannot change it.
+    #[tokio::test]
+    async fn wc_project_id_set_is_self_origin_only() {
+        let r = wc_project_id_set(
+            origin_headers("https://evil.example.com"),
+            Json(SetWcProjectId {
+                project_id: "hijacked".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// The public-key endpoint is wallet-local only and needs an unlocked wallet:
+    /// a dapp origin is refused; the self origin with no session is unauthorized.
+    #[tokio::test]
+    async fn wallet_pubkey_is_self_origin_and_needs_unlock() {
+        let st = Arc::new(AppState::default());
+        // Dapp origin → forbidden.
+        let r = wallet_pubkey(
+            State(st.clone()),
+            origin_headers("https://evil.example.com"),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        // Self origin but locked → unauthorized.
+        let self_origin = format!("http://localhost:{}", wallet_port());
+        let r = wallet_pubkey(State(st), origin_headers(&self_origin)).await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     }
 }
