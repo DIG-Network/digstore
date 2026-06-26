@@ -504,6 +504,8 @@ mod tests {
                 spent: false,
                 confirmed_block_index: 5_000,
                 spent_block_index: 0,
+                timestamp: 0,
+                coinbase: false,
             },
         );
         let anchor = CoinsetAnchor::new(mock);
