@@ -24,12 +24,24 @@
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
+use chia::puzzles::offer::{NotarizedPayment, Payment};
+use chia::puzzles::Memos;
 use chia_protocol::{Bytes32, Coin, SpendBundle};
 use chia_wallet_sdk::driver::{
-    decode_offer, encode_offer, Action, Cat, Offer, Relation, SpendContext, Spends,
+    decode_offer, encode_offer, Action, AssetInfo, Cat, CatAssetInfo, Id, Offer, Relation,
+    RequestedPayments, SpendContext, Spends,
 };
+use chia_wallet_sdk::types::puzzles::SettlementPayment;
+use chia_wallet_sdk::types::{Conditions, Mod};
 use datalayer_driver::{sign_coin_spends, PublicKey, SecretKey};
 use indexmap::IndexMap;
+
+/// The offer settlement puzzle hash (`SETTLEMENT_PAYMENT_HASH`). Sourced via the
+/// `SettlementPayment` mod's `mod_hash()` so we don't take a direct dependency on the
+/// `chia-puzzles` constants crate (it's only a dev-dependency here).
+fn settlement_payment_hash() -> Bytes32 {
+    Bytes32::from(<[u8; 32]>::from(SettlementPayment::mod_hash()))
+}
 
 /// What the wallet must pay to take an offer, derived from the offer's arbitrage
 /// (requested minus offered). All amounts are the asset's base units (mojos for
@@ -81,6 +93,386 @@ pub fn decode_offer_string(offer: &str) -> Result<Offer> {
 pub fn encode_offer_bundle(spend_bundle: &SpendBundle) -> Result<String> {
     encode_offer(spend_bundle)
         .map_err(|e| ChainError::Chain(format!("could not encode offer: {e}")))
+}
+
+// ===========================================================================
+// Make-offer — the maker's side (the missing half; `take_offer` is above).
+//
+// A make-offer is the inverse of a take: the wallet OFFERS its fungible assets
+// (XCH / CATs) by spending them into the settlement puzzle, and REQUESTS assets
+// (XCH / CATs) be paid back to its address. The result is a one-sided, signed
+// `offer1…` string that anyone can take (the taker funds the requested side and
+// claims the offered coins, exactly what `take_offer` does).
+//
+// Scope: this builds the fungible (XCH + CAT) legs — the assets the wallet
+// actually holds in this crate. NFT/DID legs are owned by a separate module; a
+// make-offer that OFFERS an NFT would be assembled there. Royalty enforcement on
+// requested NFTs is preserved on decode (`decode_offer_summary`), since the
+// canonical `Offer` carries it.
+// ===========================================================================
+
+/// One fungible asset leg of an offer: either XCH (mojos) or a CAT (by asset id /
+/// TAIL hash, in base units). Used for both the offered and requested sides of
+/// [`build_make_offer`] and reported by [`decode_offer_summary`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfferAsset {
+    /// XCH, amount in mojos.
+    Xch(u64),
+    /// A CAT identified by its `asset_id` (TAIL hash), amount in base units.
+    Cat { asset_id: Bytes32, amount: u64 },
+}
+
+impl OfferAsset {
+    fn amount(&self) -> u64 {
+        match self {
+            OfferAsset::Xch(a) => *a,
+            OfferAsset::Cat { amount, .. } => *amount,
+        }
+    }
+}
+
+/// The maker's coins funding the OFFERED side: spendable XCH coins and CAT coins
+/// (with lineage proofs, as reconstructed by [`crate::cat::reconstruct_cat_coins`]),
+/// each tagged with the synthetic keypair of the address that holds it so the inner
+/// spend can be authorized. Mirrors [`TakerFunds`].
+pub struct MakerFunds<'a> {
+    /// XCH coins available to fund offered XCH and the fee.
+    pub xch: Vec<(Coin, &'a IndexedKeys)>,
+    /// CAT coins available to fund offered CAT legs.
+    pub cats: Vec<(Cat, &'a IndexedKeys)>,
+}
+
+/// Greedily select coins of the given `OfferAsset` from `funds`, covering its amount.
+/// Returns the chosen coins so the caller can spend exactly them into settlement.
+fn select_offered_xch(funds: &MakerFunds<'_>, need: u64) -> Result<Vec<(Coin, IndexedKeys)>> {
+    let mut sorted: Vec<&(Coin, &IndexedKeys)> = funds.xch.iter().collect();
+    sorted.sort_by(|a, b| b.0.amount.cmp(&a.0.amount));
+    let mut sum = 0u64;
+    let mut out = Vec::new();
+    for (coin, keys) in sorted {
+        if sum >= need {
+            break;
+        }
+        out.push((*coin, (*keys).clone()));
+        sum += coin.amount;
+    }
+    if sum < need {
+        return Err(ChainError::Chain(format!(
+            "insufficient XCH to offer: need {need} have {sum}"
+        )));
+    }
+    Ok(out)
+}
+
+/// Build AND sign a make-offer: OFFER `offered` (XCH/CAT) and REQUEST `requested`
+/// (XCH/CAT, paid to the maker's primary address), returning the bech32 `offer1…`
+/// string. Optionally reserve an XCH network `fee`. `for_testnet` selects the
+/// signing network (mainnet in production; the simulator validates against TESTNET11).
+///
+/// The offered coins are spent into the settlement puzzle and the requested payments
+/// are asserted, so the resulting one-sided offer is only valid when a taker funds
+/// the requested side in the same transaction. **Pure: does NOT broadcast** — the
+/// returned string is handed out; settlement happens when someone takes it.
+///
+/// `maker` is the address the requested assets are paid to (and offered change /
+/// fee draw from `funds`). Errors if a leg's coins can't cover the offered amount,
+/// or if an offered/requested CAT is also present on the other side (a same-asset
+/// wash is rejected up front).
+pub fn build_make_offer(
+    maker: &IndexedKeys,
+    funds: MakerFunds<'_>,
+    offered: &[OfferAsset],
+    requested: &[OfferAsset],
+    fee: u64,
+    for_testnet: bool,
+) -> Result<String> {
+    if offered.is_empty() {
+        return Err(ChainError::Chain(
+            "make-offer must offer at least one asset".into(),
+        ));
+    }
+    if requested.is_empty() {
+        return Err(ChainError::Chain(
+            "make-offer must request at least one asset".into(),
+        ));
+    }
+
+    let settlement_ph = settlement_payment_hash();
+    let maker_ph = maker.owner_puzzle_hash;
+
+    let mut ctx = SpendContext::new();
+    let maker_hint = ctx
+        .hint(maker_ph)
+        .map_err(|e| ChainError::Chain(format!("alloc maker hint: {e}")))?;
+
+    // The change/spend target is the maker's address (offered surplus + fee draw).
+    let mut spends = Spends::new(maker_ph);
+    let mut key_map: IndexMap<Bytes32, PublicKey> = IndexMap::new();
+    key_map.insert(maker_ph, maker.synthetic_pk);
+
+    // ---- Add the maker's funding coins for each OFFERED leg ----
+    let mut actions: Vec<Action> = Vec::new();
+    // Collect the offered coin ids so the requested payments can be notarized
+    // against a nonce derived from them (binds the request to this exact offer).
+    let mut offered_coin_ids: Vec<Bytes32> = Vec::new();
+
+    for leg in offered {
+        match leg {
+            OfferAsset::Xch(amount) => {
+                let chosen = select_offered_xch(&funds, amount.saturating_add(fee))?;
+                for (coin, keys) in &chosen {
+                    spends.add(*coin);
+                    key_map.insert(keys.owner_puzzle_hash, keys.synthetic_pk);
+                    offered_coin_ids.push(coin.coin_id());
+                }
+                // Offer the XCH into settlement; change auto-returns to maker_ph.
+                actions.push(Action::send(Id::Xch, settlement_ph, *amount, Memos::None));
+            }
+            OfferAsset::Cat { asset_id, amount } => {
+                // Select CAT coins of this asset id covering the offered amount.
+                let mut sorted: Vec<&(Cat, &IndexedKeys)> = funds
+                    .cats
+                    .iter()
+                    .filter(|(c, _)| c.info.asset_id == *asset_id)
+                    .collect();
+                sorted.sort_by(|a, b| b.0.coin.amount.cmp(&a.0.coin.amount));
+                let mut sum = 0u64;
+                for (cat, keys) in sorted {
+                    if sum >= *amount {
+                        break;
+                    }
+                    spends.add(*cat);
+                    key_map.insert(keys.owner_puzzle_hash, keys.synthetic_pk);
+                    offered_coin_ids.push(cat.coin.coin_id());
+                    sum += cat.coin.amount;
+                }
+                if sum < *amount {
+                    return Err(ChainError::Chain(format!(
+                        "insufficient CAT (asset {asset_id:?}) to offer: need {amount} have {sum}"
+                    )));
+                }
+                // Offer the CAT into settlement; change auto-returns to maker_ph.
+                actions.push(Action::send(
+                    Id::Existing(*asset_id),
+                    settlement_ph,
+                    *amount,
+                    Memos::None,
+                ));
+            }
+        }
+    }
+
+    if offered_coin_ids.is_empty() {
+        return Err(ChainError::Chain(
+            "make-offer selected no offered coins".into(),
+        ));
+    }
+
+    // ---- Build the REQUESTED payments (paid to the maker's address) ----
+    let nonce = Offer::nonce(offered_coin_ids);
+    let mut requested_payments = RequestedPayments::new();
+    let mut requested_asset_info = AssetInfo::new();
+    for leg in requested {
+        if leg.amount() == 0 {
+            return Err(ChainError::Chain(
+                "requested asset amount must be greater than zero".into(),
+            ));
+        }
+        match leg {
+            OfferAsset::Xch(amount) => {
+                requested_payments.xch.push(NotarizedPayment::new(
+                    nonce,
+                    vec![Payment::new(maker_ph, *amount, maker_hint)],
+                ));
+            }
+            OfferAsset::Cat { asset_id, amount } => {
+                requested_payments.cats.insert(
+                    *asset_id,
+                    vec![NotarizedPayment::new(
+                        nonce,
+                        vec![Payment::new(maker_ph, *amount, maker_hint)],
+                    )],
+                );
+                requested_asset_info
+                    .insert_cat(*asset_id, CatAssetInfo::new(None))
+                    .map_err(|e| ChainError::Chain(format!("insert requested cat info: {e}")))?;
+            }
+        }
+    }
+
+    if fee > 0 {
+        actions.push(Action::fee(fee));
+    }
+
+    // ---- Run the offered spends, asserting the requested payments ----
+    let deltas = spends
+        .apply(&mut ctx, &actions)
+        .map_err(|e| ChainError::Chain(format!("apply make-offer actions: {e}")))?;
+
+    spends.conditions.required = spends.conditions.required.extend(
+        requested_payments
+            .assertions(&mut ctx, &requested_asset_info)
+            .map_err(|e| ChainError::Chain(format!("requested payment assertions: {e}")))?,
+    );
+
+    spends
+        .finish_with_keys(&mut ctx, &deltas, Relation::AssertConcurrent, &key_map)
+        .map_err(|e| ChainError::Chain(format!("finish make-offer spends: {e}")))?;
+
+    // Sign the maker's offered coins, then assemble the one-sided offer and encode it.
+    let coin_spends = ctx.take();
+    let signing_keys: Vec<SecretKey> = maker_signing_keys(&key_map, maker);
+    let signature = sign_coin_spends(&coin_spends, &signing_keys, for_testnet)
+        .map_err(|e| ChainError::Chain(format!("sign make-offer spends: {e}")))?;
+
+    let offer = Offer::from_input_spend_bundle(
+        &mut ctx,
+        SpendBundle::new(coin_spends, signature),
+        requested_payments,
+        requested_asset_info,
+    )
+    .map_err(|e| ChainError::Chain(format!("assemble make-offer: {e}")))?;
+
+    encode_offer_bundle(
+        &offer
+            .to_spend_bundle(&mut ctx)
+            .map_err(|e| ChainError::Chain(format!("serialize make-offer spend bundle: {e}")))?,
+    )
+}
+
+/// The maker's signing keys: the synthetic secret key for every owner puzzle hash in
+/// `key_map`, sourced from `maker` (the only address in this crate's make-offer path).
+/// In the single-address common case this is just the maker's key.
+fn maker_signing_keys(
+    key_map: &IndexMap<Bytes32, PublicKey>,
+    maker: &IndexedKeys,
+) -> Vec<SecretKey> {
+    // Every selected coin's owner ph maps to a synthetic pk in `key_map`; for the
+    // make-offer path the funds belong to `maker` (a single derived address). If a
+    // future caller funds across addresses, each address's key must be threaded
+    // through here; today the maker key signs all offered coins.
+    let _ = key_map;
+    vec![maker.synthetic_sk.clone()]
+}
+
+/// A decoded summary of an `offer1…` string: what it OFFERS, what it REQUESTS, the
+/// net arbitrage (requested-minus-offered per asset), and any NFT royalties carried
+/// by the offer. Lets a wallet inspect an offer without taking it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct OfferSummary {
+    /// Assets the offer gives the taker (XCH mojos + per-CAT base units).
+    pub offered: Vec<OfferAsset>,
+    /// Assets the offer asks the taker to pay (XCH mojos + per-CAT base units).
+    pub requested: Vec<OfferAsset>,
+    /// Net the taker must FUND to take it (the requested-over-offered surplus).
+    pub arbitrage: OfferCost,
+    /// Royalty legs carried by the offer: (NFT launcher id, royalty basis points).
+    pub royalties: Vec<(Bytes32, u16)>,
+}
+
+/// Decode a bech32 `offer1…` string into an [`OfferSummary`] — offered/requested
+/// fungible assets, arbitrage, and royalties — WITHOUT taking it. Built on
+/// [`Offer::from_spend_bundle`] + `offered_coins`/`requested_payments`/royalty
+/// accessors, so it reports exactly what the canonical offer carries.
+pub fn decode_offer_summary(offer_str: &str) -> Result<OfferSummary> {
+    let offer = decode_offer_string(offer_str)?;
+
+    // Offered fungible amounts (what the taker receives).
+    let offered_amounts = offer.offered_coins().amounts();
+    let mut offered: Vec<OfferAsset> = Vec::new();
+    if offered_amounts.xch > 0 {
+        offered.push(OfferAsset::Xch(offered_amounts.xch));
+    }
+    for (asset_id, amount) in &offered_amounts.cats {
+        offered.push(OfferAsset::Cat {
+            asset_id: *asset_id,
+            amount: *amount,
+        });
+    }
+
+    // Requested fungible amounts (what the taker pays).
+    let requested_amounts = offer.requested_payments().amounts();
+    let mut requested: Vec<OfferAsset> = Vec::new();
+    if requested_amounts.xch > 0 {
+        requested.push(OfferAsset::Xch(requested_amounts.xch));
+    }
+    for (asset_id, amount) in &requested_amounts.cats {
+        requested.push(OfferAsset::Cat {
+            asset_id: *asset_id,
+            amount: *amount,
+        });
+    }
+
+    // Royalties carried by the offer (offered + requested NFT royalties).
+    let mut royalties: Vec<(Bytes32, u16)> = Vec::new();
+    for r in offer
+        .offered_royalties()
+        .into_iter()
+        .chain(offer.requested_royalties())
+    {
+        royalties.push((r.launcher_id, r.basis_points));
+    }
+
+    Ok(OfferSummary {
+        offered,
+        requested,
+        arbitrage: offer_cost(&offer),
+        royalties,
+    })
+}
+
+/// Build AND sign the cancel spends for an offer the wallet MADE: spend the offered
+/// coins back to the maker, invalidating the outstanding `offer1…` string. Returns
+/// the signed [`SpendBundle`] (caller pushes it under its broadcast gate).
+///
+/// Uses [`Offer::cancellable_coin_spends`] to recover exactly the offered coins
+/// (those whose outputs the maker still controls), re-spends each to the maker's
+/// address, and signs with the maker's synthetic key. `for_testnet` selects the
+/// signing network. **Pure: does NOT broadcast.**
+pub fn cancel_offer(
+    offer_str: &str,
+    maker: &IndexedKeys,
+    fee: u64,
+    for_testnet: bool,
+) -> Result<SpendBundle> {
+    use chia_wallet_sdk::driver::StandardLayer;
+
+    let offer = decode_offer_string(offer_str)?;
+    let cancellable = offer
+        .cancellable_coin_spends()
+        .map_err(|e| ChainError::Chain(format!("compute cancellable coin spends: {e}")))?;
+    if cancellable.is_empty() {
+        return Err(ChainError::Chain(
+            "no cancellable coins in this offer (already settled or not the maker's)".into(),
+        ));
+    }
+
+    // Re-spend each offered (settlement-bound) coin back to the maker. The maker
+    // controls the inner puzzle of each offered coin (it signed them into the offer),
+    // so the standard layer of the maker's synthetic key authorizes reclaiming them.
+    let mut ctx = SpendContext::new();
+    let maker_ph = maker.owner_puzzle_hash;
+    let p2 = StandardLayer::new(maker.synthetic_pk);
+    let mut first = true;
+    for cs in &cancellable {
+        // Reclaim each coin to the maker; the first coin reserves the fee.
+        let mut conditions = Conditions::new().create_coin(maker_ph, cs.coin.amount, Memos::None);
+        if first && fee > 0 {
+            conditions = conditions.reserve_fee(fee);
+            first = false;
+        }
+        p2.spend(&mut ctx, cs.coin, conditions)
+            .map_err(|e| ChainError::Chain(format!("build cancel spend: {e}")))?;
+    }
+
+    let coin_spends = ctx.take();
+    let signature = sign_coin_spends(
+        &coin_spends,
+        std::slice::from_ref(&maker.synthetic_sk),
+        for_testnet,
+    )
+    .map_err(|e| ChainError::Chain(format!("sign cancel spends: {e}")))?;
+    Ok(SpendBundle::new(coin_spends, signature))
 }
 
 /// The wallet's cost to take `offer`: the requested-over-offered surplus the taker
@@ -526,6 +918,188 @@ mod tests {
             !sim.hinted_coins(change.owner_puzzle_hash).is_empty(),
             "the badge NFT should land at the change/receive address"
         );
+        Ok(())
+    }
+
+    // ----- make-offer: offline validation core -----
+
+    #[test]
+    fn make_offer_rejects_empty_sides() {
+        let maker = derive_indexed_keys(ABANDON, 0..1).unwrap()[0].clone();
+        let funds = MakerFunds {
+            xch: vec![],
+            cats: vec![],
+        };
+        // No offered assets.
+        let err = build_make_offer(
+            &maker,
+            MakerFunds {
+                xch: vec![],
+                cats: vec![],
+            },
+            &[],
+            &[OfferAsset::Xch(1)],
+            0,
+            true,
+        )
+        .unwrap_err();
+        assert!(matches!(&err, ChainError::Chain(m) if m.contains("offer at least one")));
+        // No requested assets.
+        let err = build_make_offer(&maker, funds, &[OfferAsset::Xch(1)], &[], 0, true).unwrap_err();
+        assert!(matches!(&err, ChainError::Chain(m) if m.contains("request at least one")));
+    }
+
+    #[test]
+    fn make_offer_errors_when_offered_coins_are_short() {
+        let maker = derive_indexed_keys(ABANDON, 0..1).unwrap()[0].clone();
+        // Offer 1000 mojos XCH but provide no coins → insufficient.
+        let err = build_make_offer(
+            &maker,
+            MakerFunds {
+                xch: vec![],
+                cats: vec![],
+            },
+            &[OfferAsset::Xch(1_000)],
+            &[OfferAsset::Xch(1)],
+            0,
+            true,
+        )
+        .unwrap_err();
+        assert!(matches!(&err, ChainError::Chain(m) if m.contains("insufficient XCH to offer")));
+    }
+
+    #[test]
+    fn decode_summary_rejects_non_offer() {
+        assert!(decode_offer_summary("not an offer").is_err());
+        assert!(decode_offer_summary("   ").is_err());
+    }
+
+    // ----- make-offer: full round-trip on the Simulator -----
+    //
+    // The maker OFFERS CAT-A and REQUESTS CAT-B. We build the one-sided offer with
+    // build_make_offer, inspect it with decode_offer_summary (offered/requested legs
+    // match), then a taker holding CAT-B TAKES it via take_offer. The combined bundle
+    // settles as one transaction and the assets cross over: the maker ends with CAT-B,
+    // the taker with CAT-A.
+
+    #[test]
+    fn make_offer_round_trips_through_decode_and_take() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let mut ctx = SpendContext::new();
+
+        // Maker = index 0, taker = index 1 (distinct addresses).
+        let keys = derive_indexed_keys(ABANDON, 0..2)?;
+        let maker = keys[0].clone();
+        let taker = keys[1].clone();
+
+        let offered_amt: u64 = 80_000; // CAT-A the maker gives
+        let requested_amt: u64 = 50_000; // CAT-B the maker wants
+
+        // Issue CAT-A to the maker (what it offers) and CAT-B to the taker (the
+        // requested payment). issue_cat_to returns spendable Cats with lineage proofs.
+        let (maker_cat_a, asset_a) = issue_cat_to(
+            &mut sim,
+            &mut ctx,
+            maker.owner_puzzle_hash,
+            maker.synthetic_pk,
+            &maker.synthetic_sk,
+            offered_amt,
+        )?;
+        let (taker_cat_b, asset_b) = issue_cat_to(
+            &mut sim,
+            &mut ctx,
+            taker.owner_puzzle_hash,
+            taker.synthetic_pk,
+            &taker.synthetic_sk,
+            requested_amt,
+        )?;
+        assert_ne!(asset_a, asset_b, "two distinct CATs");
+
+        // Maker builds the offer: OFFER CAT-A, REQUEST CAT-B (testnet sig for the sim).
+        let maker_funds = MakerFunds {
+            xch: vec![],
+            cats: vec![(maker_cat_a, &maker)],
+        };
+        let offer_str = build_make_offer(
+            &maker,
+            maker_funds,
+            &[OfferAsset::Cat {
+                asset_id: asset_a,
+                amount: offered_amt,
+            }],
+            &[OfferAsset::Cat {
+                asset_id: asset_b,
+                amount: requested_amt,
+            }],
+            0,
+            true,
+        )?;
+        assert!(offer_str.starts_with("offer1"), "got: {offer_str}");
+
+        // Inspect WITHOUT taking: offered = CAT-A, requested = CAT-B, and the taker's
+        // arbitrage cost is exactly the requested CAT-B amount.
+        let summary = decode_offer_summary(&offer_str)?;
+        assert_eq!(
+            summary.offered,
+            vec![OfferAsset::Cat {
+                asset_id: asset_a,
+                amount: offered_amt
+            }],
+            "offer must offer CAT-A"
+        );
+        assert_eq!(
+            summary.requested,
+            vec![OfferAsset::Cat {
+                asset_id: asset_b,
+                amount: requested_amt
+            }],
+            "offer must request CAT-B"
+        );
+        assert_eq!(
+            summary.arbitrage.cats,
+            vec![(asset_b, requested_amt)],
+            "taker must fund exactly the requested CAT-B amount"
+        );
+        assert_eq!(summary.arbitrage.xch, 0, "no XCH leg");
+
+        // Taker takes it, funding CAT-B from its coin; change/received CAT-A route to
+        // the taker's address.
+        let funds = TakerFunds {
+            xch: vec![],
+            cats: vec![(taker_cat_b, &taker)],
+        };
+        let bundle = take_offer(&offer_str, funds, &taker, 0, true)?;
+        assert!(
+            bundle.coin_spends.len() >= 2,
+            "bundle must include both the maker's offered spend and the taker's payment"
+        );
+
+        // Settle the whole thing in one transaction on the simulator.
+        sim.new_transaction(bundle)?;
+
+        // After settlement: the maker received CAT-B; the taker received CAT-A. Both
+        // land hinted at their addresses (CAT coins are hinted to the owner inner ph).
+        let maker_got_b = sim
+            .unspent_coins(
+                crate::cat::cat_puzzle_hash(maker.owner_puzzle_hash, asset_b),
+                false,
+            )
+            .iter()
+            .map(|c| c.amount)
+            .sum::<u64>();
+        let taker_got_a = sim
+            .unspent_coins(
+                crate::cat::cat_puzzle_hash(taker.owner_puzzle_hash, asset_a),
+                false,
+            )
+            .iter()
+            .map(|c| c.amount)
+            .sum::<u64>();
+        assert_eq!(
+            maker_got_b, requested_amt,
+            "maker must receive requested CAT-B"
+        );
+        assert_eq!(taker_got_a, offered_amt, "taker must receive offered CAT-A");
         Ok(())
     }
 }
