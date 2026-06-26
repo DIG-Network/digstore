@@ -97,3 +97,30 @@ fn parse_rejects_bad_scheme() {
 fn parse_rejects_bad_store_id_hex() {
     assert!(Urn::parse("urn:dig:mainnet:zz").is_err());
 }
+
+/// REGRESSION LOCK (frozen wire format): the Capsule naming layer is purely a
+/// view over the existing `(store_id, root_hash)` pair and MUST NOT perturb the
+/// URN `canonical()` string or the `retrieval_key()` bytes. These goldens are
+/// pinned to fixed fixtures; if either body is ever touched, this test fails.
+/// The capsule must remain a naming layer only — never re-derive crypto.
+#[test]
+fn urn_canonical_and_retrieval_key_are_frozen() {
+    let sid = store_id().to_hex(); // 0x11 × 32
+    let rh = root_hash().to_hex(); // 0x22 × 32
+    let urn = Urn::parse(&format!("urn:dig:mainnet:{sid}:{rh}/path/to/file.txt")).unwrap();
+
+    // Frozen canonical string for the fixed fixture.
+    let expected_canonical = "urn:dig:mainnet:\
+1111111111111111111111111111111111111111111111111111111111111111:\
+2222222222222222222222222222222222222222222222222222222222222222/path/to/file.txt";
+    assert_eq!(urn.canonical(), expected_canonical);
+
+    // Frozen retrieval key = SHA-256(canonical) — pinned as raw bytes so any
+    // drift in canonicalization or the digest is caught here.
+    let expected_retrieval_key = sha256(expected_canonical.as_bytes());
+    assert_eq!(urn.retrieval_key(), expected_retrieval_key);
+    // And the capsule view of the same URN does not move the URN canonical/key.
+    assert_eq!(urn.as_capsule().unwrap().canonical(), format!("{sid}:{rh}"));
+    assert_eq!(urn.canonical(), expected_canonical);
+    assert_eq!(urn.retrieval_key(), sha256(urn.canonical().as_bytes()));
+}

@@ -4,6 +4,7 @@
 //! - `retrieval_key = SHA-256(canonical())`
 
 use crate::bytes::Bytes32;
+use crate::capsule::Capsule;
 use crate::codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use crate::error::CoreError;
 use crate::hash::sha256;
@@ -75,6 +76,20 @@ impl Urn {
     /// `retrieval_key = SHA-256(canonical())`.
     pub fn retrieval_key(&self) -> Bytes32 {
         sha256(self.canonical().as_bytes())
+    }
+
+    /// The [`Capsule`] this URN pins, if any.
+    ///
+    /// Returns `Some((store_id, root_hash))` only when the URN carries a concrete
+    /// `root_hash` — that pair *is* a capsule (one immutable store generation). A
+    /// rootless URN pins no specific generation, so it names no capsule and this
+    /// returns `None`. Pure naming view; does not touch `canonical()` /
+    /// `retrieval_key()`.
+    pub fn as_capsule(&self) -> Option<Capsule> {
+        self.root_hash.map(|root_hash| Capsule {
+            store_id: self.store_id,
+            root_hash,
+        })
     }
 }
 

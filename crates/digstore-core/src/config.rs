@@ -44,6 +44,11 @@ pub struct StoreConfig {
 pub type GenerationId = u64;
 
 /// The committed state of a generation (no tree).
+///
+/// `(store_id, root)` is the immutable Capsule identity — one generation = one
+/// capsule, named `storeId:rootHash` (see `SYSTEM.md` → "Core concept — the
+/// capsule"). `store_id` is fixed for the store ([`StoreConfig::store_id`]); this
+/// struct carries the per-generation `root` that completes the pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationState {
     pub id: u64,

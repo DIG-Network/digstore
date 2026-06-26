@@ -11,11 +11,16 @@ pub fn store_id(ds: &DataSection) -> Bytes32 {
     ds.store_id()
 }
 
+/// The store's current root. With `store_id`, the current capsule =
+/// `(store_id, current_roothash)` — the store's latest immutable generation
+/// (see `SYSTEM.md` → "Core concept — the capsule").
 pub fn current_roothash(ds: &DataSection) -> Bytes32 {
     ds.current_root()
 }
 
 /// Root history section bytes: u32 BE count then 32-byte roots (newest last).
+/// These roots are all the store's capsules in order — each `(store_id, root)`
+/// is one capsule; the store is the ordered sequence of them.
 pub fn roothash_history(ds: &DataSection) -> Vec<u8> {
     ds.section(SectionId::RootHistory).unwrap_or(&[]).to_vec()
 }
