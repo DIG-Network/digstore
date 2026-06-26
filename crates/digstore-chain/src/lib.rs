@@ -5,6 +5,7 @@ pub mod cat;
 pub mod chip0002;
 pub mod coinset;
 pub mod config;
+pub mod did;
 pub mod dig;
 pub mod error;
 mod fs_util;
