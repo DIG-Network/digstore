@@ -688,11 +688,78 @@ async fn wc_dispatch(
             };
             Ok(json!({ "confirmed": confirmed, "spendable": confirmed }))
         }
+        "chip0002_getAssetCoins" => {
+            // The hub's spend path. Returns Sage's SpendableCoin shape: each entry is
+            // { coin{parent_coin_info,puzzle_hash,amount}, locked, spent_block_index }
+            // plus, for XCH, `puzzle` = the standard p2 reveal curried with that
+            // coin's synthetic key (the hub uncurries it to recover the key per coin).
+            // DIG CAT entries omit `puzzle` — the hub rebuilds the CAT lineage proof
+            // from the parent spend. type null => XCH; type "cat" => the DIG CAT.
+            let is_cat = params.get("type").and_then(|t| t.as_str()) == Some("cat");
+            let offset = params.get("offset").and_then(|o| o.as_u64()).unwrap_or(0) as usize;
+            let limit = params.get("limit").and_then(|l| l.as_u64()).unwrap_or(100) as usize;
+            if is_cat {
+                let asset = params
+                    .get("assetId")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("")
+                    .trim_start_matches("0x")
+                    .to_ascii_lowercase();
+                let dig = hex::encode(digstore_chain::dig::DIG_ASSET_ID);
+                if !asset.is_empty() && asset != dig {
+                    return Err(wc_err(
+                        StatusCode::BAD_REQUEST,
+                        format!("unsupported asset id: {asset}"),
+                    ));
+                }
+            }
+            let chain = Coinset::mainnet();
+            let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+            })?;
+            let mut coins = Vec::new();
+            for a in &scanned.addrs {
+                if is_cat {
+                    for c in &a.dig {
+                        coins.push(coin_entry_json(c, None));
+                    }
+                } else {
+                    let puzzle =
+                        digstore_chain::send::standard_puzzle_reveal_hex(&a.keys.synthetic_pk)
+                            .map_err(bad)?;
+                    for c in &a.xch {
+                        coins.push(coin_entry_json(c, Some(&puzzle)));
+                    }
+                }
+            }
+            let page: Vec<_> = coins.into_iter().skip(offset).take(limit).collect();
+            Ok(json!({ "coins": page }))
+        }
         other => Err(wc_err(
             StatusCode::NOT_IMPLEMENTED,
             format!("unsupported WC method: {other}"),
         )),
     }
+}
+
+/// One `getAssetCoins` entry in Sage's SpendableCoin shape. `amount` is a decimal
+/// string (BigInt-safe); `puzzle` (the standard p2 reveal) is present for XCH coins
+/// and omitted for CAT coins (whose lineage the hub rebuilds from the parent spend).
+fn coin_entry_json(coin: &chia_protocol::Coin, puzzle: Option<&str>) -> serde_json::Value {
+    use serde_json::json;
+    let mut e = json!({
+        "coin": {
+            "parent_coin_info": format!("0x{}", hex::encode(coin.parent_coin_info)),
+            "puzzle_hash": format!("0x{}", hex::encode(coin.puzzle_hash)),
+            "amount": coin.amount.to_string(),
+        },
+        "locked": false,
+        "spent_block_index": 0,
+    });
+    if let Some(p) = puzzle {
+        e["puzzle"] = json!(p);
+    }
+    e
 }
 
 /// The dapp's web origin, from the unspoofable HTTP `Origin` header (page JS
@@ -890,6 +957,26 @@ mod tests {
         assert_eq!(send_action(true, false), SendAction::RefusedDisabled);
         // Both opted in → the only path that actually broadcasts.
         assert_eq!(send_action(true, true), SendAction::Broadcast);
+    }
+
+    #[test]
+    fn coin_entry_json_matches_sage_spendable_coin_shape() {
+        let coin = chia_protocol::Coin::new([1u8; 32].into(), [2u8; 32].into(), 12345);
+        // XCH entry carries the standard puzzle reveal the hub uncurries per coin.
+        let xch = coin_entry_json(&coin, Some("0xdeadbeef"));
+        assert_eq!(
+            xch["coin"]["parent_coin_info"],
+            format!("0x{}", "01".repeat(32))
+        );
+        assert_eq!(xch["coin"]["puzzle_hash"], format!("0x{}", "02".repeat(32)));
+        assert_eq!(xch["coin"]["amount"], "12345"); // decimal string (BigInt-safe)
+        assert_eq!(xch["puzzle"], "0xdeadbeef");
+        assert_eq!(xch["locked"], false);
+        assert_eq!(xch["spent_block_index"], 0);
+        // CAT entry omits `puzzle` (the hub rebuilds the lineage from the parent spend).
+        let cat = coin_entry_json(&coin, None);
+        assert!(cat.get("puzzle").is_none());
+        assert_eq!(cat["coin"]["amount"], "12345");
     }
 
     #[test]

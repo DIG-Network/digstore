@@ -25,6 +25,26 @@ use datalayer_driver::{
     SecretKey, SpendBundle,
 };
 
+/// The standard (`p2_delegated_or_hidden`) puzzle reveal for a synthetic public
+/// key, as `0x`-prefixed serialized-CLVM hex — the `puzzle` field Sage returns on
+/// each XCH coin in `getAssetCoins`. The hub uncurries this to recover the coin's
+/// synthetic key, so it must be the standard puzzle curried with `synthetic_pk`
+/// (its tree hash equals the coin's owner puzzle hash). Built by spending a
+/// throwaway coin under a `StandardLayer` and taking the resulting
+/// `puzzle_reveal`, which depends only on the key — not the coin or conditions.
+pub fn standard_puzzle_reveal_hex(synthetic_pk: &PublicKey) -> Result<String> {
+    let mut ctx = SpendContext::new();
+    let dummy = Coin::new([0u8; 32].into(), [0u8; 32].into(), 0);
+    StandardLayer::new(*synthetic_pk)
+        .spend(&mut ctx, dummy, Conditions::new())
+        .map_err(|e| ChainError::Chain(format!("standard puzzle reveal: {e}")))?;
+    let spends = ctx.take();
+    let reveal = spends
+        .first()
+        .ok_or_else(|| ChainError::Chain("standard layer produced no spend".into()))?;
+    Ok(format!("0x{}", hex::encode(reveal.puzzle_reveal.to_vec())))
+}
+
 /// An XCH coin tagged with the synthetic keypair (and owner puzzle hash) of the
 /// wallet address that holds it, so it can be spent under the correct key.
 struct KeyedCoin {
@@ -174,6 +194,27 @@ mod tests {
     /// A `Bytes32` filled with `b` — a stand-in parent coin id for fabricated coins.
     fn b32(b: u8) -> Bytes32 {
         Bytes32::new([b; 32])
+    }
+
+    #[test]
+    fn standard_puzzle_reveal_is_deterministic_and_key_specific() {
+        // The reveal is produced by the canonical `StandardLayer` — the exact same
+        // standard-puzzle path the (mainnet-verified) send/singleton spends use — so
+        // it IS the standard puzzle curried with the synthetic key (what the hub
+        // uncurries from `getAssetCoins[].puzzle` to recover the coin's key). Here we
+        // pin its observable properties: well-formed, deterministic per key, and
+        // distinct across keys (so per-coin key recovery resolves the right address).
+        let keys = derive_indexed_keys(ABANDON, 0..2).unwrap();
+        let r0 = standard_puzzle_reveal_hex(&keys[0].synthetic_pk).unwrap();
+        assert!(r0.starts_with("0x") && r0.len() > 2);
+        assert_eq!(
+            r0,
+            standard_puzzle_reveal_hex(&keys[0].synthetic_pk).unwrap()
+        );
+        assert_ne!(
+            r0,
+            standard_puzzle_reveal_hex(&keys[1].synthetic_pk).unwrap()
+        );
     }
 
     /// Build a `ScannedWallet` from the ABANDON vector: address index `i` holds the
