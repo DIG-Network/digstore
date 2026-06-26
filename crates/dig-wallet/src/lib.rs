@@ -641,6 +641,53 @@ async fn wc_dispatch(
             let keys = digstore_chain::keys::derive_wallet_keys(&mnemonic).map_err(bad)?;
             Ok(json!({ "address": digstore_chain::keys::owner_address(&keys) }))
         }
+        "chia_signMessageByAddress" => {
+            let message = params
+                .get("message")
+                .and_then(|m| m.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'message'"))?;
+            let address = params
+                .get("address")
+                .and_then(|m| m.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'address'"))?;
+            let signed = digstore_chain::chip0002::sign_message_by_address(
+                &mnemonic,
+                address,
+                message.as_bytes(),
+            )
+            .map_err(bad)?;
+            Ok(json!(signed))
+        }
+        "chip0002_getAssetBalance" => {
+            // The hub reads `resp.confirmed`; type null => XCH, type "cat" => the
+            // DIG CAT (the only asset the native wallet tracks). Drives the
+            // account-menu XCH balance and the DIG balance widget.
+            let is_cat = params.get("type").and_then(|t| t.as_str()) == Some("cat");
+            let chain = Coinset::mainnet();
+            let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+            })?;
+            let confirmed = if is_cat {
+                let asset = params
+                    .get("assetId")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("")
+                    .trim_start_matches("0x")
+                    .to_ascii_lowercase();
+                let dig = hex::encode(digstore_chain::dig::DIG_ASSET_ID);
+                if asset.is_empty() || asset == dig {
+                    scanned.dig_balance()
+                } else {
+                    return Err(wc_err(
+                        StatusCode::BAD_REQUEST,
+                        format!("unsupported asset id: {asset}"),
+                    ));
+                }
+            } else {
+                scanned.xch_balance()
+            };
+            Ok(json!({ "confirmed": confirmed, "spendable": confirmed }))
+        }
         other => Err(wc_err(
             StatusCode::NOT_IMPLEMENTED,
             format!("unsupported WC method: {other}"),
