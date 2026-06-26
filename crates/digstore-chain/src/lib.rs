@@ -9,6 +9,7 @@ pub mod dig;
 pub mod error;
 mod fs_util;
 pub mod keys;
+pub mod nft;
 pub mod offer;
 pub mod seed;
 pub mod send;
