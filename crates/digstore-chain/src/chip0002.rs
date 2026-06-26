@@ -22,7 +22,7 @@ use datalayer_driver::{
     master_to_wallet_unhardened, sign_coin_spends, sign_message, verify_signed_message, Bytes32,
     Coin, CoinSpend, PublicKey, SecretKey, Signature,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 /// Normalize a hex string for comparison: strip an optional `0x`, lowercase.
@@ -85,6 +85,39 @@ pub fn sign_message_by_public_key(
     Err(ChainError::Crypto(format!(
         "no wallet key matches public key {target} (searched {search_limit} indices)"
     )))
+}
+
+/// A signed CHIP-0002 message: the public key that produced the signature plus
+/// the 96-byte signature, both hex (no `0x`). Mirrors Sage's
+/// `chia_signMessageByAddress` result (`{ publicKey, signature }`).
+#[derive(Serialize)]
+pub struct SignedMessage {
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    pub signature: String,
+}
+
+/// CHIP-0002 `chia_signMessageByAddress`: sign `message` with the wallet key that
+/// controls `address`. The native wallet is single-owner, so `address` must be
+/// this wallet's owner address (as returned by `chia_getAddress`); the message is
+/// signed with the owner synthetic key. The returned `public_key` is the synthetic
+/// key that signed, so the BLS signature verifies under it (and dighub binds that
+/// pubkey to the address). Errors if `address` is not this wallet's address.
+pub fn sign_message_by_address(
+    mnemonic: &str,
+    address: &str,
+    message: &[u8],
+) -> Result<SignedMessage> {
+    let keys = crate::keys::derive_wallet_keys(mnemonic)?;
+    if crate::keys::owner_address(&keys) != address.trim() {
+        return Err(ChainError::Crypto(format!(
+            "address {address} is not this wallet's address"
+        )));
+    }
+    Ok(SignedMessage {
+        public_key: hex::encode(keys.synthetic_pk.to_bytes()),
+        signature: sign_message_with(&keys.synthetic_sk, message)?,
+    })
 }
 
 /// Decode a hex string (optional `0x`) into a fixed 32-byte hash.
@@ -261,6 +294,27 @@ mod tests {
         let pk0 = wallet_public_keys(ABANDON, 0, 1).unwrap()[0].clone();
         let sig = sign_message_by_public_key(ABANDON, &format!("0x{pk0}"), b"y", 5).unwrap();
         assert!(verify_message(&pk0, b"y", &sig).unwrap());
+    }
+
+    #[test]
+    fn sign_message_by_address_signs_with_owner_key_and_verifies() {
+        use crate::keys::{derive_wallet_keys, owner_address};
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let addr = owner_address(&keys);
+        let msg = b"login challenge";
+        let signed = sign_message_by_address(ABANDON, &addr, msg).unwrap();
+        // The returned public key is the one that signed → BLS verify passes.
+        assert_eq!(signed.public_key.len(), 96, "48-byte G1 key = 96 hex chars");
+        assert!(verify_message(&signed.public_key, msg, &signed.signature).unwrap());
+        // It is the owner synthetic key (deterministic identity for the address).
+        assert_eq!(signed.public_key, hex::encode(keys.synthetic_pk.to_bytes()));
+        // Wrong message must not verify.
+        assert!(!verify_message(&signed.public_key, b"tampered", &signed.signature).unwrap());
+    }
+
+    #[test]
+    fn sign_message_by_address_rejects_foreign_address() {
+        assert!(sign_message_by_address(ABANDON, "xch1notthiswalletatall", b"m").is_err());
     }
 
     #[test]
