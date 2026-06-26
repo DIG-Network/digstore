@@ -735,6 +735,75 @@ async fn wc_dispatch(
             let page: Vec<_> = coins.into_iter().skip(offset).take(limit).collect();
             Ok(json!({ "coins": page }))
         }
+        "chia_takeOffer" => {
+            // The hub's badge-minting path: accept a MintGarden offer (pay the
+            // requested DIG, receive the badge NFT). Build + BLS-sign the taker side
+            // over the wallet's scanned DIG/XCH; the maker's half is already signed
+            // inside the offer. Like /api/send, this is gated TWICE before it spends
+            // real funds: it dry-runs (signs but pushes nothing) unless the env opts
+            // in with DIG_WALLET_ALLOW_BROADCAST=1.
+            let offer = params
+                .get("offer")
+                .and_then(|o| o.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'offer'"))?;
+            // Fee tolerated as number or decimal string (dapps send both); default 0.
+            let fee = params
+                .get("fee")
+                .map(|f| {
+                    f.as_u64()
+                        .or_else(|| f.as_str().and_then(|s| s.trim().parse().ok()))
+                        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "invalid 'fee'"))
+                })
+                .transpose()?
+                .unwrap_or(0);
+
+            let chain = Coinset::mainnet();
+            // mainnet agg_sig (for_testnet = false) — same as the canonical send path.
+            let taken =
+                digstore_chain::offer::build_take_offer(&chain, &mnemonic, offer, fee, false)
+                    .await
+                    .map_err(bad)?;
+
+            let broadcast_enabled =
+                std::env::var("DIG_WALLET_ALLOW_BROADCAST").ok().as_deref() == Some("1");
+            // A dapp cannot itself force a broadcast; taking an offer is treated as a
+            // broadcast-intent request, so it pushes only when the env also opts in.
+            let status = match send_action(true, broadcast_enabled) {
+                SendAction::Broadcast => {
+                    chain
+                        .push(taken.bundle.clone())
+                        .await
+                        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("push_tx: {e}")))?;
+                    "broadcast"
+                }
+                // Disabled → dry run (signed, not pushed). The hub still gets a
+                // success-shaped result proving the take was built + signed.
+                SendAction::RefusedDisabled | SendAction::DryRun => "signed",
+            };
+
+            // Sage's chia_takeOffer returns a transaction-ish object; the hub tolerates
+            // any shape, so report status + the signed bundle + what was paid.
+            Ok(json!({
+                "status": status,
+                "success": true,
+                "spendBundle": {
+                    "coinSpends": taken.bundle.coin_spends.len(),
+                    "aggregatedSignature": hex::encode(taken.bundle.aggregated_signature.to_bytes()),
+                },
+                "paid": {
+                    "xch": taken.cost.xch.to_string(),
+                    "cats": taken
+                        .cost
+                        .cats
+                        .iter()
+                        .map(|(id, amt)| json!({
+                            "assetId": format!("0x{}", hex::encode(id)),
+                            "amount": amt.to_string(),
+                        }))
+                        .collect::<Vec<_>>(),
+                },
+            }))
+        }
         other => Err(wc_err(
             StatusCode::NOT_IMPLEMENTED,
             format!("unsupported WC method: {other}"),
@@ -1047,6 +1116,17 @@ mod tests {
         assert!(wc_method_needs_wallet("chip0002_signMessage"));
         assert!(wc_method_needs_wallet("chip0002_signCoinSpends"));
         assert!(wc_method_needs_wallet("chia_getAddress"));
+        // Taking an offer builds + signs a spend, so it needs an unlocked wallet…
+        assert!(wc_method_needs_wallet("chia_takeOffer"));
+    }
+
+    #[test]
+    fn take_offer_is_gated_behind_the_origin_consent_and_wallet() {
+        // chia_takeOffer is a spend method: forbidden until the origin is approved,
+        // allowed once approved (same gate as the other signing methods). This guards
+        // the badge-minting path from an unapproved dapp triggering a take.
+        assert_eq!(wc_gate("chia_takeOffer", false), Gate::Forbidden);
+        assert_eq!(wc_gate("chia_takeOffer", true), Gate::Allowed);
     }
 
     #[test]

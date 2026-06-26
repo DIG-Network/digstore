@@ -24,7 +24,9 @@ chia-sdk-coinset = "0.30"
 # chip-0035 exposes the DataLayer driver primitives (Launcher::mint_datastore, etc.) so we
 # can replicate chip35's mint with the digstore-scoped owner hint memo (datalayer_driver's
 # mint_store hardcodes a single launcher hint and exposes no hint parameter).
-chia-wallet-sdk = { version = "0.30", features = ["chip-0035"] }
+# `offer-compression` decodes/encodes bech32 `offer1…` strings (chia_takeOffer); `chip-0035`
+# exposes the DataLayer driver primitives.
+chia-wallet-sdk = { version = "0.30", features = ["chip-0035", "offer-compression"] }
 hex = "0.4"
 hex-literal = "0.4"
 indexmap = "2"
@@ -36,3 +38,8 @@ tempfile = "3"
 # Decode a built coin spend's conditions in the send tests (verify the payment output).
 clvmr = "0.14"
 clvm-traits = "0.26"
+# Offer take-flow round-trip test: build a maker offer (NFT-for-DIG-CAT) and accept it
+# end-to-end in the in-process Chia simulator, validating the assembled spend bundle.
+chia-sdk-test = "0.30"
+chia-puzzles = "0.20"
+anyhow = "1"
