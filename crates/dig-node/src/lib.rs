@@ -920,4 +920,57 @@ mod tests {
         assert!(!matched);
         assert!(!module_path(&node.cache_dir, &store.to_hex(), &root.to_hex()).exists());
     }
+
+    // -- cache.* RPC (the chrome://settings DIG section) -----------------------
+
+    /// Regression guard for the cache config RPC the browser's Mojo handler calls
+    /// (cache.getConfig / cache.setCapBytes / cache.clear). Points the global
+    /// cache dir at a throwaway tempdir via DIG_NODE_CACHE — no other test reads
+    /// that env or `cache_dir()`, so the process-global set is safe here.
+    #[tokio::test]
+    async fn cache_rpc_config_roundtrip_and_clear() {
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
+        std::env::remove_var("DIG_NODE_CACHE_CAP");
+        let (node, _td) = test_node(None);
+
+        // setCapBytes persists the cap and echoes the effective value.
+        let five_gib = 5u64 * 1024 * 1024 * 1024;
+        let set = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"cache.setCapBytes",
+                   "params":{"cap_bytes": five_gib}}),
+        )
+        .await;
+        assert_eq!(set["result"]["cap_bytes"].as_u64(), Some(five_gib));
+
+        // getConfig reflects the persisted cap and reports a used figure.
+        let got = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":2,"method":"cache.getConfig"}),
+        )
+        .await;
+        assert_eq!(got["result"]["cap_bytes"].as_u64(), Some(five_gib));
+        assert!(got["result"]["used_bytes"].as_u64().is_some());
+
+        // A below-floor request is clamped up to the 64 MiB minimum (a stray 0
+        // must never disable caching).
+        let low = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":3,"method":"cache.setCapBytes",
+                   "params":{"cap_bytes": 1}}),
+        )
+        .await;
+        assert_eq!(low["result"]["cap_bytes"].as_u64(), Some(64 * 1024 * 1024));
+
+        // clear succeeds with an empty result object.
+        let cleared = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":4,"method":"cache.clear"}),
+        )
+        .await;
+        assert!(cleared["result"].is_object());
+
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
 }
