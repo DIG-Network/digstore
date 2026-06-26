@@ -56,6 +56,23 @@
   .status.err{color:#ff7a7a}
   .foot{color:var(--muted);font-size:12px;text-align:center;margin-top:8px;line-height:1.6}
   a{color:var(--accent-2);text-decoration:none}
+  input.text{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+        border-radius:10px;padding:11px 12px;font-size:14px;font-family:ui-monospace,monospace}
+  input.text:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+        border-radius:10px;padding:11px 12px;font-size:14px;font-family:ui-monospace,monospace;resize:vertical;min-height:84px}
+  .kv{display:flex;gap:8px;align-items:center;background:var(--surface-2);border:1px solid var(--border);
+        border-radius:10px;padding:10px 12px;font-family:ui-monospace,monospace;font-size:13px;word-break:break-all;margin-top:8px}
+  .kv .copy{margin-left:auto;flex:0 0 auto;background:var(--accent);color:#fff;border:0;border-radius:8px;
+        padding:6px 12px;font-size:12px;cursor:pointer}
+  .kv .copy:hover{filter:brightness(1.08)}
+  .kvlabel{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 0}
+  .warn{color:#f0b86a;font-size:13px;margin:12px 0;line-height:1.55}
+  .seedreveal{background:var(--surface-2);border:1px solid #f0b86a55;border-radius:10px;padding:14px;margin-top:12px;
+        font-family:ui-monospace,monospace;font-size:14px;line-height:1.9;word-spacing:5px;color:var(--text)}
+  .muted-note{color:var(--muted);font-size:12.5px;margin-top:10px;line-height:1.5}
+  .danger{background:transparent;color:#ff9a9a;border:1px solid #ff9a9a55}
+  .danger:hover{background:rgba(255,122,122,.08)}
 </style>
 </head>
 <body>
@@ -97,6 +114,75 @@
         <button class="ghost" id="btnClear">Clear cache</button>
       </div>
       <div class="status" id="status"></div>
+    </div>
+
+    <!-- WalletConnect projectId -->
+    <div class="card">
+      <h2>WalletConnect <span class="chip" id="wcChip">● Not configured</span></h2>
+      <p class="desc">
+        Your built-in wallet can pair with apps over WalletConnect — including apps on other
+        devices. That relay needs a free <b>projectId</b> from
+        <a href="https://cloud.reown.com/" target="_blank" rel="noopener">Reown / WalletConnect Cloud</a>.
+        Paste it here once; the wallet's <b>Connect a dapp</b> panel uses it to pair.
+      </p>
+      <div class="kvlabel">Project ID</div>
+      <input class="text" id="wcPid" type="text" placeholder="e.g. 1a2b3c… (from cloud.reown.com)" autocomplete="off" spellcheck="false" style="margin-top:8px">
+      <div class="row">
+        <button class="primary" id="btnWcSave">Save project ID</button>
+        <button class="ghost" id="btnWcClear">Clear</button>
+      </div>
+      <div class="status" id="wcStatus"></div>
+    </div>
+
+    <!-- Wallet identity (public key + address) -->
+    <div class="card">
+      <h2>Wallet identity <span class="chip">● Public</span></h2>
+      <p class="desc">
+        Your wallet's public key and receive address. These are safe to share — they identify your
+        wallet but cannot move funds. (Unlock your wallet at <b>dig://wallet</b> to see them.)
+      </p>
+      <div id="idLoaded" class="hidden">
+        <div class="kvlabel">Public key</div>
+        <div class="kv"><span id="pubKey">—</span><button class="copy" id="copyPub">Copy</button></div>
+        <div class="kvlabel">Address</div>
+        <div class="kv"><span id="addr">—</span><button class="copy" id="copyAddr">Copy</button></div>
+      </div>
+      <div id="idLocked" class="muted-note hidden">Wallet is locked — open <a href="dig://wallet">dig://wallet</a> and unlock to view your public key.</div>
+    </div>
+
+    <!-- Backup & restore (export / import the recovery phrase) -->
+    <div class="card">
+      <h2>Backup &amp; restore <span class="chip" style="background:rgba(240,184,106,.14);color:#f0b86a;border-color:rgba(240,184,106,.35)">● Sensitive</span></h2>
+      <p class="desc">
+        Your 24-word recovery phrase is the master key to your wallet. Back it up to move your wallet
+        to another device, or restore a wallet from its phrase.
+      </p>
+
+      <div class="kvlabel">Reveal recovery phrase</div>
+      <p class="warn">⚠ Anyone with these 24 words controls your funds. Never share them, and only reveal them somewhere private.</p>
+      <div id="exportGate">
+        <input class="text" id="exportPw" type="password" placeholder="Re-enter your wallet password" autocomplete="current-password" style="margin-top:6px">
+        <div class="row">
+          <button class="primary" id="btnReveal">Reveal phrase</button>
+        </div>
+      </div>
+      <div id="exportShow" class="hidden">
+        <div class="seedreveal" id="seedWords"></div>
+        <div class="row">
+          <button class="ghost" id="btnHide">Hide</button>
+          <button class="primary" id="btnCopySeed">Copy phrase</button>
+        </div>
+      </div>
+      <div class="status" id="exportStatus"></div>
+
+      <div class="kvlabel" style="margin-top:26px">Restore from recovery phrase</div>
+      <p class="muted-note">Restoring replaces the wallet on this device with the one for the phrase you enter.</p>
+      <textarea id="importPhrase" placeholder="word1 word2 word3 …" spellcheck="false" autocomplete="off" style="margin-top:8px"></textarea>
+      <input class="text" id="importPw" type="password" placeholder="Set a password (min 8 characters)" autocomplete="new-password" style="margin-top:8px">
+      <div class="row">
+        <button class="primary danger" id="btnImport">Restore wallet</button>
+      </div>
+      <div class="status" id="importStatus"></div>
     </div>
 
     <p class="foot">Need to publish data to the DIG Network? Use <a href="https://hub.dig.net/" target="_blank" rel="noopener">hub.dig.net</a>.</p>
@@ -174,7 +260,100 @@ $('btnClear').addEventListener('click', async () => {
   }catch(e){ status('Clear failed: ' + e.message, true); }
 });
 
+function setStatus(id, msg, isErr){
+  const el = $(id); el.textContent = msg; el.className = 'status' + (isErr ? ' err' : '');
+}
+function copyBtn(btn, text){
+  navigator.clipboard.writeText(text); const o = btn.textContent;
+  btn.textContent = 'Copied'; setTimeout(()=>btn.textContent=o, 1200);
+}
+
+// --- WalletConnect projectId (Task B) ---
+async function loadWcPid(){
+  try{
+    const r = await fetch('/api/wc/project-id');
+    const c = await r.json();
+    $('wcPid').value = c.project_id || '';
+    const chip = $('wcChip');
+    chip.textContent = c.configured ? '● Configured' : '● Not configured';
+    chip.style.color = c.configured ? 'var(--good)' : 'var(--muted)';
+  }catch(e){ /* leave default */ }
+}
+$('btnWcSave').addEventListener('click', async () => {
+  setStatus('wcStatus','Saving…');
+  try{
+    const r = await fetch('/api/wc/project-id', {method:'POST',headers:{'content-type':'application/json'},
+      body: JSON.stringify({project_id: $('wcPid').value.trim()})});
+    if(!r.ok) throw new Error(await r.text());
+    await loadWcPid(); setStatus('wcStatus','Saved.');
+  }catch(e){ setStatus('wcStatus','Save failed: '+e.message, true); }
+});
+$('btnWcClear').addEventListener('click', async () => {
+  setStatus('wcStatus','Clearing…');
+  try{
+    const r = await fetch('/api/wc/project-id', {method:'POST',headers:{'content-type':'application/json'},
+      body: JSON.stringify({project_id: ''})});
+    if(!r.ok) throw new Error(await r.text());
+    await loadWcPid(); setStatus('wcStatus','Cleared (using the built-in default, if any).');
+  }catch(e){ setStatus('wcStatus','Clear failed: '+e.message, true); }
+});
+
+// --- Wallet identity: public key + address (Task D) ---
+async function loadIdentity(){
+  try{
+    const r = await fetch('/api/wallet/pubkey');
+    if(r.status === 401){ $('idLocked').classList.remove('hidden'); $('idLoaded').classList.add('hidden'); return; }
+    if(!r.ok) throw new Error(await r.text());
+    const k = await r.json();
+    $('pubKey').textContent = k.public_key;
+    $('addr').textContent = k.address;
+    $('idLoaded').classList.remove('hidden'); $('idLocked').classList.add('hidden');
+  }catch(e){ $('idLocked').classList.remove('hidden'); }
+}
+$('copyPub').addEventListener('click', e => copyBtn(e.target, $('pubKey').textContent));
+$('copyAddr').addEventListener('click', e => copyBtn(e.target, $('addr').textContent));
+
+// --- Backup: reveal recovery phrase (Task C export) ---
+$('btnReveal').addEventListener('click', async () => {
+  setStatus('exportStatus','');
+  const pw = $('exportPw').value;
+  if(!pw){ setStatus('exportStatus','Enter your wallet password.', true); return; }
+  try{
+    const r = await fetch('/api/export', {method:'POST',headers:{'content-type':'application/json'},
+      body: JSON.stringify({password: pw})});
+    if(!r.ok){ let m='reveal failed'; try{m=await r.text()}catch(e){} throw new Error(m); }
+    const d = await r.json();
+    $('seedWords').textContent = d.mnemonic;
+    $('exportGate').classList.add('hidden'); $('exportShow').classList.remove('hidden');
+    $('exportPw').value = '';
+  }catch(e){ setStatus('exportStatus', e.message, true); }
+});
+$('btnHide').addEventListener('click', () => {
+  $('seedWords').textContent = '';   // drop it from the DOM
+  $('exportShow').classList.add('hidden'); $('exportGate').classList.remove('hidden');
+});
+$('btnCopySeed').addEventListener('click', e => copyBtn(e.target, $('seedWords').textContent));
+
+// --- Restore from recovery phrase (Task C import) ---
+$('btnImport').addEventListener('click', async () => {
+  setStatus('importStatus','');
+  const mnemonic = $('importPhrase').value.trim();
+  const pw = $('importPw').value;
+  if(!mnemonic){ setStatus('importStatus','Enter your recovery phrase.', true); return; }
+  if(pw.length < 8){ setStatus('importStatus','Password must be at least 8 characters.', true); return; }
+  try{
+    const r = await fetch('/api/import', {method:'POST',headers:{'content-type':'application/json'},
+      body: JSON.stringify({mnemonic, password: pw})});
+    if(!r.ok){ let m='restore failed'; try{m=(await r.json()).error||m}catch(e){} throw new Error(m); }
+    $('importPhrase').value=''; $('importPw').value='';
+    setStatus('importStatus','Wallet restored. Open dig://wallet to use it.');
+    loadIdentity();
+  }catch(e){ setStatus('importStatus', e.message, true); }
+});
+
 load();
+loadWcPid();
+loadIdentity();
 </script>
 </body>
 </html>

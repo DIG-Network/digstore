@@ -67,7 +67,17 @@
   .conn .ok{background:var(--accent);color:#fff}
   .conn .no{background:transparent;color:var(--muted);border:1px solid var(--border)}
   .conn .dot{width:7px;height:7px;border-radius:50%;background:var(--good);flex:0 0 auto}
-  .conns .empty{color:var(--muted);font-size:13px;margin-top:6px}
+  .conns .empty{color:var(--muted);font-size:13px;margin-top:6px;line-height:1.55}
+  .wc-help{color:var(--muted);font-size:12.5px;margin:2px 0 10px;line-height:1.5}
+  .wc-row{display:flex;gap:8px}
+  .wc-input{flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+        border-radius:10px;padding:10px 12px;font-size:13px;font-family:ui-monospace,monospace}
+  .wc-input:focus{outline:none;border-color:var(--accent)}
+  .wc-row .ok{flex:0 0 auto;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 16px;font-size:13px;cursor:pointer}
+  .wc-row .ok:hover{filter:brightness(1.08)}
+  .wc-status{font-size:12.5px;margin-top:8px;min-height:15px;color:var(--good)}
+  .wc-status.err{color:#ff7a7a}
+  code{font-family:ui-monospace,monospace;font-size:.92em;color:var(--accent-2)}
 </style>
 </head>
 <body>
@@ -141,8 +151,41 @@
       <div id="connPending"></div>
       <div id="connApproved"></div>
     </div>
+
+    <!-- WalletConnect: pair with a dapp (this wallet is the WC responder) -->
+    <div class="conns" id="wcSection">
+      <div class="label">Connect a dapp</div>
+
+      <!-- not configured: point the user to settings -->
+      <div id="wcNoPid" class="empty hidden">
+        WalletConnect not configured — set a <b>projectId</b> in
+        <a href="dig://settings">DIG settings</a> to pair with apps.
+      </div>
+
+      <!-- configured: paste a wc: URI -->
+      <div id="wcPair" class="hidden">
+        <p class="wc-help">Paste an app's WalletConnect link (starts with <code>wc:</code>) to connect it to this wallet.</p>
+        <div class="wc-row">
+          <input id="wcUri" class="wc-input" type="text" placeholder="wc:…" spellcheck="false" autocomplete="off">
+          <button class="ok" id="btnPair">Connect</button>
+        </div>
+        <div class="wc-status" id="wcStatus"></div>
+      </div>
+
+      <!-- a proposal awaiting approve/reject -->
+      <div id="wcProposal" class="conn pending hidden">
+        <span class="req">Wants to connect</span>
+        <span class="o" id="wcProposalName"></span>
+        <button class="ok" id="btnWcApprove">Approve</button>
+        <button class="no" id="btnWcReject">Reject</button>
+      </div>
+
+      <!-- active WC sessions -->
+      <div id="wcSessions"></div>
+    </div>
   </div>
 </main>
+<script src="/wc-bundle.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const show = id => { document.querySelectorAll('.card').forEach(c=>c.classList.add('hidden')); $('#'+id).classList.remove('hidden'); };
@@ -182,19 +225,19 @@ $('#btnSavedSeed').onclick = async () => {
   $('#createErr').textContent='';
   const pw = $('#createPw').value;
   if(pw.length<8){ $('#createErr').textContent='Password must be at least 8 characters'; return; }
-  try{ await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:window._seed,password:pw})}); window._seed=null; show('view-dash'); refreshBalance(); }
+  try{ const r = await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:window._seed,password:pw})}); window._seed=null; show('view-dash'); refreshBalance(); initWalletConnect(r.address); }
   catch(e){ $('#createErr').textContent=e.message; }
 };
 $('#btnRestoreGo').onclick = async () => {
   $('#restoreErr').textContent='';
   const pw = $('#restorePw').value;
   if(pw.length<8){ $('#restoreErr').textContent='Password must be at least 8 characters'; return; }
-  try{ await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:$('#restoreInput').value,password:pw})}); show('view-dash'); refreshBalance(); }
+  try{ const r = await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:$('#restoreInput').value,password:pw})}); show('view-dash'); refreshBalance(); initWalletConnect(r.address); }
   catch(e){ $('#restoreErr').textContent=e.message; }
 };
 $('#btnUnlock').onclick = async () => {
   $('#unlockErr').textContent='';
-  try{ await api('/api/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:$('#unlockPw').value})}); show('view-dash'); refreshBalance(); }
+  try{ const r = await api('/api/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:$('#unlockPw').value})}); show('view-dash'); refreshBalance(); initWalletConnect(r.address); }
   catch(e){ $('#unlockErr').textContent=e.message; }
 };
 // --- Connected dapps (CHIP-0002 / window.chia) ---
@@ -226,9 +269,74 @@ $('#btnRefresh').onclick = () => { refreshBalance(); refreshConnections(); };
 $('#btnLock').onclick = async () => { await api('/api/lock',{method:'POST'}); show('view-welcome'); };
 $('#copyAddr').onclick = () => { navigator.clipboard.writeText($('#addr').textContent); $('#copyAddr').textContent='Copied'; setTimeout(()=>$('#copyAddr').textContent='Copy',1200); };
 
+// --- WalletConnect responder: pair with dapps over the relay ---
+// This wallet plays the WC WALLET role (dual of Sage). We host a SignClient in
+// the page: pair from a wc: URI, surface the proposal for approve/reject, and on
+// each request route to /api/wc/request (so signing stays in the Rust signer).
+// v1: sessions live only while this page is open (a persistent background
+// responder is v2 — documented in the crate header).
+let _wcReady = false, _wcAddress = null, _wcProposal = null;
+function wcStatus(msg, isErr){ const el=$('#wcStatus'); if(!el) return; el.textContent=msg||''; el.className='wc-status'+(isErr?' err':''); }
+
+function renderWcSessions(){
+  const wrap = $('#wcSessions'); if(!wrap || !window.DigWC) return;
+  const list = DigWC.sessions();
+  wrap.innerHTML = list.map(s => {
+    const name = (s.peer && (s.peer.name || s.peer.url)) || s.topic.slice(0,8)+'…';
+    return `<div class="conn"><span class="dot"></span><span class="o">${esc(name)}</span>`+
+           `<button class="no" data-wc-disconnect="${esc(s.topic)}">Disconnect</button></div>`;
+  }).join('');
+}
+
+async function initWalletConnect(address){
+  _wcAddress = address;
+  if(!window.DigWC) return;             // bundle failed to load
+  let cfg; try{ cfg = await api('/api/wc/project-id'); }catch(e){ cfg = {configured:false}; }
+  if(!cfg.configured){
+    $('#wcNoPid').classList.remove('hidden'); $('#wcPair').classList.add('hidden');
+    return;
+  }
+  $('#wcNoPid').classList.add('hidden'); $('#wcPair').classList.remove('hidden');
+  if(_wcReady) return;                   // init once per page
+  try{
+    DigWC.onProposal(p => {
+      _wcProposal = p;
+      const md = (p.params && p.params.proposer && p.params.proposer.metadata) || {};
+      $('#wcProposalName').textContent = md.name || md.url || 'A dapp';
+      $('#wcProposal').classList.remove('hidden');
+    });
+    DigWC.onSessionsChanged(renderWcSessions);
+    await DigWC.init(cfg.project_id);
+    _wcReady = true;
+    renderWcSessions();
+  }catch(e){ wcStatus('WalletConnect failed to start: '+e.message, true); }
+}
+
+$('#btnPair').onclick = async () => {
+  const uri = $('#wcUri').value.trim();
+  if(!uri.startsWith('wc:')){ wcStatus('Paste a WalletConnect link starting with "wc:".', true); return; }
+  wcStatus('Connecting…');
+  try{ await DigWC.pair(uri); $('#wcUri').value=''; wcStatus('Pairing — approve the request below when it appears.'); }
+  catch(e){ wcStatus('Connect failed: '+e.message, true); }
+};
+$('#btnWcApprove').onclick = async () => {
+  if(!_wcProposal) return;
+  try{ await DigWC.approve(_wcProposal, _wcAddress); $('#wcProposal').classList.add('hidden'); _wcProposal=null; wcStatus('Connected.'); renderWcSessions(); }
+  catch(e){ wcStatus('Approve failed: '+e.message, true); }
+};
+$('#btnWcReject').onclick = async () => {
+  if(!_wcProposal) return;
+  try{ await DigWC.reject(_wcProposal); }catch(e){}
+  $('#wcProposal').classList.add('hidden'); _wcProposal=null; wcStatus('Rejected.');
+};
+document.addEventListener('click', async (e) => {
+  const topic = e.target.dataset.wcDisconnect;
+  if(topic){ await DigWC.disconnect(topic); renderWcSessions(); }
+});
+
 (async function init(){
   try{ const s = await api('/api/status');
-    if(s.state==='unlocked'){ $('#addr').textContent=s.address; show('view-dash'); refreshBalance(); refreshConnections(); }
+    if(s.state==='unlocked'){ $('#addr').textContent=s.address; show('view-dash'); refreshBalance(); refreshConnections(); initWalletConnect(s.address); }
     else if(s.state==='locked'){ show('view-unlock'); $('#unlockPw').focus(); }
     else { show('view-welcome'); }
   } catch(e){ show('view-welcome'); }

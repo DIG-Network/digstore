@@ -2199,6 +2199,7 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "zeroize",
 ]
