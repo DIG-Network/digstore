@@ -599,8 +599,8 @@ async fn wc_dispatch(
     match method {
         "chip0002_getPublicKeys" => {
             let (offset, limit) = pubkey_window(&params);
-            let keys =
-                digstore_chain::chip0002::wallet_public_keys(&mnemonic, offset, limit).map_err(bad)?;
+            let keys = digstore_chain::chip0002::wallet_public_keys(&mnemonic, offset, limit)
+                .map_err(bad)?;
             Ok(json!(keys))
         }
         "chip0002_signMessage" => {
@@ -629,9 +629,12 @@ async fn wc_dispatch(
             let spends: Vec<digstore_chain::chip0002::WcCoinSpend> =
                 serde_json::from_value(spends_val)
                     .map_err(|e| wc_err(StatusCode::BAD_REQUEST, format!("bad coinSpends: {e}")))?;
-            let sig =
-                digstore_chain::chip0002::sign_wc_coin_spends(&mnemonic, &spends, KEY_SEARCH_WINDOW)
-                    .map_err(bad)?;
+            let sig = digstore_chain::chip0002::sign_wc_coin_spends(
+                &mnemonic,
+                &spends,
+                KEY_SEARCH_WINDOW,
+            )
+            .map_err(bad)?;
             Ok(json!(sig))
         }
         "chia_getAddress" => {
@@ -748,7 +751,10 @@ struct OriginReq {
 }
 
 /// Approve a pending dapp origin (user action in the wallet) — persists it.
-async fn wc_approve(State(st): State<Arc<AppState>>, Json(req): Json<OriginReq>) -> impl IntoResponse {
+async fn wc_approve(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<OriginReq>,
+) -> impl IntoResponse {
     let mut a = st.approvals.lock().await;
     a.pending.remove(&req.origin);
     a.approved.insert(req.origin.clone());
@@ -757,13 +763,19 @@ async fn wc_approve(State(st): State<Arc<AppState>>, Json(req): Json<OriginReq>)
 }
 
 /// Reject a pending dapp origin (drop it without approving).
-async fn wc_reject(State(st): State<Arc<AppState>>, Json(req): Json<OriginReq>) -> impl IntoResponse {
+async fn wc_reject(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<OriginReq>,
+) -> impl IntoResponse {
     st.approvals.lock().await.pending.remove(&req.origin);
     StatusCode::NO_CONTENT
 }
 
 /// Revoke a previously-approved dapp origin — persists the removal.
-async fn wc_revoke(State(st): State<Arc<AppState>>, Json(req): Json<OriginReq>) -> impl IntoResponse {
+async fn wc_revoke(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<OriginReq>,
+) -> impl IntoResponse {
     let mut a = st.approvals.lock().await;
     a.approved.remove(&req.origin);
     save_approved(&a.approved);
@@ -840,7 +852,10 @@ mod tests {
         assert_eq!(floored_cache_cap(0), 64 * 1024 * 1024);
         assert_eq!(floored_cache_cap(1), 64 * 1024 * 1024);
         // A request above the floor is honoured verbatim.
-        assert_eq!(floored_cache_cap(5 * 1024 * 1024 * 1024), 5 * 1024 * 1024 * 1024);
+        assert_eq!(
+            floored_cache_cap(5 * 1024 * 1024 * 1024),
+            5 * 1024 * 1024 * 1024
+        );
     }
 
     #[test]

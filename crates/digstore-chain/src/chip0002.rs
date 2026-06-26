@@ -304,7 +304,10 @@ mod tests {
         let wire = serde_json::to_value(&bundle.coin_spends).unwrap();
         let parsed: Vec<WcCoinSpend> = serde_json::from_value(wire).unwrap();
         let via_wire = sign_wc_coin_spends(ABANDON, &parsed, 4).unwrap();
-        assert_eq!(via_wire, canonical, "WC JSON round-trip must sign identically");
+        assert_eq!(
+            via_wire, canonical,
+            "WC JSON round-trip must sign identically"
+        );
     }
 
     #[test]
