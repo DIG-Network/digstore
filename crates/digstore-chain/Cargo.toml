@@ -5,6 +5,10 @@ edition = "2021"
 license.workspace = true
 
 [dependencies]
+# The canonical `Capsule` (storeId:rootHash) identity. Store discovery returns the
+# current + historical capsules of a user's stores, so the return types speak in the
+# one ecosystem-wide capsule type rather than re-inventing the pair.
+digstore-core = { path = "../digstore-core" }
 async-trait = "0.1"
 bip39 = { version = "2", features = ["rand"] }
 argon2 = "0.5"
