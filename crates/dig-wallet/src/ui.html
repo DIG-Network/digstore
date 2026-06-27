@@ -1304,6 +1304,48 @@ document.addEventListener('click', async (e) => {
   await DigWC.disconnect(b.dataset.wcDisconnect); renderWcSessions();
 });
 
+// ---- Sage delegate pump (wallet source = Sage, #34) ----
+// When the wallet source is Sage, the native signer is bypassed: wc_dispatch parks
+// each key/sign method on the delegate bridge and this page forwards it to Sage over
+// the WC requester session, then returns Sage's (normalized) result. window.chia is
+// unchanged — it still hits /api/wc/request; only the SIGNER moves to Sage. The
+// connect-to-Sage flow lives in DIG settings; the live session it pairs is restorable
+// here (same loopback origin), so this page just initialises the requester + pumps.
+let _sageReady = false, _pumpRunning = false;
+async function initSageRequester(){
+  if(_sageReady || !window.DigWC || !DigWC.initRequester) return;
+  let cfg; try{ cfg = await api('/api/wc/project-id'); }catch(e){ return; }
+  if(!cfg.configured) return;
+  try{ await DigWC.initRequester(cfg.project_id); _sageReady = true; }
+  catch(e){ /* no relay — delegate calls will surface a clean "not connected" */ }
+}
+// Single long-poll cycle: pull the next parked request, forward to Sage, return the
+// result (or error). Self-origin so the loopback gate auto-approves this page.
+async function pumpOnce(){
+  let job;
+  try{ job = await api('/api/wc/delegate/next'); }catch(e){ return; }
+  if(!job || job.id===undefined) return;            // empty queue
+  let result, error;
+  try{ result = await DigWC.sageRequest(job.method, job.params||{}); }
+  catch(e){ error = (e && e.message) || String(e); }
+  try{
+    await fetch('/api/wc/delegate/result', {method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify(error!==undefined ? {id:job.id, error} : {id:job.id, result})});
+  }catch(e){ /* page is closing; the Rust waiter times out cleanly */ }
+}
+async function startSagePump(){
+  if(_pumpRunning) return; _pumpRunning = true;
+  // Continuous loop: drain parked delegate requests while the page is open. Only does
+  // real work when the source is Sage AND a session exists; otherwise it idles cheaply.
+  while(true){
+    try{
+      const src = await api('/api/wallet/source').catch(()=>({source:'native'}));
+      if(src.source==='sage'){ await initSageRequester(); if(_sageReady) await pumpOnce(); }
+    }catch(e){ /* keep the loop alive */ }
+    await new Promise(r=>setTimeout(r, 700));
+  }
+}
+
 // ---- wallet lifecycle (create / restore / unlock) ----
 $('#btnCreate').onclick = async () => {
   try{ const g = await api('/api/generate',{method:'POST'}); $('#seedWords').textContent=g.mnemonic; window._seed=g.mnemonic; showGate('view-create'); }
@@ -1337,6 +1379,7 @@ function enterWallet(address){
   $('#app').classList.remove('hidden');
   $('#tabbar').classList.add('show');
   refreshBalance(); refreshConnections(); initWalletConnect(address);
+  startSagePump();
   go('home');
 }
 

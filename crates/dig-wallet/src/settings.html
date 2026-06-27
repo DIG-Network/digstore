@@ -104,6 +104,13 @@ table.ctable tr:last-child td{border-bottom:0}
 table.ctable .rm{background:transparent;color:var(--err);border:1px solid rgba(255,107,149,.35);border-radius:8px;padding:5px 10px;font-size:11.5px;cursor:pointer;font-family:var(--sans)}
 table.ctable .rm:hover{background:rgba(255,107,149,.08)}
 .subcard{margin-top:22px;border-top:1px solid var(--hair);padding-top:18px}
+.srcopts{display:flex;flex-direction:column;gap:10px;margin:6px 0 4px}
+.srcopt{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--hair);border-radius:12px;padding:14px 16px;cursor:pointer;transition:.15s var(--ease)}
+.srcopt:hover{background:rgba(255,255,255,.04);border-color:var(--hair-v)}
+.srcopt input{margin-top:3px;accent-color:var(--magenta);width:16px;height:16px;flex:0 0 auto}
+.srcopt.on{border-color:var(--hair-m);background:rgba(255,0,222,.06)}
+.srctitle{font-size:14px;font-weight:600;color:var(--t1)}
+.srcsub{font-size:12.5px;color:var(--t3);line-height:1.5;margin-top:3px}
 .foot{color:var(--t3);font-size:12px;text-align:center;margin-top:18px;line-height:1.6}
 @media (prefers-reduced-motion: reduce){ *{animation:none!important;transition:none!important} }
 </style>
@@ -164,11 +171,53 @@ table.ctable .rm:hover{background:rgba(255,107,149,.08)}
       <div class="status" id="importStatus"></div>
     </div>
 
+    <!-- ===== WALLET SOURCE ===== -->
+    <div class="sechead"><div class="kick">Wallet</div><h2>Wallet source</h2></div>
+    <div class="card">
+      <h3>Where your wallet lives <span class="chip" id="srcChip">&#9679; Native</span></h3>
+      <p class="desc">Choose how this browser's wallet signs. <b>Native</b> keeps your keys on this device (the built-in wallet). <b>Sage</b> hands every wallet action — balances, sending, signing, offers — to your <a href="https://www.chia.net/downloads/" target="_blank" rel="noopener">Sage</a> wallet over WalletConnect; your keys never leave Sage. Apps you visit don't change — only who signs does.</p>
+
+      <div class="srcopts">
+        <label class="srcopt" id="srcOptNative">
+          <input type="radio" name="walletSource" value="native" id="srcNative">
+          <div><div class="srctitle">Native (local keys)</div><div class="srcsub">Sign with the wallet built into this browser. Your encrypted keys stay on this device.</div></div>
+        </label>
+        <label class="srcopt" id="srcOptSage">
+          <input type="radio" name="walletSource" value="sage" id="srcSage">
+          <div><div class="srctitle">Sage (WalletConnect)</div><div class="srcsub">Delegate to your Sage wallet. This browser holds no keys — Sage signs everything.</div></div>
+        </label>
+      </div>
+      <div class="status" id="srcStatus"></div>
+
+      <!-- Sage connect flow (shown only when Sage is selected) -->
+      <div id="sageConnect" class="subcard hidden">
+        <div id="sageNoPid" class="warn hidden"><span>&#9888;</span>Set a WalletConnect <b>projectId</b> below first — the relay needs it to reach Sage.</div>
+
+        <div id="sageDisconnected">
+          <div class="lblc" style="margin-top:0">Connect Sage</div>
+          <p class="note">Click connect, then scan the QR with Sage (or copy the link and paste it into Sage on this device). Approve the session in Sage to finish.</p>
+          <div class="row"><button class="btn p" id="btnSageConnect">Connect Sage</button></div>
+          <div id="sagePairing" class="hidden">
+            <div id="sageQr" style="margin:14px auto 0;width:220px;height:220px;background:#fff;border-radius:12px;padding:10px;display:grid;place-items:center"></div>
+            <div class="kv"><span id="sageUri" style="font-size:11px">—</span><button class="btn g sm copy" id="btnCopyUri" style="padding:6px 12px;font-size:12px;border-radius:8px">Copy</button></div>
+            <a class="note" id="sageUriLink" href="#" style="display:inline-block;margin-top:6px">Open in Sage on this device</a>
+          </div>
+        </div>
+
+        <div id="sageConnected" class="hidden">
+          <div class="lblc" style="margin-top:0">Connected to Sage <span class="chip" style="margin-left:6px">&#9679; Active</span></div>
+          <div class="kv"><span id="sagePeerName">Sage</span></div>
+          <p class="note">Your wallet is delegating to Sage. Every action in DIG asks Sage to sign.</p>
+          <div class="row"><button class="btn danger" id="btnSageDisconnect">Disconnect Sage</button></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== CONNECTIONS ===== -->
     <div class="sechead"><div class="kick">Connections</div><h2>WalletConnect</h2></div>
     <div class="card">
       <h3>Relay project ID <span class="chip" id="wcChip">&#9679; Not configured</span></h3>
-      <p class="desc">Your built-in wallet can pair with apps over WalletConnect — including apps on other devices. That relay needs a free <b>projectId</b> from <a href="https://cloud.reown.com/" target="_blank" rel="noopener">Reown / WalletConnect Cloud</a>. Paste it here once; the wallet's <b>Connect a dapp</b> panel uses it to pair.</p>
+      <p class="desc">Your built-in wallet can pair with apps over WalletConnect — including apps on other devices. That relay needs a free <b>projectId</b> from <a href="https://cloud.reown.com/" target="_blank" rel="noopener">Reown / WalletConnect Cloud</a>. Paste it here once; the wallet's <b>Connect a dapp</b> panel (and connecting Sage above) use it to pair.</p>
       <div class="lblc">Project ID</div>
       <input class="field" id="wcPid" type="text" placeholder="e.g. 1a2b3c… (from cloud.reown.com)" autocomplete="off" spellcheck="false">
       <div class="row"><button class="btn p" id="btnWcSave">Save project ID</button><button class="btn g" id="btnWcClear">Clear</button></div>
@@ -231,6 +280,7 @@ table.ctable .rm:hover{background:rgba(255,107,149,.08)}
   </div>
 </main>
 </div>
+<script src="/wc-bundle.js"></script>
 <script>
 const GiB = 1024 * 1024 * 1024;
 const $ = id => document.getElementById(id);
@@ -342,6 +392,89 @@ $('btnWcClear').addEventListener('click', async () => {
     if(!r.ok) throw new Error(await r.text());
     await loadWcPid(); setStatus('wcStatus','Cleared (using the built-in default, if any).');
   }catch(e){ setStatus('wcStatus','Clear failed: '+e.message, true); }
+});
+
+// --- Wallet source: Native (local keys) vs. Sage (WalletConnect delegate), #34 ---
+// Native signs with the on-device keys; Sage delegates the whole wallet surface to the
+// user's Sage wallet over a WalletConnect *requester* session (this wallet is the
+// client, the dual of "Connect a dapp"). The connect flow lives here; the live session
+// it pairs is restorable in the wallet page (same loopback origin) where the delegate
+// pump forwards each request to Sage. window.chia is unchanged either way.
+let _curSource = 'native', _reqReady = false;
+
+function renderSource(source){
+  _curSource = source;
+  $('srcNative').checked = source === 'native';
+  $('srcSage').checked   = source === 'sage';
+  $('srcOptNative').classList.toggle('on', source === 'native');
+  $('srcOptSage').classList.toggle('on', source === 'sage');
+  const chip = $('srcChip');
+  chip.textContent = source === 'sage' ? '● Sage' : '● Native';
+  $('sageConnect').classList.toggle('hidden', source !== 'sage');
+  if(source === 'sage') refreshSageState();
+}
+
+async function loadSource(){
+  try{ const r = await fetch('/api/wallet/source'); renderSource((await r.json()).source || 'native'); }
+  catch(e){ renderSource('native'); }
+}
+
+async function setSource(source){
+  setStatus('srcStatus','Saving…');
+  try{
+    const r = await fetch('/api/wallet/source', {method:'POST',headers:{'content-type':'application/json'},
+      body: JSON.stringify({source})});
+    if(!r.ok) throw new Error(await r.text());
+    renderSource((await r.json()).source || source);
+    setStatus('srcStatus', source === 'sage'
+      ? 'Sage selected — connect your Sage wallet below.'
+      : 'Using this browser’s built-in wallet.');
+  }catch(e){ setStatus('srcStatus','Could not change wallet source: '+e.message, true); }
+}
+$('srcNative').addEventListener('change', () => setSource('native'));
+$('srcSage').addEventListener('change',   () => setSource('sage'));
+
+// Init the WC requester (reuses the bundled SignClient + the configured projectId).
+async function ensureRequester(){
+  if(_reqReady || !window.DigWC || !DigWC.initRequester) return false;
+  let cfg; try{ cfg = await (await fetch('/api/wc/project-id')).json(); }catch(e){ cfg = {configured:false}; }
+  if(!cfg.configured){ $('sageNoPid').classList.remove('hidden'); return false; }
+  $('sageNoPid').classList.add('hidden');
+  try{ await DigWC.initRequester(cfg.project_id); _reqReady = true;
+    DigWC.onSageSessionChanged(refreshSageState); return true; }
+  catch(e){ setStatus('srcStatus','WalletConnect failed to start: '+e.message, true); return false; }
+}
+
+// Reflect whether a Sage session is live (connected vs. needs-connect).
+function refreshSageState(){
+  if(!window.DigWC) return;
+  const s = _reqReady ? DigWC.sageSession() : null;
+  const connected = !!s;
+  $('sageConnected').classList.toggle('hidden', !connected);
+  $('sageDisconnected').classList.toggle('hidden', connected);
+  if(connected){ const p = DigWC.sagePeer(); $('sagePeerName').textContent = (p && (p.name || p.url)) || 'Sage'; }
+}
+
+$('btnSageConnect').addEventListener('click', async () => {
+  if(!(await ensureRequester())) return;
+  setStatus('srcStatus','Opening WalletConnect…');
+  try{
+    const { uri, approval } = await DigWC.connectSage();
+    $('sageUri').textContent = uri;
+    $('sageUriLink').href = uri;
+    $('sageQr').innerHTML = DigWC.qrSvg ? DigWC.qrSvg(uri, 200) : '';
+    $('sagePairing').classList.remove('hidden');
+    setStatus('srcStatus','Scan the QR (or open in Sage) and approve the session.');
+    await approval();                 // resolves when Sage approves
+    $('sagePairing').classList.add('hidden');
+    setStatus('srcStatus','Connected to Sage.');
+    refreshSageState();
+  }catch(e){ setStatus('srcStatus','Connect failed: '+e.message, true); }
+});
+$('btnCopyUri').addEventListener('click', e => copyBtn(e.target, $('sageUri').textContent));
+$('btnSageDisconnect').addEventListener('click', async () => {
+  try{ await DigWC.disconnectSage(); }catch(e){}
+  refreshSageState(); setStatus('srcStatus','Disconnected from Sage.');
 });
 
 // --- Wallet identity: public key + address ---
@@ -478,6 +611,7 @@ $('btnFetchCap').addEventListener('click', async () => {
 
 load();
 loadWcPid();
+loadSource();
 loadIdentity();
 loadCapsules();
 </script>

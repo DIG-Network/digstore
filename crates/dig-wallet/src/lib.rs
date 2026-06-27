@@ -19,8 +19,9 @@
 //! it returns the fully signed bundle (proof the signing path works) and pushes
 //! NOTHING. The default is dry-run, so the flow can be exercised unattended safely.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::{
@@ -38,7 +39,7 @@ use digstore_chain::seed::{
 use digstore_chain::send::{build_xch_send, decode_xch_address};
 use digstore_chain::wallet::scan_wallet;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
 use zeroize::Zeroizing;
 
 /// In-memory unlocked wallet for the session.
@@ -47,10 +48,89 @@ struct Session {
     address: String,
 }
 
+/// Where the embedded wallet answers wallet requests FROM (the "wallet source",
+/// #34). `Native` signs with the local encrypted seed (the default, exactly the
+/// behaviour before this feature). `Sage` *delegates* the full wallet surface to
+/// the user's Sage wallet over a WalletConnect session in which **this** wallet is
+/// the requester/client (the dual of the existing dapp-facing responder): each
+/// CHIP-0002/chia method is forwarded over the relay to Sage and Sage's response
+/// is returned. In `Sage` mode there is NO local signer in play — Sage holds the
+/// keys — but the consent + broadcast gates are unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum WalletSource {
+    /// Sign locally with the encrypted seed (default — zero behaviour change).
+    #[default]
+    Native,
+    /// Delegate to Sage over a WalletConnect requester session.
+    Sage,
+}
+
+impl WalletSource {
+    /// The wire token persisted/served for this source (stable across versions).
+    fn as_str(self) -> &'static str {
+        match self {
+            WalletSource::Native => "native",
+            WalletSource::Sage => "sage",
+        }
+    }
+    /// Parse the wire token; anything unrecognised falls back to the safe default
+    /// (`Native`) so a corrupt/forward-incompatible value never strands the wallet.
+    fn from_str(s: &str) -> WalletSource {
+        match s {
+            "sage" => WalletSource::Sage,
+            _ => WalletSource::Native,
+        }
+    }
+}
+
+/// One wallet request awaiting Sage. When the wallet source is `Sage`, `wc_dispatch`
+/// cannot reach the relay itself (the live WalletConnect requester SignClient lives
+/// in the wallet UI page, the one tab that stays open), so it parks the call here and
+/// `await`s `tx`. The page long-polls `/api/wc/delegate/next`, forwards `{method,
+/// params}` to Sage over the session, and POSTs Sage's result/error back to
+/// `/api/wc/delegate/result`, which fulfils `tx`. This keeps `window.chia` and the
+/// per-origin consent gate completely unchanged — only the *signer* moves to Sage.
+struct DelegateRequest {
+    id: u64,
+    method: String,
+    params: serde_json::Value,
+    /// Fulfilled with Sage's bare result (`Ok`) or an error message (`Err`) by
+    /// `/api/wc/delegate/result`.
+    tx: oneshot::Sender<Result<serde_json::Value, String>>,
+}
+
+/// The requester-side delegate bridge between `wc_dispatch` and the in-page Sage
+/// WalletConnect client (see [`DelegateRequest`]). `queue` holds requests the page
+/// has not yet picked up; `waiters` holds the oneshot senders for requests in flight
+/// at Sage, keyed by request id. Lives only while the wallet page is open (the same
+/// v1 persistence caveat the responder documents); a dropped page drops the waiters,
+/// surfacing as a clean "Sage did not respond" rather than a hang.
 #[derive(Default)]
+struct DelegateBridge {
+    queue: VecDeque<DelegateRequest>,
+    waiters: std::collections::HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>,
+    next_id: AtomicU64,
+}
+
 struct AppState {
     session: Mutex<Option<Session>>,
     approvals: Mutex<Approvals>,
+    /// The active wallet source (Native local keys vs. Sage delegate). Persisted to
+    /// disk (next to the seed) and loaded here so the choice survives restarts.
+    source: Mutex<WalletSource>,
+    /// Requester→Sage delegate bridge, used only when `source == Sage`.
+    delegate: Mutex<DelegateBridge>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        AppState {
+            session: Mutex::new(None),
+            approvals: Mutex::new(Approvals::default()),
+            source: Mutex::new(load_wallet_source()),
+            delegate: Mutex::new(DelegateBridge::default()),
+        }
+    }
 }
 
 /// Per-origin dapp connection state. `approved` is the user's allow-list (which
@@ -129,6 +209,42 @@ fn save_approved(approved: &BTreeSet<String>) {
         let _ = std::fs::create_dir_all(dir);
     }
     if let Ok(json) = serde_json::to_vec_pretty(&approved.iter().collect::<Vec<_>>()) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// Path to the persisted wallet-source choice (next to the seed file). A tiny
+/// `{ "source": "native" | "sage" }` JSON — kept separate from the seed so it is
+/// readable/writable without unlocking and never touches key material.
+fn wallet_source_path() -> PathBuf {
+    seed_path()
+        .parent()
+        .map(|p| p.join("wallet-source.json"))
+        .unwrap_or_else(|| PathBuf::from("wallet-source.json"))
+}
+
+/// Load the persisted wallet source (defaults to `Native` if absent/corrupt — the
+/// safe local-keys behaviour).
+fn load_wallet_source() -> WalletSource {
+    std::fs::read(wallet_source_path())
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| {
+            v.get("source")
+                .and_then(|s| s.as_str())
+                .map(WalletSource::from_str)
+        })
+        .unwrap_or_default()
+}
+
+/// Persist the wallet source choice so it survives restarts.
+fn save_wallet_source(source: WalletSource) {
+    let path = wallet_source_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let body = serde_json::json!({ "source": source.as_str() });
+    if let Ok(json) = serde_json::to_vec_pretty(&body) {
         let _ = std::fs::write(path, json);
     }
 }
@@ -767,6 +883,60 @@ async fn wc_project_id_set(headers: HeaderMap, Json(req): Json<SetWcProjectId>) 
     }
 }
 
+// ---- DIG settings: wallet source (Native local keys vs. Sage delegate) #34 ---
+//
+// The "Wallet source" control. `Native` (default) signs with the local encrypted
+// seed; `Sage` delegates every key/sign method to the user's Sage wallet over a
+// WalletConnect requester session (see `delegate_to_sage` / the delegate bridge).
+// `window.chia` and the per-origin consent gate are unchanged either way — only the
+// signer moves. The setter is self-origin only (only the settings UI may flip it).
+
+/// The active wallet source surfaced to the settings page.
+#[derive(Serialize)]
+struct WalletSourceResp {
+    /// `"native"` or `"sage"` — the persisted, active source.
+    source: &'static str,
+}
+
+/// Read the active wallet source (Native vs. Sage). Readable by the wallet UI + the
+/// settings page so both can render the right state and run the delegate pump when
+/// Sage is selected.
+async fn wallet_source_get(State(st): State<Arc<AppState>>) -> Json<WalletSourceResp> {
+    Json(WalletSourceResp {
+        source: st.source.lock().await.as_str(),
+    })
+}
+
+#[derive(Deserialize)]
+struct SetWalletSource {
+    /// `"native"` or `"sage"` (anything else is treated as `native`).
+    source: String,
+}
+
+/// Set the active wallet source (DIG settings). Self-origin only — only the settings
+/// UI may flip it, never a dapp. Persists the choice so it survives restarts. Note
+/// this only selects WHERE requests are answered; it never touches key material, and
+/// switching to Sage does NOT establish the session (the page's connect flow does).
+async fn wallet_source_set(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<SetWalletSource>,
+) -> Response {
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "settings are wallet-local only").into_response();
+    }
+    let source = WalletSource::from_str(&req.source);
+    *st.source.lock().await = source;
+    save_wallet_source(source);
+    (
+        StatusCode::OK,
+        Json(WalletSourceResp {
+            source: source.as_str(),
+        }),
+    )
+        .into_response()
+}
+
 /// The wallet's public identity, safe to display in plain text.
 #[derive(Serialize)]
 struct PubKeyResp {
@@ -944,6 +1114,58 @@ fn wc_err(code: StatusCode, msg: impl Into<String>) -> (StatusCode, String) {
     (code, msg.into())
 }
 
+/// Where a dispatched WC method is answered FROM, given the active wallet source
+/// (#34). Decided purely so the policy is unit-tested independently of state/HTTP.
+#[derive(Debug, PartialEq, Eq)]
+enum WcRoute {
+    /// Answer with the local encrypted-seed signer (the only route in Native mode,
+    /// and still the route for the keyless handshake methods even in Sage mode).
+    Native,
+    /// Forward over the WalletConnect requester session to Sage (Sage mode only,
+    /// for the methods that read keys or sign).
+    Delegate,
+}
+
+/// Decide whether `method` is answered locally or delegated to Sage, given the
+/// active `source`. In `Native` mode everything is local (zero behaviour change).
+/// In `Sage` mode the keyless handshake methods (`chainId`, `connect` — the same
+/// ones [`wc_method_needs_wallet`] marks as not needing the wallet) are still
+/// answered locally (they touch no keys and must work before any Sage session is
+/// up); every key/sign method is delegated to Sage. Pure so the routing policy is
+/// guarded by a unit test against both modes.
+fn wc_route(source: WalletSource, method: &str) -> WcRoute {
+    match source {
+        WalletSource::Native => WcRoute::Native,
+        WalletSource::Sage => {
+            if wc_method_needs_wallet(method) {
+                WcRoute::Delegate
+            } else {
+                WcRoute::Native
+            }
+        }
+    }
+}
+
+/// The most-significant method names that would, if ever dispatched, hand back key
+/// material. They are NOT match arms in `wc_dispatch` (so they already fall to the
+/// 501 arm), but the delegate router must ALSO never forward them to Sage — a Sage
+/// that implemented such a method must not become a way to exfiltrate a seed through
+/// the dapp surface. Guarded by `delegate_never_forwards_export_class_methods`.
+fn is_export_class_method(method: &str) -> bool {
+    matches!(
+        method,
+        "export"
+            | "exportMnemonic"
+            | "chip0002_export"
+            | "chia_export"
+            | "getMnemonic"
+            | "getSecretKeys"
+            | "getPrivateKey"
+            | "getPrivateKeys"
+            | "revealSeed"
+    )
+}
+
 /// Dispatch one WalletConnect / CHIP-0002 request to the native signer, returning
 /// the bare result value Sage would return (the in-page WC client wraps it into
 /// the WC response). Signing methods require an unlocked wallet.
@@ -960,6 +1182,25 @@ async fn wc_dispatch(
             "chip0002_connect" => json!(true),
             _ => unreachable!("non-wallet method list is exhaustive"),
         });
+    }
+
+    // Wallet-source routing (#34): in Sage delegate mode, forward every key/sign
+    // method to Sage over the requester session instead of touching a local seed —
+    // Sage holds the keys. Native mode falls straight through to the local signer
+    // below (zero behaviour change). The handshake methods returned above are
+    // answered locally in either mode (they touch no keys).
+    let source = *st.source.lock().await;
+    if wc_route(source, method) == WcRoute::Delegate {
+        // Defence in depth: even if a Sage implemented an export-flavoured method,
+        // the delegate surface must never become a seed-exfiltration path. Reject
+        // before it ever reaches the relay (this matches the local 501 arm).
+        if is_export_class_method(method) {
+            return Err(wc_err(
+                StatusCode::NOT_IMPLEMENTED,
+                format!("unsupported WC method: {method}"),
+            ));
+        }
+        return delegate_to_sage(st, method, params).await;
     }
 
     let mnemonic = {
@@ -1692,6 +1933,84 @@ async fn wc_dispatch(
             StatusCode::NOT_IMPLEMENTED,
             format!("unsupported WC method: {other}"),
         )),
+    }
+}
+
+// ---- Sage delegate bridge (requester role, #34) -----------------------------
+//
+// When the wallet source is `Sage`, `wc_dispatch` cannot reach the relay from Rust:
+// the live WalletConnect *requester* SignClient (the dual of the responder) runs in
+// the wallet UI page, the one tab that stays open. So a delegated method is parked in
+// `AppState::delegate` and the call `await`s a oneshot; the page long-polls for it,
+// forwards it to Sage over the session, and POSTs the result back — which fulfils the
+// oneshot. This keeps `window.chia` and the per-origin consent gate untouched; only
+// the signer moves to Sage. The bridge lives only while the page is open (same v1
+// caveat as the responder): if the page goes away the waiter drops, surfacing as a
+// clean "Sage did not respond" error rather than a hang.
+
+/// How long a parked delegate request waits for the wallet page to forward it to Sage
+/// and return Sage's reply. Generous: a backgrounded mobile Sage can take a while to
+/// surface the prompt and have the user approve it.
+const DELEGATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Park `{method, params}` for the in-page Sage requester and await Sage's reply.
+/// Returns the bare result Sage returns (already normalized by the page to the same
+/// shapes the local signer returns, mirroring the hub's `sage.js`), or a wallet error
+/// if Sage rejects / the page is gone / it times out.
+async fn delegate_to_sage(
+    st: &AppState,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let (tx, rx) = oneshot::channel();
+    {
+        // Park the request for the page to pick up via /api/wc/delegate/next.
+        let mut bridge = st.delegate.lock().await;
+        let id = bridge.next_id.fetch_add(1, Ordering::Relaxed);
+        bridge.queue.push_back(DelegateRequest {
+            id,
+            method: method.to_string(),
+            params,
+            tx,
+        });
+    }
+    match tokio::time::timeout(DELEGATE_TIMEOUT, rx).await {
+        Ok(Ok(Ok(value))) => Ok(value),
+        // Sage (via the page) returned an explicit error for this method.
+        Ok(Ok(Err(msg))) => Err(wc_err(StatusCode::BAD_GATEWAY, msg)),
+        // The page dropped the waiter (tab closed) before answering.
+        Ok(Err(_)) => Err(wc_err(
+            StatusCode::BAD_GATEWAY,
+            "Sage wallet is not connected (open the DIG wallet and connect Sage in DIG settings)",
+        )),
+        Err(_) => Err(wc_err(
+            StatusCode::GATEWAY_TIMEOUT,
+            "Sage did not respond — open the Sage app and approve the request, then try again",
+        )),
+    }
+}
+
+/// Take the next parked delegate request for the in-page Sage requester, moving its
+/// oneshot sender into `waiters` keyed by id. Returns `None` when the queue is empty
+/// (the page long-polls, so an empty queue is the common case).
+async fn delegate_take_next(st: &AppState) -> Option<(u64, String, serde_json::Value)> {
+    let mut bridge = st.delegate.lock().await;
+    let req = bridge.queue.pop_front()?;
+    let DelegateRequest {
+        id,
+        method,
+        params,
+        tx,
+    } = req;
+    bridge.waiters.insert(id, tx);
+    Some((id, method, params))
+}
+
+/// Fulfil the parked delegate request `id` with Sage's result (`Ok`) or error
+/// message (`Err`). A no-op if the id is unknown (already fulfilled / timed out).
+async fn delegate_fulfill(st: &AppState, id: u64, result: Result<serde_json::Value, String>) {
+    if let Some(tx) = st.delegate.lock().await.waiters.remove(&id) {
+        let _ = tx.send(result);
     }
 }
 
@@ -2775,6 +3094,62 @@ async fn wc_request(
     }
 }
 
+// ---- Sage delegate pump endpoints (requester role, #34) ---------------------
+//
+// The in-page Sage requester (the wallet UI page, which owns the live SignClient)
+// drives the delegate bridge through these two endpoints. Both are SELF-ORIGIN ONLY:
+// the delegate queue carries the wallet's own dispatched requests (and would let a
+// caller feed arbitrary results back into `wc_dispatch`), so only the wallet's own
+// page may pump it — never a dapp. They are NOT a dapp signing surface.
+
+/// Long-poll for the next parked delegate request to forward to Sage. Returns
+/// `{ id, method, params }` when one is waiting, or `{}` when the queue is empty
+/// (the page polls on a short interval). Self-origin only.
+async fn wc_delegate_next(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "delegate pump is wallet-local only").into_response();
+    }
+    match delegate_take_next(&st).await {
+        Some((id, method, params)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "id": id, "method": method, "params": params })),
+        )
+            .into_response(),
+        None => (StatusCode::OK, Json(serde_json::json!({}))).into_response(),
+    }
+}
+
+/// The page returns Sage's reply for a delegate request: `{ id, result }` on success
+/// (the bare, page-normalized value `wc_dispatch` hands back to the caller) or
+/// `{ id, error }` on failure (Sage rejected, the method is unsupported, etc.). This
+/// fulfils the parked oneshot. Self-origin only.
+#[derive(Deserialize)]
+struct DelegateResult {
+    id: u64,
+    /// Sage's bare result (present on success). Mutually exclusive with `error`.
+    #[serde(default)]
+    result: Option<serde_json::Value>,
+    /// Error message (present on failure).
+    #[serde(default)]
+    error: Option<String>,
+}
+
+async fn wc_delegate_result(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<DelegateResult>,
+) -> Response {
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "delegate pump is wallet-local only").into_response();
+    }
+    let outcome = match req.error {
+        Some(msg) => Err(msg),
+        None => Ok(req.result.unwrap_or(serde_json::Value::Null)),
+    };
+    delegate_fulfill(&st, req.id, outcome).await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
 /// The dapp connections the wallet UI shows: approved allow-list + pending requests.
 #[derive(Serialize)]
 struct ConnectionsResp {
@@ -2856,9 +3231,15 @@ pub async fn run() {
             "/api/wc/project-id",
             get(wc_project_id_get).post(wc_project_id_set),
         )
+        .route(
+            "/api/wallet/source",
+            get(wallet_source_get).post(wallet_source_set),
+        )
         .route("/api/wallet/pubkey", get(wallet_pubkey))
         .route("/api/export", post(export))
         .route("/api/wc/request", post(wc_request).options(wc_preflight))
+        .route("/api/wc/delegate/next", get(wc_delegate_next))
+        .route("/api/wc/delegate/result", post(wc_delegate_result))
         .route("/api/wc/connections", get(wc_connections))
         .route("/api/wc/approve", post(wc_approve))
         .route("/api/wc/reject", post(wc_reject))
@@ -2890,6 +3271,13 @@ const WC_BUNDLE_JS: &str = include_str!("wc-bundle.js");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serializes the tests that mutate the process-global `LOCALAPPDATA` env (the
+    /// seed/connections/wallet-source dir). Without it, `cargo test`'s parallel runner
+    /// can have one test clear the env mid-flight under another, making disk
+    /// persistence assertions flaky. A tokio mutex so the guard is held safely across
+    /// the `.await`s in these async tests. Held for the whole body of each such test.
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[test]
     fn default_send_is_a_dry_run_never_broadcasts() {
@@ -3006,6 +3394,291 @@ mod tests {
         // the badge-minting path from an unapproved dapp triggering a take.
         assert_eq!(wc_gate("chia_takeOffer", false), Gate::Forbidden);
         assert_eq!(wc_gate("chia_takeOffer", true), Gate::Allowed);
+    }
+
+    // -- Wallet source: Native local keys vs. Sage delegate (#34) --------------
+
+    #[test]
+    fn wallet_source_round_trips_through_its_wire_token() {
+        // The persisted/served token is stable and the parse is total (unknown → the
+        // safe Native default, so a corrupt value never strands the wallet).
+        assert_eq!(WalletSource::Native.as_str(), "native");
+        assert_eq!(WalletSource::Sage.as_str(), "sage");
+        assert_eq!(WalletSource::from_str("native"), WalletSource::Native);
+        assert_eq!(WalletSource::from_str("sage"), WalletSource::Sage);
+        assert_eq!(WalletSource::from_str("garbage"), WalletSource::Native);
+        assert_eq!(WalletSource::from_str(""), WalletSource::Native);
+        // Default is Native — the local-keys behaviour that predates this feature.
+        assert_eq!(WalletSource::default(), WalletSource::Native);
+    }
+
+    #[test]
+    fn native_mode_routes_every_method_to_the_local_signer() {
+        // In Native mode nothing is delegated — the local signer answers everything,
+        // exactly as before this feature (zero regression).
+        for m in [
+            "chip0002_chainId",
+            "chip0002_connect",
+            "chip0002_getPublicKeys",
+            "chip0002_signMessage",
+            "chip0002_signCoinSpends",
+            "chia_getAddress",
+            "chia_signMessageByAddress",
+            "chia_takeOffer",
+            "chia_createOffer",
+            "chia_send",
+        ] {
+            assert_eq!(
+                wc_route(WalletSource::Native, m),
+                WcRoute::Native,
+                "{m} must stay local in Native mode"
+            );
+        }
+    }
+
+    #[test]
+    fn sage_mode_delegates_signing_methods_but_answers_the_handshake_locally() {
+        // The keyless handshake methods are answered locally even in Sage mode (they
+        // touch no keys and must work before any Sage session is up)…
+        assert_eq!(
+            wc_route(WalletSource::Sage, "chip0002_chainId"),
+            WcRoute::Native
+        );
+        assert_eq!(
+            wc_route(WalletSource::Sage, "chip0002_connect"),
+            WcRoute::Native
+        );
+        // …but every method that reads keys or signs is delegated to Sage.
+        for m in [
+            "chip0002_getPublicKeys",
+            "chip0002_signMessage",
+            "chip0002_signCoinSpends",
+            "chia_getAddress",
+            "chia_signMessageByAddress",
+            "chip0002_getAssetBalance",
+            "chip0002_getAssetCoins",
+            "chia_takeOffer",
+            "chia_createOffer",
+            "chia_getOfferSummary",
+            "chia_send",
+            "chia_getNfts",
+            "chia_getDids",
+            "chia_getTransactions",
+        ] {
+            assert_eq!(
+                wc_route(WalletSource::Sage, m),
+                WcRoute::Delegate,
+                "{m} must delegate to Sage in Sage mode"
+            );
+        }
+    }
+
+    #[test]
+    fn export_class_methods_are_recognised_so_delegate_never_forwards_them() {
+        // The seed-revealing method names the delegate router must refuse before they
+        // ever reach Sage (defence in depth — export is never a dispatchable method,
+        // local OR delegated).
+        for m in [
+            "export",
+            "exportMnemonic",
+            "chip0002_export",
+            "chia_export",
+            "getMnemonic",
+            "getSecretKeys",
+            "getPrivateKey",
+            "getPrivateKeys",
+            "revealSeed",
+        ] {
+            assert!(is_export_class_method(m), "{m} must be export-class");
+        }
+        // Ordinary signing methods are NOT export-class (they delegate normally).
+        assert!(!is_export_class_method("chip0002_signMessage"));
+        assert!(!is_export_class_method("chip0002_getPublicKeys"));
+    }
+
+    /// In Sage mode `wc_dispatch` must NOT touch the local seed — it parks the request
+    /// on the delegate bridge and awaits Sage. Drive the dual: a background task plays
+    /// the in-page Sage requester (take the parked request, return a canned result),
+    /// and assert the dispatched method routes through the bridge and returns Sage's
+    /// value. With NO unlocked local session, a local-signer route would 401; getting
+    /// Sage's value back proves the request went to Sage, not the local keys.
+    #[tokio::test]
+    async fn sage_mode_dispatch_routes_through_the_delegate_bridge_not_local_keys() {
+        let st = Arc::new(AppState::default());
+        *st.source.lock().await = WalletSource::Sage;
+        // Deliberately leave the local session locked (None): Native would 401 here.
+
+        // The "Sage requester" pump: pick up the parked request and answer it.
+        let pump = {
+            let st = st.clone();
+            tokio::spawn(async move {
+                loop {
+                    if let Some((id, method, params)) = delegate_take_next(&st).await {
+                        // Echo back something Sage-shaped that proves the round-trip.
+                        let result = serde_json::json!({
+                            "fromSage": true,
+                            "method": method,
+                            "echo": params,
+                        });
+                        delegate_fulfill(&st, id, Ok(result)).await;
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+        };
+
+        let out = wc_dispatch(
+            &st,
+            "chip0002_getPublicKeys",
+            serde_json::json!({ "limit": 5 }),
+        )
+        .await
+        .expect("delegate dispatch returns Sage's result, not a local 401");
+        assert_eq!(out["fromSage"], true);
+        assert_eq!(out["method"], "chip0002_getPublicKeys");
+        assert_eq!(out["echo"]["limit"], 5);
+        pump.await.unwrap();
+    }
+
+    /// The delegate bridge propagates Sage's ERRORS (a user rejection / unsupported
+    /// method) back as a wallet error, rather than hanging or faking success.
+    #[tokio::test]
+    async fn sage_mode_dispatch_surfaces_sage_errors() {
+        let st = Arc::new(AppState::default());
+        *st.source.lock().await = WalletSource::Sage;
+        let pump = {
+            let st = st.clone();
+            tokio::spawn(async move {
+                loop {
+                    if let Some((id, _m, _p)) = delegate_take_next(&st).await {
+                        delegate_fulfill(&st, id, Err("User rejected".to_string())).await;
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+        };
+        let err = wc_dispatch(&st, "chia_send", serde_json::json!({}))
+            .await
+            .expect_err("a Sage rejection must surface as an error");
+        assert_eq!(err.0, StatusCode::BAD_GATEWAY);
+        assert!(err.1.contains("User rejected"));
+        pump.await.unwrap();
+    }
+
+    /// Even in Sage mode, an export-flavoured method is refused (501) BEFORE it can be
+    /// parked for Sage — the delegate surface is never a seed-exfiltration path. (A
+    /// pump is started to prove the request never reaches it: if it did, the test
+    /// would see the pumped value instead of the 501.)
+    #[tokio::test]
+    async fn delegate_never_forwards_export_class_methods() {
+        let st = Arc::new(AppState::default());
+        *st.source.lock().await = WalletSource::Sage;
+        let leaked = Arc::new(AtomicU64::new(0));
+        let pump = {
+            let st = st.clone();
+            let leaked = leaked.clone();
+            tokio::spawn(async move {
+                // Run briefly; if any export-class request is ever parked, flag it.
+                for _ in 0..40 {
+                    if let Some((id, _m, _p)) = delegate_take_next(&st).await {
+                        leaked.fetch_add(1, Ordering::Relaxed);
+                        delegate_fulfill(&st, id, Ok(serde_json::json!("LEAK"))).await;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+        };
+        for method in ["export", "exportMnemonic", "getSecretKeys", "revealSeed"] {
+            let r = wc_dispatch(&st, method, serde_json::Value::Null).await;
+            match r {
+                Err((code, _)) => assert_eq!(
+                    code,
+                    StatusCode::NOT_IMPLEMENTED,
+                    "delegate mode must reject {method} as unsupported, never forward it"
+                ),
+                Ok(v) => panic!("{method} must not be delegatable, got {v:?}"),
+            }
+        }
+        pump.await.unwrap();
+        assert_eq!(
+            leaked.load(Ordering::Relaxed),
+            0,
+            "no export-class method may ever be parked for Sage"
+        );
+    }
+
+    /// The delegate pump endpoints are wallet-local: a dapp origin cannot pull the
+    /// parked queue or feed results back into the dispatcher.
+    #[tokio::test]
+    async fn delegate_pump_endpoints_are_self_origin_only() {
+        let st = Arc::new(AppState::default());
+        let dapp = origin_headers("https://evil.example.com");
+        assert_eq!(
+            wc_delegate_next(State(st.clone()), dapp.clone())
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let r = wc_delegate_result(
+            State(st),
+            dapp,
+            Json(DelegateResult {
+                id: 0,
+                result: Some(serde_json::json!("x")),
+                error: None,
+            }),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// The wallet-source setter is wallet-local only (a dapp cannot flip the wallet to
+    /// Sage / back), and a self-origin set persists + is reflected by the getter.
+    #[tokio::test]
+    async fn wallet_source_set_is_self_origin_only_and_persists() {
+        let _g = ENV_LOCK.lock().await;
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("LOCALAPPDATA", td.path());
+        let st = Arc::new(AppState::default());
+
+        // A dapp origin is refused.
+        let r = wallet_source_set(
+            State(st.clone()),
+            origin_headers("https://evil.example.com"),
+            Json(SetWalletSource {
+                source: "sage".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        // …and did NOT change the mode.
+        assert_eq!(*st.source.lock().await, WalletSource::Native);
+
+        // The self origin can flip to Sage; it persists to disk and the getter agrees.
+        let self_origin = format!("http://127.0.0.1:{}", wallet_port());
+        let r = wallet_source_set(
+            State(st.clone()),
+            origin_headers(&self_origin),
+            Json(SetWalletSource {
+                source: "sage".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(*st.source.lock().await, WalletSource::Sage);
+        let got = wallet_source_get(State(st)).await;
+        assert_eq!(got.0.source, "sage");
+
+        // It persisted to disk: read the file directly from the tempdir (not via the
+        // process-global env, which a parallel env-mutating test could have changed).
+        let persisted = std::fs::read(td.path().join("DigWallet").join("wallet-source.json"))
+            .expect("wallet-source.json written");
+        let v: serde_json::Value = serde_json::from_slice(&persisted).unwrap();
+        assert_eq!(v["source"], "sage");
+
+        std::env::remove_var("LOCALAPPDATA");
     }
 
     #[test]
@@ -3365,6 +4038,7 @@ mod tests {
     /// the cache dir at a throwaway tempdir via LOCALAPPDATA so the test is hermetic.
     #[tokio::test]
     async fn cache_list_self_origin_returns_capsule_list() {
+        let _g = ENV_LOCK.lock().await;
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("LOCALAPPDATA", td.path());
         let self_origin = format!("http://127.0.0.1:{}", wallet_port());
@@ -3503,6 +4177,63 @@ mod tests {
         assert!(SETTINGS_HTML.contains("/api/wallet/pubkey"));
     }
 
+    #[test]
+    fn settings_page_wires_the_wallet_source_control() {
+        // The "Wallet source" control must read/write the source endpoint and offer
+        // both choices, and the Sage path must load the WC bundle (requester role) +
+        // the projectId so the connect-to-Sage pairing can run, or the surface no-ops.
+        assert!(
+            SETTINGS_HTML.contains("/api/wallet/source"),
+            "reads/sets the source"
+        );
+        assert!(SETTINGS_HTML.contains("value=\"native\""), "Native option");
+        assert!(SETTINGS_HTML.contains("value=\"sage\""), "Sage option");
+        // Connect-to-Sage flow: the bundle (the WC requester), projectId, the pairing
+        // URI surface, and a Disconnect.
+        assert!(
+            SETTINGS_HTML.contains("/wc-bundle.js"),
+            "loads the WC requester bundle"
+        );
+        assert!(
+            SETTINGS_HTML.contains("/api/wc/project-id"),
+            "needs the relay projectId"
+        );
+        assert!(SETTINGS_HTML.contains("DigWC"), "uses the requester API");
+        assert!(
+            SETTINGS_HTML.contains("connectSage"),
+            "starts the Sage pairing"
+        );
+    }
+
+    #[test]
+    fn wallet_page_runs_the_sage_delegate_pump() {
+        // When the wallet source is Sage, the wallet page must (a) host the WC
+        // requester (DigWC.sageRequest), and (b) pump the delegate bridge — pull
+        // parked requests, forward to Sage, return results — or delegate dispatch
+        // would hang. Guard the wiring the same way the responder is guarded.
+        assert!(
+            UI_HTML.contains("/api/wallet/source"),
+            "reads the active source"
+        );
+        assert!(
+            UI_HTML.contains("/api/wc/delegate/next"),
+            "pulls parked requests"
+        );
+        assert!(
+            UI_HTML.contains("/api/wc/delegate/result"),
+            "returns Sage's replies"
+        );
+        assert!(
+            UI_HTML.contains("sageRequest"),
+            "forwards over the requester session"
+        );
+        // The bundle must expose the requester role, not just the responder.
+        assert!(
+            WC_BUNDLE_JS.contains("sageRequest"),
+            "wc-bundle.js exposes the Sage requester role"
+        );
+    }
+
     // -- Key export is unreachable from every dapp-facing path -----------------
 
     /// The master mnemonic must NEVER be reachable through the WC / injected
@@ -3599,6 +4330,7 @@ mod tests {
         const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
         const PW: &str = "correct horse battery";
 
+        let _g = ENV_LOCK.lock().await;
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("LOCALAPPDATA", td.path());
         // Encrypt + persist the seed exactly as `import` does.
