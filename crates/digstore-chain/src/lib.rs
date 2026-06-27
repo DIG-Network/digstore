@@ -17,6 +17,7 @@ pub mod option;
 pub mod seed;
 pub mod send;
 pub mod singleton;
+pub mod streaming;
 pub mod unlock;
 pub mod wallet;
 
