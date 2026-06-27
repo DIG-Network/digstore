@@ -92,11 +92,84 @@ pub unsafe extern "C" fn dig_rpc(request_json: *const c_char) -> *mut c_char {
     }
 }
 
-/// Free a string previously returned by [`dig_rpc`].
+/// Execute one wallet request in-process and return a JSON envelope of the answer.
+///
+/// This is the wallet counterpart to [`dig_rpc`]: the DIG browser's broker process
+/// calls it to drive the per-origin wallet surface (the CHIP-0002 / chia methods)
+/// DIRECTLY, with no loopback HTTP hop. It runs the SAME dispatch the loopback
+/// `/api/wc/request` handler runs (`dig_wallet::wallet_dispatch`) against the same
+/// process-global wallet state, so the per-origin approval gate, the unlocked
+/// session, and the wallet source are shared with the loopback wallet UI.
+///
+/// `origin` is the calling page's web origin (supplied first-hand by the browser, so
+/// — unlike a header a page could forge — it is UNSPOOFABLE and is what the approval
+/// gate keys on). `request_json` is the `{method, params}` body. Both are
+/// NUL-terminated UTF-8 strings owned by the caller; a null pointer or invalid UTF-8
+/// yields an error envelope rather than undefined behavior.
+///
+/// The return value is a newly-allocated NUL-terminated UTF-8 JSON ENVELOPE
+/// `{"status":<u16>,"body":<body>}`, where `status` is the HTTP-equivalent status the
+/// dispatch produced (200 ok / 202 pending / 403 not-approved / 4xx-5xx errors) and
+/// `body` is the dispatch's JSON body embedded as raw JSON (the `{"data":...}` /
+/// `{"error":...}` value — NOT a double-encoded string). The caller MUST return the
+/// pointer to [`dig_free`] (same allocation discipline as [`dig_rpc`]).
+///
+/// Blocking: drives the request to completion on the shared runtime, so callers must
+/// invoke it from a thread allowed to block (never the browser UI/IO thread).
+/// Concurrent calls are safe.
 ///
 /// # Safety
-/// `ptr` must be a pointer returned by [`dig_rpc`] and not yet freed; passing any
-/// other value (or freeing twice) is undefined behavior. Null is ignored.
+/// `origin` and `request_json` must each be a valid NUL-terminated C string for the
+/// duration of the call (or null). The returned pointer must be freed exactly once
+/// with [`dig_free`].
+#[no_mangle]
+pub unsafe extern "C" fn dig_wallet_rpc(
+    origin: *const c_char,
+    request_json: *const c_char,
+) -> *mut c_char {
+    // Read both C strings up front; a null pointer is treated as an empty string so a
+    // missing origin/body degrades to a clean wallet error, never UB. `to_string_lossy`
+    // makes invalid UTF-8 lossy rather than panicking.
+    let read = |p: *const c_char| -> String {
+        if p.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+        }
+    };
+    let origin = read(origin);
+    let request_json = read(request_json);
+
+    let envelope = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let rt = runtime();
+        let (status, body) = rt
+            .rt
+            .block_on(dig_wallet::wallet_dispatch(&origin, &request_json));
+        // Embed the body as RAW JSON (not a re-encoded string). It is always a JSON
+        // object from `wallet_dispatch`; if it ever weren't parseable, fall back to a
+        // JSON null body so the envelope itself is always valid JSON.
+        let body_value: serde_json::Value =
+            serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        serde_json::json!({ "status": status, "body": body_value }).to_string()
+    }))
+    // A panic during dispatch (should not happen) becomes a 500 error envelope rather
+    // than crossing the FFI boundary.
+    .unwrap_or_else(|_| {
+        r#"{"status":500,"body":{"error":"wallet dispatch panicked"}}"#.to_string()
+    });
+
+    match CString::new(envelope) {
+        Ok(c) => c.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Free a string previously returned by [`dig_rpc`] or [`dig_wallet_rpc`].
+///
+/// # Safety
+/// `ptr` must be a pointer returned by [`dig_rpc`] or [`dig_wallet_rpc`] and not yet
+/// freed; passing any other value (or freeing twice) is undefined behavior. Null is
+/// ignored.
 #[no_mangle]
 pub unsafe extern "C" fn dig_free(ptr: *mut c_char) {
     if !ptr.is_null() {
@@ -129,5 +202,56 @@ mod tests {
         unsafe { dig_free(resp_ptr) };
         assert!(resp.contains("method not found"), "got: {resp}");
         assert!(resp.contains("\"id\":7"), "id should round-trip: {resp}");
+    }
+
+    // The wallet FFI counterpart, needing no network: `chip0002_chainId` is a public
+    // method (no origin approval, no unlocked session) that the wallet always answers
+    // `mainnet`. Proves dig_wallet_rpc returns a well-formed {status, body} envelope
+    // with the body embedded as RAW JSON (not double-encoded), and that dig_free frees
+    // it without UB — the browser-side wallet path with no loopback server.
+    #[test]
+    fn wallet_ffi_roundtrip_chain_id_envelope() {
+        // Isolate the identity + cache (the runtime brings up the node + wallet).
+        let tmp = std::env::temp_dir().join("dig-runtime-wallet-test");
+        std::env::set_var("DIG_IDENTITY_DIR", tmp.join("id"));
+        std::env::set_var("DIG_NODE_CACHE", tmp.join("cache"));
+
+        dig_runtime_start();
+        let origin = CString::new("https://anything.example").unwrap();
+        let req = CString::new(r#"{"method":"chip0002_chainId"}"#).unwrap();
+        let resp_ptr = unsafe { dig_wallet_rpc(origin.as_ptr(), req.as_ptr()) };
+        assert!(!resp_ptr.is_null());
+        let resp = unsafe { CStr::from_ptr(resp_ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { dig_free(resp_ptr) };
+
+        // The envelope is valid JSON: { "status": 200, "body": { "data": "mainnet" } }.
+        let env: serde_json::Value = serde_json::from_str(&resp).expect("envelope is JSON");
+        assert_eq!(env["status"], 200, "chainId is a 200: {resp}");
+        // body is RAW JSON (an object), not a re-encoded string.
+        assert!(env["body"].is_object(), "body embedded as raw JSON: {resp}");
+        assert_eq!(env["body"]["data"], "mainnet", "chainId data: {resp}");
+    }
+
+    // A null origin/request pointer must yield an error envelope, never UB. (A null
+    // request is an empty body → the dispatch's malformed-JSON 400 error envelope.)
+    #[test]
+    fn wallet_ffi_null_pointers_yield_error_envelope_not_ub() {
+        let tmp = std::env::temp_dir().join("dig-runtime-wallet-null-test");
+        std::env::set_var("DIG_IDENTITY_DIR", tmp.join("id"));
+        std::env::set_var("DIG_NODE_CACHE", tmp.join("cache"));
+
+        dig_runtime_start();
+        let resp_ptr = unsafe { dig_wallet_rpc(std::ptr::null(), std::ptr::null()) };
+        assert!(!resp_ptr.is_null(), "null inputs still return an envelope");
+        let resp = unsafe { CStr::from_ptr(resp_ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { dig_free(resp_ptr) };
+        let env: serde_json::Value = serde_json::from_str(&resp).expect("envelope is JSON");
+        // An empty body is malformed → the 400 error envelope.
+        assert_eq!(env["status"], 400, "null/empty body is a 400: {resp}");
+        assert!(env["body"]["error"].is_string(), "carries an error: {resp}");
     }
 }

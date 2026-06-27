@@ -22,7 +22,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::{
     extract::State,
@@ -1936,6 +1936,97 @@ async fn wc_dispatch(
     }
 }
 
+// ---- The single dispatch path: HTTP handler + native FFI share it -----------
+//
+// `wallet_dispatch` is the ONE place a wallet request — its calling origin + the
+// `{method, params}` JSON — turns into a `(status, body)` answer. Two callers reach
+// it: the loopback HTTP handler `wc_request` (which parses the origin from the
+// `Origin` header and maps the result to an axum response), and the browser
+// process directly via the C-ABI FFI `dig_wallet_rpc` in `dig-runtime` (which has
+// no HTTP server in the path — it knows the calling page's origin first-hand and is
+// thus UNSPOOFABLE). Both share ONE process-global `AppState` (`shared_state`) so
+// the per-origin approval allow-list, the unlocked session, and the wallet source
+// are consistent no matter which entrypoint is used.
+
+/// The process-global wallet state, shared by the loopback HTTP server (`run`) and
+/// the native FFI dispatch (`wallet_dispatch`). Built once, lazily — the wallet has
+/// exactly one approval allow-list / session / source per browser process, and both
+/// entrypoints must see the same one (an FFI approval must let the HTTP path through
+/// and vice-versa).
+fn shared_state() -> &'static Arc<AppState> {
+    static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
+    STATE.get_or_init(|| Arc::new(AppState::default()))
+}
+
+/// Dispatch one wallet request against `st`, returning the HTTP-equivalent
+/// `(status, body_json)` the loopback handler produces. This is the shared core of
+/// [`wallet_dispatch`]; it takes the state explicitly so it can be unit-tested with
+/// a fresh, isolated `AppState`. `origin` is the calling web origin (from the
+/// unspoofable `Origin` header over HTTP, or supplied first-hand by the browser
+/// process over FFI); `request_json` is the `{method, params}` body.
+///
+/// The status/body mirror the HTTP path exactly: 200 `{"data":...}` on success, 202
+/// `{"status":"pending"}` for a `connect` from an unapproved origin (recorded
+/// pending), 403 `{"error":...}` for a key/sign method from an unapproved origin,
+/// 400 `{"error":...}` for a malformed request body, and the dispatcher's own
+/// status (401/4xx/5xx/501) `{"error":...}` otherwise.
+async fn wallet_dispatch_with(st: &AppState, origin: &str, request_json: &str) -> (u16, String) {
+    let req: WcRequest = match serde_json::from_str(request_json) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST.as_u16(),
+                serde_json::json!({ "error": format!("bad request: {e}") }).to_string(),
+            );
+        }
+    };
+
+    let approved = st.approvals.lock().await.is_approved(origin);
+    match wc_gate(&req.method, approved) {
+        Gate::NeedsApproval => {
+            if !origin.is_empty() {
+                st.approvals.lock().await.pending.insert(origin.to_string());
+            }
+            return (
+                StatusCode::ACCEPTED.as_u16(),
+                serde_json::json!({ "status": "pending" }).to_string(),
+            );
+        }
+        Gate::Forbidden => {
+            return (
+                StatusCode::FORBIDDEN.as_u16(),
+                serde_json::json!({
+                    "error": "origin not connected — call chip0002_connect and approve it in the DIG wallet"
+                })
+                .to_string(),
+            );
+        }
+        Gate::Public | Gate::Allowed => {}
+    }
+
+    match wc_dispatch(st, &req.method, req.params).await {
+        Ok(data) => (
+            StatusCode::OK.as_u16(),
+            serde_json::json!({ "data": data }).to_string(),
+        ),
+        Err((code, msg)) => (
+            code.as_u16(),
+            serde_json::json!({ "error": msg }).to_string(),
+        ),
+    }
+}
+
+/// Dispatch one wallet request in-process against the process-global wallet state,
+/// returning the HTTP-equivalent `(status, body_json)`. The native FFI entrypoint
+/// (`dig_runtime::dig_wallet_rpc`) calls this directly so the browser process can
+/// drive the per-origin wallet surface with NO loopback HTTP hop — the same dispatch
+/// (and the same approval gate / session / source) the loopback `wc_request` handler
+/// uses. `origin` is the calling page's web origin (supplied first-hand by the
+/// browser, hence unspoofable); `request_json` is the `{method, params}` body.
+pub async fn wallet_dispatch(origin: &str, request_json: &str) -> (u16, String) {
+    wallet_dispatch_with(shared_state(), origin, request_json).await
+}
+
 // ---- Sage delegate bridge (requester role, #34) -----------------------------
 //
 // When the wallet source is `Sage`, `wc_dispatch` cannot reach the relay from Rust:
@@ -3022,26 +3113,24 @@ fn origin_of(headers: &HeaderMap) -> String {
         .to_string()
 }
 
-/// A JSON response carrying the CORS header a dapp page needs to read it. Security
-/// is the per-origin approval gate, not CORS, so the origin is reflected.
-fn cors_json(origin: &str, status: StatusCode, body: serde_json::Value) -> Response {
-    let mut resp = (status, Json(body)).into_response();
+/// Reflect the dapp's origin into a response's CORS headers so the page can read it.
+/// Security is the per-origin approval gate (not CORS), so the origin is reflected
+/// verbatim (an empty origin becomes `null`). Shared by every dapp-facing reply so
+/// the header policy lives in one place.
+fn attach_cors_origin(resp: &mut Response, origin: &str) {
     let h = resp.headers_mut();
     if let Ok(v) = HeaderValue::from_str(if origin.is_empty() { "null" } else { origin }) {
         h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
     }
     h.insert(header::VARY, HeaderValue::from_static("Origin"));
-    resp
 }
 
 /// CORS preflight for the dapp-facing `/api/wc/request` endpoint.
 async fn wc_preflight(headers: HeaderMap) -> Response {
     let origin = origin_of(&headers);
     let mut resp = StatusCode::NO_CONTENT.into_response();
+    attach_cors_origin(&mut resp, &origin);
     let h = resp.headers_mut();
-    if let Ok(v) = HeaderValue::from_str(if origin.is_empty() { "null" } else { &origin }) {
-        h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
-    }
     h.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
         HeaderValue::from_static("POST, OPTIONS"),
@@ -3050,48 +3139,32 @@ async fn wc_preflight(headers: HeaderMap) -> Response {
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         HeaderValue::from_static("content-type"),
     );
-    h.insert(header::VARY, HeaderValue::from_static("Origin"));
     resp
 }
 
-/// The dapp-facing WalletConnect endpoint. Applies the per-origin consent gate,
-/// then dispatches to the native signer, always with CORS so the dapp can read
-/// the reply.
-async fn wc_request(
-    State(st): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<WcRequest>,
-) -> Response {
+/// The dapp-facing WalletConnect endpoint. A thin HTTP wrapper over the shared
+/// [`wallet_dispatch`] core: it reads the origin from the unspoofable `Origin`
+/// header + the `{method, params}` request body, runs the ONE dispatch path
+/// (consent gate + signer), and maps the `(status, body_json)` it returns to a CORS
+/// axum response so the dapp can read the reply. There is no behaviour difference
+/// from the native FFI path — both go through `wallet_dispatch`.
+async fn wc_request(State(st): State<Arc<AppState>>, headers: HeaderMap, body: String) -> Response {
     let origin = origin_of(&headers);
-    let approved = st.approvals.lock().await.is_approved(&origin);
-
-    match wc_gate(&req.method, approved) {
-        Gate::NeedsApproval => {
-            if !origin.is_empty() {
-                st.approvals.lock().await.pending.insert(origin.clone());
-            }
-            return cors_json(
-                &origin,
-                StatusCode::ACCEPTED,
-                serde_json::json!({ "status": "pending" }),
-            );
-        }
-        Gate::Forbidden => {
-            return cors_json(
-                &origin,
-                StatusCode::FORBIDDEN,
-                serde_json::json!({
-                    "error": "origin not connected — call chip0002_connect and approve it in the DIG wallet"
-                }),
-            );
-        }
-        Gate::Public | Gate::Allowed => {}
-    }
-
-    match wc_dispatch(&st, &req.method, req.params).await {
-        Ok(data) => cors_json(&origin, StatusCode::OK, serde_json::json!({ "data": data })),
-        Err((code, msg)) => cors_json(&origin, code, serde_json::json!({ "error": msg })),
-    }
+    let (status, body_json) = wallet_dispatch_with(&st, &origin, &body).await;
+    // Re-attach CORS (the dispatch core is transport-agnostic). The body is already
+    // a JSON string from the shared core, so emit it verbatim rather than re-encoding.
+    let code = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut resp = (
+        code,
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )],
+        body_json,
+    )
+        .into_response();
+    attach_cors_origin(&mut resp, &origin);
+    resp
 }
 
 // ---- Sage delegate pump endpoints (requester role, #34) ---------------------
@@ -3208,7 +3281,10 @@ async fn wc_revoke(
 /// served over loopback HTTP (never reachable off-host); native BLS signing runs
 /// in this same process.
 pub async fn run() {
-    let state = Arc::new(AppState::default());
+    // Share the ONE process-global state with the native FFI dispatch
+    // (`wallet_dispatch`), so an approval granted over either entrypoint is honoured
+    // by both, and the unlocked session / wallet source are consistent.
+    let state = shared_state().clone();
     let app = Router::new()
         .route("/", get(index))
         .route("/wc-bundle.js", get(wc_bundle_js))
@@ -4270,6 +4346,126 @@ mod tests {
                 Ok(v) => panic!("{method} must not be dispatchable, got {v:?}"),
             }
         }
+    }
+
+    // -- wallet_dispatch: the one dispatch path (HTTP handler + FFI share it) ----
+
+    /// `wallet_dispatch_with` is the single core both the HTTP `wc_request` handler
+    /// and the native FFI (`dig_wallet_rpc`) call. An UNAPPROVED origin asking a
+    /// key/sign method must be gated exactly as the HTTP path is: 403 with the
+    /// `{"error":...}` "origin not connected" body. The per-origin gate keys on the
+    /// passed `origin` (now supplied unspoofably by the browser process), so a bogus
+    /// origin never slips through.
+    #[tokio::test]
+    async fn wallet_dispatch_gates_unapproved_origin_for_sign_methods() {
+        let st = AppState::default();
+        let req =
+            r#"{"method":"chip0002_signMessage","params":{"message":"hi","publicKey":"0xabc"}}"#;
+        let (status, body) = wallet_dispatch_with(&st, "https://dapp.example.com", req).await;
+        assert_eq!(status, 403, "unapproved sign method is forbidden");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(
+            v.get("data").is_none(),
+            "a forbidden request must NOT carry data"
+        );
+        assert!(
+            v["error"].as_str().unwrap().contains("not connected"),
+            "error body matches the HTTP path's 'origin not connected' shape: {body}"
+        );
+    }
+
+    /// A `chip0002_connect` from an unapproved origin parks it pending and returns the
+    /// HTTP-equivalent 202 with `{"status":"pending"}` — identical to the HTTP handler.
+    #[tokio::test]
+    async fn wallet_dispatch_connect_from_unapproved_origin_is_pending_202() {
+        let st = AppState::default();
+        let (status, body) = wallet_dispatch_with(
+            &st,
+            "https://newdapp.example",
+            r#"{"method":"chip0002_connect"}"#,
+        )
+        .await;
+        assert_eq!(status, 202, "connect from a new origin is pending approval");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["status"], "pending");
+        // …and the origin was recorded as pending so the wallet UI can approve it.
+        assert!(st
+            .approvals
+            .lock()
+            .await
+            .pending
+            .contains("https://newdapp.example"));
+    }
+
+    /// The self origin (the wallet's own UI) routes straight through the gate (it is
+    /// implicitly approved) — a key method reaches the signer rather than being
+    /// forbidden. With the wallet locked it surfaces the signer's 401, proving it
+    /// passed the consent gate and hit dispatch (a Forbidden gate would be 403).
+    #[tokio::test]
+    async fn wallet_dispatch_self_origin_routes_through_to_the_signer() {
+        let st = AppState::default();
+        // Pin Native so this test exercises the LOCAL signer's locked-gate regardless
+        // of any on-disk wallet-source the dev machine has (Sage would delegate).
+        *st.source.lock().await = WalletSource::Native;
+        let self_origin = format!("http://127.0.0.1:{}", wallet_port());
+        let (status, body) = wallet_dispatch_with(
+            &st,
+            &self_origin,
+            r#"{"method":"chip0002_getPublicKeys","params":{}}"#,
+        )
+        .await;
+        // Locked session → the signer returns 401 (NOT the gate's 403).
+        assert_eq!(
+            status, 401,
+            "self origin passes the gate; locked signer 401s"
+        );
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(v["error"].as_str().unwrap().contains("locked"), "{body}");
+    }
+
+    /// An APPROVED origin routes through the gate to the signer, exactly like the self
+    /// origin (proving the approval allow-list — not just self-origin — opens the path).
+    #[tokio::test]
+    async fn wallet_dispatch_approved_origin_routes_through() {
+        let st = AppState::default();
+        // Pin Native (see the self-origin test) so the locked LOCAL signer answers.
+        *st.source.lock().await = WalletSource::Native;
+        st.approvals
+            .lock()
+            .await
+            .approved
+            .insert("https://good.example".to_string());
+        let (status, _body) = wallet_dispatch_with(
+            &st,
+            "https://good.example",
+            r#"{"method":"chip0002_getPublicKeys","params":{}}"#,
+        )
+        .await;
+        // Passed the gate (not 403); locked signer 401s.
+        assert_eq!(status, 401, "approved origin passes the gate to the signer");
+    }
+
+    /// `chip0002_chainId` is public (no approval, no unlock) and returns the OK 200
+    /// `{"data":"mainnet"}` body — the shape the HTTP path returns. Driven through the
+    /// PUBLIC `wallet_dispatch` (the FFI entrypoint's exact callee) to prove the
+    /// process-global state path answers it too, with no origin and no session.
+    #[tokio::test]
+    async fn wallet_dispatch_chain_id_is_public_and_returns_mainnet() {
+        let (status, body) = wallet_dispatch("", r#"{"method":"chip0002_chainId"}"#).await;
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["data"], "mainnet", "chainId data is mainnet: {body}");
+    }
+
+    /// Malformed request JSON is a clean 400 `{"error":...}` (never a panic / UB),
+    /// since the browser process may hand us arbitrary bytes over the FFI.
+    #[tokio::test]
+    async fn wallet_dispatch_rejects_malformed_request_json() {
+        let st = AppState::default();
+        let (status, body) = wallet_dispatch_with(&st, "", "not json at all").await;
+        assert_eq!(status, 400, "bad request JSON is a 400");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(v.get("error").is_some(), "carries an error body: {body}");
     }
 
     #[test]

@@ -2185,6 +2185,7 @@ version = "0.1.0"
 dependencies = [
  "dig-node",
  "dig-wallet",
+ "serde_json",
  "tokio",
 ]
 
