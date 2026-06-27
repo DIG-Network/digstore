@@ -984,6 +984,142 @@ async fn wc_dispatch(
                 },
             }))
         }
+        "chia_getNfts" => {
+            // List the wallet's owned NFTs across every HD address (off-chain media is
+            // app-side; this returns the on-chain metadata/identity it has).
+            let chain = Coinset::mainnet();
+            let owner_phs = wallet_owner_phs(&mnemonic).await?;
+            let nfts = digstore_chain::nft::list_owned_nfts(&chain, &owner_phs)
+                .await
+                .map_err(bad)?;
+            Ok(json!({ "nfts": nfts.iter().map(owned_nft_json).collect::<Vec<_>>() }))
+        }
+        "chia_transferNft" => {
+            // Transfer an owned NFT (identified by its current coin id or launcher id)
+            // to `to`, optional `fee`. State-changing → broadcast/dry-run env gate.
+            let to = params
+                .get("to")
+                .or_else(|| params.get("address"))
+                .and_then(|a| a.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'to'"))?;
+            let new_owner_ph = digstore_chain::send::decode_xch_address(to).map_err(bad)?;
+            let fee = json_u64(&params, "fee").unwrap_or(0);
+
+            let chain = Coinset::mainnet();
+            let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+            })?;
+            let owner_phs: Vec<_> = scanned
+                .addrs
+                .iter()
+                .map(|a| a.keys.owner_puzzle_hash)
+                .collect();
+            let owned = digstore_chain::nft::list_owned_nfts(&chain, &owner_phs)
+                .await
+                .map_err(bad)?;
+            let idx = find_owned_index(owned.iter().map(|n| (n.coin_id, n.launcher_id)), &params)?;
+            let nft = &owned[idx];
+            // The address that holds the NFT authorizes the spend (match by its p2 ph).
+            let owner = scanned
+                .addrs
+                .iter()
+                .find(|a| a.keys.owner_puzzle_hash == nft.p2_puzzle_hash)
+                .map(|a| a.keys.clone())
+                .ok_or_else(|| {
+                    wc_err(StatusCode::BAD_REQUEST, "NFT is not owned by this wallet")
+                })?;
+            // A fee draws from an XCH coin at the owner's address.
+            let fee_coin = if fee > 0 {
+                scanned
+                    .addrs
+                    .iter()
+                    .find(|a| a.keys.owner_puzzle_hash == owner.owner_puzzle_hash)
+                    .and_then(|a| a.xch.first().copied())
+            } else {
+                None
+            };
+            let (spends, _child) = digstore_chain::nft::build_nft_transfer(
+                &chain,
+                &owner,
+                nft.nft.coin,
+                new_owner_ph,
+                fee,
+                fee_coin,
+            )
+            .await
+            .map_err(bad)?;
+            let sig = digstore_chain::nft::sign_nft_spends(
+                &spends,
+                std::slice::from_ref(&owner.synthetic_sk),
+                false,
+            )
+            .map_err(bad)?;
+            let bundle = chia_protocol::SpendBundle::new(spends, sig);
+            let n = bundle.coin_spends.len();
+            let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+            Ok(singleton_spend_json(status, n, &bundle))
+        }
+        "chia_mintNft" => {
+            // Mint one NFT from a funding XCH coin at the wallet's primary address.
+            let chain = Coinset::mainnet();
+            let minter = digstore_chain::keys::derive_indexed_keys(&mnemonic, 0..1)
+                .map_err(bad)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| wc_err(StatusCode::INTERNAL_SERVER_ERROR, "no wallet key"))?;
+            let funding = find_funding_coin(&chain, &mnemonic, minter.owner_puzzle_hash).await?;
+            let spec = parse_mint_spec(&params, minter.owner_puzzle_hash)?;
+            let (spends, nft) =
+                digstore_chain::nft::build_nft_mint(&minter, funding, &spec).map_err(bad)?;
+            let sig = digstore_chain::nft::sign_nft_spends(
+                &spends,
+                std::slice::from_ref(&minter.synthetic_sk),
+                false,
+            )
+            .map_err(bad)?;
+            let bundle = chia_protocol::SpendBundle::new(spends, sig);
+            let n = bundle.coin_spends.len();
+            let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+            let mut out = singleton_spend_json(status, n, &bundle);
+            out["launcherId"] = json!(format!("0x{}", hex::encode(nft.info.launcher_id)));
+            Ok(out)
+        }
+        "chia_bulkMintNfts" => {
+            // Bulk-mint N NFTs from one funding XCH coin, atomically in one bundle.
+            let chain = Coinset::mainnet();
+            let minter = digstore_chain::keys::derive_indexed_keys(&mnemonic, 0..1)
+                .map_err(bad)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| wc_err(StatusCode::INTERNAL_SERVER_ERROR, "no wallet key"))?;
+            let specs_val = params
+                .get("nfts")
+                .or_else(|| params.get("specs"))
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'nfts' (array)"))?;
+            let mut specs = Vec::with_capacity(specs_val.len());
+            for s in specs_val {
+                specs.push(parse_mint_spec(s, minter.owner_puzzle_hash)?);
+            }
+            let funding = find_funding_coin(&chain, &mnemonic, minter.owner_puzzle_hash).await?;
+            let (spends, nfts) =
+                digstore_chain::nft::build_bulk_mint(&minter, funding, &specs).map_err(bad)?;
+            let sig = digstore_chain::nft::sign_nft_spends(
+                &spends,
+                std::slice::from_ref(&minter.synthetic_sk),
+                false,
+            )
+            .map_err(bad)?;
+            let bundle = chia_protocol::SpendBundle::new(spends, sig);
+            let n = bundle.coin_spends.len();
+            let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+            let mut out = singleton_spend_json(status, n, &bundle);
+            out["launcherIds"] = json!(nfts
+                .iter()
+                .map(|n| format!("0x{}", hex::encode(n.info.launcher_id)))
+                .collect::<Vec<_>>());
+            Ok(out)
+        }
         "chia_getOfferSummary" => {
             // Inspect an offer WITHOUT taking it: offered/requested assets, the net
             // the taker must fund (arbitrage), and any NFT royalties. Read-only; needs
@@ -1360,6 +1496,182 @@ fn offer_summary_json(s: &digstore_chain::offer::OfferSummary) -> serde_json::Va
     })
 }
 
+/// Render an [`OwnedNft`] as the JSON the wallet UI consumes. Ids are `0x` hex
+/// (the canonical launcher/coin identity); off-chain media is app-side, so only the
+/// on-chain identity/royalty/owner is reported here.
+fn owned_nft_json(n: &digstore_chain::nft::OwnedNft) -> serde_json::Value {
+    serde_json::json!({
+        "launcherId": format!("0x{}", hex::encode(n.launcher_id)),
+        "coinId": format!("0x{}", hex::encode(n.coin_id)),
+        "ownerDid": n.owner_did.map(|d| format!("0x{}", hex::encode(d))),
+        "royaltyPuzzleHash": format!("0x{}", hex::encode(n.royalty_puzzle_hash)),
+        "royaltyBasisPoints": n.royalty_basis_points,
+        "p2PuzzleHash": format!("0x{}", hex::encode(n.p2_puzzle_hash)),
+    })
+}
+
+/// Standard JSON for a single state-changing singleton spend (transfer/mint):
+/// the broadcast `status`, the coin-spend count, and the aggregated signature.
+fn singleton_spend_json(
+    status: &str,
+    coin_spends: usize,
+    bundle: &chia_protocol::SpendBundle,
+) -> serde_json::Value {
+    serde_json::json!({
+        "status": status,
+        "success": true,
+        "spendBundle": {
+            "coinSpends": coin_spends,
+            "aggregatedSignature": hex::encode(bundle.aggregated_signature.to_bytes()),
+        },
+    })
+}
+
+/// Normalize a `coinId` / `launcherId` request param to a 32-byte id (either is
+/// accepted; `coinId` wins). Errors if neither is present or the hex is malformed.
+fn requested_singleton_id(
+    params: &serde_json::Value,
+) -> Result<chia_protocol::Bytes32, (StatusCode, String)> {
+    let raw = params
+        .get("coinId")
+        .or_else(|| params.get("launcherId"))
+        .or_else(|| params.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'coinId' or 'launcherId'"))?;
+    parse_asset_id_hex(raw).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))
+}
+
+/// Find the index of the owned singleton (NFT/DID) the request targets, matching the
+/// requested id against each candidate's `(coin_id, launcher_id)`. Pure over an
+/// iterator of those pairs so the selection is unit-tested without chain reads.
+fn find_owned_index<I>(
+    candidates: I,
+    params: &serde_json::Value,
+) -> Result<usize, (StatusCode, String)>
+where
+    I: IntoIterator<Item = (chia_protocol::Bytes32, chia_protocol::Bytes32)>,
+{
+    let id = requested_singleton_id(params)?;
+    candidates
+        .into_iter()
+        .position(|(coin_id, launcher_id)| coin_id == id || launcher_id == id)
+        .ok_or_else(|| wc_err(StatusCode::NOT_FOUND, "no owned NFT/DID matches that id"))
+}
+
+/// Find an XCH funding coin at `owner_ph` (the wallet's primary address) to launch a
+/// singleton (NFT/DID) from. Scans over coinset and returns the first spendable XCH
+/// coin; errors clearly if the address has none.
+async fn find_funding_coin(
+    chain: &Coinset,
+    mnemonic: &str,
+    owner_ph: chia_protocol::Bytes32,
+) -> Result<chia_protocol::Coin, (StatusCode, String)> {
+    let scanned = scan_wallet(chain, mnemonic)
+        .await
+        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}")))?;
+    scanned
+        .addrs
+        .iter()
+        .find(|a| a.keys.owner_puzzle_hash == owner_ph)
+        .and_then(|a| a.xch.first().copied())
+        .ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                "no spendable XCH coin to fund the mint at the wallet's address",
+            )
+        })
+}
+
+/// Parse a `MintSpec` from a `{ metadata{dataUris,dataHash,metadataUris,…,edition*},
+/// royaltyBasisPoints?, did? }` JSON object, serializing the on-chain NFT metadata
+/// into a `Program`. `default_owner_ph` is the minter's address (the NFT is created
+/// for the wallet). DID attribution is parsed but the attributing DID's own spend is
+/// the caller's responsibility (out of scope for this pass).
+fn parse_mint_spec(
+    params: &serde_json::Value,
+    default_owner_ph: chia_protocol::Bytes32,
+) -> Result<digstore_chain::nft::MintSpec, (StatusCode, String)> {
+    use chia::puzzles::nft::NftMetadata;
+    use chia_wallet_sdk::driver::SpendContext;
+
+    let md = params
+        .get("metadata")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let str_vec = |key: &str| -> Vec<String> {
+        md.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let opt_hash = |key: &str| -> Result<Option<chia_protocol::Bytes32>, (StatusCode, String)> {
+        match md.get(key).and_then(|v| v.as_str()) {
+            Some(s) if !s.trim().is_empty() => Ok(Some(
+                parse_asset_id_hex(s).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?,
+            )),
+            _ => Ok(None),
+        }
+    };
+
+    let metadata = NftMetadata {
+        edition_number: md
+            .get("editionNumber")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1),
+        edition_total: md.get("editionTotal").and_then(|v| v.as_u64()).unwrap_or(1),
+        data_uris: str_vec("dataUris"),
+        data_hash: opt_hash("dataHash")?,
+        metadata_uris: str_vec("metadataUris"),
+        metadata_hash: opt_hash("metadataHash")?,
+        license_uris: str_vec("licenseUris"),
+        license_hash: opt_hash("licenseHash")?,
+    };
+    let mut ctx = SpendContext::new();
+    let metadata = ctx.serialize(&metadata).map_err(|e| {
+        wc_err(
+            StatusCode::BAD_REQUEST,
+            format!("serialize nft metadata: {e}"),
+        )
+    })?;
+
+    let royalty_basis_points = params
+        .get("royaltyBasisPoints")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u16;
+
+    // Optional DID attribution: { launcherId, innerPuzzleHash }.
+    let did = match params.get("did") {
+        Some(d) if d.is_object() => {
+            let launcher = d
+                .get("launcherId")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "did missing 'launcherId'"))?;
+            let inner = d
+                .get("innerPuzzleHash")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "did missing 'innerPuzzleHash'"))?;
+            Some(digstore_chain::nft::DidAttribution {
+                launcher_id: parse_asset_id_hex(launcher)
+                    .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?,
+                inner_puzzle_hash: parse_asset_id_hex(inner)
+                    .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?,
+            })
+        }
+        _ => None,
+    };
+
+    Ok(digstore_chain::nft::MintSpec {
+        metadata,
+        owner_ph: default_owner_ph,
+        royalty_basis_points,
+        did,
+    })
+}
+
 /// The dapp's web origin, from the unspoofable HTTP `Origin` header (page JS
 /// cannot forge it on a cross-origin fetch). Empty if absent.
 fn origin_of(headers: &HeaderMap) -> String {
@@ -1732,6 +2044,79 @@ mod tests {
         // A non-32-byte memo is rejected (the CAT memo slot is a hash).
         let (code, _) = parse_memo_hashes(&serde_json::json!({ "memos": ["dead"] })).unwrap_err();
         assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn find_owned_index_matches_coin_or_launcher_id() {
+        let coin_a = chia_protocol::Bytes32::new([0xa0u8; 32]);
+        let launcher_a = chia_protocol::Bytes32::new([0xa1u8; 32]);
+        let coin_b = chia_protocol::Bytes32::new([0xb0u8; 32]);
+        let launcher_b = chia_protocol::Bytes32::new([0xb1u8; 32]);
+        let cands = vec![(coin_a, launcher_a), (coin_b, launcher_b)];
+        // Match by coin id…
+        let p = serde_json::json!({ "coinId": format!("0x{}", "b0".repeat(32)) });
+        assert_eq!(find_owned_index(cands.clone(), &p).unwrap(), 1);
+        // …or by launcher id.
+        let p = serde_json::json!({ "launcherId": format!("0x{}", "a1".repeat(32)) });
+        assert_eq!(find_owned_index(cands.clone(), &p).unwrap(), 0);
+        // A non-matching id is a 404.
+        let p = serde_json::json!({ "coinId": format!("0x{}", "cc".repeat(32)) });
+        let (code, _) = find_owned_index(cands.clone(), &p).unwrap_err();
+        assert_eq!(code, StatusCode::NOT_FOUND);
+        // A missing id is a 400.
+        let (code, _) = find_owned_index(cands, &serde_json::json!({})).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn mint_spec_parses_metadata_royalty_and_did() {
+        let owner = chia_protocol::Bytes32::new([0x55u8; 32]);
+        let p = serde_json::json!({
+            "metadata": {
+                "dataUris": ["https://example.com/a.png"],
+                "dataHash": format!("0x{}", "11".repeat(32)),
+                "editionNumber": 2,
+                "editionTotal": 10
+            },
+            "royaltyBasisPoints": 300,
+            "did": {
+                "launcherId": format!("0x{}", "22".repeat(32)),
+                "innerPuzzleHash": format!("0x{}", "33".repeat(32))
+            }
+        });
+        let spec = parse_mint_spec(&p, owner).unwrap();
+        assert_eq!(spec.owner_ph, owner);
+        assert_eq!(spec.royalty_basis_points, 300);
+        let did = spec.did.expect("did attribution parsed");
+        assert_eq!(hex::encode(did.launcher_id), "22".repeat(32));
+        assert_eq!(hex::encode(did.inner_puzzle_hash), "33".repeat(32));
+        // The metadata serialized to a non-empty Program.
+        assert!(!spec.metadata.is_empty());
+        // A malformed did is a 400 (missing innerPuzzleHash).
+        let bad_p = serde_json::json!({
+            "metadata": {},
+            "did": { "launcherId": format!("0x{}", "22".repeat(32)) }
+        });
+        let (code, _) = parse_mint_spec(&bad_p, owner).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn nft_methods_are_gated_and_need_a_wallet() {
+        for m in [
+            "chia_getNfts",
+            "chia_transferNft",
+            "chia_mintNft",
+            "chia_bulkMintNfts",
+        ] {
+            assert_eq!(
+                wc_gate(m, false),
+                Gate::Forbidden,
+                "{m} forbidden unapproved"
+            );
+            assert_eq!(wc_gate(m, true), Gate::Allowed, "{m} allowed approved");
+            assert!(wc_method_needs_wallet(m), "{m} needs a wallet");
+        }
     }
 
     #[test]
