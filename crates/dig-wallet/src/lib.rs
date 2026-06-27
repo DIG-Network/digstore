@@ -1120,6 +1120,116 @@ async fn wc_dispatch(
                 .collect::<Vec<_>>());
             Ok(out)
         }
+        "chia_getDids" => {
+            // List the wallet's owned DIDs (profiles) across every HD address.
+            let chain = Coinset::mainnet();
+            let owner_phs = wallet_owner_phs(&mnemonic).await?;
+            let dids = digstore_chain::did::list_owned_dids(&chain, &owner_phs)
+                .await
+                .map_err(bad)?;
+            Ok(json!({ "dids": dids.iter().map(owned_did_json).collect::<Vec<_>>() }))
+        }
+        "chia_createDidWallet" => {
+            // Create a DID (profile) from a funding XCH coin at the primary address.
+            // `create_simple_did` by default; an explicit recovery config uses
+            // `create_did` (recoveryListHash? + numVerificationsRequired).
+            let chain = Coinset::mainnet();
+            let creator = digstore_chain::keys::derive_indexed_keys(&mnemonic, 0..1)
+                .map_err(bad)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| wc_err(StatusCode::INTERNAL_SERVER_ERROR, "no wallet key"))?;
+            let funding = find_funding_coin(&chain, &mnemonic, creator.owner_puzzle_hash).await?;
+
+            let (spends, did) = if params.get("numVerificationsRequired").is_some()
+                || params.get("recoveryListHash").is_some()
+            {
+                let recovery = match params.get("recoveryListHash").and_then(|v| v.as_str()) {
+                    Some(s) if !s.trim().is_empty() => Some(
+                        parse_asset_id_hex(s).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?,
+                    ),
+                    _ => None,
+                };
+                let n = json_u64(&params, "numVerificationsRequired").unwrap_or(1);
+                digstore_chain::did::create_did(&creator, funding, recovery, n).map_err(bad)?
+            } else {
+                digstore_chain::did::create_simple_did(&creator, funding).map_err(bad)?
+            };
+            let sig = digstore_chain::did::sign_did_spends(
+                &spends,
+                std::slice::from_ref(&creator.synthetic_sk),
+                false,
+            )
+            .map_err(bad)?;
+            let bundle = chia_protocol::SpendBundle::new(spends, sig);
+            let n = bundle.coin_spends.len();
+            let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+            let mut out = singleton_spend_json(status, n, &bundle);
+            out["launcherId"] = json!(format!("0x{}", hex::encode(did.info.launcher_id)));
+            Ok(out)
+        }
+        "chia_transferDid" => {
+            // Transfer an owned DID (by coinId or launcherId) to `to`, optional `fee`.
+            let to = params
+                .get("to")
+                .or_else(|| params.get("address"))
+                .and_then(|a| a.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'to'"))?;
+            let new_owner_ph = digstore_chain::send::decode_xch_address(to).map_err(bad)?;
+            let fee = json_u64(&params, "fee").unwrap_or(0);
+
+            let chain = Coinset::mainnet();
+            let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+            })?;
+            let owner_phs: Vec<_> = scanned
+                .addrs
+                .iter()
+                .map(|a| a.keys.owner_puzzle_hash)
+                .collect();
+            let owned = digstore_chain::did::list_owned_dids(&chain, &owner_phs)
+                .await
+                .map_err(bad)?;
+            let idx = find_owned_index(owned.iter().map(|d| (d.coin_id, d.launcher_id)), &params)?;
+            let did = &owned[idx];
+            let owner = scanned
+                .addrs
+                .iter()
+                .find(|a| a.keys.owner_puzzle_hash == did.p2_puzzle_hash)
+                .map(|a| a.keys.clone())
+                .ok_or_else(|| {
+                    wc_err(StatusCode::BAD_REQUEST, "DID is not owned by this wallet")
+                })?;
+            let fee_coin = if fee > 0 {
+                scanned
+                    .addrs
+                    .iter()
+                    .find(|a| a.keys.owner_puzzle_hash == owner.owner_puzzle_hash)
+                    .and_then(|a| a.xch.first().copied())
+            } else {
+                None
+            };
+            let (spends, _child) = digstore_chain::did::build_did_transfer(
+                &chain,
+                &owner,
+                did.did.coin,
+                new_owner_ph,
+                fee,
+                fee_coin,
+            )
+            .await
+            .map_err(bad)?;
+            let sig = digstore_chain::did::sign_did_spends(
+                &spends,
+                std::slice::from_ref(&owner.synthetic_sk),
+                false,
+            )
+            .map_err(bad)?;
+            let bundle = chia_protocol::SpendBundle::new(spends, sig);
+            let n = bundle.coin_spends.len();
+            let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+            Ok(singleton_spend_json(status, n, &bundle))
+        }
         "chia_getOfferSummary" => {
             // Inspect an offer WITHOUT taking it: offered/requested assets, the net
             // the taker must fund (arbitrage), and any NFT royalties. Read-only; needs
@@ -1507,6 +1617,17 @@ fn owned_nft_json(n: &digstore_chain::nft::OwnedNft) -> serde_json::Value {
         "royaltyPuzzleHash": format!("0x{}", hex::encode(n.royalty_puzzle_hash)),
         "royaltyBasisPoints": n.royalty_basis_points,
         "p2PuzzleHash": format!("0x{}", hex::encode(n.p2_puzzle_hash)),
+    })
+}
+
+/// Render an [`OwnedDid`] as the JSON the wallet UI consumes (the DID's on-chain
+/// identity + location). Ids are `0x` hex.
+fn owned_did_json(d: &digstore_chain::did::OwnedDid) -> serde_json::Value {
+    serde_json::json!({
+        "launcherId": format!("0x{}", hex::encode(d.launcher_id)),
+        "coinId": format!("0x{}", hex::encode(d.coin_id)),
+        "p2PuzzleHash": format!("0x{}", hex::encode(d.p2_puzzle_hash)),
+        "numVerificationsRequired": d.num_verifications_required,
     })
 }
 
@@ -2109,6 +2230,19 @@ mod tests {
             "chia_mintNft",
             "chia_bulkMintNfts",
         ] {
+            assert_eq!(
+                wc_gate(m, false),
+                Gate::Forbidden,
+                "{m} forbidden unapproved"
+            );
+            assert_eq!(wc_gate(m, true), Gate::Allowed, "{m} allowed approved");
+            assert!(wc_method_needs_wallet(m), "{m} needs a wallet");
+        }
+    }
+
+    #[test]
+    fn did_methods_are_gated_and_need_a_wallet() {
+        for m in ["chia_getDids", "chia_createDidWallet", "chia_transferDid"] {
             assert_eq!(
                 wc_gate(m, false),
                 Gate::Forbidden,
