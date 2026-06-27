@@ -984,6 +984,108 @@ async fn wc_dispatch(
                 },
             }))
         }
+        "chia_getOfferSummary" => {
+            // Inspect an offer WITHOUT taking it: offered/requested assets, the net
+            // the taker must fund (arbitrage), and any NFT royalties. Read-only; needs
+            // an unlocked wallet only to match the other methods' gate.
+            let offer = params
+                .get("offer")
+                .and_then(|o| o.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'offer'"))?;
+            let summary = digstore_chain::offer::decode_offer_summary(offer).map_err(bad)?;
+            Ok(offer_summary_json(&summary))
+        }
+        "chia_createOffer" => {
+            // Build + sign a make-offer: OFFER `offered` assets, REQUEST `requested`
+            // assets (paid to the maker), optional `fee`. Returns the bech32 offer1…
+            // string (+ a decoded summary). Building an offer SPENDS nothing on its own
+            // (settlement happens when someone takes it), so it returns the string
+            // regardless of the broadcast gate.
+            let offered = parse_offer_legs(&params, "offered")?;
+            let requested = parse_offer_legs(&params, "requested")?;
+            let fee = json_u64(&params, "fee").unwrap_or(0);
+
+            let chain = Coinset::mainnet();
+            let maker = digstore_chain::keys::derive_indexed_keys(&mnemonic, 0..1)
+                .map_err(bad)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| wc_err(StatusCode::INTERNAL_SERVER_ERROR, "no wallet key"))?;
+            let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+            })?;
+
+            // XCH funding coins tagged with each address's keys.
+            let mut xch: Vec<(chia_protocol::Coin, &digstore_chain::keys::IndexedKeys)> =
+                Vec::new();
+            for a in &scanned.addrs {
+                for c in &a.xch {
+                    xch.push((*c, &a.keys));
+                }
+            }
+            // CAT funding coins (with lineage proofs) for each DISTINCT offered CAT.
+            let offered_cats: BTreeSet<chia_protocol::Bytes32> = offered
+                .iter()
+                .filter_map(|l| match l {
+                    digstore_chain::offer::OfferAsset::Cat { asset_id, .. } => Some(*asset_id),
+                    _ => None,
+                })
+                .collect();
+            let mut cats: Vec<(
+                chia_wallet_sdk::driver::Cat,
+                &digstore_chain::keys::IndexedKeys,
+            )> = Vec::new();
+            for asset_id in offered_cats {
+                for a in &scanned.addrs {
+                    let reconstructed = digstore_chain::cat::reconstruct_cat_coins(
+                        &chain,
+                        a.keys.owner_puzzle_hash,
+                        asset_id,
+                    )
+                    .await
+                    .map_err(bad)?;
+                    for cat in reconstructed {
+                        cats.push((cat, &a.keys));
+                    }
+                }
+            }
+
+            let funds = digstore_chain::offer::MakerFunds { xch, cats };
+            let offer_str = digstore_chain::offer::build_make_offer(
+                &maker, funds, &offered, &requested, fee, false,
+            )
+            .map_err(bad)?;
+            let summary = digstore_chain::offer::decode_offer_summary(&offer_str).map_err(bad)?;
+            Ok(json!({ "offer": offer_str, "summary": offer_summary_json(&summary) }))
+        }
+        "chia_cancelOffer" => {
+            // Cancel an offer the wallet MADE: re-spend the offered coins back to the
+            // maker, invalidating the outstanding offer1… string. State-changing, so
+            // gated by the broadcast/dry-run env gate (signed-only unless opted in).
+            let offer = params
+                .get("offer")
+                .and_then(|o| o.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'offer'"))?;
+            let fee = json_u64(&params, "fee").unwrap_or(0);
+            let maker = digstore_chain::keys::derive_indexed_keys(&mnemonic, 0..1)
+                .map_err(bad)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| wc_err(StatusCode::INTERNAL_SERVER_ERROR, "no wallet key"))?;
+            let bundle =
+                digstore_chain::offer::cancel_offer(offer, &maker, fee, false).map_err(bad)?;
+            let chain = Coinset::mainnet();
+            let n = bundle.coin_spends.len();
+            let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+            Ok(json!({
+                "status": status,
+                "success": true,
+                "spendBundle": {
+                    "coinSpends": n,
+                    "aggregatedSignature": hex::encode(bundle.aggregated_signature.to_bytes()),
+                },
+            }))
+        }
         "chia_send" => {
             // Sage-parity send: pay XCH (type null) or a generic CAT (type "cat",
             // identified by `assetId`) to `address`, with optional `memos` and `fee`.
@@ -1183,6 +1285,78 @@ async fn broadcast_or_dry_run(
             "broadcast"
         }
         SendAction::RefusedDisabled | SendAction::DryRun => "signed",
+    })
+}
+
+/// Parse an offer's `offered`/`requested` legs from `params[key]` — an array of
+/// `{ assetId?, amount }` where a missing/empty `assetId` means XCH and any 32-byte
+/// TAIL means that CAT — into `OfferAsset`s. Generic over the asset (no allow-list).
+fn parse_offer_legs(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<Vec<digstore_chain::offer::OfferAsset>, (StatusCode, String)> {
+    use digstore_chain::offer::OfferAsset;
+    let arr = params
+        .get(key)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, format!("missing '{key}' (array)")))?;
+    let mut out = Vec::with_capacity(arr.len());
+    for leg in arr {
+        let amount = json_u64(leg, "amount").ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                format!("{key} leg missing 'amount'"),
+            )
+        })?;
+        let asset_raw = leg
+            .get("assetId")
+            .and_then(|a| a.as_str())
+            .unwrap_or("")
+            .trim();
+        if asset_raw.is_empty() {
+            out.push(OfferAsset::Xch(amount));
+        } else {
+            let asset_id =
+                parse_asset_id_hex(asset_raw).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?;
+            out.push(OfferAsset::Cat { asset_id, amount });
+        }
+    }
+    Ok(out)
+}
+
+/// Render an [`OfferAsset`] as `{ type, assetId?, amount }` (amount as a BigInt-safe
+/// decimal string). XCH carries no `assetId`.
+fn offer_asset_json(a: &digstore_chain::offer::OfferAsset) -> serde_json::Value {
+    use digstore_chain::offer::OfferAsset;
+    match a {
+        OfferAsset::Xch(amount) => {
+            serde_json::json!({ "type": "xch", "amount": amount.to_string() })
+        }
+        OfferAsset::Cat { asset_id, amount } => serde_json::json!({
+            "type": "cat",
+            "assetId": format!("0x{}", hex::encode(asset_id)),
+            "amount": amount.to_string(),
+        }),
+    }
+}
+
+/// Render an [`OfferSummary`] (offered/requested assets, the taker's funding cost,
+/// and any NFT royalties) as the JSON the wallet UI / dapps consume.
+fn offer_summary_json(s: &digstore_chain::offer::OfferSummary) -> serde_json::Value {
+    serde_json::json!({
+        "offered": s.offered.iter().map(offer_asset_json).collect::<Vec<_>>(),
+        "requested": s.requested.iter().map(offer_asset_json).collect::<Vec<_>>(),
+        "arbitrage": {
+            "xch": s.arbitrage.xch.to_string(),
+            "cats": s.arbitrage.cats.iter().map(|(id, amt)| serde_json::json!({
+                "assetId": format!("0x{}", hex::encode(id)),
+                "amount": amt.to_string(),
+            })).collect::<Vec<_>>(),
+        },
+        "royalties": s.royalties.iter().map(|(launcher, bp)| serde_json::json!({
+            "launcherId": format!("0x{}", hex::encode(launcher)),
+            "basisPoints": bp,
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -1558,6 +1732,80 @@ mod tests {
         // A non-32-byte memo is rejected (the CAT memo slot is a hash).
         let (code, _) = parse_memo_hashes(&serde_json::json!({ "memos": ["dead"] })).unwrap_err();
         assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn offer_legs_parse_xch_and_cat() {
+        use digstore_chain::offer::OfferAsset;
+        // A missing/empty assetId means XCH; a 32-byte TAIL means that CAT.
+        let tail = "ab".repeat(32);
+        let legs = parse_offer_legs(
+            &serde_json::json!({
+                "offered": [
+                    { "amount": 1000 },
+                    { "assetId": format!("0x{tail}"), "amount": "250" }
+                ]
+            }),
+            "offered",
+        )
+        .unwrap();
+        assert_eq!(legs.len(), 2);
+        assert_eq!(legs[0], OfferAsset::Xch(1000));
+        match legs[1] {
+            OfferAsset::Cat { asset_id, amount } => {
+                assert_eq!(hex::encode(asset_id), tail);
+                assert_eq!(amount, 250);
+            }
+            _ => panic!("expected a CAT leg"),
+        }
+        // A missing array is a 400 (so the builder never sees a half-formed offer).
+        let (code, _) = parse_offer_legs(&serde_json::json!({}), "offered").unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        // A leg without an amount is a 400.
+        let (code, _) =
+            parse_offer_legs(&serde_json::json!({ "offered": [{}] }), "offered").unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn offer_summary_json_shape() {
+        use digstore_chain::offer::{OfferAsset, OfferCost, OfferSummary};
+        let tail = chia_protocol::Bytes32::new([0x42u8; 32]);
+        let nft = chia_protocol::Bytes32::new([0x07u8; 32]);
+        let s = OfferSummary {
+            offered: vec![OfferAsset::Xch(5)],
+            requested: vec![OfferAsset::Cat {
+                asset_id: tail,
+                amount: 9,
+            }],
+            arbitrage: OfferCost {
+                xch: 0,
+                cats: vec![(tail, 9)],
+            },
+            royalties: vec![(nft, 300)],
+        };
+        let j = offer_summary_json(&s);
+        assert_eq!(j["offered"][0]["type"], "xch");
+        assert_eq!(j["offered"][0]["amount"], "5"); // decimal string (BigInt-safe)
+        assert_eq!(j["requested"][0]["type"], "cat");
+        assert_eq!(
+            j["requested"][0]["assetId"],
+            format!("0x{}", "42".repeat(32))
+        );
+        assert_eq!(j["arbitrage"]["cats"][0]["amount"], "9");
+        assert_eq!(j["royalties"][0]["basisPoints"], 300);
+    }
+
+    #[test]
+    fn offer_methods_are_gated() {
+        // Summary is read-only but still requires origin approval; create/cancel are
+        // state-changing and need an unlocked wallet.
+        assert_eq!(wc_gate("chia_getOfferSummary", false), Gate::Forbidden);
+        assert_eq!(wc_gate("chia_createOffer", false), Gate::Forbidden);
+        assert_eq!(wc_gate("chia_cancelOffer", true), Gate::Allowed);
+        assert!(wc_method_needs_wallet("chia_createOffer"));
+        assert!(wc_method_needs_wallet("chia_cancelOffer"));
+        assert!(wc_method_needs_wallet("chia_getOfferSummary"));
     }
 
     #[test]
