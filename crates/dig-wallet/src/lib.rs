@@ -827,31 +827,35 @@ async fn wc_dispatch(
             Ok(json!(signed))
         }
         "chip0002_getAssetBalance" => {
-            // The hub reads `resp.confirmed`; type null => XCH, type "cat" => the
-            // DIG CAT (the only asset the native wallet tracks). Drives the
-            // account-menu XCH balance and the DIG balance widget.
+            // The hub reads `resp.confirmed`; type null => XCH, type "cat" => a CAT
+            // identified by `assetId` (DIG when omitted). Generic over the TAIL, so
+            // any CAT the wallet holds is reported — not just DIG. Drives the
+            // account-menu XCH balance and every token balance widget.
             let is_cat = params.get("type").and_then(|t| t.as_str()) == Some("cat");
             let chain = Coinset::mainnet();
-            let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
-                wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
-            })?;
             let confirmed = if is_cat {
-                let asset = params
-                    .get("assetId")
-                    .and_then(|a| a.as_str())
-                    .unwrap_or("")
-                    .trim_start_matches("0x")
-                    .to_ascii_lowercase();
-                let dig = hex::encode(digstore_chain::dig::DIG_ASSET_ID);
-                if asset.is_empty() || asset == dig {
-                    scanned.dig_balance()
-                } else {
-                    return Err(wc_err(
-                        StatusCode::BAD_REQUEST,
-                        format!("unsupported asset id: {asset}"),
-                    ));
+                let asset_id = cat_asset_id(&params)?;
+                // Spendable base units of this CAT at the wallet's per-asset CAT puzzle
+                // hash, summed across every scanned HD address (Sage-style).
+                let owner_phs = wallet_owner_phs(&mnemonic).await?;
+                let mut total = 0u64;
+                for ph in owner_phs {
+                    total = total.saturating_add(
+                        digstore_chain::cat::cat_balance(&chain, ph, asset_id)
+                            .await
+                            .map_err(|e| {
+                                wc_err(
+                                    StatusCode::BAD_GATEWAY,
+                                    format!("coinset CAT balance failed: {e}"),
+                                )
+                            })?,
+                    );
                 }
+                total
             } else {
+                let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                    wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+                })?;
                 scanned.xch_balance()
             };
             Ok(json!({ "confirmed": confirmed, "spendable": confirmed }))
@@ -866,32 +870,40 @@ async fn wc_dispatch(
             let is_cat = params.get("type").and_then(|t| t.as_str()) == Some("cat");
             let offset = params.get("offset").and_then(|o| o.as_u64()).unwrap_or(0) as usize;
             let limit = params.get("limit").and_then(|l| l.as_u64()).unwrap_or(100) as usize;
-            if is_cat {
-                let asset = params
-                    .get("assetId")
-                    .and_then(|a| a.as_str())
-                    .unwrap_or("")
-                    .trim_start_matches("0x")
-                    .to_ascii_lowercase();
-                let dig = hex::encode(digstore_chain::dig::DIG_ASSET_ID);
-                if !asset.is_empty() && asset != dig {
-                    return Err(wc_err(
-                        StatusCode::BAD_REQUEST,
-                        format!("unsupported asset id: {asset}"),
-                    ));
-                }
-            }
             let chain = Coinset::mainnet();
             let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
                 wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
             })?;
             let mut coins = Vec::new();
-            for a in &scanned.addrs {
-                if is_cat {
-                    for c in &a.dig {
-                        coins.push(coin_entry_json(c, None));
+            if is_cat {
+                // Generic over the TAIL: the unspent CAT coins of `assetId` (DIG when
+                // omitted) at each address's per-asset CAT puzzle hash. The DIG scan
+                // shortcut still applies for DIG; any other CAT is read directly.
+                let asset_id = cat_asset_id(&params)?;
+                let is_dig = asset_id == digstore_chain::dig::DIG_ASSET_ID;
+                for a in &scanned.addrs {
+                    if is_dig {
+                        for c in &a.dig {
+                            coins.push(coin_entry_json(c, None));
+                        }
+                    } else {
+                        let ph = digstore_chain::cat::cat_puzzle_hash(
+                            a.keys.owner_puzzle_hash,
+                            asset_id,
+                        );
+                        let cat_coins = chain.unspent_coins(ph).await.map_err(|e| {
+                            wc_err(
+                                StatusCode::BAD_GATEWAY,
+                                format!("coinset CAT coins failed: {e}"),
+                            )
+                        })?;
+                        for c in &cat_coins {
+                            coins.push(coin_entry_json(c, None));
+                        }
                     }
-                } else {
+                }
+            } else {
+                for a in &scanned.addrs {
                     let puzzle =
                         digstore_chain::send::standard_puzzle_reveal_hex(&a.keys.synthetic_pk)
                             .map_err(bad)?;
@@ -972,6 +984,88 @@ async fn wc_dispatch(
                 },
             }))
         }
+        "chia_send" => {
+            // Sage-parity send: pay XCH (type null) or a generic CAT (type "cat",
+            // identified by `assetId`) to `address`, with optional `memos` and `fee`.
+            // Like /api/send, this spends real funds only when the env opts in; a
+            // dapp-originated send is treated as broadcast-intent and pushes only when
+            // DIG_WALLET_ALLOW_BROADCAST=1 (otherwise dry-run / "signed").
+            let to = params
+                .get("address")
+                .or_else(|| params.get("to"))
+                .and_then(|a| a.as_str())
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'address'"))?;
+            let recipient_ph = digstore_chain::send::decode_xch_address(to).map_err(bad)?;
+            let amount = json_u64(&params, "amount")
+                .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'amount'"))?;
+            let fee = json_u64(&params, "fee").unwrap_or(0);
+            let is_cat = params.get("type").and_then(|t| t.as_str()) == Some("cat");
+            let chain = Coinset::mainnet();
+
+            let (signed_bundle, coin_spends, status_value) = if is_cat {
+                let asset_id = cat_asset_id(&params)?;
+                // Reconstruct this asset's CAT coins (with lineage proofs) across every
+                // scanned address; the recipient/change use the primary owner key.
+                let keys = digstore_chain::keys::derive_wallet_keys(&mnemonic).map_err(bad)?;
+                let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                    wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+                })?;
+                let mut cats = Vec::new();
+                for a in &scanned.addrs {
+                    cats.extend(
+                        digstore_chain::cat::reconstruct_cat_coins(
+                            &chain,
+                            a.keys.owner_puzzle_hash,
+                            asset_id,
+                        )
+                        .await
+                        .map_err(bad)?,
+                    );
+                }
+                let memos = parse_memo_hashes(&params)?;
+                let (bundle, plan) = digstore_chain::cat::build_cat_send(
+                    &keys,
+                    &cats,
+                    asset_id,
+                    recipient_ph,
+                    amount,
+                    &memos,
+                    fee,
+                    false,
+                )
+                .map_err(bad)?;
+                let n = bundle.coin_spends.len();
+                (
+                    bundle,
+                    n,
+                    json!({ "amount": plan.amount.to_string(), "change": plan.change.to_string() }),
+                )
+            } else {
+                let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                    wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+                })?;
+                let (bundle, plan) =
+                    digstore_chain::send::build_xch_send(&scanned, recipient_ph, amount, fee)
+                        .map_err(bad)?;
+                let n = bundle.coin_spends.len();
+                (
+                    bundle,
+                    n,
+                    json!({ "amount": amount.to_string(), "change": plan.change.to_string() }),
+                )
+            };
+
+            let status = broadcast_or_dry_run(&chain, signed_bundle.clone()).await?;
+            Ok(json!({
+                "status": status,
+                "success": true,
+                "spendBundle": {
+                    "coinSpends": coin_spends,
+                    "aggregatedSignature": hex::encode(signed_bundle.aggregated_signature.to_bytes()),
+                },
+                "sent": status_value,
+            }))
+        }
         other => Err(wc_err(
             StatusCode::NOT_IMPLEMENTED,
             format!("unsupported WC method: {other}"),
@@ -997,6 +1091,99 @@ fn coin_entry_json(coin: &chia_protocol::Coin, puzzle: Option<&str>) -> serde_js
         e["puzzle"] = json!(p);
     }
     e
+}
+
+/// Parse a 32-byte CAT asset id (TAIL hash) from a hex string (`0x`-prefixed or
+/// bare). Pure so the parse/validation is unit-tested independently of HTTP.
+fn parse_asset_id_hex(s: &str) -> Result<chia_protocol::Bytes32, String> {
+    let hex = s.trim().trim_start_matches("0x");
+    let bytes = hex::decode(hex).map_err(|_| format!("invalid asset id hex: {s}"))?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| format!("asset id must be 32 bytes: {s}"))?;
+    Ok(chia_protocol::Bytes32::new(arr))
+}
+
+/// The CAT `assetId` for a request, defaulting to the DIG TAIL when omitted/empty
+/// (so the common DIG path needs no asset id). Any 32-byte TAIL is accepted —
+/// generic over the asset, no allow-list.
+fn cat_asset_id(
+    params: &serde_json::Value,
+) -> Result<chia_protocol::Bytes32, (StatusCode, String)> {
+    let raw = params
+        .get("assetId")
+        .and_then(|a| a.as_str())
+        .unwrap_or("")
+        .trim();
+    if raw.is_empty() {
+        return Ok(digstore_chain::dig::DIG_ASSET_ID);
+    }
+    parse_asset_id_hex(raw).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))
+}
+
+/// A `u64` from `params[key]`, tolerating both a JSON number and a decimal string
+/// (dapps send amounts/fees as either; BigInt-safe values arrive as strings).
+fn json_u64(params: &serde_json::Value, key: &str) -> Option<u64> {
+    let v = params.get(key)?;
+    v.as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+/// Parse optional `memos` (array of hex strings) into 32-byte memo hashes for a CAT
+/// send. Memos that are not 32-byte hex are rejected (the CAT memo slot is a hash).
+fn parse_memo_hashes(
+    params: &serde_json::Value,
+) -> Result<Vec<chia_protocol::Bytes32>, (StatusCode, String)> {
+    let Some(arr) = params.get("memos").and_then(|m| m.as_array()) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for m in arr {
+        let s = m
+            .as_str()
+            .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "each memo must be a hex string"))?;
+        out.push(parse_asset_id_hex(s).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?);
+    }
+    Ok(out)
+}
+
+/// The wallet's HD owner puzzle hashes (one per scanned address), used to find a
+/// wallet's coins/NFTs/DIDs across every derived address. Scans over coinset.
+async fn wallet_owner_phs(
+    mnemonic: &str,
+) -> Result<Vec<chia_protocol::Bytes32>, (StatusCode, String)> {
+    let chain = Coinset::mainnet();
+    let scanned = scan_wallet(&chain, mnemonic)
+        .await
+        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}")))?;
+    Ok(scanned
+        .addrs
+        .iter()
+        .map(|a| a.keys.owner_puzzle_hash)
+        .collect())
+}
+
+/// Apply the SAME broadcast gate the XCH `send`/`chia_takeOffer` paths use to a
+/// built+signed bundle: push only when the env opts in (`DIG_WALLET_ALLOW_BROADCAST=1`),
+/// otherwise dry-run (the bundle is signed but nothing is pushed). A dapp can never
+/// itself force a broadcast — taking/sending is broadcast-INTENT, gated by the env.
+/// Returns `"broadcast"` or `"signed"`.
+async fn broadcast_or_dry_run(
+    chain: &Coinset,
+    bundle: chia_protocol::SpendBundle,
+) -> Result<&'static str, (StatusCode, String)> {
+    let broadcast_enabled =
+        std::env::var("DIG_WALLET_ALLOW_BROADCAST").ok().as_deref() == Some("1");
+    Ok(match send_action(true, broadcast_enabled) {
+        SendAction::Broadcast => {
+            chain
+                .push(bundle)
+                .await
+                .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("push_tx: {e}")))?;
+            "broadcast"
+        }
+        SendAction::RefusedDisabled | SendAction::DryRun => "signed",
+    })
 }
 
 /// The dapp's web origin, from the unspoofable HTTP `Origin` header (page JS
@@ -1307,6 +1494,82 @@ mod tests {
         // the badge-minting path from an unapproved dapp triggering a take.
         assert_eq!(wc_gate("chia_takeOffer", false), Gate::Forbidden);
         assert_eq!(wc_gate("chia_takeOffer", true), Gate::Allowed);
+    }
+
+    #[test]
+    fn asset_id_parses_with_or_without_0x_and_rejects_bad_len() {
+        // A 32-byte hex TAIL parses identically with or without the 0x prefix.
+        let bare = "ab".repeat(32);
+        let prefixed = format!("0x{bare}");
+        let a = parse_asset_id_hex(&bare).unwrap();
+        let b = parse_asset_id_hex(&prefixed).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(hex::encode(a), bare);
+        // Wrong length / bad hex are rejected (not panics).
+        assert!(parse_asset_id_hex("dead").is_err()); // too short
+        assert!(parse_asset_id_hex(&"zz".repeat(32)).is_err()); // not hex
+    }
+
+    #[test]
+    fn cat_asset_id_defaults_to_dig_and_accepts_any_tail() {
+        // No / empty assetId → DIG (the common token path needs no id)…
+        assert_eq!(
+            cat_asset_id(&serde_json::Value::Null).unwrap(),
+            digstore_chain::dig::DIG_ASSET_ID
+        );
+        assert_eq!(
+            cat_asset_id(&serde_json::json!({ "assetId": "" })).unwrap(),
+            digstore_chain::dig::DIG_ASSET_ID
+        );
+        // …and ANY 32-byte TAIL is accepted — no allow-list, generic over the asset.
+        let tail = "cd".repeat(32);
+        let got = cat_asset_id(&serde_json::json!({ "assetId": format!("0x{tail}") })).unwrap();
+        assert_eq!(hex::encode(got), tail);
+        // A malformed assetId is a 400.
+        let (code, _) = cat_asset_id(&serde_json::json!({ "assetId": "nope" })).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn json_u64_tolerates_number_and_decimal_string() {
+        // Amounts/fees arrive as numbers OR decimal strings (BigInt-safe) — both work.
+        assert_eq!(
+            json_u64(&serde_json::json!({"amount": 42}), "amount"),
+            Some(42)
+        );
+        assert_eq!(
+            json_u64(&serde_json::json!({"amount": "1000000000000"}), "amount"),
+            Some(1_000_000_000_000)
+        );
+        assert_eq!(json_u64(&serde_json::json!({}), "amount"), None);
+    }
+
+    #[test]
+    fn memo_hashes_parse_and_reject_non_hash() {
+        // No memos → empty (a memo-less send is fine).
+        assert!(parse_memo_hashes(&serde_json::Value::Null)
+            .unwrap()
+            .is_empty());
+        // 32-byte hex memos parse in order.
+        let m = "11".repeat(32);
+        let got = parse_memo_hashes(&serde_json::json!({ "memos": [format!("0x{m}")] })).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(hex::encode(got[0]), m);
+        // A non-32-byte memo is rejected (the CAT memo slot is a hash).
+        let (code, _) = parse_memo_hashes(&serde_json::json!({ "memos": ["dead"] })).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn token_methods_are_gated_and_need_a_wallet() {
+        // chia_send is a spend method: forbidden until the origin is approved, allowed
+        // once approved, and always needs an unlocked wallet.
+        assert_eq!(wc_gate("chia_send", false), Gate::Forbidden);
+        assert_eq!(wc_gate("chia_send", true), Gate::Allowed);
+        assert!(wc_method_needs_wallet("chia_send"));
+        // Generic CAT balance/coins still need a wallet (they read keys + scan).
+        assert!(wc_method_needs_wallet("chip0002_getAssetBalance"));
+        assert!(wc_method_needs_wallet("chip0002_getAssetCoins"));
     }
 
     #[test]
