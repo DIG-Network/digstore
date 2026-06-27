@@ -539,3 +539,52 @@ fn commit_json_output_unchanged_and_never_pushes() {
         "json commit without --push must not push"
     );
 }
+
+/// A commit surfaces the deployed **capsule** identity — the canonical
+/// `storeId:rootHash` string (matches `digstore_core::Capsule::canonical()`), so
+/// the user gets the capsule id to share/anchor and learns the ecosystem term.
+#[test]
+fn commit_prints_the_capsule_id() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, b"capsule content").unwrap();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
+    let assert = dig(&dir).args(["commit", "-m", "first"]).assert().success();
+    let out = assert.get_output();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The expected capsule = storeId:rootHash for the just-committed root.
+    let (store_id, root) = store_id_and_root(&dir);
+    let capsule = format!("{store_id}:{root}");
+    assert!(
+        combined.contains(&capsule),
+        "commit output should surface the capsule id `{capsule}`; got:\n{combined}"
+    );
+    // The literal term must appear too (progressive-disclosure vocabulary).
+    assert!(
+        combined.to_lowercase().contains("capsule"),
+        "commit output should use the word 'capsule'; got:\n{combined}"
+    );
+}
+
+/// `digstore commit --help` teaches the capsule concept (ecosystem vocabulary).
+#[test]
+fn commit_help_mentions_capsule() {
+    let dir = tmp_dig();
+    let assert = dig(&dir).args(["commit", "--help"]).assert().success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).to_lowercase();
+    assert!(
+        out.contains("capsule"),
+        "`commit --help` should mention 'capsule'; got:\n{out}"
+    );
+}

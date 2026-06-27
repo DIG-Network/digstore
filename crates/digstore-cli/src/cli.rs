@@ -46,18 +46,19 @@ pub enum Command {
     Init(InitArgs),
     /// Stage files, directories, or glob patterns for the next commit.
     Add(AddArgs),
-    /// Commit the staged content as a new deployment (generation root).
+    /// Commit the staged content as a new deployment — a new capsule
+    /// (`storeId:rootHash`). A store is a sequence of capsules, one per commit.
     Commit(CommitArgs),
     /// Compile a directory into a hostable module + root, with NO chain/wallet
     /// (headless). The caller anchors the printed root on-chain separately.
     Compile(CompileArgs),
     /// Show the active project, its content root, and pending staged changes.
     Status(StatusArgs),
-    /// Show the project's deployment history.
+    /// Show the project's deployment history (its sequence of capsules).
     Log(LogArgs),
-    /// Show what changed between two deployment roots.
+    /// Show what changed between two deployment roots (capsules).
     Diff(DiffArgs),
-    /// Materialize a deployment root's content into an output directory.
+    /// Materialize a deployment root (capsule) content into an output directory.
     Checkout(CheckoutArgs),
     /// Stream a resource out by URN (decrypted) or retrieval key (encrypted).
     Cat(CatArgs),
