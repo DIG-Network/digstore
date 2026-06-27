@@ -2244,6 +2244,7 @@ dependencies = [
  "clvm-traits",
  "clvmr",
  "datalayer-driver",
+ "digstore-core",
  "dirs",
  "getrandom 0.2.17",
  "hex",

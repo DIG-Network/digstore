@@ -719,6 +719,161 @@ pub async fn current_root(chain: &dyn ChainReads, launcher_id: Bytes32) -> Resul
     Ok(store.info.metadata.root_hash)
 }
 
+// ===========================================================================
+// Store discovery — a user's own DataLayer stores → their capsules.
+//
+// A store's launcher coin is created carrying `digstore_owner_hint(owner_ph)` as
+// its indexed memo (see `mint_store_digstore`), IDENTICAL to chip35. So a single
+// coinset `get_coin_records_by_hint` query for that hint surfaces every store a
+// given owner address launched — whether minted by the CLI or the web app. The
+// launcher coin's `coin_id` IS the `launcher_id` IS the `store_id`.
+// ===========================================================================
+
+/// Convert a `chia_protocol::Bytes32` into the ecosystem-canonical
+/// `digstore_core::Bytes32` (both are raw 32-byte wrappers). Used to speak the one
+/// shared [`Capsule`](digstore_core::Capsule) identity in discovery return types.
+fn core_bytes32(b: Bytes32) -> digstore_core::Bytes32 {
+    digstore_core::Bytes32(b.to_bytes())
+}
+
+/// Enumerate the launcher (store) ids of every DataLayer store owned by
+/// `owner_ph`, by querying coinset for launcher coins carrying that owner's
+/// discovery hint.
+///
+/// The hint is `digstore_owner_hint(owner_ph)` — the SAME derivation used at mint
+/// time and by chip35 (hub.dig.net), so one query finds CLI- and web-minted stores
+/// alike. Each returned [`Bytes32`] is a `coin_id` which, for a launcher coin,
+/// equals the `launcher_id` and therefore the `store_id`.
+///
+/// Returns the store ids of currently-unspent launcher coins (a launcher coin is
+/// spent exactly once — to create the eve singleton — but `unspent_coins_by_hint`
+/// keys on the hint that the singleton lineage continues to carry; in practice a
+/// live store's discoverable coin is its current singleton, hinted to the owner).
+pub async fn enum_user_stores(chain: &dyn ChainReads, owner_ph: Bytes32) -> Result<Vec<Bytes32>> {
+    let hint = digstore_owner_hint(owner_ph);
+    let coins = chain.unspent_coins_by_hint(hint).await?;
+    Ok(coins.into_iter().map(|c| c.coin_id()).collect())
+}
+
+/// Discover ALL of a wallet's DataLayer stores across its HD addresses.
+///
+/// Derives the wallet's unhardened keys for indices `0..500` (the same gap-limit
+/// the [`scan_wallet`](crate::wallet::scan_wallet) scan uses) and runs
+/// [`enum_user_stores`] for each address's owner puzzle hash, returning
+/// `(hd_index, store_id)` pairs so the caller knows which derived address owns each
+/// store. A wallet that reused one address has all its stores under index 0; a
+/// wallet that rotated addresses has them spread across indices.
+pub async fn discover_all_user_stores(
+    chain: &dyn ChainReads,
+    mnemonic: &str,
+) -> Result<Vec<(u32, Bytes32)>> {
+    let indexed = crate::keys::derive_indexed_keys(mnemonic, 0..500)?;
+    let mut out = Vec::new();
+    for k in indexed {
+        let stores = enum_user_stores(chain, k.owner_puzzle_hash).await?;
+        for store_id in stores {
+            out.push((k.index, store_id));
+        }
+    }
+    Ok(out)
+}
+
+/// The current state of a store plus its ordered capsule (root) history.
+///
+/// `current` is the live capsule — `(launcher_id, current_root)` — and `history`
+/// is the ordered list of every capsule the store has been, one
+/// [`Capsule`](digstore_core::Capsule) per on-chain root from the eve singleton
+/// (index 0) through to the current one (the last element of `history`, which has
+/// the same root as `current`). Each commit adds one capsule.
+pub struct StoreHistory {
+    /// The store's CURRENT capsule: `(launcher_id, current_root)`.
+    pub current: digstore_core::Capsule,
+    /// Every capsule the store has ever been, oldest → newest. The last element's
+    /// `root_hash` equals `current.root_hash`.
+    pub history: Vec<digstore_core::Capsule>,
+}
+
+/// Sync a store AND collect its full capsule (root) history during the walk.
+///
+/// This is [`sync_datastore`]'s forward walk, except every hop's metadata root is
+/// COLLECTED into the ordered capsule history instead of discarded. The walk goes
+/// eve → … → current unspent singleton; each visited singleton's root becomes one
+/// [`Capsule`](digstore_core::Capsule) `(launcher_id, root)`. The returned
+/// `current` capsule is `(launcher_id, current_root)` (== the last history entry),
+/// and the returned [`DataStore`] is the live, spendable singleton.
+///
+/// Returns `(DataStore, StoreHistory)` so callers get both the spendable handle
+/// (for further updates) and the audit-grade capsule lineage.
+pub async fn sync_datastore_with_history(
+    chain: &dyn ChainReads,
+    launcher_id: Bytes32,
+) -> Result<(DataStore, StoreHistory)> {
+    let mut ctx = SpendContext::new();
+    let store_id = core_bytes32(launcher_id);
+
+    // The launcher coin is spent to create the eve singleton (same as sync_datastore).
+    let launcher = chain
+        .coin_record(launcher_id)
+        .await?
+        .ok_or_else(|| ChainError::Chain(format!("launcher coin {launcher_id:?} not found")))?;
+    if !launcher.spent {
+        return Err(ChainError::Chain(
+            "launcher coin is unspent (store not minted yet)".into(),
+        ));
+    }
+    let launcher_spend = chain
+        .coin_spend(launcher_id, launcher.spent_block_index)
+        .await?
+        .ok_or_else(|| ChainError::Chain("launcher spend not found".into()))?;
+
+    let mut store = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &launcher_spend, &[])
+        .map_err(|e| ChainError::Chain(format!("parse eve store: {e}")))?
+        .ok_or_else(|| ChainError::Chain("launcher spend is not a datastore".into()))?;
+
+    // Collect each hop's root as a capsule, in order.
+    let mut history: Vec<digstore_core::Capsule> = Vec::new();
+    let mut push_capsule = |store: &DataStore| {
+        history.push(digstore_core::Capsule {
+            store_id,
+            root_hash: core_bytes32(store.info.metadata.root_hash),
+        });
+    };
+
+    const MAX_HOPS: u32 = 100_000;
+    let mut hops = 0u32;
+    loop {
+        hops += 1;
+        if hops > MAX_HOPS {
+            return Err(ChainError::Chain(format!(
+                "singleton chain exceeded {MAX_HOPS} hops; possible cycle or corrupt chain data"
+            )));
+        }
+        // Record this generation's capsule (root) before checking if it is the tip.
+        push_capsule(&store);
+
+        let coin_id = store.coin.coin_id();
+        let rec = chain
+            .coin_record(coin_id)
+            .await?
+            .ok_or_else(|| ChainError::Chain(format!("singleton coin {coin_id:?} not found")))?;
+        if !rec.spent {
+            // `store` is the current, unspent singleton; the last-pushed capsule is current.
+            let current = *history
+                .last()
+                .expect("at least one capsule pushed before the unspent check");
+            return Ok((store, StoreHistory { current, history }));
+        }
+        let spend = chain
+            .coin_spend(coin_id, rec.spent_block_index)
+            .await?
+            .ok_or_else(|| ChainError::Chain("singleton spend not found".into()))?;
+        let delegated: Vec<DelegatedPuzzle> = store.info.delegated_puzzles.clone();
+        store = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &spend, &delegated)
+            .map_err(|e| ChainError::Chain(format!("parse next store: {e}")))?
+            .ok_or_else(|| ChainError::Chain("singleton spend did not yield a store".into()))?;
+    }
+}
+
 #[cfg(test)]
 mod sync_tests {
     use super::*;
@@ -800,5 +955,199 @@ mod sync_tests {
         // minted with empty root, never updated:
         assert_eq!(store.info.metadata.root_hash, Bytes32::default());
         println!("synced store coin id = {:?}", store.coin.coin_id());
+    }
+}
+
+// ===========================================================================
+// Store-discovery tests — enum_user_stores / discover_all_user_stores /
+// sync_datastore_with_history, all on the in-crate MockChain (no network).
+// ===========================================================================
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use crate::coinset::mock::MockChain;
+    use crate::coinset::{CoinInfo, CoinRecord};
+    use crate::keys::derive_indexed_keys;
+
+    const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+    /// Seed one unspent launcher coin under `owner_ph`'s discovery hint, returning its
+    /// store id (= coin id).
+    ///
+    /// The launcher coin lives at the well-known singleton launcher puzzle hash and
+    /// carries 1 mojo (odd amount) — exactly how `mint_store` creates it — so its
+    /// `coin_id` is a faithful stand-in for a real launcher id (= store id).
+    fn seed_store(mock: &mut MockChain, owner_ph: Bytes32, parent: [u8; 32]) -> Bytes32 {
+        let coin = Coin::new(Bytes32::new(parent), SINGLETON_LAUNCHER_PH, 1);
+        let store_id = coin.coin_id();
+        let hint = digstore_owner_hint(owner_ph);
+        mock.records_by_hint
+            .entry(hint)
+            .or_default()
+            .push(CoinRecord {
+                coin,
+                spent: false,
+                confirmed_block_index: 100,
+                spent_block_index: 0,
+                timestamp: 1_700_000_000,
+                coinbase: false,
+            });
+        store_id
+    }
+
+    // enum_user_stores: a single owner's hint-indexed launcher surfaces as a store id.
+    #[tokio::test]
+    async fn enum_user_stores_finds_hinted_launcher() {
+        let mut mock = MockChain::default();
+        let keys = derive_indexed_keys(ABANDON, 0..1).unwrap();
+        let owner_ph = keys[0].owner_puzzle_hash;
+        let store_id = seed_store(&mut mock, owner_ph, [1u8; 32]);
+
+        let found = enum_user_stores(&mock, owner_ph).await.unwrap();
+        assert_eq!(
+            found,
+            vec![store_id],
+            "the launcher's coin_id is the store id"
+        );
+    }
+
+    // enum_user_stores: an owner with no stores returns empty (and only that owner's
+    // hint is consulted — a different owner's store does not leak in).
+    #[tokio::test]
+    async fn enum_user_stores_empty_for_owner_without_stores() {
+        let mut mock = MockChain::default();
+        let keys = derive_indexed_keys(ABANDON, 0..2).unwrap();
+        // Seed a store for index 1 only.
+        seed_store(&mut mock, keys[1].owner_puzzle_hash, [2u8; 32]);
+
+        let found = enum_user_stores(&mock, keys[0].owner_puzzle_hash)
+            .await
+            .unwrap();
+        assert!(found.is_empty(), "index 0 owns no stores");
+    }
+
+    // discover_all_user_stores: stores spread across HD indices are all found, each
+    // tagged with the HD index of the address that owns it.
+    #[tokio::test]
+    async fn discover_all_user_stores_spans_hd_indices() {
+        let mut mock = MockChain::default();
+        let keys = derive_indexed_keys(ABANDON, 0..5).unwrap();
+        // One store at index 0, two at index 3.
+        let s0 = seed_store(&mut mock, keys[0].owner_puzzle_hash, [10u8; 32]);
+        let s3a = seed_store(&mut mock, keys[3].owner_puzzle_hash, [30u8; 32]);
+        let s3b = seed_store(&mut mock, keys[3].owner_puzzle_hash, [31u8; 32]);
+
+        let mut found = discover_all_user_stores(&mock, ABANDON).await.unwrap();
+        found.sort_by_key(|(idx, _)| *idx);
+
+        assert_eq!(found.len(), 3, "all three stores discovered");
+        assert!(found.contains(&(0u32, s0)));
+        assert!(found.contains(&(3u32, s3a)));
+        assert!(found.contains(&(3u32, s3b)));
+    }
+
+    // sync_datastore_with_history: a multi-generation lineage yields the ORDERED
+    // capsule history (one capsule per root) and a current capsule == the last entry.
+    #[tokio::test]
+    async fn sync_with_history_collects_ordered_capsule_roots() {
+        use crate::keys::derive_wallet_keys;
+
+        // Build a REAL lineage with the driver: mint (root r0) then two updates
+        // (r1, r2), seeding the MockChain from the actual coin spends so the walk
+        // re-parses genuine singleton spends.
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let r0 = Bytes32::default();
+        let r1 = Bytes32::new([1u8; 32]);
+        let r2 = Bytes32::new([2u8; 32]);
+
+        let funding = Coin::new(Bytes32::new([9u8; 32]), keys.owner_puzzle_hash, 1_000_000);
+        let mint = build_mint(&keys, &[funding], r0, None, None, 0).unwrap();
+        let launcher_id = mint.launcher_id;
+
+        let mut mock = MockChain::default();
+
+        // Helper: register a coin as spent + its spend (look the spend up by the
+        // coin it spends).
+        fn register_spend(mock: &mut MockChain, spends: &[CoinSpend], coin_id: Bytes32) {
+            let cs = spends
+                .iter()
+                .find(|cs| cs.coin.coin_id() == coin_id)
+                .expect("coin spend present in bundle")
+                .clone();
+            mock.records.insert(
+                coin_id,
+                CoinInfo {
+                    coin: cs.coin,
+                    spent: true,
+                    confirmed_block_index: 100,
+                    spent_block_index: 200,
+                    timestamp: 1_700_000_000,
+                    coinbase: false,
+                },
+            );
+            mock.spends.insert(coin_id, cs);
+        }
+
+        // Advance the store's root with no fee (the multi variant skips fee-coin
+        // selection when fee == 0, so the test needs no extra funding coin).
+        let update_no_fee = |store: DataStore, new_root: Bytes32| {
+            build_update_unsigned_multi(keys.synthetic_pk, store, new_root, None, None, &[], 0)
+                .unwrap()
+        };
+
+        // The launcher coin is spent in the mint bundle to create the eve singleton.
+        register_spend(&mut mock, &mint.bundle.coin_spends, launcher_id);
+
+        // Generation 0 (eve): spent by the first update.
+        let eve = mint.datastore.clone();
+        let up1 = update_no_fee(eve.clone(), r1);
+        register_spend(&mut mock, &up1.coin_spends, eve.coin.coin_id());
+
+        // Generation 1: spent by the second update.
+        let gen1 = up1.datastore.clone();
+        let up2 = update_no_fee(gen1.clone(), r2);
+        register_spend(&mut mock, &up2.coin_spends, gen1.coin.coin_id());
+
+        // Generation 2: the current, UNSPENT tip.
+        let gen2 = up2.datastore.clone();
+        mock.records.insert(
+            gen2.coin.coin_id(),
+            CoinInfo {
+                coin: gen2.coin,
+                spent: false,
+                confirmed_block_index: 300,
+                spent_block_index: 0,
+                timestamp: 1_700_000_001,
+                coinbase: false,
+            },
+        );
+
+        let (store, hist) = sync_datastore_with_history(&mock, launcher_id)
+            .await
+            .unwrap();
+
+        // Current store is the unspent tip carrying r2.
+        assert_eq!(store.info.metadata.root_hash, r2);
+        assert_eq!(store.coin.coin_id(), gen2.coin.coin_id());
+
+        // History is the ordered capsule list r0 → r1 → r2, all under the launcher id.
+        let store_id = core_bytes32(launcher_id);
+        let roots: Vec<digstore_core::Bytes32> = hist.history.iter().map(|c| c.root_hash).collect();
+        assert_eq!(
+            roots,
+            vec![core_bytes32(r0), core_bytes32(r1), core_bytes32(r2)],
+            "capsule history must be the ordered root list (eve → … → current)"
+        );
+        assert!(hist.history.iter().all(|c| c.store_id == store_id));
+
+        // Current capsule == last history entry == (launcher_id, r2).
+        assert_eq!(
+            hist.current,
+            digstore_core::Capsule {
+                store_id,
+                root_hash: core_bytes32(r2)
+            }
+        );
+        assert_eq!(hist.current, *hist.history.last().unwrap());
     }
 }
