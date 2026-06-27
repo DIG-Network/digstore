@@ -105,6 +105,11 @@ pub enum Command {
     Whoami(WhoamiArgs),
     /// Log out of dighub (clear the stored session).
     Logout(LogoutArgs),
+    /// Deploy a built site/dapp to an EXISTING store from CI (a new capsule),
+    /// reading `dig.toml` — like Vercel's Git integration. Never mints (no init).
+    Deploy(DeployArgs),
+    /// Manage the per-store publisher deploy key (export it once for CI; import it).
+    DeployKey(DeployKeyArgs),
 }
 
 #[derive(Debug, Args)]
@@ -479,6 +484,68 @@ pub struct WhoamiArgs {}
 #[derive(Debug, Args)]
 #[command(after_help = "EXAMPLES:\n  digstore logout")]
 pub struct LogoutArgs {}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Advances an EXISTING store from CI: reconstructs the store's local state \
+(publisher key from --deploy-key / DIGSTORE_DEPLOY_KEY, current root from chain), stages \
+--output-dir, then commits + pushes to DIGHub as a new capsule. NEVER mints (no `init`).\n\nReads \
+defaults from `dig.toml` in the current directory (store-id, output-dir, build-command, remote, \
+network, wait-timeout). Flags/env override the file.\n\nCosts 100 DIG + an XCH fee per deploy (the \
+on-chain root update), paid from the wallet seed (DIGSTORE_PASSPHRASE).\n\nEXAMPLES:\n  digstore \
+deploy\n  digstore deploy --output-dir dist --message \"deploy ${GITHUB_SHA}\" --json"
+)]
+pub struct DeployArgs {
+    /// The on-chain store id (64-hex) to advance. Overrides `dig.toml`'s `store-id`.
+    #[arg(long = "store-id")]
+    pub store_id: Option<String>,
+    /// The built-output directory to publish. Overrides `dig.toml`'s `output-dir` (default `dist`).
+    #[arg(long = "output-dir")]
+    pub output_dir: Option<String>,
+    /// A shell build command to run before staging (e.g. "npm ci && npm run build").
+    /// Overrides `dig.toml`'s `build-command`. Skipped if neither is set.
+    #[arg(long = "build-command")]
+    pub build_command: Option<String>,
+    /// The publisher deploy-key seed (64-hex), from `digstore deploy-key export`. Prefer the
+    /// `DIGSTORE_DEPLOY_KEY` env var in CI so it is not visible in the process table.
+    #[arg(long = "deploy-key")]
+    pub deploy_key: Option<String>,
+    /// The 32-byte secret salt (64-hex) for a PRIVATE store. Public stores omit it. Prefer
+    /// `DIGSTORE_STORE_SALT` in CI.
+    #[arg(long = "salt")]
+    pub salt: Option<String>,
+    /// Commit message for the new capsule. Overrides `dig.toml`'s `message`.
+    #[arg(long, short)]
+    pub message: Option<String>,
+    /// Seconds to wait for on-chain confirmation (default 300; 0 = single check, don't block).
+    #[arg(long)]
+    pub wait_timeout: Option<u64>,
+    /// Chain network (default `mainnet`).
+    #[arg(long)]
+    pub network: Option<String>,
+    /// The `origin` remote to publish to (e.g. `dig://<store-id>` for the public DIGHub, or a
+    /// self-hosted node URL). Overrides `dig.toml`'s `remote`. Defaults to the public RPC.
+    #[arg(long)]
+    pub remote: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct DeployKeyArgs {
+    #[command(subcommand)]
+    pub action: DeployKeyAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DeployKeyAction {
+    /// Print (or write) the active store's publisher deploy key (64-hex seed) so it can be stored
+    /// as a CI secret. This key authorizes publishing new capsules to DIGHub; it has NO spend
+    /// authority. Treat it like a credential.
+    Export {
+        /// Write the key to this file instead of stdout.
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
+}
 
 #[derive(Debug, Args)]
 #[command(

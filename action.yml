@@ -1,0 +1,224 @@
+name: "Deploy to DIG (digstore)"
+description: >-
+  Auto-deploy a built site/dapp to your existing DIG store on every push — a new
+  capsule, published to DIGHub — like Vercel's Git integration. Advances an
+  existing store (never mints: it does NOT run `init`).
+author: "DIG Network"
+
+branding:
+  icon: "upload-cloud"
+  color: "green"
+
+# ---------------------------------------------------------------------------
+# Inputs. Most have sensible defaults or can come from a committed `dig.toml`
+# in your repo. The TWO things you MUST provide are the wallet `mnemonic` and
+# the `deploy-key`, both as repository SECRETS (see SECURITY below).
+# ---------------------------------------------------------------------------
+inputs:
+  mnemonic:
+    description: >-
+      BIP-39 mnemonic of the FUNDED deploy wallet (the singleton owner). Signs
+      the on-chain root update and pays 100 DIG + an XCH fee PER deploy. SECURITY:
+      this can spend all of the wallet's DIG/XCH — use a DEDICATED low-balance
+      deploy wallet funded only with enough DIG for your expected deploys. Pass a
+      repository secret; never hard-code it.
+    required: true
+  deploy-key:
+    description: >-
+      The store's publisher deploy key (64-hex), from `digstore deploy-key export`
+      run once on the machine that created the store. Authorizes publishing new
+      capsules to DIGHub. It has NO spend authority, but it is still a credential —
+      pass it as a repository secret.
+    required: true
+  store-id:
+    description: >-
+      The 64-hex store id to advance. Optional if set as `store-id` in `dig.toml`.
+    required: false
+    default: ""
+  output-dir:
+    description: "The built-output directory to publish (default: dist, or dig.toml's output-dir)."
+    required: false
+    default: ""
+  build-command:
+    description: >-
+      Shell command to build the site before deploying (e.g. "npm ci && npm run
+      build"). Optional; you can also build in a prior step and leave this empty.
+    required: false
+    default: ""
+  salt:
+    description: >-
+      The 32-byte secret salt (64-hex) for a PRIVATE store. Leave empty for a
+      public store. Pass as a repository secret if used.
+    required: false
+    default: ""
+  remote:
+    description: >-
+      The DIGHub remote to publish to. Defaults to the public DIGHub for your
+      store. Override only for a self-hosted node. Accepts `dig://<store-id>` or a
+      node URL. Optional if set as `remote` in `dig.toml`.
+    required: false
+    default: ""
+  message:
+    description: "Commit message for the new capsule (default: deploy <git sha>)."
+    required: false
+    default: ""
+  network:
+    description: "Chain network (default: mainnet)."
+    required: false
+    default: "mainnet"
+  wait-timeout:
+    description: "Seconds to wait for on-chain confirmation (default: 600)."
+    required: false
+    default: "600"
+  passphrase:
+    description: >-
+      Optional passphrase to encrypt the imported seed on the runner. Defaults to
+      a random per-run value (the seed is discarded when the runner is torn down).
+      You normally do NOT need to set this.
+    required: false
+    default: ""
+  digstore-ref:
+    description: >-
+      The digstore git ref (tag/branch/sha) to build the CLI from. Pin this to a
+      release tag for reproducible deploys.
+    required: false
+    default: "main"
+
+# ---------------------------------------------------------------------------
+# Outputs (capture with `id:` on the step that uses this action).
+# ---------------------------------------------------------------------------
+outputs:
+  capsule:
+    description: "The new capsule identity: storeId:rootHash."
+    value: ${{ steps.deploy.outputs.capsule }}
+  root:
+    description: "The new on-chain root hash of this deploy."
+    value: ${{ steps.deploy.outputs.root }}
+  store-id:
+    description: "The store id that was advanced."
+    value: ${{ steps.deploy.outputs.store_id }}
+  dig-url:
+    description: "The dig:// URL of the new capsule."
+    value: ${{ steps.deploy.outputs.dig_url }}
+  hub-url:
+    description: "The DIGHub URL for the store."
+    value: ${{ steps.deploy.outputs.hub_url }}
+
+runs:
+  using: "composite"
+  steps:
+    # 1. Toolchain: build digstore from source (the CLI embeds a guest wasm via
+    #    build.rs, so the wasm32 target + a guest-wasm build are required first).
+    - name: Install Rust toolchain (wasm32)
+      shell: bash
+      run: |
+        rustup show
+        rustup target add wasm32-unknown-unknown
+        rustc --version && cargo --version
+
+    - name: Checkout digstore (${{ inputs.digstore-ref }})
+      uses: actions/checkout@v4
+      with:
+        repository: DIG-Network/digstore
+        ref: ${{ inputs.digstore-ref }}
+        path: .digstore-src
+        persist-credentials: false
+
+    - name: Cache digstore build
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          .digstore-src/target
+        key: digstore-build-${{ runner.os }}-${{ inputs.digstore-ref }}-${{ hashFiles('.digstore-src/Cargo.lock') }}
+        restore-keys: |
+          digstore-build-${{ runner.os }}-${{ inputs.digstore-ref }}-
+          digstore-build-${{ runner.os }}-
+
+    - name: Build + install digstore CLI
+      shell: bash
+      working-directory: .digstore-src
+      run: |
+        # BINDING contract D6: the guest wasm must exist before the CLI build.
+        cargo build -p digstore-guest --target wasm32-unknown-unknown --release
+        cargo install --path crates/digstore-cli --force --locked
+        digstore --version
+
+    # 2. Import the funded wallet seed non-interactively. The mnemonic +
+    #    passphrase are masked and never printed; the seed lives in a throwaway
+    #    DIGSTORE_HOME under the runner's temp dir, discarded at job end.
+    - name: Import deploy wallet seed
+      shell: bash
+      env:
+        DIG_MNEMONIC: ${{ inputs.mnemonic }}
+        DIG_PASSPHRASE: ${{ inputs.passphrase }}
+      run: |
+        echo "::add-mask::$DIG_MNEMONIC"
+        DIGSTORE_HOME="${RUNNER_TEMP}/.dig-deploy"
+        mkdir -p "$DIGSTORE_HOME"
+        echo "DIGSTORE_HOME=$DIGSTORE_HOME" >> "$GITHUB_ENV"
+        # A passphrase to encrypt the seed at rest on the runner. Random if unset.
+        PASS="$DIG_PASSPHRASE"
+        if [ -z "$PASS" ]; then PASS="$(openssl rand -hex 24)"; fi
+        echo "::add-mask::$PASS"
+        echo "DIGSTORE_PASSPHRASE=$PASS" >> "$GITHUB_ENV"
+        DIGSTORE_HOME="$DIGSTORE_HOME" DIGSTORE_PASSPHRASE="$PASS" \
+          digstore seed import --mnemonic "$DIG_MNEMONIC"
+
+    # 3. Deploy: reconstruct the store locally with the deploy key, stage the
+    #    output, advance the on-chain root, and push the new capsule to DIGHub.
+    - name: Deploy to DIG
+      id: deploy
+      shell: bash
+      env:
+        DIGSTORE_DEPLOY_KEY: ${{ inputs.deploy-key }}
+        DIGSTORE_STORE_SALT: ${{ inputs.salt }}
+        IN_STORE_ID: ${{ inputs.store-id }}
+        IN_OUTPUT_DIR: ${{ inputs.output-dir }}
+        IN_BUILD_COMMAND: ${{ inputs.build-command }}
+        IN_REMOTE: ${{ inputs.remote }}
+        IN_MESSAGE: ${{ inputs.message }}
+        IN_NETWORK: ${{ inputs.network }}
+        IN_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+        GIT_SHA: ${{ github.sha }}
+      run: |
+        echo "::add-mask::$DIGSTORE_DEPLOY_KEY"
+        if [ -n "$DIGSTORE_STORE_SALT" ]; then echo "::add-mask::$DIGSTORE_STORE_SALT"; fi
+
+        args=(deploy --json --network "$IN_NETWORK" --wait-timeout "$IN_WAIT_TIMEOUT")
+        [ -n "$IN_STORE_ID" ]      && args+=(--store-id "$IN_STORE_ID")
+        [ -n "$IN_OUTPUT_DIR" ]    && args+=(--output-dir "$IN_OUTPUT_DIR")
+        [ -n "$IN_BUILD_COMMAND" ] && args+=(--build-command "$IN_BUILD_COMMAND")
+        [ -n "$IN_REMOTE" ]        && args+=(--remote "$IN_REMOTE")
+        msg="$IN_MESSAGE"; [ -z "$msg" ] && msg="deploy ${GIT_SHA}"
+        args+=(--message "$msg")
+
+        # Run the deploy, capturing the machine-readable JSON result.
+        out="$(digstore "${args[@]}")"
+        echo "$out"
+
+        capsule="$(printf '%s' "$out" | jq -r '.capsule // empty')"
+        root="$(printf '%s' "$out" | jq -r '.root // empty')"
+        pushed="$(printf '%s' "$out" | jq -r '.pushed // empty')"
+        store_id="${capsule%%:*}"
+
+        if [ -z "$capsule" ] || [ "$pushed" != "true" ]; then
+          echo "::error::deploy did not publish a capsule to DIGHub (pushed=$pushed)"
+          exit 1
+        fi
+
+        echo "capsule=$capsule"   >> "$GITHUB_OUTPUT"
+        echo "root=$root"         >> "$GITHUB_OUTPUT"
+        echo "store_id=$store_id" >> "$GITHUB_OUTPUT"
+        echo "dig_url=dig://$store_id" >> "$GITHUB_OUTPUT"
+        echo "hub_url=https://hub.dig.net/stores/$store_id" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### Deployed to DIG 🟢"
+          echo ""
+          echo "- **Capsule:** \`$capsule\`"
+          echo "- **dig://** \`dig://$store_id\`"
+          echo "- **DIGHub:** https://hub.dig.net/stores/$store_id"
+        } >> "$GITHUB_STEP_SUMMARY"

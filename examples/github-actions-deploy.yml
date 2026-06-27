@@ -1,0 +1,65 @@
+# Example consumer workflow: auto-deploy your site/dapp to DIG on every push.
+#
+# Copy this to `.github/workflows/deploy.yml` in YOUR repo. On every push to your
+# default branch it builds your site and publishes a new capsule to your existing
+# DIG store — like Vercel's Git integration.
+#
+# ONE-TIME SETUP (on the machine where you created the store with `digstore init`):
+#   1. Get the store id:        digstore log --json   (the "store_id" field)
+#   2. Export the deploy key:    digstore deploy-key export
+#   3. Add two repository SECRETS (Settings → Secrets and variables → Actions):
+#        DIG_MNEMONIC    = your funded DEPLOY wallet's BIP-39 mnemonic
+#        DIG_DEPLOY_KEY  = the 64-hex deploy key from step 2
+#   4. Commit a `dig.toml` to your repo root (or pass store-id below):
+#        store-id     = "<your 64-hex store id>"
+#        output-dir   = "dist"            # your build output directory
+#        # build-command = "npm ci && npm run build"   # optional
+#
+# SECURITY: DIG_MNEMONIC can spend ALL of that wallet's DIG/XCH. Use a DEDICATED,
+# low-balance deploy wallet funded only with enough DIG for your expected deploys
+# (each deploy costs 100 DIG + a small XCH fee). Scoped, spend-capped, revocable
+# deploy tokens (no seed in CI) are the planned secure replacement.
+
+name: Deploy to DIG
+
+on:
+  push:
+    branches: [main] # your default branch
+
+# One deploy at a time; let the running one finish (it spends on-chain).
+concurrency:
+  group: dig-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Build your site here (or let the action do it via build-command).
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build
+        run: |
+          npm ci
+          npm run build   # produces ./dist
+
+      - name: Deploy to DIG
+        id: dig
+        uses: DIG-Network/digstore@v0.5.29 # pin to a digstore release tag
+        with:
+          mnemonic: ${{ secrets.DIG_MNEMONIC }}
+          deploy-key: ${{ secrets.DIG_DEPLOY_KEY }}
+          output-dir: dist
+          # store-id: "<64-hex>"   # omit if set in dig.toml
+          # build-command: "npm ci && npm run build"  # alternative to building above
+
+      - name: Show result
+        run: |
+          echo "Capsule: ${{ steps.dig.outputs.capsule }}"
+          echo "dig://   ${{ steps.dig.outputs.dig-url }}"
+          echo "DIGHub:  ${{ steps.dig.outputs.hub-url }}"

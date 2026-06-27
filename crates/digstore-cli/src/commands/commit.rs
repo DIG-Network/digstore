@@ -177,7 +177,13 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
             let capsule = format!("{}:{}", state.store_id, outcome.roothash.to_hex());
 
             if ui.json() {
-                ui.emit_json(&serde_json::json!({
+                // Decide + perform the push in JSON mode too. `--push` is built for
+                // CI, which runs with `--json`; if the push only happened in the
+                // human branch, `commit --push --json` would silently NOT publish.
+                // `do_push` only pushes when `--push` is set (json/non-TTY never
+                // prompts), so json + no `--push` still pushes nothing — unchanged.
+                let pushed = do_push(ctx, ui, &args);
+                let mut obj = serde_json::json!({
                     "root": outcome.roothash.to_hex(),
                     "capsule": capsule,
                     "module": outcome.output_path.display().to_string(),
@@ -185,7 +191,15 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                     "coin_id": coin_hex,
                     "anchor_status": "confirmed",
                     "mocked": mocked,
-                }));
+                });
+                if let Some(result) = pushed {
+                    obj["pushed"] = serde_json::json!(result.is_ok());
+                    match &result {
+                        Ok(out) => obj["claimed"] = serde_json::json!(out.claimed),
+                        Err(e) => obj["push_error"] = serde_json::json!(e.to_string()),
+                    }
+                }
+                ui.emit_json(&obj);
             } else {
                 ui.success(format!("committed root {}", outcome.roothash.to_hex()));
                 ui.line(format!("  capsule: {capsule}  (storeId:rootHash)"));
@@ -214,50 +228,54 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     }
 }
 
-/// After a deployment confirms (human-mode success branch only), decide whether to
-/// publish it to DIGHub and, if so, run the existing push path. This is the ONLY
-/// place commit pushes; it never duplicates the push logic — it calls
-/// [`crate::commands::push::run`] with the default (`origin`) remote, exactly as
-/// `digstore push origin` would.
+/// Decide whether a confirmed deployment should be pushed to DIGHub now, and if
+/// so perform it via the shared push path ([`crate::commands::push::push_core`]
+/// against the default `origin` remote — the same target as `digstore push
+/// origin`). This is the ONE push decision, used by BOTH the human and the JSON
+/// success branches so `commit --push` publishes regardless of output mode.
 ///
-/// Decision (mirrors the `ui.spinner`/`progress_bar` TTY/json gating so it never
-/// blocks automation):
-/// - `--no-push`: never push; keep the `digstore push origin` hint.
-/// - `--push`: push without asking (works non-interactively too).
+/// Decision (mirrors the TTY/json gating so it never blocks automation):
+/// - `--no-push`: never push (returns `None`).
+/// - `--push`: push without asking (works non-interactively / in `--json` too).
 /// - interactive (TTY, not json): ask `Push this deployment to DIGHub now? [y/N]`
-///   (default No); push on yes, keep the hint on no.
-/// - non-interactive (no flag): do nothing but print the hint — never prompt/block.
+///   (default No); push on yes.
+/// - non-interactive (no flag): do not push (returns `None`).
 ///
-/// A push failure here NEVER fails the commit: the deployment is already confirmed
-/// on-chain and finalized locally. We surface a clear error line and the hint so the
-/// user can retry with `digstore push origin`.
-fn maybe_offer_push(ctx: &CliContext, ui: &crate::ui::Ui, args: &CommitArgs) {
-    // Explicit opt-out, or a non-interactive run with no `--push`: just leave the hint.
+/// Returns `None` when no push was attempted, or `Some(result)` carrying the push
+/// outcome. A push FAILURE never fails the commit (the deployment is already
+/// confirmed on-chain and finalized locally) — the caller surfaces it.
+fn do_push(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    args: &CommitArgs,
+) -> Option<Result<crate::commands::push::PushOutcome, CliError>> {
+    // Explicit opt-out, or a non-interactive run with no `--push`: do not push.
     if args.no_push || (!args.push && !ui.can_prompt()) {
-        ui.hint("digstore push origin");
-        return;
+        return None;
     }
-
     // `--push` pushes unconditionally; otherwise ask (we are interactive here).
-    let do_push = args.push || ui.confirm("Push this deployment to DIGHub now?", false);
-    if !do_push {
-        // User declined: keep the hint so they know how to publish later.
-        ui.hint("digstore push origin");
-        return;
+    let push = args.push || ui.confirm("Push this deployment to DIGHub now?", false);
+    if !push {
+        return None;
     }
+    Some(crate::commands::push::push_core(ctx, ui, "origin"))
+}
 
-    // Reuse the existing push path — the same target as `digstore push origin`.
-    // Its own (now-indeterminate) progress bar runs while it works; on success it
-    // prints "pushed root … to origin".
-    match crate::commands::push::run(
-        ctx,
-        ui,
-        crate::cli::PushArgs {
-            remote: "origin".to_string(),
-        },
-    ) {
-        Ok(()) => {}
-        Err(e) => {
+/// Human-mode wrapper over [`do_push`]: pushes per the decision, then prints the
+/// same `pushed root … to origin` success line `digstore push origin` would, or
+/// surfaces the error + the retry hint. (The JSON branch folds the [`do_push`]
+/// result into its single object instead of printing.)
+fn maybe_offer_push(ctx: &CliContext, ui: &crate::ui::Ui, args: &CommitArgs) {
+    match do_push(ctx, ui, args) {
+        // No push attempted (opted out / declined / non-interactive default).
+        None => ui.hint("digstore push origin"),
+        Some(Ok(out)) => {
+            ui.success(format!("pushed root {} to origin", out.root.to_hex()));
+            if out.claimed {
+                ui.line("linked to your dighub account (pending on-chain owner verification)");
+            }
+        }
+        Some(Err(e)) => {
             // Do NOT fail the (already-confirmed) commit: report and keep the hint.
             ui.error(&e);
             ui.hint("digstore push origin");

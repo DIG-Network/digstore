@@ -12,6 +12,8 @@ pub mod checkout;
 pub mod clone;
 pub mod commit;
 pub mod compile;
+pub mod deploy;
+pub mod deploy_key;
 pub mod diff;
 pub mod dir;
 pub mod init;
@@ -44,9 +46,11 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
     // like `git init`/`git clone`); `compile` is a self-contained headless build
     // into an ephemeral `.dig` (the caller passes --dig-dir); everything else
     // discovers an existing workspace by walking up.
+    // `deploy` also CREATES/adopts the store from a fresh checkout (like
+    // init/clone), so it anchors to CWD/.dig with no walk-up.
     let workspace_dir = if matches!(
         cli.command,
-        Command::Init(_) | Command::Clone(_) | Command::Compile(_)
+        Command::Init(_) | Command::Clone(_) | Command::Compile(_) | Command::Deploy(_)
     ) {
         CliContext::init_workspace(cli.dig_dir.clone())
     } else {
@@ -76,6 +80,21 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
                 verbose: cli.verbose,
             };
             return compile::run(&ctx, &ui, a);
+        }
+        // `deploy` advances an EXISTING store from a fresh checkout (CI). It adopts
+        // the store into `<workspace>/stores/default` (reconstructing its local
+        // state) and runs add+commit+push, so it owns its own store-scoped context
+        // with op_dir == CWD (where `dig.toml` and the build output live).
+        Command::Deploy(a) => {
+            let ctx = CliContext {
+                dig_dir: workspace_dir.join("stores").join("default"),
+                workspace_dir,
+                op_dir: cwd,
+                store_name: Some("default".to_string()),
+                json: cli.json,
+                verbose: cli.verbose,
+            };
+            return deploy::run(&ctx, &ui, a);
         }
         Command::Stores(a) => {
             let ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
@@ -142,9 +161,11 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Revoke(a) => revoke::run(&ctx, &ui, a),
         Command::Serve(a) => serve::run(&ctx, &ui, a),
         Command::Anchor(a) => anchor::run(&ctx, &ui, a),
+        Command::DeployKey(a) => deploy_key::run(&ctx, &ui, a),
         Command::Init(_)
         | Command::Clone(_)
         | Command::Compile(_)
+        | Command::Deploy(_)
         | Command::Stores(_)
         | Command::Use(_)
         | Command::Update(_)

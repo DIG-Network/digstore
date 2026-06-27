@@ -194,6 +194,144 @@ pub fn init_store(
     })
 }
 
+/// Reconstruct the per-store `.dig` state for an EXISTING store so a fresh
+/// checkout (e.g. a CI runner) can ADVANCE it without re-minting it.
+///
+/// `init` MINTS a new singleton (spends 100 DIG) and is the wrong tool for CI:
+/// the store already exists. To advance an existing store, `commit` needs four
+/// pieces of local state that a fresh checkout lacks: `config.toml` (store id +
+/// visibility/salt), `signing_key.bin` (the per-store BLS PUBLISHER key whose
+/// pubkey the DIGHub remote pinned at first push — `commit --push` signs the §21
+/// head with it), `anchor.toml` (so `commit` does not hard-error "store is not
+/// anchored"), and a `roots.log` whose head is the store's current on-chain root
+/// (so `next_id` and the no-op guard are correct and the new commit fast-forwards
+/// from the real tip). This writes all of them into a fresh `ctx.dig_dir`.
+///
+/// CRITICAL — the two irreducible inputs CI must supply (everything else is
+/// derived or read from chain):
+/// - `signing_seed`: the 32-byte seed behind the store's publisher key. It is
+///   RANDOM (generated at `init`) and CANNOT be reconstructed from the wallet
+///   seed, so it must be exported once (`digstore deploy-key export`) and given
+///   to CI. It carries NO spend authority — only §21 head-push authority.
+/// - `visibility`: `Public`, or `Private(salt)` with the ORIGINAL secret salt —
+///   a private store's retrieval keys are derived from `urn + salt`, so a wrong
+///   salt silently produces a divergent (unservable) store.
+///
+/// `chain_tip_root` is the store singleton's current on-chain root (resolve via
+/// `remote_ops::onchain_tip_root`); it seeds the local head so the next commit
+/// fast-forwards from the real tip. `coin_id_hex` is recorded in `anchor.toml`
+/// for completeness but is NOT load-bearing: a fresh `commit` re-syncs the
+/// singleton lineage from the launcher id (only the resume path reads it).
+///
+/// Refuses to overwrite an already-initialized store (mirrors `init_store`).
+pub fn adopt_existing_store(
+    ctx: &CliContext,
+    store_id: Bytes32,
+    signing_seed: &[u8; 32],
+    visibility: Visibility,
+    chain_tip_root: Bytes32,
+    coin_id_hex: Option<String>,
+) -> Result<(), CliError> {
+    if ctx.config_path().exists() {
+        return Err(CliError::InvalidArgument(format!(
+            "store already initialized at {}",
+            ctx.dig_dir.display()
+        )));
+    }
+
+    // Reconstruct the publisher identity from the provided seed (NOT freshly
+    // generated, unlike `clone` — that is the whole point: the pushed head must
+    // be signed by the key the remote already pinned for this store).
+    let secret = digstore_crypto::bls::SecretKey::from_seed(signing_seed);
+    let host_public_key = secret.public_key().to_bytes();
+
+    let cfg = StoreConfig {
+        store_id,
+        data_dir: ctx.dig_dir.display().to_string(),
+        max_size: MAX_STORE_BYTES,
+        visibility,
+        // Label/description live on-chain; the adopted local config starts without
+        // them and `commit` re-sends whatever the user passes (or preserves the
+        // on-chain metadata via the singleton update).
+        label: None,
+        description: None,
+    };
+
+    // Real store scaffold: config.toml + §4.4 tree + staging + roots.log.
+    Store::init(cfg.clone(), SystemClock)
+        .map_err(|e| CliError::Other(anyhow::anyhow!("store init: {e}")))?;
+
+    // Persist the PROVIDED publisher signing seed (same on-disk shape as `init`).
+    write_secret_file(&ctx.dig_dir.join("signing_key.bin"), signing_seed)
+        .map_err(|e| CliError::Other(e.into()))?;
+
+    // Private-store master salt sidecar (owner-only), mirroring `init_store`.
+    if let Visibility::Private(salt) = &cfg.visibility {
+        write_secret_file(&ctx.salt_path(), Bytes32(salt.0).to_hex().as_bytes())
+            .map_err(|e| CliError::Other(e.into()))?;
+    }
+
+    // Trusted serving key = the publisher key (the adopting node can also serve).
+    let trusted = vec![TrustedHostKey {
+        public_key: host_public_key.0,
+        label: format!("dig-host-key-v1:{}", host_public_key.to_hex()),
+    }];
+    fs::write(
+        ctx.dig_dir.join("trusted_keys.json"),
+        serde_json::to_string_pretty(&serialize_keys(&trusted))
+            .map_err(|e| CliError::Other(e.into()))?,
+    )
+    .map_err(|e| CliError::Other(e.into()))?;
+
+    // Seed local history with the on-chain tip as the head, so `current_root`
+    // returns the real tip: `next_id` is correct AND a deploy that did not change
+    // anything (staged content reproduces the tip) is rejected by the no-op guard
+    // instead of spending DIG to re-anchor an identical root.
+    append_history(
+        ctx,
+        GenerationState {
+            id: 0,
+            root: chain_tip_root,
+            timestamp: current_time(),
+        },
+    )?;
+
+    // Anchor record: Confirmed at the tip. A non-empty `last_root` + Confirmed
+    // status sidesteps both the "pending init" guard and the "resume in-flight
+    // update" guard in `commit`, so the next commit submits a FRESH root update.
+    let anchor = crate::ops::anchor_state::AnchorState {
+        network: "mainnet".to_string(),
+        store_id: store_id.to_hex(),
+        coin_id: coin_id_hex.unwrap_or_default(),
+        status: crate::ops::anchor_state::AnchorStatus::Confirmed,
+        last_root: chain_tip_root.to_hex(),
+        last_tx_id: String::new(),
+        confirmed_height: 0,
+    };
+    anchor.save(&ctx.dig_dir)?;
+
+    // Git convenience: ignore the workspace `.dig/` once.
+    ensure_dig_gitignored(&ctx.workspace_dir);
+
+    Ok(())
+}
+
+/// Read the store's publisher signing seed (`signing_key.bin`) as 32 bytes, for
+/// `digstore deploy-key export`. This is the seed `init` generated; a node uses
+/// it to sign §21 head pushes. Errors cleanly if the store has no signing key.
+pub fn read_signing_seed(ctx: &CliContext) -> Result<[u8; 32], CliError> {
+    let path = ctx.dig_dir.join("signing_key.bin");
+    let bytes = fs::read(&path).map_err(|_| {
+        CliError::NotFound(format!(
+            "no signing key for this store ({}); deploy-key export needs an initialized store",
+            ctx.dig_dir.display()
+        ))
+    })?;
+    bytes
+        .try_into()
+        .map_err(|_| CliError::InvalidArgument("signing_key.bin is not a 32-byte seed".to_string()))
+}
+
 /// Ensure the project's `.gitignore` ignores the `.dig/` store directory.
 ///
 /// Only applies to the conventional layout where the store lives in a directory
@@ -1810,6 +1948,111 @@ mod tests {
 
         let txt = std::fs::read_to_string(ctx.dig_dir.join("urns.txt")).unwrap();
         assert!(txt.contains("readme.md\turn:dig:chia:"));
+    }
+
+    // --- adopt_existing_store: reconstruct an existing store's .dig for CI ---
+
+    /// A fresh `.dig` context that has NOT been initialized (no config.toml),
+    /// used to exercise `adopt_existing_store` from a clean slate.
+    fn empty_ctx() -> (tempfile::TempDir, CliContext) {
+        let td = tempdir().unwrap();
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
+        (td, ctx)
+    }
+
+    #[test]
+    fn adopt_writes_config_key_anchor_and_history() {
+        let (_td, ctx) = empty_ctx();
+        let store_id = Bytes32([0x11u8; 32]);
+        let seed = [0x22u8; 32];
+        let tip = Bytes32([0x33u8; 32]);
+
+        store_ops_adopt(&ctx, store_id, &seed, Visibility::Public, tip, None);
+
+        // config.toml carries the adopted store id.
+        let cfg = ctx.load_config().unwrap();
+        assert_eq!(cfg.store_id, store_id);
+        assert!(matches!(cfg.visibility, Visibility::Public));
+
+        // signing_key.bin is EXACTLY the provided seed (not a fresh random one).
+        let on_disk = fs::read(ctx.dig_dir.join("signing_key.bin")).unwrap();
+        assert_eq!(on_disk, seed.to_vec(), "publisher seed must be preserved");
+
+        // The reconstructed publisher pubkey matches from-seed derivation.
+        let sk = load_signing_key(&ctx).unwrap();
+        let expected = digstore_crypto::bls::SecretKey::from_seed(&seed)
+            .public_key()
+            .to_bytes();
+        assert_eq!(sk.public_key().to_bytes().0, expected.0);
+
+        // anchor.toml: Confirmed at the tip (so commit submits a fresh update).
+        let anchor = crate::ops::anchor_state::AnchorState::load(&ctx.dig_dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            anchor.status,
+            crate::ops::anchor_state::AnchorStatus::Confirmed
+        );
+        assert_eq!(anchor.last_root, tip.to_hex());
+        assert_eq!(anchor.store_id, store_id.to_hex());
+
+        // Local head == the on-chain tip.
+        assert_eq!(current_root(&ctx).unwrap(), Some(tip));
+    }
+
+    #[test]
+    fn adopt_refuses_when_already_initialized() {
+        let (_td, ctx) = empty_ctx();
+        let store_id = Bytes32([0x44u8; 32]);
+        let seed = [0x55u8; 32];
+        let tip = Bytes32([0x66u8; 32]);
+        store_ops_adopt(&ctx, store_id, &seed, Visibility::Public, tip, None);
+        // A second adopt into the same dir must fail (mirrors init_store's guard).
+        let err = adopt_existing_store(&ctx, store_id, &seed, Visibility::Public, tip, None);
+        assert!(
+            err.is_err(),
+            "adopt must refuse an already-initialized store"
+        );
+    }
+
+    #[test]
+    fn adopt_private_writes_salt_sidecar() {
+        let (_td, ctx) = empty_ctx();
+        let store_id = Bytes32([0x77u8; 32]);
+        let seed = [0x88u8; 32];
+        let tip = Bytes32([0x99u8; 32]);
+        let salt = SecretSalt([0xABu8; 32]);
+        store_ops_adopt(&ctx, store_id, &seed, Visibility::Private(salt), tip, None);
+        let salt_hex = fs::read_to_string(ctx.salt_path()).unwrap();
+        assert_eq!(salt_hex.trim(), Bytes32(salt.0).to_hex());
+        let cfg = ctx.load_config().unwrap();
+        assert!(matches!(cfg.visibility, Visibility::Private(_)));
+    }
+
+    #[test]
+    fn read_signing_seed_round_trips_init_key() {
+        let (_td, ctx) = ctx(false);
+        let seed = read_signing_seed(&ctx).unwrap();
+        let on_disk = fs::read(ctx.dig_dir.join("signing_key.bin")).unwrap();
+        assert_eq!(seed.to_vec(), on_disk);
+    }
+
+    #[test]
+    fn read_signing_seed_errors_without_store() {
+        let (_td, ctx) = empty_ctx();
+        assert!(read_signing_seed(&ctx).is_err());
+    }
+
+    /// Helper: adopt and unwrap, keeping the tests terse.
+    fn store_ops_adopt(
+        ctx: &CliContext,
+        store_id: Bytes32,
+        seed: &[u8; 32],
+        visibility: Visibility,
+        tip: Bytes32,
+        coin: Option<String>,
+    ) {
+        adopt_existing_store(ctx, store_id, seed, visibility, tip, coin).unwrap();
     }
 
     #[test]
