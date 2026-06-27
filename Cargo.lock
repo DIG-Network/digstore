@@ -2193,9 +2193,12 @@ name = "dig-wallet"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chia",
  "chia-protocol",
+ "chia-wallet-sdk",
  "dig-node",
  "digstore-chain",
+ "digstore-core",
  "hex",
  "serde",
  "serde_json",
