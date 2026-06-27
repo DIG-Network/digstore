@@ -1636,11 +1636,396 @@ async fn wc_dispatch(
                 "sent": status_value,
             }))
         }
+
+        // ---- Advanced coin types (power-user) -------------------------------
+        //
+        // Clawback payments, options, streaming/vesting, vaults, and verifiable
+        // credentials. These wrap the digstore-chain builders behind the SAME
+        // consent + broadcast gate as the core methods. Where a builder documents a
+        // gap (e.g. an option exercise needs the caller to also fund the strike, a
+        // vault spend needs the wallet's non-existent K1 secret keys, a VC issue/revoke
+        // needs the issuer DID co-spent in the same bundle), the leg is surfaced as an
+        // honest "not supported in this build" (501) rather than faked.
+        "dig_clawbackSend" => clawback_send(&mnemonic, &params).await,
+        "dig_clawbackClaim" => clawback_claim_or_recover(&mnemonic, &params, true).await,
+        "dig_clawbackRecover" => clawback_claim_or_recover(&mnemonic, &params, false).await,
+
+        "dig_optionCreate" => option_create(&mnemonic, &params).await,
+        "dig_optionExercise" | "dig_optionClawback" => Err(wc_err(
+            StatusCode::NOT_IMPLEMENTED,
+            "exercising / clawing back an option is not supported in this build: it needs the \
+             post-create option state (the option singleton + locked-underlying coin) and, for \
+             exercise, a same-bundle strike payment — neither is reconstructable from a request. \
+             Create options here; exercise/clawback them with a full Chia wallet."
+                .to_string(),
+        )),
+
+        "dig_streamCreate" => stream_create(&mnemonic, &params).await,
+        "dig_streamClaim" => stream_claim_or_clawback(&mnemonic, &params, false).await,
+        "dig_streamClawback" => stream_claim_or_clawback(&mnemonic, &params, true).await,
+
+        "dig_vaultCreate" => vault_create(&mnemonic, &params).await,
+        "dig_vaultSpend" => Err(wc_err(
+            StatusCode::NOT_IMPLEMENTED,
+            "spending a vault is not supported in this build: a vault's custody is an \
+             independent K1 (secp256k1) member set, NOT the wallet's BLS keys, so this wallet \
+             holds no signer for it (chia-wallet-sdk 0.30 only verifies the K1 member spend). \
+             Create vaults here; spend them with the K1 custody keys elsewhere."
+                .to_string(),
+        )),
+
+        "dig_vcVerify" => vc_verify(&params),
+        "dig_vcIssue" | "dig_vcRevoke" => Err(wc_err(
+            StatusCode::NOT_IMPLEMENTED,
+            "issuing / revoking a verifiable credential is not supported in this build: both \
+             require the issuing DID to be co-spent in the SAME bundle (it holds the issuer's \
+             authority), which this standalone wallet endpoint cannot orchestrate. Verify \
+             credentials here (dig_vcVerify); issue/revoke them from the issuing DID's tooling."
+                .to_string(),
+        )),
+        "dig_vcTransfer" => Err(wc_err(
+            StatusCode::NOT_IMPLEMENTED,
+            digstore_chain::vc::vc_transfer_unsupported().to_string(),
+        )),
+
         other => Err(wc_err(
             StatusCode::NOT_IMPLEMENTED,
             format!("unsupported WC method: {other}"),
         )),
     }
+}
+
+// ---- Advanced coin-type handlers --------------------------------------------
+//
+// Each builds (and, where it holds all keys, signs) via the digstore-chain builders,
+// then applies `broadcast_or_dry_run` — signed-but-not-pushed unless the env opts in
+// (`DIG_WALLET_ALLOW_BROADCAST=1`), exactly like the core spend methods. A dapp can
+// never force a broadcast; these are broadcast-INTENT, gated by the env.
+
+/// Build + sign a clawback SEND: fund a clawback coin (claimable by `receiver` after
+/// `timelock` seconds, recoverable by the wallet until then) from an XCH coin at the
+/// wallet's primary address. Returns the resulting clawback coin id + terms so the
+/// recipient/sender can later claim/recover it (those need the coin + terms back).
+async fn clawback_send(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let bad = |e: digstore_chain::error::ChainError| wc_err(StatusCode::BAD_REQUEST, e.to_string());
+
+    let to = params
+        .get("receiver")
+        .or_else(|| params.get("to"))
+        .or_else(|| params.get("address"))
+        .and_then(|a| a.as_str())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'receiver'"))?;
+    let receiver_ph = digstore_chain::send::decode_xch_address(to).map_err(bad)?;
+    let amount = json_u64(params, "amount")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'amount'"))?;
+    let timelock = json_u64(params, "timelock")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'timelock' (seconds)"))?;
+
+    let chain = Coinset::mainnet();
+    let sender = primary_keys(mnemonic)?;
+    let funding = find_funding_coin(&chain, mnemonic, sender.owner_puzzle_hash).await?;
+    let (spends, clawback) = digstore_chain::clawback::build_clawback_send(
+        &sender,
+        funding,
+        receiver_ph,
+        amount,
+        timelock,
+    )
+    .map_err(bad)?;
+    let sig = digstore_chain::clawback::sign_clawback_spends(
+        &spends,
+        std::slice::from_ref(&sender.synthetic_sk),
+        false,
+    )
+    .map_err(bad)?;
+    let bundle = chia_protocol::SpendBundle::new(spends, sig);
+    let n = bundle.coin_spends.len();
+    let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+    let mut out = singleton_spend_json(status, n, &bundle);
+    out["clawbackCoin"] = clawback_coin_json(&clawback);
+    Ok(out)
+}
+
+/// Build + sign a clawback CLAIM (recipient path, after the timelock) or RECOVER
+/// (sender path, before the recipient claims) of an existing clawback coin. The coin +
+/// its terms are supplied in the request (a clawback coin is fully reconstructable from
+/// `{parentCoinId, amount, timelock, senderAddress, receiverAddress}`); the wallet
+/// signs with the matching (claim → receiver / recover → sender) key.
+async fn clawback_claim_or_recover(
+    mnemonic: &str,
+    params: &serde_json::Value,
+    claim: bool,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let bad = |e: digstore_chain::error::ChainError| wc_err(StatusCode::BAD_REQUEST, e.to_string());
+    let clawback = parse_clawback_coin(params)?;
+    let fee = json_u64(params, "fee").unwrap_or(0);
+
+    // The key that authorizes this path: the receiver (claim) or the sender (recover).
+    let target_ph = if claim {
+        clawback.terms.receiver_puzzle_hash
+    } else {
+        clawback.terms.sender_puzzle_hash
+    };
+    let keys = wallet_keys_for_ph(mnemonic, target_ph)
+        .await?
+        .ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                if claim {
+                    "this wallet does not hold the clawback's receiver address"
+                } else {
+                    "this wallet does not hold the clawback's sender address"
+                },
+            )
+        })?;
+
+    let bundle = if claim {
+        digstore_chain::clawback::build_clawback_claim(&clawback, &keys, fee, false).map_err(bad)?
+    } else {
+        digstore_chain::clawback::build_clawback_recover(&clawback, &keys, fee, false)
+            .map_err(bad)?
+    };
+    let chain = Coinset::mainnet();
+    let n = bundle.coin_spends.len();
+    let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+    Ok(singleton_spend_json(status, n, &bundle))
+}
+
+/// Build + sign an option CREATE: lock `underlyingAmount` XCH from the wallet's primary
+/// address as the underlying, mint the option singleton to the wallet, exercisable for
+/// the requested strike (`strike{type,amount,assetId?}`) until `expirySeconds`. Returns
+/// the option launcher id + underlying coin id.
+async fn option_create(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    use serde_json::json;
+    let bad = |e: digstore_chain::error::ChainError| wc_err(StatusCode::BAD_REQUEST, e.to_string());
+
+    let underlying_amount = json_u64(params, "underlyingAmount")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'underlyingAmount'"))?;
+    let expiry = json_u64(params, "expirySeconds")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'expirySeconds'"))?;
+    let strike = parse_option_strike(params)?;
+
+    let chain = Coinset::mainnet();
+    let creator = primary_keys(mnemonic)?;
+    let funding = find_funding_coin(&chain, mnemonic, creator.owner_puzzle_hash).await?;
+    let (spends, created) = digstore_chain::option::build_option_create(
+        &creator,
+        funding,
+        underlying_amount,
+        strike,
+        expiry,
+    )
+    .map_err(bad)?;
+    let sig = digstore_chain::option::sign_option_spends(
+        &spends,
+        std::slice::from_ref(&creator.synthetic_sk),
+        false,
+    )
+    .map_err(bad)?;
+    let bundle = chia_protocol::SpendBundle::new(spends, sig);
+    let n = bundle.coin_spends.len();
+    let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+    let mut out = singleton_spend_json(status, n, &bundle);
+    out["launcherId"] = json!(format!(
+        "0x{}",
+        hex::encode(created.option.info.launcher_id)
+    ));
+    out["underlyingCoinId"] = json!(format!(
+        "0x{}",
+        hex::encode(created.underlying_coin.coin_id())
+    ));
+    Ok(out)
+}
+
+/// Build + sign a streaming CREATE: lock `amount` XCH from the wallet's primary address
+/// that vests linearly from `startTime` to `endTime` to `recipient`, with the unvested
+/// remainder claw-back-able to the wallet. Returns the streaming coin id.
+async fn stream_create(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    use serde_json::json;
+    let bad = |e: digstore_chain::error::ChainError| wc_err(StatusCode::BAD_REQUEST, e.to_string());
+
+    let to = params
+        .get("recipient")
+        .or_else(|| params.get("to"))
+        .or_else(|| params.get("address"))
+        .and_then(|a| a.as_str())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'recipient'"))?;
+    let recipient_ph = digstore_chain::send::decode_xch_address(to).map_err(bad)?;
+    let amount = json_u64(params, "amount")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'amount'"))?;
+    let start = json_u64(params, "startTime")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'startTime'"))?;
+    let end = json_u64(params, "endTime")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'endTime'"))?;
+
+    let chain = Coinset::mainnet();
+    let payer = primary_keys(mnemonic)?;
+    // The payer is the clawback address (it reclaims the unvested remainder).
+    let clawback_ph = payer.owner_puzzle_hash;
+    let funding = find_funding_coin(&chain, mnemonic, payer.owner_puzzle_hash).await?;
+    let (spends, stream) = digstore_chain::streaming::build_stream_create(
+        &payer,
+        funding,
+        recipient_ph,
+        clawback_ph,
+        amount,
+        start,
+        end,
+    )
+    .map_err(bad)?;
+    let sig = digstore_chain::streaming::sign_stream_spends(
+        &spends,
+        std::slice::from_ref(&payer.synthetic_sk),
+        false,
+    )
+    .map_err(bad)?;
+    let bundle = chia_protocol::SpendBundle::new(spends, sig);
+    let n = bundle.coin_spends.len();
+    let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+    let mut out = singleton_spend_json(status, n, &bundle);
+    out["streamCoinId"] = json!(format!("0x{}", hex::encode(stream.asset.coin.coin_id())));
+    Ok(out)
+}
+
+/// Build + sign a streaming CLAIM (recipient takes the vested portion) or CLAWBACK
+/// (payer reclaims the unvested remainder). The live stream is reconstructed from the
+/// `parentSpend` hex (the coin spend that created/last-updated it) via
+/// [`reconstruct_stream`]; the authorizing message coin is a 0-mojo coin the wallet
+/// holds at the recipient/clawback address.
+async fn stream_claim_or_clawback(
+    mnemonic: &str,
+    params: &serde_json::Value,
+    clawback: bool,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let bad = |e: digstore_chain::error::ChainError| wc_err(StatusCode::BAD_REQUEST, e.to_string());
+
+    let parent_spend = parse_coin_spend_hex(params, "parentSpend")?;
+    let stream = digstore_chain::streaming::reconstruct_stream(&parent_spend)
+        .map_err(bad)?
+        .ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                "no live stream in that parent spend (it may have been fully clawed back)",
+            )
+        })?;
+    let payment_time = json_u64(params, "paymentTime").ok_or_else(|| {
+        wc_err(
+            StatusCode::BAD_REQUEST,
+            "missing 'paymentTime' (block timestamp)",
+        )
+    })?;
+
+    // The address that authorizes this path: recipient (claim) or clawback (clawback).
+    let target_ph = if clawback {
+        stream.asset.info.clawback_ph.ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                "this stream has no clawback path (clawback_ph is None)",
+            )
+        })?
+    } else {
+        stream.asset.info.recipient
+    };
+    let keys = wallet_keys_for_ph(mnemonic, target_ph)
+        .await?
+        .ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                if clawback {
+                    "this wallet does not hold the stream's clawback address"
+                } else {
+                    "this wallet does not hold the stream's recipient address"
+                },
+            )
+        })?;
+    // The stream releases funds ONLY for an authorizing message from a real coin at the
+    // recipient/clawback address — and that coin is consumed with no output, so it MUST
+    // be a 0-mojo coin (a value-bearing coin would burn its value). Don't fake one.
+    let message_coin = find_zero_mojo_coin(&keys.owner_puzzle_hash, mnemonic).await?;
+
+    let bundle = if clawback {
+        digstore_chain::streaming::build_stream_clawback(
+            &stream,
+            &keys,
+            message_coin,
+            payment_time,
+            false,
+        )
+        .map_err(bad)?
+    } else {
+        digstore_chain::streaming::build_stream_claim(
+            &stream,
+            &keys,
+            message_coin,
+            payment_time,
+            false,
+        )
+        .map_err(bad)?
+    };
+    let chain = Coinset::mainnet();
+    let n = bundle.coin_spends.len();
+    let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+    Ok(singleton_spend_json(status, n, &bundle))
+}
+
+/// Build + sign a vault CREATE: launch a vault singleton (funded by the wallet's BLS
+/// coin at its primary address) under a K1 custody set — `members` (33-byte K1 pubkeys,
+/// hex) with `required` of them needed to spend. Returns the vault launcher id. (The
+/// vault SPEND needs the K1 secret keys, which the wallet does not hold — see the
+/// dig_vaultSpend "not supported in this build" note.)
+async fn vault_create(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    use serde_json::json;
+    let bad = |e: digstore_chain::error::ChainError| wc_err(StatusCode::BAD_REQUEST, e.to_string());
+
+    let config = parse_vault_config(params)?;
+    let chain = Coinset::mainnet();
+    let funder = primary_keys(mnemonic)?;
+    let funding = find_funding_coin(&chain, mnemonic, funder.owner_puzzle_hash).await?;
+    let (spends, created) =
+        digstore_chain::vault::build_vault_create(&funder, funding, config).map_err(bad)?;
+    let sig = digstore_chain::vault::sign_vault_create_spends(
+        &spends,
+        std::slice::from_ref(&funder.synthetic_sk),
+        false,
+    )
+    .map_err(bad)?;
+    let bundle = chia_protocol::SpendBundle::new(spends, sig);
+    let n = bundle.coin_spends.len();
+    let status = broadcast_or_dry_run(&chain, bundle.clone()).await?;
+    let mut out = singleton_spend_json(status, n, &bundle);
+    out["launcherId"] = json!(format!("0x{}", hex::encode(created.vault.info.launcher_id)));
+    Ok(out)
+}
+
+/// VC VERIFY (pure, no chain): compute the on-chain asserter puzzle hash for a credential
+/// `(issuerDid, version, assetId, dataHash)` — the address a relying party sends a coin to
+/// so spending it REQUIRES proof of that credential. The "verify a credential" primitive.
+fn vc_verify(params: &serde_json::Value) -> Result<serde_json::Value, (StatusCode, String)> {
+    use serde_json::json;
+    let issuer_did = parse_required_hash(params, "issuerDid")?;
+    let asset_id = parse_required_hash(params, "assetId")?;
+    let data_hash = parse_required_hash(params, "dataHash")?;
+    let version = json_u64(params, "version").unwrap_or(1) as u32;
+    let ph = digstore_chain::vc::vc_asserter_puzzle_hash(issuer_did, version, asset_id, data_hash);
+    Ok(json!({
+        "asserterPuzzleHash": format!("0x{}", hex::encode(ph)),
+        "issuerDid": format!("0x{}", hex::encode(issuer_did)),
+        "version": version,
+        "assetId": format!("0x{}", hex::encode(asset_id)),
+        "dataHash": format!("0x{}", hex::encode(data_hash)),
+    }))
 }
 
 /// One `getAssetCoins` entry in Sage's SpendableCoin shape. `amount` is a decimal
@@ -1951,6 +2336,271 @@ async fn find_funding_coin(
                 "no spendable XCH coin to fund the mint at the wallet's address",
             )
         })
+}
+
+// ---- Advanced coin-type helpers ---------------------------------------------
+
+/// The wallet's primary (index 0) [`IndexedKeys`] — the address that funds new
+/// singletons / clawback coins / streams / vaults, mirroring the mint/DID paths.
+fn primary_keys(mnemonic: &str) -> Result<digstore_chain::keys::IndexedKeys, (StatusCode, String)> {
+    digstore_chain::keys::derive_indexed_keys(mnemonic, 0..1)
+        .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| wc_err(StatusCode::INTERNAL_SERVER_ERROR, "no wallet key"))
+}
+
+/// The wallet's HD [`IndexedKeys`] whose owner puzzle hash equals `ph`, if any, found by
+/// scanning the wallet's derived addresses. `None` when the wallet does not hold `ph`
+/// (e.g. claiming a clawback the wallet did not receive). Lets the clawback/stream legs
+/// pick the exact key that authorizes the receiver / sender / clawback path.
+async fn wallet_keys_for_ph(
+    mnemonic: &str,
+    ph: chia_protocol::Bytes32,
+) -> Result<Option<digstore_chain::keys::IndexedKeys>, (StatusCode, String)> {
+    let chain = Coinset::mainnet();
+    let scanned = scan_wallet(&chain, mnemonic)
+        .await
+        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}")))?;
+    Ok(scanned
+        .addrs
+        .iter()
+        .find(|a| a.keys.owner_puzzle_hash == ph)
+        .map(|a| a.keys.clone()))
+}
+
+/// Find a 0-mojo coin the wallet holds at `ph`, for use as a stream's authorizing
+/// MESSAGE coin. The message coin is spent with only a `send_message` (no output), so it
+/// MUST be a 0-mojo coin — a value-bearing coin would burn its value. Errors clearly when
+/// the wallet has none at that address (we never substitute a value-bearing coin).
+async fn find_zero_mojo_coin(
+    ph: &chia_protocol::Bytes32,
+    mnemonic: &str,
+) -> Result<chia_protocol::Coin, (StatusCode, String)> {
+    let chain = Coinset::mainnet();
+    let coins = chain.unspent_coins(*ph).await.map_err(|e| {
+        wc_err(
+            StatusCode::BAD_GATEWAY,
+            format!("coinset coins failed: {e}"),
+        )
+    })?;
+    let _ = mnemonic; // address derives from the supplied ph; mnemonic kept for symmetry
+    coins.into_iter().find(|c| c.amount == 0).ok_or_else(|| {
+        wc_err(
+            StatusCode::BAD_REQUEST,
+            "no 0-mojo message coin at that address — a stream claim/clawback needs a spare \
+             0-mojo coin to carry the authorizing message (we will not burn a value-bearing coin)",
+        )
+    })
+}
+
+/// Render a freshly-built [`ClawbackCoin`] as the JSON the UI shows after a clawback send:
+/// the coin's id + amount and the terms (timelock + sender/receiver puzzle hashes) the
+/// recipient/sender later supply to claim/recover it.
+fn clawback_coin_json(c: &digstore_chain::clawback::ClawbackCoin) -> serde_json::Value {
+    serde_json::json!({
+        "coinId": format!("0x{}", hex::encode(c.coin.coin_id())),
+        "parentCoinId": format!("0x{}", hex::encode(c.coin.parent_coin_info)),
+        "amount": c.coin.amount.to_string(),
+        "timelock": c.terms.timelock,
+        "senderPuzzleHash": format!("0x{}", hex::encode(c.terms.sender_puzzle_hash)),
+        "receiverPuzzleHash": format!("0x{}", hex::encode(c.terms.receiver_puzzle_hash)),
+    })
+}
+
+/// Reconstruct a [`ClawbackCoin`] from a claim/recover request:
+/// `{ parentCoinId, amount, timelock, senderAddress|senderPuzzleHash,
+///    receiverAddress|receiverPuzzleHash }`. The coin's puzzle hash is the clawback
+/// 1-of-2 merkle root derived from the terms (so the request need not carry it). Pure so
+/// the parse is unit-tested without chain reads.
+fn parse_clawback_coin(
+    params: &serde_json::Value,
+) -> Result<digstore_chain::clawback::ClawbackCoin, (StatusCode, String)> {
+    use chia_wallet_sdk::driver::Clawback;
+    use chia_wallet_sdk::prelude::ToTreeHash;
+
+    let parent = parse_required_hash(params, "parentCoinId")?;
+    let amount = json_u64(params, "amount")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'amount'"))?;
+    let timelock = json_u64(params, "timelock")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'timelock'"))?;
+    let sender_ph = parse_ph_or_address(params, "sender")?;
+    let receiver_ph = parse_ph_or_address(params, "receiver")?;
+
+    let terms = Clawback {
+        timelock,
+        sender_puzzle_hash: sender_ph,
+        receiver_puzzle_hash: receiver_ph,
+    };
+    let clawback_ph: chia_protocol::Bytes32 = terms.to_layer().tree_hash().into();
+    let coin = chia_protocol::Coin::new(parent, clawback_ph, amount);
+    Ok(digstore_chain::clawback::ClawbackCoin { coin, terms })
+}
+
+/// Parse an option `strike{ type, amount, assetId? }`. Only an XCH strike is fully
+/// verifiable in this build; a CAT/NFT strike underlying leg is surfaced as "not
+/// supported in this build" (the create can encode a CAT strike type, but the exercise it
+/// implies is the unsupported leg, so we refuse it up front to avoid an unexercisable
+/// option). Pure so the parse + the gap refusal are unit-tested.
+fn parse_option_strike(
+    params: &serde_json::Value,
+) -> Result<chia_wallet_sdk::driver::OptionType, (StatusCode, String)> {
+    use chia_wallet_sdk::driver::OptionType;
+    let strike = params.get("strike").unwrap_or(params);
+    let amount = json_u64(strike, "amount")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing strike 'amount'"))?;
+    let ty = strike.get("type").and_then(|t| t.as_str()).unwrap_or("xch");
+    match ty {
+        "xch" | "" => Ok(OptionType::Xch { amount }),
+        "cat" | "nft" | "revocableCat" => Err(wc_err(
+            StatusCode::NOT_IMPLEMENTED,
+            format!(
+                "a '{ty}' strike is not supported in this build — only an XCH strike is fully \
+                 verifiable here (the CAT/NFT strike's exercise leg is unsupported)"
+            ),
+        )),
+        other => Err(wc_err(
+            StatusCode::BAD_REQUEST,
+            format!("unknown strike type '{other}'"),
+        )),
+    }
+}
+
+/// Parse a vault `{ members: [K1 pubkey hex (33 bytes)], required }` into a
+/// [`VaultKeyConfig`]. `required` defaults to the member count (n-of-n) when omitted.
+/// Pure so the parse + threshold validation are unit-tested without chain reads.
+fn parse_vault_config(
+    params: &serde_json::Value,
+) -> Result<digstore_chain::vault::VaultKeyConfig, (StatusCode, String)> {
+    let arr = params
+        .get("members")
+        .and_then(|m| m.as_array())
+        .ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                "missing 'members' (array of K1 pubkeys)",
+            )
+        })?;
+    if arr.is_empty() {
+        return Err(wc_err(
+            StatusCode::BAD_REQUEST,
+            "vault needs at least one member",
+        ));
+    }
+    let mut members = Vec::with_capacity(arr.len());
+    for m in arr {
+        let s = m.as_str().ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                "each member must be a K1 pubkey hex",
+            )
+        })?;
+        members.push(parse_k1_pubkey(s)?);
+    }
+    let required = json_u64(params, "required").unwrap_or(members.len() as u64) as usize;
+    digstore_chain::vault::VaultKeyConfig::m_of_n(required, members)
+        .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))
+}
+
+/// Parse a 33-byte secp256k1 (K1) public key from hex (`0x`-prefixed or bare). Pure so
+/// the parse/validation is unit-tested independently of HTTP.
+fn parse_k1_pubkey(s: &str) -> Result<chia::secp::K1PublicKey, (StatusCode, String)> {
+    let hex = s.trim().trim_start_matches("0x");
+    let bytes = hex::decode(hex).map_err(|_| {
+        wc_err(
+            StatusCode::BAD_REQUEST,
+            format!("invalid K1 pubkey hex: {s}"),
+        )
+    })?;
+    let arr: [u8; 33] = bytes.try_into().map_err(|_| {
+        wc_err(
+            StatusCode::BAD_REQUEST,
+            format!("K1 pubkey must be 33 bytes: {s}"),
+        )
+    })?;
+    chia::secp::K1PublicKey::from_bytes(&arr)
+        .map_err(|e| wc_err(StatusCode::BAD_REQUEST, format!("invalid K1 pubkey: {e}")))
+}
+
+/// A required 32-byte hash param (e.g. a DID / asset id / data hash), `0x`-prefixed or
+/// bare. A clear 400 if missing or malformed.
+fn parse_required_hash(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<chia_protocol::Bytes32, (StatusCode, String)> {
+    let s = params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, format!("missing '{key}'")))?;
+    parse_asset_id_hex(s).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))
+}
+
+/// Parse a puzzle hash for `<key>`, accepting EITHER `<key>Address` (an `xch1…` address,
+/// decoded to its puzzle hash) OR `<key>PuzzleHash` (a 32-byte hash). Lets the clawback
+/// claim/recover request name the sender/receiver by whichever the caller has.
+fn parse_ph_or_address(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<chia_protocol::Bytes32, (StatusCode, String)> {
+    if let Some(a) = params.get(format!("{key}Address")).and_then(|v| v.as_str()) {
+        return digstore_chain::send::decode_xch_address(a)
+            .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()));
+    }
+    if let Some(h) = params
+        .get(format!("{key}PuzzleHash"))
+        .and_then(|v| v.as_str())
+    {
+        return parse_asset_id_hex(h).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e));
+    }
+    Err(wc_err(
+        StatusCode::BAD_REQUEST,
+        format!("missing '{key}Address' or '{key}PuzzleHash'"),
+    ))
+}
+
+/// Parse a [`CoinSpend`] from a request field carrying its components:
+/// `<key>{ coin{parentCoinInfo,puzzleHash,amount}, puzzleReveal, solution }`, with the
+/// program/hex fields `0x`-prefixed or bare. Used to reconstruct a live streaming coin
+/// from the spend that created/updated it.
+fn parse_coin_spend_hex(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<chia_protocol::CoinSpend, (StatusCode, String)> {
+    let cs = params.get(key).ok_or_else(|| {
+        wc_err(
+            StatusCode::BAD_REQUEST,
+            format!("missing '{key}' (coin spend)"),
+        )
+    })?;
+    let coin = cs
+        .get("coin")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, format!("'{key}' missing 'coin'")))?;
+    let parent = parse_required_hash(coin, "parentCoinInfo")?;
+    let puzzle_hash = parse_required_hash(coin, "puzzleHash")?;
+    let amount = json_u64(coin, "amount")
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "coin missing 'amount'"))?;
+    let puzzle_reveal = parse_program_hex(cs, "puzzleReveal")?;
+    let solution = parse_program_hex(cs, "solution")?;
+    Ok(chia_protocol::CoinSpend::new(
+        chia_protocol::Coin::new(parent, puzzle_hash, amount),
+        puzzle_reveal,
+        solution,
+    ))
+}
+
+/// Parse a serialized CLVM program (`Program`) from a hex field (`0x`-prefixed or bare).
+fn parse_program_hex(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<chia_protocol::Program, (StatusCode, String)> {
+    let s = params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, format!("missing '{key}'")))?;
+    let hex = s.trim().trim_start_matches("0x");
+    let bytes = hex::decode(hex)
+        .map_err(|_| wc_err(StatusCode::BAD_REQUEST, format!("invalid {key} hex")))?;
+    Ok(chia_protocol::Program::from(bytes))
 }
 
 /// Parse a `MintSpec` from a `{ metadata{dataUris,dataHash,metadataUris,…,edition*},
@@ -2786,6 +3436,27 @@ mod tests {
     }
 
     #[test]
+    fn wallet_page_wires_the_advanced_coin_types() {
+        // The Advanced tab must call each supported advanced method, or the surface
+        // silently no-ops. Clawback (send/claim/recover).
+        assert!(UI_HTML.contains("dig_clawbackSend"));
+        assert!(UI_HTML.contains("dig_clawbackClaim"));
+        assert!(UI_HTML.contains("dig_clawbackRecover"));
+        // Options (create).
+        assert!(UI_HTML.contains("dig_optionCreate"));
+        // Streaming (create/claim/clawback).
+        assert!(UI_HTML.contains("dig_streamCreate"));
+        assert!(UI_HTML.contains("dig_streamClaim"));
+        assert!(UI_HTML.contains("dig_streamClawback"));
+        // Vault (create).
+        assert!(UI_HTML.contains("dig_vaultCreate"));
+        // Verifiable credentials (verify).
+        assert!(UI_HTML.contains("dig_vcVerify"));
+        // The Advanced tab itself is present and clearly secondary.
+        assert!(UI_HTML.contains("data-tab=\"advanced\""));
+    }
+
+    #[test]
     fn settings_page_wires_the_new_settings_apis() {
         // The settings page must talk to the projectId, export, import, and
         // public-key endpoints, or those features silently no-op.
@@ -2966,5 +3637,230 @@ mod tests {
         let self_origin = format!("http://localhost:{}", wallet_port());
         let r = wallet_pubkey(State(st), origin_headers(&self_origin)).await;
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // -- Advanced coin types (Part B) ------------------------------------------
+
+    // Public BIP-39 test vector (NOT a real wallet), for the dispatch-gate tests.
+    const ABANDON_24: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+    #[test]
+    fn advanced_methods_are_gated_and_need_a_wallet() {
+        // Every advanced coin-type method is a key/sign method: forbidden until the
+        // origin is approved, allowed once approved, and needs an unlocked wallet —
+        // same gate as the core spend methods.
+        for m in [
+            "dig_clawbackSend",
+            "dig_clawbackClaim",
+            "dig_clawbackRecover",
+            "dig_optionCreate",
+            "dig_optionExercise",
+            "dig_streamCreate",
+            "dig_streamClaim",
+            "dig_streamClawback",
+            "dig_vaultCreate",
+            "dig_vaultSpend",
+            "dig_vcIssue",
+            "dig_vcVerify",
+            "dig_vcRevoke",
+        ] {
+            assert_eq!(
+                wc_gate(m, false),
+                Gate::Forbidden,
+                "{m} forbidden unapproved"
+            );
+            assert_eq!(wc_gate(m, true), Gate::Allowed, "{m} allowed approved");
+            assert!(wc_method_needs_wallet(m), "{m} needs a wallet");
+        }
+    }
+
+    /// The legs the digstore-chain builders cannot support standalone are surfaced as
+    /// honest 501s (never faked) — with the wallet UNLOCKED so the locked-gate isn't
+    /// what stops them; they reach the explicit "not supported in this build" arm.
+    #[tokio::test]
+    async fn unsupported_advanced_legs_surface_as_not_implemented() {
+        let st = AppState::default();
+        *st.session.lock().await = Some(Session {
+            mnemonic: Zeroizing::new(ABANDON_24.to_string()),
+            address: "xch1test".to_string(),
+        });
+        for method in [
+            "dig_optionExercise",
+            "dig_optionClawback",
+            "dig_vaultSpend",
+            "dig_vcIssue",
+            "dig_vcRevoke",
+            "dig_vcTransfer",
+        ] {
+            let r = wc_dispatch(&st, method, serde_json::Value::Null).await;
+            match r {
+                Err((code, msg)) => {
+                    assert_eq!(
+                        code,
+                        StatusCode::NOT_IMPLEMENTED,
+                        "{method} must be an honest 501, got: {msg}"
+                    );
+                    assert!(
+                        msg.contains("not supported in this build")
+                            || msg.contains("cannot be transferred"),
+                        "{method} must say why it is unsupported, got: {msg}"
+                    );
+                }
+                Ok(v) => panic!("{method} must not silently succeed, got {v:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn clawback_coin_parses_and_renders() {
+        // A clawback coin round-trips from a claim/recover request: parent + amount +
+        // terms (timelock + sender/receiver puzzle hashes), with the coin's own puzzle
+        // hash derived from the terms (the 1-of-2 merkle root).
+        let params = serde_json::json!({
+            "parentCoinId": format!("0x{}", "11".repeat(32)),
+            "amount": "1000",
+            "timelock": 86400,
+            "senderPuzzleHash": format!("0x{}", "22".repeat(32)),
+            "receiverPuzzleHash": format!("0x{}", "33".repeat(32)),
+        });
+        let c = parse_clawback_coin(&params).unwrap();
+        assert_eq!(c.coin.amount, 1000);
+        assert_eq!(c.terms.timelock, 86400);
+        assert_eq!(hex::encode(c.terms.sender_puzzle_hash), "22".repeat(32));
+        assert_eq!(hex::encode(c.terms.receiver_puzzle_hash), "33".repeat(32));
+        assert_eq!(hex::encode(c.coin.parent_coin_info), "11".repeat(32));
+        // The rendered JSON carries the coin id + terms back to the UI.
+        let j = clawback_coin_json(&c);
+        assert_eq!(j["amount"], "1000");
+        assert_eq!(j["timelock"], 86400);
+        assert_eq!(j["senderPuzzleHash"], format!("0x{}", "22".repeat(32)));
+        // A missing term is a 400.
+        let (code, _) = parse_clawback_coin(&serde_json::json!({})).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn option_strike_parses_xch_and_rejects_unsupported_underlyings() {
+        use chia_wallet_sdk::driver::OptionType;
+        // An XCH strike is supported (the fully-verifiable case).
+        let xch =
+            parse_option_strike(&serde_json::json!({ "strike": { "type": "xch", "amount": 250 } }))
+                .unwrap();
+        assert!(matches!(xch, OptionType::Xch { amount: 250 }));
+        // A bare amount (no nested 'strike') defaults to XCH too.
+        let bare = parse_option_strike(&serde_json::json!({ "amount": 5 })).unwrap();
+        assert!(matches!(bare, OptionType::Xch { amount: 5 }));
+        // A CAT / NFT strike is surfaced as an honest 501 (its exercise leg is unsupported).
+        for ty in ["cat", "nft", "revocableCat"] {
+            let (code, msg) =
+                parse_option_strike(&serde_json::json!({ "strike": { "type": ty, "amount": 1 } }))
+                    .unwrap_err();
+            assert_eq!(code, StatusCode::NOT_IMPLEMENTED, "{ty} strike");
+            assert!(msg.contains("not supported in this build"), "{ty}: {msg}");
+        }
+        // A missing amount is a 400.
+        let (code, _) =
+            parse_option_strike(&serde_json::json!({ "strike": { "type": "xch" } })).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn vault_config_parses_members_and_threshold() {
+        // Use real K1 pubkeys from the test harness so from_bytes accepts them.
+        use chia_sdk_test::K1Pair;
+        let keys = K1Pair::range_vec(3);
+        let hexes: Vec<String> = keys
+            .iter()
+            .map(|k| format!("0x{}", hex::encode(k.pk.to_bytes())))
+            .collect();
+        // 2-of-3.
+        let cfg = parse_vault_config(&serde_json::json!({
+            "members": hexes, "required": 2
+        }))
+        .unwrap();
+        assert_eq!(cfg.members.len(), 3);
+        assert_eq!(cfg.required, 2);
+        // Omitted 'required' defaults to n-of-n.
+        let cfg = parse_vault_config(&serde_json::json!({ "members": hexes })).unwrap();
+        assert_eq!(cfg.required, 3);
+        // An empty member set is a 400.
+        let (code, _) = parse_vault_config(&serde_json::json!({ "members": [] })).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        // A bad threshold (more than members) is a 400.
+        let (code, _) = parse_vault_config(&serde_json::json!({
+            "members": hexes, "required": 9
+        }))
+        .unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn k1_pubkey_parses_and_rejects_bad_len() {
+        use chia_sdk_test::K1Pair;
+        let pk = K1Pair::default().pk;
+        let hex_pk = format!("0x{}", hex::encode(pk.to_bytes()));
+        let parsed = parse_k1_pubkey(&hex_pk).unwrap();
+        assert_eq!(parsed.to_bytes(), pk.to_bytes());
+        // A 32-byte value (wrong length for K1's 33) is rejected, not panicked.
+        let (code, _) = parse_k1_pubkey(&"ab".repeat(32)).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn ph_or_address_accepts_either_form() {
+        // A raw puzzle hash.
+        let ph = parse_ph_or_address(
+            &serde_json::json!({ "senderPuzzleHash": format!("0x{}", "aa".repeat(32)) }),
+            "sender",
+        )
+        .unwrap();
+        assert_eq!(hex::encode(ph), "aa".repeat(32));
+        // Neither form → 400.
+        let (code, _) = parse_ph_or_address(&serde_json::json!({}), "sender").unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn vc_verify_is_pure_and_deterministic() {
+        // The asserter puzzle hash is computed with no chain/keys, and is deterministic
+        // for a given credential tuple.
+        let params = serde_json::json!({
+            "issuerDid": format!("0x{}", "11".repeat(32)),
+            "assetId": format!("0x{}", "22".repeat(32)),
+            "dataHash": format!("0x{}", "33".repeat(32)),
+            "version": 1,
+        });
+        let a = vc_verify(&params).unwrap();
+        let b = vc_verify(&params).unwrap();
+        assert_eq!(a["asserterPuzzleHash"], b["asserterPuzzleHash"]);
+        assert!(a["asserterPuzzleHash"].as_str().unwrap().starts_with("0x"));
+        assert_eq!(a["version"], 1);
+        // A missing field is a 400.
+        let (code, _) = vc_verify(&serde_json::json!({})).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn coin_spend_hex_round_trips_from_components() {
+        // A coin spend reconstructs from coin{parent,puzzleHash,amount} + program hexes.
+        let params = serde_json::json!({
+            "parentSpend": {
+                "coin": {
+                    "parentCoinInfo": format!("0x{}", "01".repeat(32)),
+                    "puzzleHash": format!("0x{}", "02".repeat(32)),
+                    "amount": 7,
+                },
+                "puzzleReveal": "0xff80",
+                "solution": "80",
+            }
+        });
+        let cs = parse_coin_spend_hex(&params, "parentSpend").unwrap();
+        assert_eq!(cs.coin.amount, 7);
+        assert_eq!(hex::encode(cs.coin.parent_coin_info), "01".repeat(32));
+        assert_eq!(hex::encode(cs.puzzle_reveal.as_ref()), "ff80");
+        assert_eq!(hex::encode(cs.solution.as_ref()), "80");
+        // A missing field is a 400.
+        let (code, _) = parse_coin_spend_hex(&serde_json::json!({}), "parentSpend").unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
     }
 }

@@ -2195,6 +2195,7 @@ dependencies = [
  "axum",
  "chia",
  "chia-protocol",
+ "chia-sdk-test",
  "chia-wallet-sdk",
  "dig-node",
  "digstore-chain",

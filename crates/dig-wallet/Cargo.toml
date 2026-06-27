@@ -35,3 +35,5 @@ zeroize = "1"
 
 [dev-dependencies]
 tempfile = "3"
+# K1Pair — real secp256k1 test key pairs for the vault config / K1 pubkey parse tests.
+chia-sdk-test = "0.30"

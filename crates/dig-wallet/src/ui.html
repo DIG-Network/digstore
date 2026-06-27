@@ -187,6 +187,7 @@
       <button class="tab" data-tab="dids">Profiles</button>
       <button class="tab" data-tab="txs">Activity</button>
       <button class="tab" data-tab="stores">My Stores</button>
+      <button class="tab" data-tab="advanced">Advanced</button>
     </div>
 
     <!-- TOKENS -->
@@ -289,6 +290,118 @@
       <p class="mini">Your DataLayer stores. Each store is shown as its current <b>capsule</b> — a <code>storeId:rootHash</code> snapshot. Expand to see its full history.</p>
       <div id="storeList"></div>
       <div class="empty hidden" id="storeEmpty">No stores found for this wallet.</div>
+    </div>
+
+    <!-- ADVANCED (power-user coin types) -->
+    <div class="panel hidden" id="tab-advanced">
+      <p class="mini">Power-user coin types. These are secondary to your everyday Tokens, Collectibles, and Trades — open one only if you know you need it. Each panel keeps the plain idea up front and the protocol detail behind a toggle.</p>
+
+      <!-- Clawback payments -->
+      <details>
+        <summary>Reversible payments (clawback)</summary>
+        <div class="body">
+          <p class="mini">Send funds that the recipient can only claim after a delay — and that you can take back until they do.</p>
+          <input class="fld" id="cbTo" placeholder="recipient address (xch1…)">
+          <div class="flex2">
+            <input class="fld" id="cbAmt" placeholder="amount (mojos)">
+            <input class="fld" id="cbLock" placeholder="claim delay (seconds)">
+          </div>
+          <button class="primary" id="btnClawSend">Send reversible payment</button>
+          <div class="ok-line" id="clawStatus"></div>
+          <div id="clawResult"></div>
+          <details>
+            <summary>Claim or recover an existing one (protocol detail)</summary>
+            <div class="body">
+              <p class="mini">A clawback coin is a 1-of-2 puzzle: the receiver path (after the delay) and the sender recover path. Supply the coin's terms to claim (you're the receiver) or recover (you're the sender).</p>
+              <input class="fld" id="cbParent" placeholder="parent coin id (0x…)">
+              <input class="fld" id="cbCoinAmt" placeholder="amount (mojos)">
+              <input class="fld" id="cbCoinLock" placeholder="timelock (seconds)">
+              <input class="fld" id="cbSender" placeholder="sender address (xch1…)">
+              <input class="fld" id="cbReceiver" placeholder="receiver address (xch1…)">
+              <div class="flex2">
+                <button class="ghost" id="btnClawClaim">Claim (receiver)</button>
+                <button class="ghost" id="btnClawRecover">Recover (sender)</button>
+              </div>
+              <div class="ok-line" id="clawClaimStatus"></div>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <!-- Options -->
+      <details>
+        <summary>Options (covered calls)</summary>
+        <div class="body">
+          <p class="mini">Lock XCH as an option's underlying; the option holder can exercise it (pay the strike) before it expires, or you reclaim the underlying after.</p>
+          <input class="fld" id="optUnderlying" placeholder="underlying XCH to lock (mojos)">
+          <div class="flex2">
+            <input class="fld" id="optStrike" placeholder="strike amount (XCH mojos)">
+            <input class="fld" id="optExpiry" placeholder="expiry (unix seconds)">
+          </div>
+          <button class="primary" id="btnOptCreate">Create option</button>
+          <div class="ok-line" id="optStatus"></div>
+          <p class="note" id="optNote">Exercise / clawback of options needs a full Chia wallet in this build.</p>
+        </div>
+      </details>
+
+      <!-- Streaming / vesting -->
+      <details>
+        <summary>Streaming payments (vesting)</summary>
+        <div class="body">
+          <p class="mini">Pay XCH that unlocks gradually to a recipient between a start and end time. The recipient claims what's vested; you can claw back the rest.</p>
+          <input class="fld" id="strTo" placeholder="recipient address (xch1…)">
+          <input class="fld" id="strAmt" placeholder="amount (mojos)">
+          <div class="flex2">
+            <input class="fld" id="strStart" placeholder="start (unix seconds)">
+            <input class="fld" id="strEnd" placeholder="end (unix seconds)">
+          </div>
+          <button class="primary" id="btnStreamCreate">Create stream</button>
+          <div class="ok-line" id="streamStatus"></div>
+          <div id="streamResult"></div>
+          <details>
+            <summary>Claim vested / claw back (protocol detail)</summary>
+            <div class="body">
+              <p class="mini">Reconstruct the live stream from the coin spend that created/updated it, then claim the vested portion (recipient) or claw back the remainder (payer). Needs a spare 0-mojo coin at your address to carry the authorizing message.</p>
+              <textarea id="strParentSpend" placeholder='parent coin spend JSON: {"coin":{"parentCoinInfo":"0x…","puzzleHash":"0x…","amount":N},"puzzleReveal":"0x…","solution":"0x…"}'></textarea>
+              <input class="fld" id="strPayTime" placeholder="payment time (block timestamp)">
+              <div class="flex2">
+                <button class="ghost" id="btnStreamClaim">Claim vested</button>
+                <button class="ghost" id="btnStreamClawback">Claw back</button>
+              </div>
+              <div class="ok-line" id="streamClaimStatus"></div>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <!-- Vault -->
+      <details>
+        <summary>Vaults (multi-key custody)</summary>
+        <div class="body">
+          <p class="mini">Create a vault whose custody is an m-of-n set of secp256k1 (K1) keys — an independent multi-key custody set you manage alongside this wallet.</p>
+          <textarea id="vaultMembers" placeholder="one K1 public key (33-byte hex) per line"></textarea>
+          <input class="fld" id="vaultRequired" placeholder="required signers (blank = all)">
+          <button class="primary" id="btnVaultCreate">Create vault</button>
+          <div class="ok-line" id="vaultStatus"></div>
+          <p class="note">Spending a vault needs its K1 custody keys, which this wallet does not hold — create here, spend with the K1 keys elsewhere.</p>
+        </div>
+      </details>
+
+      <!-- Verifiable credentials -->
+      <details>
+        <summary>Verifiable credentials (attestations)</summary>
+        <div class="body">
+          <p class="mini">Compute the on-chain "asserter" address for a credential — the address a relying party sends a coin to so spending it requires proof the credential was issued.</p>
+          <input class="fld" id="vcIssuer" placeholder="issuer DID launcher id (0x…)">
+          <input class="fld" id="vcAsset" placeholder="subject asset id (0x…)">
+          <input class="fld" id="vcData" placeholder="data hash (0x…)">
+          <input class="fld" id="vcVersion" placeholder="version (default 1)">
+          <button class="primary" id="btnVcVerify">Compute verifier address</button>
+          <div class="ok-line" id="vcStatus"></div>
+          <div id="vcResult"></div>
+          <p class="note">Issuing / revoking a credential needs the issuing DID's tooling (it co-signs the same bundle) — not available standalone in this build.</p>
+        </div>
+      </details>
     </div>
 
     <div class="row">
@@ -570,6 +683,96 @@ document.addEventListener('click', async e => {
     }catch(err){ box.innerHTML=`<div class="empty">${esc(err.message)}</div>`; }
   }
 });
+
+// ---- ADVANCED (power-user coin types) ----
+// Each leg goes through the native signer (chia_*/dig_* over /api/wc/request, self-origin
+// auto-approved) and honours the broadcast gate: SIGNED but not pushed by default.
+function advStatus(id, msg, isErr){ const el=$('#'+id); if(!el) return; el.className='ok-line'+(isErr?' err':''); el.textContent=msg; }
+function dryNote(status){ return status==='broadcast' ? '(broadcast).' : '(signed — dry run, not broadcast).'; }
+
+// Clawback — reversible payments.
+$('#btnClawSend').onclick = async () => {
+  advStatus('clawStatus','Building…'); $('#clawResult').innerHTML='';
+  try{
+    const r = await wc('dig_clawbackSend', {
+      receiver:$('#cbTo').value.trim(), amount:$('#cbAmt').value.trim(), timelock:$('#cbLock').value.trim() });
+    advStatus('clawStatus','Reversible payment sent '+dryNote(r.status));
+    const c = r.clawbackCoin||{};
+    $('#clawResult').innerHTML = `<div class="offerbox">coin: ${esc(c.coinId||'')}\nterms: timelock ${esc(String(c.timelock||''))}</div>`;
+  }catch(e){ advStatus('clawStatus', e.message, true); }
+};
+async function clawClaimRecover(method){
+  advStatus('clawClaimStatus','Building…');
+  try{
+    const r = await wc(method, {
+      parentCoinId:$('#cbParent').value.trim(), amount:$('#cbCoinAmt').value.trim(),
+      timelock:$('#cbCoinLock').value.trim(),
+      senderAddress:$('#cbSender').value.trim(), receiverAddress:$('#cbReceiver').value.trim() });
+    advStatus('clawClaimStatus','Done '+dryNote(r.status));
+  }catch(e){ advStatus('clawClaimStatus', e.message, true); }
+}
+$('#btnClawClaim').onclick = () => clawClaimRecover('dig_clawbackClaim');
+$('#btnClawRecover').onclick = () => clawClaimRecover('dig_clawbackRecover');
+
+// Options.
+$('#btnOptCreate').onclick = async () => {
+  advStatus('optStatus','Building…');
+  try{
+    const r = await wc('dig_optionCreate', {
+      underlyingAmount:$('#optUnderlying').value.trim(), expirySeconds:$('#optExpiry').value.trim(),
+      strike:{ type:'xch', amount:$('#optStrike').value.trim() } });
+    advStatus('optStatus','Option created '+dryNote(r.status)+' '+short(r.launcherId||''));
+  }catch(e){ advStatus('optStatus', e.message, true); }
+};
+
+// Streaming / vesting.
+$('#btnStreamCreate').onclick = async () => {
+  advStatus('streamStatus','Building…'); $('#streamResult').innerHTML='';
+  try{
+    const r = await wc('dig_streamCreate', {
+      recipient:$('#strTo').value.trim(), amount:$('#strAmt').value.trim(),
+      startTime:$('#strStart').value.trim(), endTime:$('#strEnd').value.trim() });
+    advStatus('streamStatus','Stream created '+dryNote(r.status));
+    $('#streamResult').innerHTML = `<div class="offerbox">stream coin: ${esc(r.streamCoinId||'')}</div>`;
+  }catch(e){ advStatus('streamStatus', e.message, true); }
+};
+async function streamClaimClawback(method){
+  advStatus('streamClaimStatus','Building…');
+  let parentSpend;
+  try{ parentSpend = JSON.parse($('#strParentSpend').value.trim()); }
+  catch(e){ advStatus('streamClaimStatus','Parent spend must be valid JSON.', true); return; }
+  try{
+    const r = await wc(method, { parentSpend, paymentTime:$('#strPayTime').value.trim() });
+    advStatus('streamClaimStatus','Done '+dryNote(r.status));
+  }catch(e){ advStatus('streamClaimStatus', e.message, true); }
+}
+$('#btnStreamClaim').onclick = () => streamClaimClawback('dig_streamClaim');
+$('#btnStreamClawback').onclick = () => streamClaimClawback('dig_streamClawback');
+
+// Vault.
+$('#btnVaultCreate').onclick = async () => {
+  advStatus('vaultStatus','Building…');
+  const members = $('#vaultMembers').value.split(/\s+/).map(s=>s.trim()).filter(Boolean);
+  if(!members.length){ advStatus('vaultStatus','Enter at least one K1 public key.', true); return; }
+  const params = { members };
+  const req = $('#vaultRequired').value.trim(); if(req) params.required = req;
+  try{
+    const r = await wc('dig_vaultCreate', params);
+    advStatus('vaultStatus','Vault created '+dryNote(r.status)+' '+short(r.launcherId||''));
+  }catch(e){ advStatus('vaultStatus', e.message, true); }
+};
+
+// Verifiable credentials — verify (compute the asserter address).
+$('#btnVcVerify').onclick = async () => {
+  advStatus('vcStatus','Computing…'); $('#vcResult').innerHTML='';
+  try{
+    const params = { issuerDid:$('#vcIssuer').value.trim(), assetId:$('#vcAsset').value.trim(), dataHash:$('#vcData').value.trim() };
+    const v = $('#vcVersion').value.trim(); if(v) params.version = Number(v);
+    const r = await wc('dig_vcVerify', params);
+    advStatus('vcStatus','Verifier address computed.');
+    $('#vcResult').innerHTML = `<div class="offerbox">${esc(r.asserterPuzzleHash||'')}</div>`;
+  }catch(e){ advStatus('vcStatus', e.message, true); }
+};
 
 // ---- wallet lifecycle (create/restore/unlock) ----
 $('#btnCreate').onclick = async () => {
