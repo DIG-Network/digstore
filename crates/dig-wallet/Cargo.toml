@@ -20,8 +20,11 @@ digstore-chain = { path = "../digstore-chain" }
 digstore-core = { path = "../digstore-core" }
 dig-node = { path = "../dig-node" }
 chia-protocol = "0.26"
+# `chia::puzzles::nft::NftMetadata` — the on-chain NFT metadata struct we serialize
+# into a MintSpec's metadata Program for chia_mintNft / chia_bulkMintNfts.
+chia = "0.26"
 # Needed to NAME the SDK spendable `Cat` type when assembling a make-offer's
-# MakerFunds (the offered CAT coins, with lineage proofs, from digstore-chain).
+# MakerFunds, and `SpendContext` to serialize NFT metadata into a Program.
 chia-wallet-sdk = { version = "0.30", features = ["offer-compression"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 axum = "0.7"
