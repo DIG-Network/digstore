@@ -8,7 +8,8 @@
   :root{
     --bg:#0b0c0e; --surface:#15161c; --surface-2:#1d1f28; --border:#2a2c38;
     --text:#e8eaed; --muted:#9aa0ad; --accent:#5800d6; --accent-2:#8a4dff;
-    --good:#5ece71; --radius:16px; --shadow:0 8px 40px rgba(0,0,0,.45);
+    --good:#5ece71; --warn:#f0b86a; --bad:#ff7a7a;
+    --radius:16px; --shadow:0 8px 40px rgba(0,0,0,.45);
     --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
   }
   html[data-theme="chia"]{ --accent:#3aac59; --accent-2:#5ece71; }
@@ -23,10 +24,12 @@
   .spacer{flex:1}
   .theme-toggle{background:var(--surface-2);border:1px solid var(--border);color:var(--muted);
        border-radius:999px;padding:6px 12px;font-size:12px;cursor:pointer}
-  main{flex:1;display:flex;align-items:center;justify-content:center;padding:32px}
+  main{flex:1;display:flex;align-items:flex-start;justify-content:center;padding:32px}
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
         box-shadow:var(--shadow);width:100%;max-width:480px;padding:30px}
+  .card.wide{max-width:720px}
   h1{font-size:22px;margin:0 0 6px}
+  h2{font-size:16px;margin:18px 0 10px}
   .sub{color:var(--muted);font-size:14px;margin:0 0 22px;line-height:1.5}
   button.primary{width:100%;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border:0;
        border-radius:12px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;transition:filter .15s}
@@ -36,12 +39,12 @@
   button.ghost:hover{background:var(--surface-2)}
   textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
        border-radius:12px;padding:14px;font-size:14px;font-family:ui-monospace,monospace;resize:vertical;min-height:96px}
-  input.pw{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+  input.pw,input.fld{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
        border-radius:12px;padding:14px;font-size:14px}
-  input.pw:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  input.pw:focus,input.fld:focus,textarea:focus{outline:none;border-color:var(--accent)}
   .seed{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:16px;
        font-family:ui-monospace,monospace;font-size:14px;line-height:1.9;word-spacing:6px;color:var(--text)}
-  .warn{color:#f0b86a;font-size:13px;margin:14px 0;line-height:1.5}
+  .warn{color:var(--warn);font-size:13px;margin:14px 0;line-height:1.5}
   .bal-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:8px 0 20px}
   .bal{background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:18px}
   .bal .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
@@ -54,9 +57,45 @@
   .row{display:flex;gap:12px;margin-top:18px}
   .row button{flex:1}
   .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:18px 0 8px}
-  .err{color:#ff7a7a;font-size:13px;margin-top:12px;min-height:16px}
+  .err{color:var(--bad);font-size:13px;margin-top:12px;min-height:16px}
   .hidden{display:none}
   .spin{color:var(--muted);font-size:13px}
+  code{font-family:ui-monospace,monospace;font-size:.92em;color:var(--accent-2)}
+  /* tabs */
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin:6px 0 18px;padding-bottom:2px}
+  .tab{background:transparent;border:0;color:var(--muted);padding:9px 13px;font-size:13.5px;cursor:pointer;
+       border-radius:9px 9px 0 0;border-bottom:2px solid transparent}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--text);border-bottom-color:var(--accent)}
+  .panel{min-height:60px}
+  /* list / item rows */
+  .item{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);
+        border-radius:12px;padding:12px 14px;margin-top:8px;font-size:13.5px}
+  .item .grow{flex:1;min-width:0}
+  .item .grow .t{font-weight:600}
+  .item .grow .s{color:var(--muted);font-size:12px;margin-top:3px;word-break:break-all;font-family:ui-monospace,monospace}
+  .item .amt{font-weight:700;white-space:nowrap}
+  .item .amt.in{color:var(--good)} .item .amt.out{color:var(--text)}
+  .item button{flex:0 0 auto;border:0;border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer;background:var(--accent);color:#fff}
+  .item button.sec{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  .empty{color:var(--muted);font-size:13px;margin-top:10px;line-height:1.55}
+  .pill{font-size:11px;color:var(--accent-2);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
+  .nft-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px}
+  .nft{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px}
+  .nft .ph{height:74px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));opacity:.35;margin-bottom:8px}
+  .nft .id{font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);word-break:break-all}
+  .nft button{margin-top:8px;width:100%;border:0;border-radius:8px;padding:7px;font-size:12px;cursor:pointer;background:var(--accent);color:#fff}
+  details{margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--surface-2)}
+  details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
+  details .body{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  .mini{font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5}
+  .ok-line{color:var(--good);font-size:12.5px;margin-top:8px;min-height:15px}
+  .ok-line.err{color:var(--bad)}
+  .offerbox{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px;
+       font-family:ui-monospace,monospace;font-size:11.5px;word-break:break-all;margin-top:8px;max-height:120px;overflow:auto}
+  .flex2{display:flex;gap:10px} .flex2>*{flex:1}
+  .note{font-size:11.5px;color:var(--warn);margin-top:8px}
+  /* conns / WC (unchanged look) */
   .conns{margin-top:22px;border-top:1px solid var(--border);padding-top:18px}
   .conn{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--border);
         border-radius:12px;padding:11px 14px;margin-top:8px;font-size:13px}
@@ -76,8 +115,7 @@
   .wc-row .ok{flex:0 0 auto;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 16px;font-size:13px;cursor:pointer}
   .wc-row .ok:hover{filter:brightness(1.08)}
   .wc-status{font-size:12.5px;margin-top:8px;min-height:15px;color:var(--good)}
-  .wc-status.err{color:#ff7a7a}
-  code{font-family:ui-monospace,monospace;font-size:.92em;color:var(--accent-2)}
+  .wc-status.err{color:var(--bad)}
 </style>
 </head>
 <body>
@@ -131,8 +169,8 @@
   </div>
 
   <!-- DASHBOARD -->
-  <div class="card hidden" id="view-dash">
-    <h1>Balance</h1>
+  <div class="card wide hidden" id="view-dash">
+    <h1>Wallet</h1>
     <p class="sub" id="dashSub">Scanning the chain via coinset.org…</p>
     <div class="bal-grid">
       <div class="bal"><div class="k">XCH</div><div class="v" id="xchBal">—</div></div>
@@ -140,11 +178,125 @@
     </div>
     <div class="label">Receive address</div>
     <div class="addr"><span id="addr">—</span><button class="copy" id="copyAddr">Copy</button></div>
+
+    <!-- tabbed advanced surfaces -->
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="tokens">Tokens</button>
+      <button class="tab" data-tab="nfts">Collectibles</button>
+      <button class="tab" data-tab="offers">Trades</button>
+      <button class="tab" data-tab="dids">Profiles</button>
+      <button class="tab" data-tab="txs">Activity</button>
+      <button class="tab" data-tab="stores">My Stores</button>
+    </div>
+
+    <!-- TOKENS -->
+    <div class="panel" id="tab-tokens">
+      <p class="mini">XCH and your Chia Asset Tokens (CATs). Add any token by its asset id.</p>
+      <div id="tokenList"></div>
+      <details>
+        <summary>Add a token by asset id</summary>
+        <div class="body">
+          <input class="fld" id="addCatId" placeholder="asset id (0x… 32-byte TAIL)">
+          <button class="primary" id="btnAddCat">Add token</button>
+        </div>
+      </details>
+      <details>
+        <summary>Send a token</summary>
+        <div class="body">
+          <input class="fld" id="sendCatId" placeholder="asset id (leave blank for XCH)">
+          <input class="fld" id="sendTo" placeholder="recipient address (xch1…)">
+          <div class="flex2">
+            <input class="fld" id="sendAmt" placeholder="amount (base units)">
+            <input class="fld" id="sendFee" placeholder="fee mojos (0)">
+          </div>
+          <button class="primary" id="btnSendCat">Send</button>
+          <div class="ok-line" id="sendCatStatus"></div>
+        </div>
+      </details>
+    </div>
+
+    <!-- NFTS -->
+    <div class="panel hidden" id="tab-nfts">
+      <p class="mini">Your collectibles. Media is loaded by the app you mint/view in; here we show on-chain identity.</p>
+      <div class="nft-grid" id="nftGrid"></div>
+      <div class="empty hidden" id="nftEmpty">No collectibles found.</div>
+      <details>
+        <summary>Mint a collectible</summary>
+        <div class="body">
+          <input class="fld" id="mintDataUri" placeholder="image URL (data URI)">
+          <input class="fld" id="mintDataHash" placeholder="image hash (0x… optional)">
+          <input class="fld" id="mintRoyalty" placeholder="royalty basis points (e.g. 300 = 3%)">
+          <button class="primary" id="btnMintNft">Mint</button>
+          <div class="ok-line" id="mintStatus"></div>
+        </div>
+      </details>
+    </div>
+
+    <!-- OFFERS / TRADES -->
+    <div class="panel hidden" id="tab-offers">
+      <p class="mini">Trade assets trustlessly. Make an offer, or paste one to inspect &amp; take it.</p>
+      <h2>Take or inspect an offer</h2>
+      <textarea id="takeOfferStr" placeholder="paste an offer1… string"></textarea>
+      <div class="flex2">
+        <button class="ghost" id="btnInspectOffer">Inspect</button>
+        <button class="primary" id="btnTakeOffer">Take offer</button>
+      </div>
+      <div id="offerSummary"></div>
+      <div class="ok-line" id="takeStatus"></div>
+
+      <h2>Make an offer</h2>
+      <p class="mini">Offer assets and request assets in return. Amounts in base units; leave asset id blank for XCH.</p>
+      <div class="flex2">
+        <input class="fld" id="offerGiveId" placeholder="offer asset id (blank = XCH)">
+        <input class="fld" id="offerGiveAmt" placeholder="offer amount">
+      </div>
+      <div class="flex2" style="margin-top:8px">
+        <input class="fld" id="offerGetId" placeholder="request asset id (blank = XCH)">
+        <input class="fld" id="offerGetAmt" placeholder="request amount">
+      </div>
+      <button class="primary" id="btnMakeOffer" style="margin-top:10px">Create offer</button>
+      <div id="madeOffer"></div>
+      <div class="ok-line" id="makeStatus"></div>
+    </div>
+
+    <!-- DIDS / PROFILES -->
+    <div class="panel hidden" id="tab-dids">
+      <p class="mini">Decentralized identities (DIDs) — on-chain profiles you can attach to collectibles.</p>
+      <div id="didList"></div>
+      <div class="empty hidden" id="didEmpty">No profiles yet.</div>
+      <details>
+        <summary>Create a profile (DID)</summary>
+        <div class="body">
+          <button class="primary" id="btnCreateDid">Create DID</button>
+          <div class="ok-line" id="didStatus"></div>
+        </div>
+      </details>
+    </div>
+
+    <!-- TRANSACTIONS / ACTIVITY -->
+    <div class="panel hidden" id="tab-txs">
+      <p class="mini">Your XCH and DIG activity, newest first.</p>
+      <div id="txList"></div>
+      <div class="empty hidden" id="txEmpty">No activity yet.</div>
+      <div class="row">
+        <button class="ghost" id="btnTxPrev">Newer</button>
+        <button class="ghost" id="btnTxNext">Older</button>
+      </div>
+    </div>
+
+    <!-- MY STORES -->
+    <div class="panel hidden" id="tab-stores">
+      <p class="mini">Your DataLayer stores. Each store is shown as its current <b>capsule</b> — a <code>storeId:rootHash</code> snapshot. Expand to see its full history.</p>
+      <div id="storeList"></div>
+      <div class="empty hidden" id="storeEmpty">No stores found for this wallet.</div>
+    </div>
+
     <div class="row">
       <button class="primary" id="btnRefresh">Refresh</button>
       <button class="ghost" id="btnLock">Lock</button>
     </div>
     <div class="err" id="dashErr"></div>
+    <p class="note" id="broadcastNote"></p>
 
     <div id="connections" class="conns hidden">
       <div class="label">Connected apps</div>
@@ -155,14 +307,10 @@
     <!-- WalletConnect: pair with a dapp (this wallet is the WC responder) -->
     <div class="conns" id="wcSection">
       <div class="label">Connect a dapp</div>
-
-      <!-- not configured: point the user to settings -->
       <div id="wcNoPid" class="empty hidden">
         WalletConnect not configured — set a <b>projectId</b> in
         <a href="dig://settings">DIG settings</a> to pair with apps.
       </div>
-
-      <!-- configured: paste a wc: URI -->
       <div id="wcPair" class="hidden">
         <p class="wc-help">Paste an app's WalletConnect link (starts with <code>wc:</code>) to connect it to this wallet.</p>
         <div class="wc-row">
@@ -171,16 +319,12 @@
         </div>
         <div class="wc-status" id="wcStatus"></div>
       </div>
-
-      <!-- a proposal awaiting approve/reject -->
       <div id="wcProposal" class="conn pending hidden">
         <span class="req">Wants to connect</span>
         <span class="o" id="wcProposalName"></span>
         <button class="ok" id="btnWcApprove">Approve</button>
         <button class="no" id="btnWcReject">Reject</button>
       </div>
-
-      <!-- active WC sessions -->
       <div id="wcSessions"></div>
     </div>
   </div>
@@ -190,6 +334,17 @@
 const $ = s => document.querySelector(s);
 const show = id => { document.querySelectorAll('.card').forEach(c=>c.classList.add('hidden')); $('#'+id).classList.remove('hidden'); };
 async function api(path, opts){ const r = await fetch(path, opts); if(!r.ok){ let m='request failed'; try{m=(await r.json()).error||m}catch(e){} throw new Error(m);} return r.status===204?null:r.json(); }
+function esc(s){ return String(s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+
+// Call a WalletConnect/chia method through the native signer (self-origin, so the
+// wallet's own UI is auto-approved). State-changing methods honour the broadcast
+// gate: by default they are SIGNED but not pushed (a safe dry run).
+async function wc(method, params){
+  const r = await api('/api/wc/request', {method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({method, params: params||{}})});
+  return r.data;
+}
+const short = s => !s ? '' : (s.length>20 ? s.slice(0,10)+'…'+s.slice(-6) : s);
 
 // theme toggle (DIG ⇄ Chia)
 $('#themeBtn').onclick = () => {
@@ -199,8 +354,8 @@ $('#themeBtn').onclick = () => {
   $('#themeBtn').textContent = chia?'Chia theme':'DIG theme';
 };
 
-function fmtXch(mojos){ return (mojos/1e12).toLocaleString(undefined,{maximumFractionDigits:12}); }
-function fmtDig(units){ return (units/1e3).toLocaleString(undefined,{maximumFractionDigits:3}); }
+function fmtXch(mojos){ return (Number(mojos)/1e12).toLocaleString(undefined,{maximumFractionDigits:12}); }
+function fmtDig(units){ return (Number(units)/1e3).toLocaleString(undefined,{maximumFractionDigits:3}); }
 
 async function refreshBalance(){
   $('#dashErr').textContent=''; $('#dashSub').textContent='Scanning the chain via coinset.org…';
@@ -214,6 +369,209 @@ async function refreshBalance(){
   }catch(e){ $('#dashErr').textContent=e.message; $('#dashSub').textContent='Could not reach the chain.'; }
 }
 
+// ---- tab switching ----
+let _txPage = 0;
+const _customCats = JSON.parse(localStorage.getItem('digCats')||'[]');
+function showTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));
+  $('#tab-'+name).classList.remove('hidden');
+  if(name==='tokens') loadTokens();
+  else if(name==='nfts') loadNfts();
+  else if(name==='dids') loadDids();
+  else if(name==='txs') loadTxs();
+  else if(name==='stores') loadStores();
+}
+$('#tabs').addEventListener('click', e => { if(e.target.dataset.tab) showTab(e.target.dataset.tab); });
+
+// ---- TOKENS ----
+async function loadTokens(){
+  const wrap = $('#tokenList'); wrap.innerHTML='<div class="empty">Loading…</div>';
+  const rows = [];
+  try{
+    const xch = await wc('chip0002_getAssetBalance', {});
+    rows.push({name:'XCH', id:null, bal:fmtXch(xch.confirmed), units:xch.confirmed});
+  }catch(e){}
+  try{
+    const dig = await wc('chip0002_getAssetBalance', {type:'cat'});
+    rows.push({name:'DIG', id:null, bal:fmtDig(dig.confirmed), units:dig.confirmed});
+  }catch(e){}
+  for(const id of _customCats){
+    try{
+      const b = await wc('chip0002_getAssetBalance', {type:'cat', assetId:id});
+      rows.push({name:'CAT', id, bal:b.confirmed, units:b.confirmed});
+    }catch(e){ rows.push({name:'CAT', id, bal:'—', units:'0'}); }
+  }
+  wrap.innerHTML = rows.map(r=>
+    `<div class="item"><div class="grow"><div class="t">${esc(r.name)} `+
+    (r.id?`<span class="pill">${esc(short(r.id))}</span>`:'')+`</div>`+
+    (r.id?`<div class="s">${esc(r.id)}</div>`:'')+`</div>`+
+    `<div class="amt">${esc(r.bal)}</div></div>`).join('') || '<div class="empty">No tokens.</div>';
+}
+$('#btnAddCat').onclick = () => {
+  const id = $('#addCatId').value.trim();
+  if(!/^0x?[0-9a-fA-F]{64}$|^[0-9a-fA-F]{64}$/.test(id.replace(/^0x/,''))){ alert('Enter a 32-byte asset id (hex).'); return; }
+  if(!_customCats.includes(id)){ _customCats.push(id); localStorage.setItem('digCats', JSON.stringify(_customCats)); }
+  $('#addCatId').value=''; loadTokens();
+};
+$('#btnSendCat').onclick = async () => {
+  const st = $('#sendCatStatus'); st.className='ok-line'; st.textContent='Building…';
+  try{
+    const id = $('#sendCatId').value.trim();
+    const params = { address:$('#sendTo').value.trim(), amount:$('#sendAmt').value.trim(), fee:($('#sendFee').value.trim()||'0') };
+    if(id){ params.type='cat'; params.assetId=id; }
+    const r = await wc('chia_send', params);
+    st.textContent = r.status==='broadcast' ? 'Sent (broadcast).' : 'Signed (dry run — not broadcast). Enable broadcasting to spend.';
+  }catch(e){ st.className='ok-line err'; st.textContent=e.message; }
+};
+
+// ---- NFTS ----
+async function loadNfts(){
+  const grid = $('#nftGrid'), empty=$('#nftEmpty'); grid.innerHTML=''; empty.classList.add('hidden');
+  try{
+    const r = await wc('chia_getNfts', {});
+    const nfts = r.nfts||[];
+    if(!nfts.length){ empty.classList.remove('hidden'); return; }
+    grid.innerHTML = nfts.map(n=>
+      `<div class="nft"><div class="ph"></div>`+
+      `<div class="id">${esc(short(n.launcherId))}</div>`+
+      `<button data-nft-transfer="${esc(n.coinId)}">Transfer</button></div>`).join('');
+  }catch(e){ empty.textContent='Could not load: '+e.message; empty.classList.remove('hidden'); }
+}
+$('#btnMintNft').onclick = async () => {
+  const st = $('#mintStatus'); st.className='ok-line'; st.textContent='Minting…';
+  try{
+    const md = { dataUris: $('#mintDataUri').value.trim()?[$('#mintDataUri').value.trim()]:[] };
+    const dh = $('#mintDataHash').value.trim(); if(dh) md.dataHash=dh;
+    const params = { metadata: md, royaltyBasisPoints: Number($('#mintRoyalty').value.trim()||0) };
+    const r = await wc('chia_mintNft', params);
+    st.textContent = (r.status==='broadcast'?'Minted: ':'Signed (dry run): ')+short(r.launcherId);
+    loadNfts();
+  }catch(e){ st.className='ok-line err'; st.textContent=e.message; }
+};
+document.addEventListener('click', async e => {
+  const cid = e.target.dataset.nftTransfer;
+  if(cid){
+    const to = prompt('Transfer collectible to address (xch1…):'); if(!to) return;
+    try{ const r = await wc('chia_transferNft', {coinId:cid, to:to.trim()});
+      alert(r.status==='broadcast'?'Transferred.':'Signed (dry run — not broadcast).'); loadNfts(); }
+    catch(err){ alert(err.message); }
+  }
+});
+
+// ---- OFFERS ----
+function renderSummary(s){
+  const leg = a => a.type==='xch' ? fmtXch(a.amount)+' XCH' : (a.amount+' '+short(a.assetId));
+  return `<div class="item"><div class="grow"><div class="t">Offers</div>`+
+    `<div class="s">${(s.offered||[]).map(leg).join(', ')||'—'}</div></div></div>`+
+    `<div class="item"><div class="grow"><div class="t">Requests</div>`+
+    `<div class="s">${(s.requested||[]).map(leg).join(', ')||'—'}</div></div></div>`;
+}
+$('#btnInspectOffer').onclick = async () => {
+  const o = $('#takeOfferStr').value.trim(); const box=$('#offerSummary'); box.innerHTML='';
+  if(!o){ return; }
+  try{ const s = await wc('chia_getOfferSummary', {offer:o}); box.innerHTML = renderSummary(s); }
+  catch(e){ box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+};
+$('#btnTakeOffer').onclick = async () => {
+  const st=$('#takeStatus'); st.className='ok-line'; st.textContent='Taking…';
+  try{ const r = await wc('chia_takeOffer', {offer:$('#takeOfferStr').value.trim()});
+    st.textContent = r.status==='broadcast' ? 'Offer taken (broadcast).' : 'Signed (dry run — not broadcast).'; }
+  catch(e){ st.className='ok-line err'; st.textContent=e.message; }
+};
+$('#btnMakeOffer').onclick = async () => {
+  const st=$('#makeStatus'); st.className='ok-line'; st.textContent='Building…'; $('#madeOffer').innerHTML='';
+  const leg = (id, amt) => { const o={amount:amt.trim()}; const i=id.trim(); if(i) o.assetId=i; return o; };
+  try{
+    const r = await wc('chia_createOffer', {
+      offered:[leg($('#offerGiveId').value, $('#offerGiveAmt').value)],
+      requested:[leg($('#offerGetId').value, $('#offerGetAmt').value)],
+    });
+    $('#madeOffer').innerHTML = `<div class="offerbox" id="offerOut">${esc(r.offer)}</div>`+
+      `<button class="ghost" id="copyOffer">Copy offer</button>`;
+    $('#copyOffer').onclick = () => navigator.clipboard.writeText(r.offer);
+    st.textContent='Offer created. Share the string above.';
+  }catch(e){ st.className='ok-line err'; st.textContent=e.message; }
+};
+
+// ---- DIDS ----
+async function loadDids(){
+  const wrap=$('#didList'), empty=$('#didEmpty'); wrap.innerHTML=''; empty.classList.add('hidden');
+  try{
+    const r = await wc('chia_getDids', {});
+    const dids = r.dids||[];
+    if(!dids.length){ empty.classList.remove('hidden'); return; }
+    wrap.innerHTML = dids.map(d=>
+      `<div class="item"><div class="grow"><div class="t">Profile</div>`+
+      `<div class="s">${esc(d.launcherId)}</div></div>`+
+      `<button data-did-transfer="${esc(d.coinId)}">Transfer</button></div>`).join('');
+  }catch(e){ empty.textContent='Could not load: '+e.message; empty.classList.remove('hidden'); }
+}
+$('#btnCreateDid').onclick = async () => {
+  const st=$('#didStatus'); st.className='ok-line'; st.textContent='Creating…';
+  try{ const r = await wc('chia_createDidWallet', {});
+    st.textContent=(r.status==='broadcast'?'Created: ':'Signed (dry run): ')+short(r.launcherId); loadDids(); }
+  catch(e){ st.className='ok-line err'; st.textContent=e.message; }
+};
+document.addEventListener('click', async e => {
+  const cid = e.target.dataset.didTransfer;
+  if(cid){
+    const to = prompt('Transfer profile to address (xch1…):'); if(!to) return;
+    try{ const r = await wc('chia_transferDid', {coinId:cid, to:to.trim()});
+      alert(r.status==='broadcast'?'Transferred.':'Signed (dry run — not broadcast).'); loadDids(); }
+    catch(err){ alert(err.message); }
+  }
+});
+
+// ---- TRANSACTIONS ----
+async function loadTxs(){
+  const wrap=$('#txList'), empty=$('#txEmpty'); wrap.innerHTML='<div class="empty">Loading…</div>'; empty.classList.add('hidden');
+  try{
+    const r = await wc('chia_getTransactions', {page:_txPage});
+    const txs = r.transactions||[];
+    if(!txs.length){ wrap.innerHTML=''; empty.classList.remove('hidden'); empty.textContent=_txPage>0?'No older activity.':'No activity yet.'; return; }
+    wrap.innerHTML = txs.map(t=>{
+      const isXch = t.asset.type==='xch';
+      const amt = isXch ? fmtXch(t.amount)+' XCH' : (t.amount+' '+(t.asset.type==='cat'?'CAT':t.asset.type));
+      const sign = t.direction==='in'?'+':'−';
+      return `<div class="item"><div class="grow"><div class="t">${t.direction==='in'?'Received':'Sent'} `+
+        `<span class="pill">${esc(t.status)}</span></div>`+
+        `<div class="s">block ${t.height||'pending'} · ${esc(short(t.coinIds[0]||''))}</div></div>`+
+        `<div class="amt ${t.direction}">${sign}${esc(amt)}</div></div>`;
+    }).join('');
+  }catch(e){ wrap.innerHTML=''; empty.textContent='Could not load: '+e.message; empty.classList.remove('hidden'); }
+}
+$('#btnTxPrev').onclick = () => { if(_txPage>0){ _txPage--; loadTxs(); } };
+$('#btnTxNext').onclick = () => { _txPage++; loadTxs(); };
+
+// ---- MY STORES ----
+async function loadStores(){
+  const wrap=$('#storeList'), empty=$('#storeEmpty'); wrap.innerHTML='<div class="empty">Discovering…</div>'; empty.classList.add('hidden');
+  try{
+    const r = await api('/api/stores');
+    const stores = r.stores||[];
+    if(!stores.length){ wrap.innerHTML=''; empty.classList.remove('hidden'); return; }
+    wrap.innerHTML = stores.map(s=>
+      `<div class="item"><div class="grow"><div class="t">Store <span class="pill">addr #${s.hd_index}</span></div>`+
+      `<div class="s">${esc(s.current_capsule)}</div></div>`+
+      `<button class="sec" data-store-history="${esc(s.store_id)}">History</button></div>`+
+      `<div id="hist-${esc(s.store_id)}"></div>`).join('');
+  }catch(e){ wrap.innerHTML=''; empty.textContent='Could not load: '+e.message; empty.classList.remove('hidden'); }
+}
+document.addEventListener('click', async e => {
+  const sid = e.target.dataset.storeHistory;
+  if(sid){
+    const box = $('#hist-'+sid); if(box.innerHTML){ box.innerHTML=''; return; }
+    box.innerHTML='<div class="empty">Loading history…</div>';
+    try{
+      const r = await api('/api/stores/history?store_id='+encodeURIComponent(sid));
+      box.innerHTML = '<details open><summary>'+(r.capsules.length)+' capsule(s) (oldest → newest)</summary>'+
+        '<div class="body">'+r.capsules.map(c=>`<div class="offerbox">${esc(c)}</div>`).join('')+'</div></details>';
+    }catch(err){ box.innerHTML=`<div class="empty">${esc(err.message)}</div>`; }
+  }
+});
+
+// ---- wallet lifecycle (create/restore/unlock) ----
 $('#btnCreate').onclick = async () => {
   try{ const g = await api('/api/generate',{method:'POST'}); $('#seedWords').textContent=g.mnemonic; window._seed=g.mnemonic; show('view-create'); }
   catch(e){ alert(e.message); }
@@ -225,23 +583,24 @@ $('#btnSavedSeed').onclick = async () => {
   $('#createErr').textContent='';
   const pw = $('#createPw').value;
   if(pw.length<8){ $('#createErr').textContent='Password must be at least 8 characters'; return; }
-  try{ const r = await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:window._seed,password:pw})}); window._seed=null; show('view-dash'); refreshBalance(); initWalletConnect(r.address); }
+  try{ const r = await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:window._seed,password:pw})}); window._seed=null; enterDash(r.address); }
   catch(e){ $('#createErr').textContent=e.message; }
 };
 $('#btnRestoreGo').onclick = async () => {
   $('#restoreErr').textContent='';
   const pw = $('#restorePw').value;
   if(pw.length<8){ $('#restoreErr').textContent='Password must be at least 8 characters'; return; }
-  try{ const r = await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:$('#restoreInput').value,password:pw})}); show('view-dash'); refreshBalance(); initWalletConnect(r.address); }
+  try{ const r = await api('/api/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({mnemonic:$('#restoreInput').value,password:pw})}); enterDash(r.address); }
   catch(e){ $('#restoreErr').textContent=e.message; }
 };
 $('#btnUnlock').onclick = async () => {
   $('#unlockErr').textContent='';
-  try{ const r = await api('/api/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:$('#unlockPw').value})}); show('view-dash'); refreshBalance(); initWalletConnect(r.address); }
+  try{ const r = await api('/api/unlock',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:$('#unlockPw').value})}); enterDash(r.address); }
   catch(e){ $('#unlockErr').textContent=e.message; }
 };
+function enterDash(address){ show('view-dash'); refreshBalance(); refreshConnections(); initWalletConnect(address); showTab('tokens'); }
+
 // --- Connected dapps (CHIP-0002 / window.chia) ---
-function esc(s){ return s.replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 async function refreshConnections(){
   let c; try{ c = await api('/api/wc/connections'); }catch(e){ return; }
   const wrap = $('#connections'), pend = $('#connPending'), appr = $('#connApproved');
@@ -262,22 +621,15 @@ document.addEventListener('click', async (e) => {
   else if(t.dataset.reject){ await api('/api/wc/reject', body(t.dataset.reject)); refreshConnections(); }
   else if(t.dataset.revoke){ await api('/api/wc/revoke', body(t.dataset.revoke)); refreshConnections(); }
 });
-// Poll for connect requests while the dashboard is visible.
 setInterval(() => { if(!$('#view-dash').classList.contains('hidden')) refreshConnections(); }, 2000);
 
-$('#btnRefresh').onclick = () => { refreshBalance(); refreshConnections(); };
+$('#btnRefresh').onclick = () => { refreshBalance(); refreshConnections(); const active=document.querySelector('.tab.active'); if(active) showTab(active.dataset.tab); };
 $('#btnLock').onclick = async () => { await api('/api/lock',{method:'POST'}); show('view-welcome'); };
 $('#copyAddr').onclick = () => { navigator.clipboard.writeText($('#addr').textContent); $('#copyAddr').textContent='Copied'; setTimeout(()=>$('#copyAddr').textContent='Copy',1200); };
 
 // --- WalletConnect responder: pair with dapps over the relay ---
-// This wallet plays the WC WALLET role (dual of Sage). We host a SignClient in
-// the page: pair from a wc: URI, surface the proposal for approve/reject, and on
-// each request route to /api/wc/request (so signing stays in the Rust signer).
-// v1: sessions live only while this page is open (a persistent background
-// responder is v2 — documented in the crate header).
 let _wcReady = false, _wcAddress = null, _wcProposal = null;
 function wcStatus(msg, isErr){ const el=$('#wcStatus'); if(!el) return; el.textContent=msg||''; el.className='wc-status'+(isErr?' err':''); }
-
 function renderWcSessions(){
   const wrap = $('#wcSessions'); if(!wrap || !window.DigWC) return;
   const list = DigWC.sessions();
@@ -287,17 +639,13 @@ function renderWcSessions(){
            `<button class="no" data-wc-disconnect="${esc(s.topic)}">Disconnect</button></div>`;
   }).join('');
 }
-
 async function initWalletConnect(address){
   _wcAddress = address;
-  if(!window.DigWC) return;             // bundle failed to load
+  if(!window.DigWC) return;
   let cfg; try{ cfg = await api('/api/wc/project-id'); }catch(e){ cfg = {configured:false}; }
-  if(!cfg.configured){
-    $('#wcNoPid').classList.remove('hidden'); $('#wcPair').classList.add('hidden');
-    return;
-  }
+  if(!cfg.configured){ $('#wcNoPid').classList.remove('hidden'); $('#wcPair').classList.add('hidden'); return; }
   $('#wcNoPid').classList.add('hidden'); $('#wcPair').classList.remove('hidden');
-  if(_wcReady) return;                   // init once per page
+  if(_wcReady) return;
   try{
     DigWC.onProposal(p => {
       _wcProposal = p;
@@ -311,7 +659,6 @@ async function initWalletConnect(address){
     renderWcSessions();
   }catch(e){ wcStatus('WalletConnect failed to start: '+e.message, true); }
 }
-
 $('#btnPair').onclick = async () => {
   const uri = $('#wcUri').value.trim();
   if(!uri.startsWith('wc:')){ wcStatus('Paste a WalletConnect link starting with "wc:".', true); return; }
@@ -336,7 +683,7 @@ document.addEventListener('click', async (e) => {
 
 (async function init(){
   try{ const s = await api('/api/status');
-    if(s.state==='unlocked'){ $('#addr').textContent=s.address; show('view-dash'); refreshBalance(); refreshConnections(); initWalletConnect(s.address); }
+    if(s.state==='unlocked'){ $('#addr').textContent=s.address; enterDash(s.address); }
     else if(s.state==='locked'){ show('view-unlock'); $('#unlockPw').focus(); }
     else { show('view-welcome'); }
   } catch(e){ show('view-welcome'); }
