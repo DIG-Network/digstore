@@ -19,6 +19,7 @@ pub mod send;
 pub mod singleton;
 pub mod streaming;
 pub mod unlock;
+pub mod vault;
 pub mod wallet;
 
 pub use error::{ChainError, Result};
