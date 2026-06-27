@@ -171,9 +171,15 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
             )?;
             let coin_hex = hex::encode(coin_id.as_ref());
 
+            // The capsule identity of this deployment: `storeId:rootHash`
+            // (byte-identical to `digstore_core::Capsule::canonical()`). A store
+            // is a sequence of capsules — one per commit/root advance.
+            let capsule = format!("{}:{}", state.store_id, outcome.roothash.to_hex());
+
             if ui.json() {
                 ui.emit_json(&serde_json::json!({
                     "root": outcome.roothash.to_hex(),
+                    "capsule": capsule,
                     "module": outcome.output_path.display().to_string(),
                     "size": outcome.output_size,
                     "coin_id": coin_hex,
@@ -182,6 +188,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                 }));
             } else {
                 ui.success(format!("committed root {}", outcome.roothash.to_hex()));
+                ui.line(format!("  capsule: {capsule}  (storeId:rootHash)"));
                 ui.line(format!(
                     "  module: {} ({} bytes)",
                     outcome.output_path.display(),
