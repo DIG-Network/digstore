@@ -3418,10 +3418,12 @@ mod tests {
         assert!(UI_HTML.contains("chia_getNfts"));
         assert!(UI_HTML.contains("chia_transferNft"));
         assert!(UI_HTML.contains("chia_mintNft"));
-        // Offers.
+        // Offers: inspect, make, take, and cancel (the luxury redesign wires the
+        // Cancel action on "Your offers" through the real chia_cancelOffer signer).
         assert!(UI_HTML.contains("chia_getOfferSummary"));
         assert!(UI_HTML.contains("chia_createOffer"));
         assert!(UI_HTML.contains("chia_takeOffer"));
+        assert!(UI_HTML.contains("chia_cancelOffer"));
         // DIDs.
         assert!(UI_HTML.contains("chia_getDids"));
         assert!(UI_HTML.contains("chia_createDidWallet"));
@@ -3433,6 +3435,41 @@ mod tests {
         assert!(UI_HTML.contains("/api/stores/history"));
         // Goes through the native signer (self-origin auto-approved).
         assert!(UI_HTML.contains("/api/wc/request"));
+    }
+
+    #[test]
+    fn wallet_page_renders_the_luxury_dig_wallet_shell() {
+        // The "DIG Wallet" luxury redesign: a persistent left rail with the
+        // plain-language domains, the Balance Orb hero, the Notary hold-to-sign
+        // sheet, and the Certificate-of-Permanence ownership framing. Guard the
+        // shell so a regression can't silently strip the redesign while leaving
+        // the endpoint wiring intact.
+        assert!(UI_HTML.contains("class=\"rail\""), "persistent left rail");
+        assert!(UI_HTML.contains("class=\"orb\""), "balance orb hero");
+        assert!(UI_HTML.contains("Hold to sign"), "notary hold-to-confirm");
+        assert!(
+            UI_HTML.contains("yours forever"),
+            "ownership framing (never 'fee')"
+        );
+        assert!(
+            UI_HTML.contains("Show protocol detail"),
+            "progressive-disclosure of protocol detail"
+        );
+        // Every everyday domain is reachable from the rail.
+        for go in [
+            "data-go=\"home\"",
+            "data-go=\"tokens\"",
+            "data-go=\"nfts\"",
+            "data-go=\"trades\"",
+            "data-go=\"activity\"",
+            "data-go=\"profiles\"",
+            "data-go=\"stores\"",
+            "data-go=\"connect\"",
+            "data-go=\"advanced\"",
+            "data-go=\"settings\"",
+        ] {
+            assert!(UI_HTML.contains(go), "rail wires {go}");
+        }
     }
 
     #[test]

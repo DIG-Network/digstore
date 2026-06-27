@@ -5,250 +5,239 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DIG Settings</title>
 <style>
-  :root{
-    --bg:#0b0c0e; --surface:#15161c; --surface-2:#1d1f28; --border:#2a2c38;
-    --text:#e8eaed; --muted:#9aa0ad; --accent:#5800d6; --accent-2:#8a4dff;
-    --good:#5ece71; --radius:16px; --shadow:0 8px 40px rgba(0,0,0,.45);
-    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:radial-gradient(1200px 700px at 70% -10%,rgba(88,0,214,.18),transparent 60%),var(--bg);
-       color:var(--text);font-family:var(--font);min-height:100vh;display:flex;flex-direction:column}
-  header{display:flex;align-items:center;gap:12px;padding:18px 28px;border-bottom:1px solid var(--border)}
-  .logo{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));
-        display:grid;place-items:center;font-weight:800;color:#fff;font-size:16px}
-  .brand{font-weight:700;letter-spacing:.2px;font-size:17px}
-  .spacer{flex:1}
-  main{flex:1;display:flex;justify-content:center;padding:40px 24px}
-  .col{width:100%;max-width:560px}
-  .page-title{font-size:26px;margin:0 0 4px;font-weight:700}
-  .page-sub{color:var(--muted);font-size:14px;margin:0 0 28px;line-height:1.5}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-        box-shadow:var(--shadow);padding:26px;margin-bottom:20px}
-  .card h2{font-size:17px;margin:0 0 6px;display:flex;align-items:center;gap:10px}
-  .chip{display:inline-flex;align-items:center;gap:5px;background:rgba(94,206,113,.14);color:var(--good);
-        border:1px solid rgba(94,206,113,.35);border-radius:999px;padding:2px 10px;font-size:11px;font-weight:600;
-        text-transform:uppercase;letter-spacing:.5px}
-  .card .desc{color:var(--muted);font-size:13.5px;line-height:1.6;margin:0 0 22px}
-  .usage{margin:18px 0 6px}
-  .usage .nums{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:8px}
-  .usage .nums b{color:var(--text);font-weight:600}
-  .bar{height:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;overflow:hidden}
-  .bar > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-2));
-        border-radius:999px;transition:width .35s ease}
-  .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:24px 0 10px}
-  .slider-row{display:flex;align-items:center;gap:16px}
-  input[type=range]{flex:1;accent-color:var(--accent);height:4px}
-  .capbox{display:flex;align-items:center;gap:8px;flex:0 0 auto}
-  input.num{width:90px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
-        border-radius:10px;padding:10px 12px;font-size:15px;text-align:right;font-variant-numeric:tabular-nums}
-  input.num:focus{outline:none;border-color:var(--accent)}
-  .unit{color:var(--muted);font-size:14px}
-  .row{display:flex;gap:12px;margin-top:24px}
-  button.primary{flex:1;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border:0;
-       border-radius:12px;padding:13px;font-size:14px;font-weight:600;cursor:pointer;transition:filter .15s}
-  button.primary:hover{filter:brightness(1.08)}
-  button.primary:disabled{filter:grayscale(.6) brightness(.7);cursor:default}
-  button.ghost{flex:0 0 auto;background:transparent;color:var(--text);border:1px solid var(--border);
-       border-radius:12px;padding:13px 18px;font-size:14px;cursor:pointer}
-  button.ghost:hover{background:var(--surface-2)}
-  .status{font-size:13px;margin-top:14px;min-height:16px;color:var(--good)}
-  .status.err{color:#ff7a7a}
-  .foot{color:var(--muted);font-size:12px;text-align:center;margin-top:8px;line-height:1.6}
-  a{color:var(--accent-2);text-decoration:none}
-  input.text{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
-        border-radius:10px;padding:11px 12px;font-size:14px;font-family:ui-monospace,monospace}
-  input.text:focus,textarea:focus{outline:none;border-color:var(--accent)}
-  textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--text);
-        border-radius:10px;padding:11px 12px;font-size:14px;font-family:ui-monospace,monospace;resize:vertical;min-height:84px}
-  .kv{display:flex;gap:8px;align-items:center;background:var(--surface-2);border:1px solid var(--border);
-        border-radius:10px;padding:10px 12px;font-family:ui-monospace,monospace;font-size:13px;word-break:break-all;margin-top:8px}
-  .kv .copy{margin-left:auto;flex:0 0 auto;background:var(--accent);color:#fff;border:0;border-radius:8px;
-        padding:6px 12px;font-size:12px;cursor:pointer}
-  .kv .copy:hover{filter:brightness(1.08)}
-  .kvlabel{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 0}
-  .warn{color:#f0b86a;font-size:13px;margin:12px 0;line-height:1.55}
-  .seedreveal{background:var(--surface-2);border:1px solid #f0b86a55;border-radius:10px;padding:14px;margin-top:12px;
-        font-family:ui-monospace,monospace;font-size:14px;line-height:1.9;word-spacing:5px;color:var(--text)}
-  .muted-note{color:var(--muted);font-size:12.5px;margin-top:10px;line-height:1.5}
-  .danger{background:transparent;color:#ff9a9a;border:1px solid #ff9a9a55}
-  .danger:hover{background:rgba(255,122,122,.08)}
-  /* cached-store manager (#32) */
-  .cache-controls{display:flex;gap:8px;align-items:center;margin:6px 0 14px}
-  .cache-controls .text{flex:1;margin-top:0}
-  select.sortsel{background:var(--surface-2);border:1px solid var(--border);color:var(--text);
-        border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer}
-  select.sortsel:focus{outline:none;border-color:var(--accent)}
-  button.ghost.refresh{flex:0 0 auto;padding:10px 16px}
-  table.ctable{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
-  table.ctable th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;
-        letter-spacing:.5px;padding:0 8px 8px;border-bottom:1px solid var(--border)}
-  table.ctable th.num,table.ctable td.num{text-align:right;font-variant-numeric:tabular-nums}
-  table.ctable td{padding:10px 8px;border-bottom:1px solid var(--border);font-family:ui-monospace,monospace;vertical-align:middle}
-  table.ctable td.lbl{color:var(--muted);font-family:var(--font)}
-  table.ctable tr:last-child td{border-bottom:0}
-  table.ctable .rm{background:transparent;color:#ff9a9a;border:1px solid #ff9a9a55;border-radius:8px;
-        padding:5px 10px;font-size:11.5px;cursor:pointer}
-  table.ctable .rm:hover{background:rgba(255,122,122,.08)}
-  .subcard{margin-top:22px;border-top:1px solid var(--border);padding-top:18px}
+:root{
+  --void:#07060F; --space:#0C0B1E; --panel:rgba(22,20,54,.62);
+  --card:rgba(24,18,68,.55); --card-h:rgba(34,26,92,.62);
+  --hair:rgba(255,255,255,.07); --hair2:rgba(255,255,255,.11);
+  --hair-v:rgba(140,112,255,.22); --hair-m:rgba(255,0,222,.42);
+  --violet:#5800D6; --magenta:#FF00DE; --pink:#FF3DF5;
+  --grad:linear-gradient(115deg,#5800D6 0%,#FF00DE 100%);
+  --grad-text:linear-gradient(100deg,#B98CFF 0%,#FF6BEE 100%);
+  --glow-v:0 0 36px rgba(88,0,214,.5); --glow-m:0 0 28px rgba(255,0,222,.4);
+  --gold:#E6CC93; --gold2:#B8924E; --gold-soft:rgba(230,204,147,.14);
+  --grad-gold:linear-gradient(115deg,#F0DCAE,#B8924E);
+  --plat:#ECEAF6;
+  --t1:#F6F4FC; --t2:#C5C1E0; --t3:#928DBA; --t4:#605B8A;
+  --ok:#46E0B0; --warn:#E6B453; --err:#FF6B95;
+  --serif:"Hoefler Text","Iowan Old Style","Palatino Linotype",Georgia,"Times New Roman",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI",system-ui,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Code","SF Mono","Segoe UI Mono",Consolas,Menlo,monospace;
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--sans);color:var(--t1);background:var(--void);-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;min-height:100vh}
+::selection{background:rgba(255,0,222,.32)}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:rgba(140,112,255,.22);border-radius:6px}
+.mono{font-family:var(--mono)}
+.sky{position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(900px 620px at 84% -10%,rgba(88,0,214,.30),transparent 60%),radial-gradient(760px 520px at 6% 2%,rgba(255,0,222,.12),transparent 62%),radial-gradient(130% 1500px at 50% -4%,#1c1248 0%,#130d33 38%,#0c0a22 70%,#07060F 100%)}
+.stars{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.85}
+.stars i{position:absolute;width:2px;height:2px;border-radius:50%;background:#fff;animation:tw 5.5s ease-in-out infinite}
+@keyframes tw{0%,100%{opacity:.18}50%{opacity:.9}}
+.wrap{position:relative;z-index:2;min-height:100vh}
+header{display:flex;align-items:center;gap:12px;padding:20px 34px;border-bottom:1px solid var(--hair);backdrop-filter:blur(16px);background:linear-gradient(180deg,rgba(14,12,38,.5),transparent)}
+.mark{width:36px;height:36px;border-radius:11px;background:var(--grad);display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:20px;color:#fff;box-shadow:var(--glow-v)}
+.brand{font-size:15px;font-weight:600;letter-spacing:.2px}
+.brand small{display:block;font-size:9.5px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;margin-top:2px;background:var(--grad-gold);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.spacer{flex:1}
+main{display:flex;justify-content:center;padding:40px 24px 80px}
+.col{width:100%;max-width:620px}
+.eyebrow{font-size:11px;letter-spacing:.2em;text-transform:uppercase;font-weight:600;background:var(--grad-gold);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+h1.title{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:-.01em;margin:4px 0 6px}
+.sub{color:var(--t3);font-size:13.5px;line-height:1.55;margin:0 0 30px;max-width:60ch}
+.sechead{display:flex;flex-direction:column;gap:3px;margin:30px 2px 14px}
+.sechead .kick{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;font-weight:600;background:var(--grad-gold);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.sechead h2{font-family:var(--serif);font-size:21px;font-weight:600;letter-spacing:-.01em}
+.card{border:1px solid var(--hair);border-radius:18px;background:var(--panel);backdrop-filter:blur(16px);padding:24px 26px;margin-bottom:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.card h3{font-size:15px;font-weight:600;display:flex;align-items:center;gap:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:rgba(70,224,176,.12);color:var(--ok);border:1px solid rgba(70,224,176,.3);border-radius:999px;padding:3px 10px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.chip.gold{background:var(--gold-soft);color:var(--gold);border-color:var(--gold-soft)}
+.chip.warn{background:rgba(230,180,83,.12);color:var(--warn);border-color:rgba(230,180,83,.3)}
+.desc{color:var(--t3);font-size:13px;line-height:1.6;margin:8px 0 18px}
+.desc code,code{font-family:var(--mono);font-size:.92em;color:var(--gold)}
+a{color:var(--gold);text-decoration:none}a:hover{color:var(--pink)}
+.lblc{font-size:10.5px;color:var(--t4);text-transform:uppercase;letter-spacing:.16em;font-weight:600;margin:18px 0 8px}
+.field{width:100%;background:rgba(0,0,0,.28);border:1px solid var(--hair);color:var(--t1);border-radius:10px;padding:11px 13px;font-size:13px;font-family:var(--mono);outline:none;transition:border-color .15s var(--ease)}
+.field:focus,textarea.field:focus{border-color:var(--hair-m)}
+textarea.field{resize:vertical;min-height:84px;line-height:1.5}
+.field::placeholder{color:var(--t4)}
+.num{width:96px;background:rgba(0,0,0,.28);border:1px solid var(--hair);color:var(--t1);border-radius:10px;padding:10px 12px;font-size:15px;text-align:right;font-variant-numeric:tabular-nums;outline:none}
+.num:focus{border-color:var(--hair-m)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;cursor:pointer;font-family:inherit;font-weight:600;font-size:13.5px;border-radius:11px;padding:11px 18px;transition:.18s var(--ease)}
+.btn.p{background:var(--grad);color:#fff;box-shadow:0 8px 24px rgba(255,0,222,.26),inset 0 1px 0 rgba(255,255,255,.26)}
+.btn.p:hover{transform:translateY(-2px);box-shadow:0 12px 34px rgba(255,0,222,.4),inset 0 1px 0 rgba(255,255,255,.3)}
+.btn.p:disabled{opacity:.5;transform:none;box-shadow:none;cursor:default}
+.btn.g{background:rgba(255,255,255,.05);color:#fff;border:1px solid var(--hair-v)}
+.btn.g:hover{background:rgba(255,255,255,.1)}
+.btn.danger{background:transparent;color:var(--err);border:1px solid rgba(255,107,149,.35)}
+.btn.danger:hover{background:rgba(255,107,149,.08)}
+.row{display:flex;gap:12px;margin-top:18px;flex-wrap:wrap}
+.row .btn{flex:0 0 auto}
+.row .btn.grow{flex:1}
+.status{font-size:12.5px;margin-top:12px;min-height:15px;color:var(--ok)}
+.status.err{color:var(--err)}
+.warn{color:var(--warn);font-size:12.5px;margin:12px 0;line-height:1.55;display:flex;gap:8px}
+.note{color:var(--t3);font-size:12.5px;margin-top:10px;line-height:1.55}
+.usage{margin:18px 0 6px}
+.usage .nums{display:flex;justify-content:space-between;font-size:13px;color:var(--t3);margin-bottom:8px}
+.usage .nums b{color:var(--t1);font-weight:600}
+.bar{height:10px;background:rgba(0,0,0,.3);border:1px solid var(--hair);border-radius:999px;overflow:hidden}
+.bar > i{display:block;height:100%;width:0;background:var(--grad);border-radius:999px;transition:width .35s var(--ease)}
+.slider-row{display:flex;align-items:center;gap:16px;margin-top:6px}
+input[type=range]{flex:1;accent-color:var(--magenta);height:4px}
+.capbox{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.unit{color:var(--t3);font-size:14px}
+.kv{display:flex;gap:8px;align-items:center;background:rgba(0,0,0,.24);border:1px solid var(--hair);border-radius:10px;padding:11px 13px;font-family:var(--mono);font-size:12.5px;word-break:break-all;margin-top:8px}
+.kv .copy{margin-left:auto;flex:0 0 auto}
+.seedreveal{background:rgba(0,0,0,.28);border:1px solid var(--gold-soft);border-radius:10px;padding:14px;margin-top:12px;font-family:var(--mono);font-size:13.5px;line-height:1.95;word-spacing:5px;color:var(--t1)}
+.hidden{display:none}
+.cache-controls{display:flex;gap:8px;align-items:center;margin:6px 0 14px;flex-wrap:wrap}
+.cache-controls .field{flex:1;min-width:160px}
+select.sortsel{background:rgba(0,0,0,.28);border:1px solid var(--hair);color:var(--t1);border-radius:10px;padding:10px 12px;font-size:12.5px;cursor:pointer;outline:none}
+select.sortsel:focus{border-color:var(--hair-m)}
+table.ctable{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+table.ctable th{text-align:left;color:var(--t4);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;padding:0 8px 8px;border-bottom:1px solid var(--hair)}
+table.ctable th.num,table.ctable td.num{text-align:right;font-variant-numeric:tabular-nums}
+table.ctable td{padding:11px 8px;border-bottom:1px solid var(--hair);font-family:var(--mono);vertical-align:middle;color:var(--t2)}
+table.ctable td.lbl{color:var(--t3);font-family:var(--sans)}
+table.ctable tr:last-child td{border-bottom:0}
+table.ctable .rm{background:transparent;color:var(--err);border:1px solid rgba(255,107,149,.35);border-radius:8px;padding:5px 10px;font-size:11.5px;cursor:pointer;font-family:var(--sans)}
+table.ctable .rm:hover{background:rgba(255,107,149,.08)}
+.subcard{margin-top:22px;border-top:1px solid var(--hair);padding-top:18px}
+.foot{color:var(--t3);font-size:12px;text-align:center;margin-top:18px;line-height:1.6}
+@media (prefers-reduced-motion: reduce){ *{animation:none!important;transition:none!important} }
 </style>
 </head>
 <body>
+<div class="sky"></div><div class="stars" id="stars"></div>
+<div class="wrap">
 <header>
-  <div class="logo">Ð</div>
-  <div class="brand">DIG Settings</div>
+  <div class="mark">&#208;</div>
+  <div class="brand">DIG Settings<small>Self-custodial node</small></div>
   <div class="spacer"></div>
+  <a class="btn g" href="dig://wallet">Open wallet</a>
 </header>
 <main>
   <div class="col">
-    <h1 class="page-title">DIG protocol</h1>
-    <p class="page-sub">Settings for how this browser participates in the DIG Network as a native node.</p>
+    <div class="eyebrow">DIG protocol</div>
+    <h1 class="title">Settings</h1>
+    <p class="sub">How this browser participates in the DIG Network as a native node — your local cache, your keys, and the relay that powers connecting apps.</p>
 
+    <!-- ===== KEYS ===== -->
+    <div class="sechead"><div class="kick">Keys</div><h2>Your keys</h2></div>
+
+    <!-- Wallet identity (public key + address) -->
     <div class="card">
-      <h2>Local cache <span class="chip">● Local-first</span></h2>
-      <p class="desc">
-        Your browser is a DIG node. When you open a <b>dig://</b> site, it downloads that store's
-        <code>.dig</code> file to a local cache and serves it from your machine — instantly, and verified
-        against the chain. Pages served from this cache show a <b>local</b> badge in the address bar.
-        When the cache is full, the least-recently-visited stores are evicted first (LRU).
-      </p>
+      <h3>Wallet identity <span class="chip">&#9679; Public</span></h3>
+      <p class="desc">Your wallet's public key and receive address. These are safe to share — they identify your wallet but cannot move funds. (Unlock your wallet at <a href="dig://wallet">dig://wallet</a> to see them.)</p>
+      <div id="idLoaded" class="hidden">
+        <div class="lblc">Public key</div>
+        <div class="kv"><span id="pubKey">—</span><button class="btn g sm copy" id="copyPub" style="padding:6px 12px;font-size:12px;border-radius:8px">Copy</button></div>
+        <div class="lblc">Address</div>
+        <div class="kv"><span id="addr">—</span><button class="btn g sm copy" id="copyAddr" style="padding:6px 12px;font-size:12px;border-radius:8px">Copy</button></div>
+      </div>
+      <div id="idLocked" class="note hidden">Wallet is locked — open <a href="dig://wallet">dig://wallet</a> and unlock to view your public key.</div>
+    </div>
+
+    <!-- Backup & restore (export / import the recovery phrase) -->
+    <div class="card">
+      <h3>Backup &amp; restore <span class="chip warn">&#9679; Sensitive</span></h3>
+      <p class="desc">Your 24-word recovery phrase is the master key to your wallet. Back it up to move your wallet to another device, or restore a wallet from its phrase.</p>
+
+      <div class="lblc">Reveal recovery phrase</div>
+      <p class="warn"><span>&#9888;</span>Anyone with these 24 words controls your funds. Never share them, and only reveal them somewhere private.</p>
+      <div id="exportGate">
+        <input class="field" id="exportPw" type="password" placeholder="Re-enter your wallet password" autocomplete="current-password">
+        <div class="row"><button class="btn p" id="btnReveal">Reveal phrase</button></div>
+      </div>
+      <div id="exportShow" class="hidden">
+        <div class="seedreveal" id="seedWords"></div>
+        <div class="row"><button class="btn g" id="btnHide">Hide</button><button class="btn p" id="btnCopySeed">Copy phrase</button></div>
+      </div>
+      <div class="status" id="exportStatus"></div>
+
+      <div class="lblc" style="margin-top:26px">Restore from recovery phrase</div>
+      <p class="note">Restoring replaces the wallet on this device with the one for the phrase you enter.</p>
+      <textarea class="field" id="importPhrase" placeholder="word1 word2 word3 …" spellcheck="false" autocomplete="off" style="margin-top:8px"></textarea>
+      <input class="field" id="importPw" type="password" placeholder="Set a password (min 8 characters)" autocomplete="new-password" style="margin-top:8px">
+      <div class="row"><button class="btn danger" id="btnImport">Restore wallet</button></div>
+      <div class="status" id="importStatus"></div>
+    </div>
+
+    <!-- ===== CONNECTIONS ===== -->
+    <div class="sechead"><div class="kick">Connections</div><h2>WalletConnect</h2></div>
+    <div class="card">
+      <h3>Relay project ID <span class="chip" id="wcChip">&#9679; Not configured</span></h3>
+      <p class="desc">Your built-in wallet can pair with apps over WalletConnect — including apps on other devices. That relay needs a free <b>projectId</b> from <a href="https://cloud.reown.com/" target="_blank" rel="noopener">Reown / WalletConnect Cloud</a>. Paste it here once; the wallet's <b>Connect a dapp</b> panel uses it to pair.</p>
+      <div class="lblc">Project ID</div>
+      <input class="field" id="wcPid" type="text" placeholder="e.g. 1a2b3c… (from cloud.reown.com)" autocomplete="off" spellcheck="false">
+      <div class="row"><button class="btn p" id="btnWcSave">Save project ID</button><button class="btn g" id="btnWcClear">Clear</button></div>
+      <div class="status" id="wcStatus"></div>
+    </div>
+
+    <!-- ===== PERFORMANCE / CACHE ===== -->
+    <div class="sechead"><div class="kick">Performance</div><h2>Local cache</h2></div>
+    <div class="card">
+      <h3>Cache &amp; storage limit <span class="chip">&#9679; Local-first</span></h3>
+      <p class="desc">Your browser is a DIG node. When you open a <b>dig://</b> site, it downloads that store's <code>.dig</code> file to a local cache and serves it from your machine — instantly, and verified against the chain. When the cache is full, the least-recently-visited stores are evicted first (LRU).</p>
 
       <div class="usage">
         <div class="nums"><span>Cache used</span><span><b id="usedTxt">—</b> of <b id="capTxt">—</b></span></div>
         <div class="bar"><i id="usedBar"></i></div>
       </div>
 
-      <div class="label">Storage limit</div>
+      <div class="lblc">Storage limit</div>
       <div class="slider-row">
         <input type="range" id="capRange" min="1" max="200" step="1" value="1">
-        <div class="capbox">
-          <input class="num" id="capNum" type="number" min="0.06" step="0.5" value="1">
-          <span class="unit">GB</span>
-        </div>
+        <div class="capbox"><input class="num" id="capNum" type="number" min="0.06" step="0.5" value="1"><span class="unit">GB</span></div>
       </div>
-
-      <div class="row">
-        <button class="primary" id="btnSave" disabled>Save</button>
-        <button class="ghost" id="btnClear">Clear cache</button>
-      </div>
+      <div class="row"><button class="btn p" id="btnSave" disabled>Save</button><button class="btn g" id="btnClear">Clear cache</button></div>
       <div class="status" id="status"></div>
     </div>
 
     <!-- Cached stores (#32): per-capsule local-cache manager -->
     <div class="card">
-      <h2>Cached stores <span class="chip">● Capsules</span></h2>
-      <p class="desc">
-        Every store generation your browser has cached is one <b>capsule</b> — a
-        <code>storeId:rootHash</code> snapshot, stored locally and served instantly (verified
-        against the chain). Remove a capsule to free space, or cache one ahead of time below.
-      </p>
+      <h3>Cached stores <span class="chip gold">&#9679; Capsules</span></h3>
+      <p class="desc">Every store generation your browser has cached is one <b>capsule</b> — a <code>storeId:rootHash</code> snapshot, stored locally and served instantly (verified against the chain). Remove a capsule to free space, or cache one ahead of time below.</p>
 
       <div class="cache-controls">
-        <input class="text" id="capFilter" type="text" placeholder="Filter by store id…" autocomplete="off" spellcheck="false">
+        <input class="field" id="capFilter" type="text" placeholder="Filter by store id…" autocomplete="off" spellcheck="false">
         <select id="capSort" class="sortsel">
           <option value="time">Sort: last used</option>
           <option value="size">Sort: size</option>
           <option value="store">Sort: store id</option>
         </select>
-        <button class="ghost refresh" id="btnCapRefresh">Refresh</button>
+        <button class="btn g" id="btnCapRefresh">Refresh</button>
       </div>
 
       <table class="ctable" id="capTable">
         <thead><tr><th>Store id</th><th>Root</th><th class="num">Size</th><th>Last used</th><th></th></tr></thead>
         <tbody id="capBody"></tbody>
       </table>
-      <div class="muted-note" id="capEmpty">No capsules cached yet.</div>
+      <div class="note" id="capEmpty">No capsules cached yet.</div>
       <div class="status" id="capStatus"></div>
 
-      <!-- Cache a capsule on demand -->
       <div class="subcard">
-        <div class="kvlabel" style="margin-top:0">Cache a capsule</div>
-        <p class="muted-note">Enter a capsule's <code>storeId</code> and <code>rootHash</code> (64-hex each) to fetch and cache it now.</p>
-        <input class="text" id="fetchStore" type="text" placeholder="store id (64-hex)" autocomplete="off" spellcheck="false" style="margin-top:8px">
-        <input class="text" id="fetchRoot" type="text" placeholder="root hash (64-hex)" autocomplete="off" spellcheck="false" style="margin-top:8px">
-        <div class="row">
-          <button class="primary" id="btnFetchCap">Cache capsule</button>
-        </div>
+        <div class="lblc" style="margin-top:0">Cache a capsule</div>
+        <p class="note">Enter a capsule's <code>storeId</code> and <code>rootHash</code> (64-hex each) to fetch and cache it now.</p>
+        <input class="field" id="fetchStore" type="text" placeholder="store id (64-hex)" autocomplete="off" spellcheck="false" style="margin-top:8px">
+        <input class="field" id="fetchRoot" type="text" placeholder="root hash (64-hex)" autocomplete="off" spellcheck="false" style="margin-top:8px">
+        <div class="row"><button class="btn p" id="btnFetchCap">Cache capsule</button></div>
         <div class="status" id="fetchStatus"></div>
       </div>
-    </div>
-
-    <!-- WalletConnect projectId -->
-    <div class="card">
-      <h2>WalletConnect <span class="chip" id="wcChip">● Not configured</span></h2>
-      <p class="desc">
-        Your built-in wallet can pair with apps over WalletConnect — including apps on other
-        devices. That relay needs a free <b>projectId</b> from
-        <a href="https://cloud.reown.com/" target="_blank" rel="noopener">Reown / WalletConnect Cloud</a>.
-        Paste it here once; the wallet's <b>Connect a dapp</b> panel uses it to pair.
-      </p>
-      <div class="kvlabel">Project ID</div>
-      <input class="text" id="wcPid" type="text" placeholder="e.g. 1a2b3c… (from cloud.reown.com)" autocomplete="off" spellcheck="false" style="margin-top:8px">
-      <div class="row">
-        <button class="primary" id="btnWcSave">Save project ID</button>
-        <button class="ghost" id="btnWcClear">Clear</button>
-      </div>
-      <div class="status" id="wcStatus"></div>
-    </div>
-
-    <!-- Wallet identity (public key + address) -->
-    <div class="card">
-      <h2>Wallet identity <span class="chip">● Public</span></h2>
-      <p class="desc">
-        Your wallet's public key and receive address. These are safe to share — they identify your
-        wallet but cannot move funds. (Unlock your wallet at <b>dig://wallet</b> to see them.)
-      </p>
-      <div id="idLoaded" class="hidden">
-        <div class="kvlabel">Public key</div>
-        <div class="kv"><span id="pubKey">—</span><button class="copy" id="copyPub">Copy</button></div>
-        <div class="kvlabel">Address</div>
-        <div class="kv"><span id="addr">—</span><button class="copy" id="copyAddr">Copy</button></div>
-      </div>
-      <div id="idLocked" class="muted-note hidden">Wallet is locked — open <a href="dig://wallet">dig://wallet</a> and unlock to view your public key.</div>
-    </div>
-
-    <!-- Backup & restore (export / import the recovery phrase) -->
-    <div class="card">
-      <h2>Backup &amp; restore <span class="chip" style="background:rgba(240,184,106,.14);color:#f0b86a;border-color:rgba(240,184,106,.35)">● Sensitive</span></h2>
-      <p class="desc">
-        Your 24-word recovery phrase is the master key to your wallet. Back it up to move your wallet
-        to another device, or restore a wallet from its phrase.
-      </p>
-
-      <div class="kvlabel">Reveal recovery phrase</div>
-      <p class="warn">⚠ Anyone with these 24 words controls your funds. Never share them, and only reveal them somewhere private.</p>
-      <div id="exportGate">
-        <input class="text" id="exportPw" type="password" placeholder="Re-enter your wallet password" autocomplete="current-password" style="margin-top:6px">
-        <div class="row">
-          <button class="primary" id="btnReveal">Reveal phrase</button>
-        </div>
-      </div>
-      <div id="exportShow" class="hidden">
-        <div class="seedreveal" id="seedWords"></div>
-        <div class="row">
-          <button class="ghost" id="btnHide">Hide</button>
-          <button class="primary" id="btnCopySeed">Copy phrase</button>
-        </div>
-      </div>
-      <div class="status" id="exportStatus"></div>
-
-      <div class="kvlabel" style="margin-top:26px">Restore from recovery phrase</div>
-      <p class="muted-note">Restoring replaces the wallet on this device with the one for the phrase you enter.</p>
-      <textarea id="importPhrase" placeholder="word1 word2 word3 …" spellcheck="false" autocomplete="off" style="margin-top:8px"></textarea>
-      <input class="text" id="importPw" type="password" placeholder="Set a password (min 8 characters)" autocomplete="new-password" style="margin-top:8px">
-      <div class="row">
-        <button class="primary danger" id="btnImport">Restore wallet</button>
-      </div>
-      <div class="status" id="importStatus"></div>
     </div>
 
     <p class="foot">Need to publish data to the DIG Network? Use <a href="https://hub.dig.net/" target="_blank" rel="noopener">hub.dig.net</a>.</p>
   </div>
 </main>
+</div>
 <script>
 const GiB = 1024 * 1024 * 1024;
 const $ = id => document.getElementById(id);
 let savedCapGb = null;
+
+// decorative starfield (skipped when motion is reduced)
+(function(){ if(window.matchMedia('(prefers-reduced-motion: reduce)').matches) return; var s=$('stars'),h=''; for(var i=0;i<70;i++){h+='<i style="left:'+(Math.random()*100)+'%;top:'+(Math.random()*100)+'%;animation-delay:'+(Math.random()*5).toFixed(2)+'s;opacity:'+(.25+Math.random()*.55).toFixed(2)+'"></i>';} s.innerHTML=h; })();
 
 function fmtBytes(n){
   if(n >= GiB) return (n / GiB).toFixed(n >= 10*GiB ? 0 : 2) + ' GB';
@@ -325,7 +314,7 @@ function copyBtn(btn, text){
   btn.textContent = 'Copied'; setTimeout(()=>btn.textContent=o, 1200);
 }
 
-// --- WalletConnect projectId (Task B) ---
+// --- WalletConnect projectId ---
 async function loadWcPid(){
   try{
     const r = await fetch('/api/wc/project-id');
@@ -333,7 +322,7 @@ async function loadWcPid(){
     $('wcPid').value = c.project_id || '';
     const chip = $('wcChip');
     chip.textContent = c.configured ? '● Configured' : '● Not configured';
-    chip.style.color = c.configured ? 'var(--good)' : 'var(--muted)';
+    chip.className = 'chip' + (c.configured ? '' : ' warn');
   }catch(e){ /* leave default */ }
 }
 $('btnWcSave').addEventListener('click', async () => {
@@ -355,7 +344,7 @@ $('btnWcClear').addEventListener('click', async () => {
   }catch(e){ setStatus('wcStatus','Clear failed: '+e.message, true); }
 });
 
-// --- Wallet identity: public key + address (Task D) ---
+// --- Wallet identity: public key + address ---
 async function loadIdentity(){
   try{
     const r = await fetch('/api/wallet/pubkey');
@@ -370,7 +359,7 @@ async function loadIdentity(){
 $('copyPub').addEventListener('click', e => copyBtn(e.target, $('pubKey').textContent));
 $('copyAddr').addEventListener('click', e => copyBtn(e.target, $('addr').textContent));
 
-// --- Backup: reveal recovery phrase (Task C export) ---
+// --- Backup: reveal recovery phrase (export) ---
 $('btnReveal').addEventListener('click', async () => {
   setStatus('exportStatus','');
   const pw = $('exportPw').value;
@@ -391,7 +380,7 @@ $('btnHide').addEventListener('click', () => {
 });
 $('btnCopySeed').addEventListener('click', e => copyBtn(e.target, $('seedWords').textContent));
 
-// --- Restore from recovery phrase (Task C import) ---
+// --- Restore from recovery phrase (import) ---
 $('btnImport').addEventListener('click', async () => {
   setStatus('importStatus','');
   const mnemonic = $('importPhrase').value.trim();
