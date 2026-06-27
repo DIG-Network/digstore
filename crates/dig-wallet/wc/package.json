@@ -13,6 +13,7 @@
   "license": "GPL-2.0-only",
   "devDependencies": {
     "@walletconnect/sign-client": "^2.23.10",
-    "esbuild": "^0.25.12"
+    "esbuild": "^0.25.12",
+    "qrcode-generator": "^1.4.4"
   }
 }

@@ -18,6 +18,23 @@ import { callLocalSigner, METHOD_NOT_FOUND } from "./signer.js";
 // Re-export so the wallet page can call the bridge directly if needed.
 export { callLocalSigner };
 
+// The REQUESTER (delegate-to-Sage) role — the dual of this responder (#34). When the
+// user picks "Sage" as the wallet source, the page uses these to pair with Sage and
+// the in-page delegate pump uses `sageRequest` to forward each wallet method to Sage.
+// `window.chia` is unchanged; only the signer moves to Sage.
+export {
+  initRequester,
+  connectSage,
+  sageSession,
+  sagePeer,
+  disconnectSage,
+  onSageSessionChanged,
+  sageRequest,
+} from "./requester.js";
+
+// QR helper for the connect-to-Sage pairing URI (scan into Sage on another device).
+export { qrSvg } from "./qr.js";
+
 // The chia/CHIP-0002 surface the native signer implements (mirrors Sage's WC
 // namespace). These are advertised in the session namespace and accepted on
 // session_request; anything else is rejected.
