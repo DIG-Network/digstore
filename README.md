@@ -178,6 +178,44 @@ for `localhost`).
 
 ---
 
+## Deploy from GitHub Actions (CI)
+
+Auto-publish your built site/dapp to your existing store on every push — a new
+capsule, like Vercel's Git integration. The store must already exist (you ran
+`digstore init` once); CI only **advances** it (it never mints).
+
+One-time setup, on the machine that created the store:
+
+```sh
+digstore log --json          # copy the store_id
+digstore deploy-key export   # copy the 64-hex publisher deploy key
+```
+
+Add two repository **secrets** — `DIG_MNEMONIC` (your funded deploy wallet) and
+`DIG_DEPLOY_KEY` (the key above) — commit a `dig.toml` (see [`examples/dig.toml`](examples/dig.toml)),
+then add the workflow ([`examples/github-actions-deploy.yml`](examples/github-actions-deploy.yml)):
+
+```yaml
+- name: Deploy to DIG
+  uses: DIG-Network/digstore@v0.5.29   # pin to a release tag
+  with:
+    mnemonic: ${{ secrets.DIG_MNEMONIC }}
+    deploy-key: ${{ secrets.DIG_DEPLOY_KEY }}
+    output-dir: dist
+```
+
+> **⚠ Security:** v1 ships the funded wallet mnemonic into CI as a secret — it can
+> spend ALL of that wallet's DIG/XCH. Use a **dedicated, low-balance deploy
+> wallet** funded with only enough DIG for your expected deploys (each deploy costs
+> 100 DIG + a small XCH fee). Scoped, spend-capped, revocable deploy tokens (no
+> seed in CI) are the planned secure replacement.
+
+`digstore deploy` reconstructs the store locally from the deploy key + the
+on-chain root, stages your `output-dir`, advances the root, and pushes the new
+capsule — all non-interactively. See `digstore deploy --help`.
+
+---
+
 ## On-chain anchoring (Chia mainnet)
 
 Every project is **anchored on Chia mainnet**. `digstore init` mints an empty store
@@ -293,6 +331,8 @@ a hint only — local config and flags always take precedence.
 | `digstore checkout <root> --out <dir> [--salt <hex>]` | Write a whole deployment to a directory |
 | `digstore remote add\|list\|remove …` | Manage remotes |
 | `digstore clone <url>` / `push [remote]` / `pull [remote]` | Sync with a remote (verified) |
+| `digstore deploy [--store-id <hex>] [--output-dir <dir>] [--build-command <cmd>] [-m <msg>]` | CI auto-deploy: advance an EXISTING store from a fresh checkout (reads `dig.toml`); never mints |
+| `digstore deploy-key export [--out <file>]` | Export the store's publisher deploy key (for a CI secret) |
 | `digstore anchor [--wait-timeout <s>]` | Resume a pending on-chain anchor (confirm the coin, flip to confirmed) |
 | `digstore anchor status [--json]` | Show the active project's anchor state + embedded module chain pointer (read-only) |
 | `digstore anchor inspect <module.dig> [--json]` | Dump the on-chain pointer embedded in any module file (read-only, no workspace needed) |

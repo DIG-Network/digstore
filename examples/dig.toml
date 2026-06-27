@@ -1,0 +1,21 @@
+# dig.toml — committed to your repo root; tells `digstore deploy` what to publish.
+# Flags / env vars override anything set here. Safe to commit: it contains NO
+# secrets (the wallet mnemonic + deploy key are CI secrets, never in this file).
+
+# The on-chain store id this repo deploys to (from `digstore log --json`).
+store-id = "REPLACE_WITH_YOUR_64_HEX_STORE_ID"
+
+# The built-output directory to publish (default: dist).
+output-dir = "dist"
+
+# Optional: a build command run before staging. Omit if you build in a CI step.
+# build-command = "npm ci && npm run build"
+
+# Optional: the DIGHub remote. Defaults to the public DIGHub for your store.
+# Override only for a self-hosted node.
+# remote = "dig://REPLACE_WITH_YOUR_64_HEX_STORE_ID"
+
+# Optional defaults (overridable per run).
+# network = "mainnet"
+# wait-timeout = 600
+# message = "deploy"

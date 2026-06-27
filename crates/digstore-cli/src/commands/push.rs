@@ -4,8 +4,22 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::{dighub, remote_ops, store_ops};
 
-pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PushArgs) -> Result<(), CliError> {
-    let base = config::resolve_remote_url(ctx, &args.remote)?;
+/// The outcome of a push: the pushed root and whether the dighub claim succeeded.
+pub struct PushOutcome {
+    pub root: digstore_core::Bytes32,
+    pub claimed: bool,
+}
+
+/// Push the current committed root to `remote`, returning the outcome WITHOUT
+/// emitting any output. Shared by [`run`] (which prints) and `commit`'s `--push`
+/// path (which folds the result into its own single JSON/human output), so there
+/// is exactly one push implementation and no double-emitted JSON object.
+pub fn push_core(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    remote: &str,
+) -> Result<PushOutcome, CliError> {
+    let base = config::resolve_remote_url(ctx, remote)?;
     // Product gate: require a dighub account — but ONLY for dighub-managed remotes
     // (*.dig.net). Pushing to a self-hosted / loopback node needs no dighub account.
     // (Does NOT change the store-key/§21.9 push owner-auth, unchanged below.)
@@ -32,14 +46,24 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PushArgs) -> Result<(), C
         ))
         .unwrap_or(false);
 
+    Ok(PushOutcome { root, claimed })
+}
+
+pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PushArgs) -> Result<(), CliError> {
+    let out = push_core(ctx, ui, &args.remote)?;
+
     if ui.json() {
         ui.emit_json(&serde_json::json!({
-            "pushed_root": root.to_hex(),
-            "claimed": claimed,
+            "pushed_root": out.root.to_hex(),
+            "claimed": out.claimed,
         }));
     } else {
-        ui.success(format!("pushed root {} to {}", root.to_hex(), args.remote));
-        if claimed {
+        ui.success(format!(
+            "pushed root {} to {}",
+            out.root.to_hex(),
+            args.remote
+        ));
+        if out.claimed {
             ui.line("linked to your dighub account (pending on-chain owner verification)");
         }
     }
