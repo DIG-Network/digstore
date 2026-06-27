@@ -73,6 +73,24 @@
   .muted-note{color:var(--muted);font-size:12.5px;margin-top:10px;line-height:1.5}
   .danger{background:transparent;color:#ff9a9a;border:1px solid #ff9a9a55}
   .danger:hover{background:rgba(255,122,122,.08)}
+  /* cached-store manager (#32) */
+  .cache-controls{display:flex;gap:8px;align-items:center;margin:6px 0 14px}
+  .cache-controls .text{flex:1;margin-top:0}
+  select.sortsel{background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+        border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer}
+  select.sortsel:focus{outline:none;border-color:var(--accent)}
+  button.ghost.refresh{flex:0 0 auto;padding:10px 16px}
+  table.ctable{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+  table.ctable th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;
+        letter-spacing:.5px;padding:0 8px 8px;border-bottom:1px solid var(--border)}
+  table.ctable th.num,table.ctable td.num{text-align:right;font-variant-numeric:tabular-nums}
+  table.ctable td{padding:10px 8px;border-bottom:1px solid var(--border);font-family:ui-monospace,monospace;vertical-align:middle}
+  table.ctable td.lbl{color:var(--muted);font-family:var(--font)}
+  table.ctable tr:last-child td{border-bottom:0}
+  table.ctable .rm{background:transparent;color:#ff9a9a;border:1px solid #ff9a9a55;border-radius:8px;
+        padding:5px 10px;font-size:11.5px;cursor:pointer}
+  table.ctable .rm:hover{background:rgba(255,122,122,.08)}
+  .subcard{margin-top:22px;border-top:1px solid var(--border);padding-top:18px}
 </style>
 </head>
 <body>
@@ -114,6 +132,45 @@
         <button class="ghost" id="btnClear">Clear cache</button>
       </div>
       <div class="status" id="status"></div>
+    </div>
+
+    <!-- Cached stores (#32): per-capsule local-cache manager -->
+    <div class="card">
+      <h2>Cached stores <span class="chip">● Capsules</span></h2>
+      <p class="desc">
+        Every store generation your browser has cached is one <b>capsule</b> — a
+        <code>storeId:rootHash</code> snapshot, stored locally and served instantly (verified
+        against the chain). Remove a capsule to free space, or cache one ahead of time below.
+      </p>
+
+      <div class="cache-controls">
+        <input class="text" id="capFilter" type="text" placeholder="Filter by store id…" autocomplete="off" spellcheck="false">
+        <select id="capSort" class="sortsel">
+          <option value="time">Sort: last used</option>
+          <option value="size">Sort: size</option>
+          <option value="store">Sort: store id</option>
+        </select>
+        <button class="ghost refresh" id="btnCapRefresh">Refresh</button>
+      </div>
+
+      <table class="ctable" id="capTable">
+        <thead><tr><th>Store id</th><th>Root</th><th class="num">Size</th><th>Last used</th><th></th></tr></thead>
+        <tbody id="capBody"></tbody>
+      </table>
+      <div class="muted-note" id="capEmpty">No capsules cached yet.</div>
+      <div class="status" id="capStatus"></div>
+
+      <!-- Cache a capsule on demand -->
+      <div class="subcard">
+        <div class="kvlabel" style="margin-top:0">Cache a capsule</div>
+        <p class="muted-note">Enter a capsule's <code>storeId</code> and <code>rootHash</code> (64-hex each) to fetch and cache it now.</p>
+        <input class="text" id="fetchStore" type="text" placeholder="store id (64-hex)" autocomplete="off" spellcheck="false" style="margin-top:8px">
+        <input class="text" id="fetchRoot" type="text" placeholder="root hash (64-hex)" autocomplete="off" spellcheck="false" style="margin-top:8px">
+        <div class="row">
+          <button class="primary" id="btnFetchCap">Cache capsule</button>
+        </div>
+        <div class="status" id="fetchStatus"></div>
+      </div>
     </div>
 
     <!-- WalletConnect projectId -->
@@ -351,9 +408,89 @@ $('btnImport').addEventListener('click', async () => {
   }catch(e){ setStatus('importStatus', e.message, true); }
 });
 
+// --- Cached stores: per-capsule local-cache manager (#32) ---
+const HEX64 = /^[0-9a-fA-F]{64}$/;
+let _capsules = [];
+
+function fmtAgo(ms){
+  if(!ms) return '—';
+  const s = Math.max(0, Math.floor((Date.now() - ms)/1000));
+  if(s < 60) return s+'s ago';
+  if(s < 3600) return Math.floor(s/60)+'m ago';
+  if(s < 86400) return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+const shortHex = h => !h ? '' : (h.length>16 ? h.slice(0,8)+'…'+h.slice(-6) : h);
+
+function renderCapsules(){
+  const filter = $('capFilter').value.trim().toLowerCase();
+  const sort = $('capSort').value;
+  let rows = _capsules.filter(c => !filter || c.store_id.toLowerCase().startsWith(filter));
+  rows.sort((a,b) =>
+    sort==='size'  ? b.size_bytes - a.size_bytes :
+    sort==='store' ? a.store_id.localeCompare(b.store_id) :
+                     b.last_used_unix_ms - a.last_used_unix_ms);
+  const body = $('capBody');
+  body.innerHTML = rows.map(c =>
+    `<tr><td title="${c.store_id}">${shortHex(c.store_id)}</td>`+
+    `<td title="${c.root}">${shortHex(c.root)}</td>`+
+    `<td class="num">${fmtBytes(c.size_bytes)}</td>`+
+    `<td class="lbl">${fmtAgo(c.last_used_unix_ms)}</td>`+
+    `<td class="num"><button class="rm" data-rm-store="${c.store_id}" data-rm-root="${c.root}">Remove</button></td></tr>`).join('');
+  const none = rows.length === 0;
+  $('capTable').style.display = none ? 'none' : '';
+  $('capEmpty').style.display = none ? '' : 'none';
+  $('capEmpty').textContent = (_capsules.length && none) ? 'No capsules match the filter.' : 'No capsules cached yet.';
+}
+
+async function loadCapsules(){
+  try{
+    const r = await fetch('/api/dig-cache/list');
+    if(!r.ok) throw new Error(await r.text());
+    _capsules = (await r.json()).cached || [];
+    renderCapsules();
+    setStatus('capStatus', _capsules.length ? _capsules.length+' capsule(s) cached.' : '');
+  }catch(e){ setStatus('capStatus','Could not load cached stores: '+e.message, true); }
+}
+
+$('capFilter').addEventListener('input', renderCapsules);
+$('capSort').addEventListener('change', renderCapsules);
+$('btnCapRefresh').addEventListener('click', loadCapsules);
+
+$('capBody').addEventListener('click', async e => {
+  const store = e.target.dataset.rmStore, root = e.target.dataset.rmRoot;
+  if(!store) return;
+  setStatus('capStatus','Removing…');
+  try{
+    const r = await fetch('/api/dig-cache/remove', {method:'POST',headers:{'content-type':'application/json'},
+      body: JSON.stringify({store_id: store, root})});
+    if(!r.ok){ let m='remove failed'; try{m=(await r.json()).error||m}catch(_){} throw new Error(m); }
+    await loadCapsules();
+  }catch(e){ setStatus('capStatus','Remove failed: '+e.message, true); }
+});
+
+$('btnFetchCap').addEventListener('click', async () => {
+  const store = $('fetchStore').value.trim().replace(/^0x/,'');
+  const root  = $('fetchRoot').value.trim().replace(/^0x/,'');
+  if(!HEX64.test(store)){ setStatus('fetchStatus','Store id must be 64 hex characters.', true); return; }
+  if(!HEX64.test(root)){ setStatus('fetchStatus','Root hash must be 64 hex characters.', true); return; }
+  $('btnFetchCap').disabled = true;
+  setStatus('fetchStatus','Fetching capsule… (this can take a moment)');
+  try{
+    const r = await fetch('/api/dig-cache/fetch', {method:'POST',headers:{'content-type':'application/json'},
+      body: JSON.stringify({store_id: store, root})});
+    if(!r.ok){ let m='fetch failed'; try{m=(await r.json()).error||m}catch(_){} throw new Error(m); }
+    const d = await r.json();
+    if(d.status === 'failed'){ setStatus('fetchStatus', 'Could not cache: '+(d.message||'unknown error'), true); }
+    else { setStatus('fetchStatus', 'Cached ('+fmtBytes(d.size_bytes)+').'); $('fetchStore').value=''; $('fetchRoot').value=''; await loadCapsules(); }
+  }catch(e){ setStatus('fetchStatus','Fetch failed: '+e.message, true); }
+  finally{ $('btnFetchCap').disabled = false; }
+});
+
 load();
 loadWcPid();
 loadIdentity();
+loadCapsules();
 </script>
 </body>
 </html>

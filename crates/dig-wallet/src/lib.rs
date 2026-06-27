@@ -610,6 +610,104 @@ async fn dig_cache_clear() -> impl IntoResponse {
     StatusCode::NO_CONTENT
 }
 
+// ---- Cached-store manager (#32) ---------------------------------------------
+//
+// The DIG settings "Cached stores" card manages the per-capsule local cache:
+// every cached store generation is one CAPSULE — the canonical `storeId:rootHash`
+// identity (`digstore_core::Capsule`) — keyed on disk at
+// `<cache>/modules/<storeId>/<root>.module`. These endpoints back that card by
+// calling the dig-node public cache fns DIRECTLY on a `Node::from_env()` (the same
+// cache dir / config the loader and CLI use — no extra process / port).
+//
+// They are wallet-local (self-origin gated): only the DIG settings page may list /
+// remove / fetch capsules, never a dapp page (the cache is the user's local store,
+// not a dapp-facing surface). `is_self_origin` uses the unspoofable `Origin` header.
+
+/// One cached capsule in the settings table: its capsule identity (`storeId:rootHash`),
+/// the store id + root separately (so the UI can show/truncate each), the on-disk size,
+/// and the last-used (LRU recency) timestamp. Mirrors [`dig_node::CachedCapsule`] one to
+/// one; rendered by [`cached_capsule_json`] so the wire shape is unit-tested.
+fn cached_capsule_json(c: &dig_node::CachedCapsule) -> serde_json::Value {
+    serde_json::json!({
+        // The canonical storeId:rootHash identity (== digstore_core::Capsule::canonical()).
+        "capsule": format!("{}:{}", c.store_id, c.root),
+        "store_id": c.store_id,
+        "root": c.root,
+        "size_bytes": c.size_bytes,
+        "last_used_unix_ms": c.last_used_unix_ms,
+    })
+}
+
+/// List every cached capsule (`storeId:rootHash`) with its size + last-used time, for the
+/// DIG settings "Cached stores" table. Self-origin only (the local cache is the user's,
+/// not a dapp surface). Reads via `dig_node::Node::cache_list_cached` on a fresh
+/// `Node::from_env()` — the same cache dir the loader/CLI use.
+async fn dig_cache_list(headers: HeaderMap) -> Response {
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "cache manager is wallet-local only").into_response();
+    }
+    let node = dig_node::Node::from_env();
+    let cached = node.cache_list_cached().await;
+    let list: Vec<_> = cached.iter().map(cached_capsule_json).collect();
+    (StatusCode::OK, Json(serde_json::json!({ "cached": list }))).into_response()
+}
+
+#[derive(Deserialize)]
+struct CacheCapsuleReq {
+    /// Store id, lowercase 64-hex (the capsule's head).
+    store_id: String,
+    /// Generation root hash, lowercase 64-hex (the capsule's tail).
+    root: String,
+}
+
+/// Remove one cached capsule (`storeId:rootHash`) from the local cache. Idempotent: a
+/// capsule that isn't cached returns `removed:false`. Content stays available — it just
+/// re-fetches from rpc.dig.net on next visit. Self-origin only. Delegates to
+/// `dig_node::Node::cache_remove_cached`, which validates the hex + guards path traversal.
+async fn dig_cache_remove(headers: HeaderMap, Json(req): Json<CacheCapsuleReq>) -> Response {
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "cache manager is wallet-local only").into_response();
+    }
+    let node = dig_node::Node::from_env();
+    match node.cache_remove_cached(&req.store_id, &req.root).await {
+        Ok(removed) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "removed": removed })),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(ErrResp { error: e })).into_response(),
+    }
+}
+
+/// Fetch a capsule (`storeId:rootHash`) into the local cache on demand (the settings
+/// "Cache a capsule" sub-card). May be slow (a network whole-store sync from the §21
+/// remote), so the UI shows a spinner. Self-origin only. Delegates to
+/// `dig_node::Node::cache_fetch_and_cache`; a failed fetch is reported in-band
+/// (`status:"failed"`) so the manager shows it without treating it as a transport error.
+async fn dig_cache_fetch(headers: HeaderMap, Json(req): Json<CacheCapsuleReq>) -> Response {
+    if !is_self_origin(&origin_of(&headers)) {
+        return (StatusCode::FORBIDDEN, "cache manager is wallet-local only").into_response();
+    }
+    let node = dig_node::Node::from_env();
+    match node.cache_fetch_and_cache(&req.store_id, &req.root).await {
+        Ok((size_bytes, served_root)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "cached",
+                "size_bytes": size_bytes,
+                "served_root": served_root,
+            })),
+        )
+            .into_response(),
+        // In-band failure (no §21 identity, not authorized, or the served root differs).
+        Err(e) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "failed", "message": e })),
+        )
+            .into_response(),
+    }
+}
+
 // ---- DIG settings: WalletConnect projectId, public key, key export ----------
 //
 // These endpoints back the DIG settings page (`dig://settings`). Two of them
@@ -2101,6 +2199,9 @@ pub async fn run() {
         .route("/api/lock", post(lock))
         .route("/api/dig-config", get(dig_config_get).post(dig_config_set))
         .route("/api/dig-cache/clear", post(dig_cache_clear))
+        .route("/api/dig-cache/list", get(dig_cache_list))
+        .route("/api/dig-cache/remove", post(dig_cache_remove))
+        .route("/api/dig-cache/fetch", post(dig_cache_fetch))
         .route(
             "/api/wc/project-id",
             get(wc_project_id_get).post(wc_project_id_set),
@@ -2560,6 +2661,78 @@ mod tests {
         // handlers expose, or the UI silently no-ops.
         assert!(SETTINGS_HTML.contains("/api/dig-config"));
         assert!(SETTINGS_HTML.contains("/api/dig-cache/clear"));
+    }
+
+    // -- Cached-store manager (#32) --------------------------------------------
+
+    #[test]
+    fn cached_capsule_json_matches_the_capsule_identity() {
+        // The wire shape carries the canonical storeId:rootHash capsule identity plus
+        // the head/tail/size/last-used the settings table renders + sorts on.
+        let c = dig_node::CachedCapsule {
+            store_id: "aa".repeat(32),
+            root: "bb".repeat(32),
+            size_bytes: 4096,
+            last_used_unix_ms: 1_700_000_000_000,
+        };
+        let j = cached_capsule_json(&c);
+        assert_eq!(
+            j["capsule"],
+            format!("{}:{}", "aa".repeat(32), "bb".repeat(32))
+        );
+        assert_eq!(j["store_id"], "aa".repeat(32));
+        assert_eq!(j["root"], "bb".repeat(32));
+        assert_eq!(j["size_bytes"], 4096);
+        assert_eq!(j["last_used_unix_ms"], 1_700_000_000_000u64);
+    }
+
+    /// All three cache-manager endpoints are wallet-local: a dapp origin is refused (403)
+    /// so the user's local cache is never listable/removable/fetchable from a dapp page.
+    #[tokio::test]
+    async fn cache_manager_endpoints_are_self_origin_only() {
+        let dapp = origin_headers("https://evil.example.com");
+        assert_eq!(
+            dig_cache_list(dapp.clone()).await.status(),
+            StatusCode::FORBIDDEN
+        );
+        let req = || {
+            Json(CacheCapsuleReq {
+                store_id: "aa".repeat(32),
+                root: "bb".repeat(32),
+            })
+        };
+        assert_eq!(
+            dig_cache_remove(dapp.clone(), req()).await.status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            dig_cache_fetch(dapp, req()).await.status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    /// The self origin can LIST the cache (an empty list when nothing is cached). Points
+    /// the cache dir at a throwaway tempdir via LOCALAPPDATA so the test is hermetic.
+    #[tokio::test]
+    async fn cache_list_self_origin_returns_capsule_list() {
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("LOCALAPPDATA", td.path());
+        let self_origin = format!("http://127.0.0.1:{}", wallet_port());
+        let resp = dig_cache_list(origin_headers(&self_origin)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert!(body["cached"].is_array(), "list returns a cached array");
+        assert_eq!(body["cached"].as_array().unwrap().len(), 0, "empty cache");
+        std::env::remove_var("LOCALAPPDATA");
+    }
+
+    #[test]
+    fn settings_page_wires_the_cache_manager_api() {
+        // The "Cached stores" card must call the list/remove/fetch endpoints, or the
+        // capsule manager silently no-ops.
+        assert!(SETTINGS_HTML.contains("/api/dig-cache/list"));
+        assert!(SETTINGS_HTML.contains("/api/dig-cache/remove"));
+        assert!(SETTINGS_HTML.contains("/api/dig-cache/fetch"));
     }
 
     #[test]
