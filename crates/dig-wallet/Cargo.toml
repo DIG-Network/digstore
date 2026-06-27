@@ -15,8 +15,14 @@ path = "src/main.rs"
 
 [dependencies]
 digstore-chain = { path = "../digstore-chain" }
+# The canonical Capsule (storeId:rootHash) identity, rendered by the /api/stores
+# endpoint via Capsule::canonical(). Same type digstore-chain's store discovery returns.
+digstore-core = { path = "../digstore-core" }
 dig-node = { path = "../dig-node" }
 chia-protocol = "0.26"
+# Needed to NAME the SDK spendable `Cat` type when assembling a make-offer's
+# MakerFunds (the offered CAT coins, with lineage proofs, from digstore-chain).
+chia-wallet-sdk = { version = "0.30", features = ["offer-compression"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 axum = "0.7"
 serde = { version = "1", features = ["derive"] }
