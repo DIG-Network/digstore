@@ -2585,6 +2585,34 @@ mod tests {
     }
 
     #[test]
+    fn wallet_page_wires_the_advanced_surfaces() {
+        // The advanced wallet UI must call each new method/endpoint, or the surface
+        // silently no-ops. Guard the wiring the same way the settings page is guarded.
+        // Tokens (generic CAT) + send.
+        assert!(UI_HTML.contains("chip0002_getAssetBalance"));
+        assert!(UI_HTML.contains("chia_send"));
+        // NFTs.
+        assert!(UI_HTML.contains("chia_getNfts"));
+        assert!(UI_HTML.contains("chia_transferNft"));
+        assert!(UI_HTML.contains("chia_mintNft"));
+        // Offers.
+        assert!(UI_HTML.contains("chia_getOfferSummary"));
+        assert!(UI_HTML.contains("chia_createOffer"));
+        assert!(UI_HTML.contains("chia_takeOffer"));
+        // DIDs.
+        assert!(UI_HTML.contains("chia_getDids"));
+        assert!(UI_HTML.contains("chia_createDidWallet"));
+        assert!(UI_HTML.contains("chia_transferDid"));
+        // Transactions.
+        assert!(UI_HTML.contains("chia_getTransactions"));
+        // My Stores (the dedicated HTTP routes + the capsule history view).
+        assert!(UI_HTML.contains("/api/stores"));
+        assert!(UI_HTML.contains("/api/stores/history"));
+        // Goes through the native signer (self-origin auto-approved).
+        assert!(UI_HTML.contains("/api/wc/request"));
+    }
+
+    #[test]
     fn settings_page_wires_the_new_settings_apis() {
         // The settings page must talk to the projectId, export, import, and
         // public-key endpoints, or those features silently no-op.
