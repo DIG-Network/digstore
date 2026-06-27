@@ -13,6 +13,7 @@ mod fs_util;
 pub mod keys;
 pub mod nft;
 pub mod offer;
+pub mod option;
 pub mod seed;
 pub mod send;
 pub mod singleton;
