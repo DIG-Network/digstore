@@ -426,6 +426,115 @@ async fn send(
     }))
 }
 
+// ---- My Stores: the wallet's own DataLayer stores as capsules ----------------
+//
+// A user's DataLayer stores are discovered across the HD wallet and reported as
+// CAPSULES — the canonical `storeId:rootHash` identity (`digstore_core::Capsule`).
+// `/api/stores` lists every store's CURRENT capsule + which HD index owns it;
+// `/api/stores/history` returns one store's full capsule lineage (eve → current).
+// Wallet-local (needs an unlocked session); not a dapp-facing WC method.
+
+/// One owned store in the list view: its current capsule (`storeId:rootHash`), the
+/// HD index that owns it, and the current root (so the UI can show it without
+/// re-parsing the capsule string).
+#[derive(Serialize)]
+struct StoreEntry {
+    /// The store id (launcher id), `0x` hex.
+    store_id: String,
+    /// The canonical current capsule string: `storeId:rootHash`.
+    current_capsule: String,
+    /// The HD index whose address owns this store.
+    hd_index: u32,
+    /// The current root hash, `0x`-free lowercase hex (matches the capsule's tail).
+    current_root: String,
+}
+
+#[derive(Serialize)]
+struct StoresResp {
+    stores: Vec<StoreEntry>,
+}
+
+/// List the wallet's own DataLayer stores, each as its CURRENT capsule
+/// (`storeId:rootHash`) plus the HD index that owns it. Discovers stores across the
+/// whole HD wallet ([`discover_all_user_stores`]) then syncs each to its current
+/// root ([`sync_datastore_with_history`]). Wallet-local (unlocked session required).
+async fn stores_list(
+    State(st): State<Arc<AppState>>,
+) -> Result<Json<StoresResp>, (StatusCode, Json<ErrResp>)> {
+    let mnemonic = {
+        let s = st.session.lock().await;
+        match s.as_ref() {
+            Some(w) => w.mnemonic.clone(),
+            None => return Err(err(StatusCode::UNAUTHORIZED, "wallet is locked")),
+        }
+    };
+    let chain = Coinset::mainnet();
+    let discovered = digstore_chain::singleton::discover_all_user_stores(&chain, &mnemonic)
+        .await
+        .map_err(|e| {
+            err(
+                StatusCode::BAD_GATEWAY,
+                format!("store discovery failed: {e}"),
+            )
+        })?;
+
+    let mut stores = Vec::with_capacity(discovered.len());
+    for (hd_index, store_id) in discovered {
+        let (_store, history) =
+            digstore_chain::singleton::sync_datastore_with_history(&chain, store_id)
+                .await
+                .map_err(|e| err(StatusCode::BAD_GATEWAY, format!("store sync failed: {e}")))?;
+        // `Capsule::canonical()` is the ecosystem-wide storeId:rootHash identity.
+        stores.push(StoreEntry {
+            store_id: format!("0x{}", hex::encode(store_id)),
+            current_capsule: history.current.canonical(),
+            hd_index,
+            current_root: history.current.root_hash.to_hex(),
+        });
+    }
+    Ok(Json(StoresResp { stores }))
+}
+
+#[derive(Deserialize)]
+struct StoreHistoryQuery {
+    /// The store id (launcher id), `0x`-prefixed or bare hex.
+    store_id: String,
+}
+
+#[derive(Serialize)]
+struct StoreHistoryResp {
+    store_id: String,
+    /// The current capsule (`storeId:rootHash`) — equals the last `capsules` entry.
+    current_capsule: String,
+    /// Every capsule the store has ever been, oldest → newest, as canonical strings.
+    capsules: Vec<String>,
+}
+
+/// One store's full capsule history (eve → current) as canonical `storeId:rootHash`
+/// strings, via [`sync_datastore_with_history`]. Wallet-local (unlocked session).
+async fn store_history(
+    State(st): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<StoreHistoryQuery>,
+) -> Result<Json<StoreHistoryResp>, (StatusCode, Json<ErrResp>)> {
+    {
+        let s = st.session.lock().await;
+        if s.is_none() {
+            return Err(err(StatusCode::UNAUTHORIZED, "wallet is locked"));
+        }
+    }
+    let store_id = parse_asset_id_hex(&q.store_id).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let chain = Coinset::mainnet();
+    let (_store, history) =
+        digstore_chain::singleton::sync_datastore_with_history(&chain, store_id)
+            .await
+            .map_err(|e| err(StatusCode::BAD_GATEWAY, format!("store sync failed: {e}")))?;
+    Ok(Json(StoreHistoryResp {
+        store_id: format!("0x{}", hex::encode(store_id)),
+        current_capsule: history.current.canonical(),
+        capsules: history.history.iter().map(|c| c.canonical()).collect(),
+    }))
+}
+
 async fn index() -> Html<&'static str> {
     Html(UI_HTML)
 }
@@ -982,6 +1091,21 @@ async fn wc_dispatch(
                         }))
                         .collect::<Vec<_>>(),
                 },
+            }))
+        }
+        "chia_getTransactions" => {
+            // Paginated wallet transaction history (XCH + DIG CAT), newest-first.
+            let page = params.get("page").and_then(|p| p.as_u64()).unwrap_or(0) as usize;
+            let chain = Coinset::mainnet();
+            let scanned = scan_wallet(&chain, &mnemonic).await.map_err(|e| {
+                wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}"))
+            })?;
+            let txs = digstore_chain::wallet::wallet_transactions(&chain, &scanned, page)
+                .await
+                .map_err(bad)?;
+            Ok(json!({
+                "page": page,
+                "transactions": txs.iter().map(tx_json).collect::<Vec<_>>(),
             }))
         }
         "chia_getNfts" => {
@@ -1620,6 +1744,34 @@ fn owned_nft_json(n: &digstore_chain::nft::OwnedNft) -> serde_json::Value {
     })
 }
 
+/// Render one [`Tx`] (a wallet receipt or spend) as the JSON the history UI consumes.
+/// Amounts are BigInt-safe decimal strings; the asset is `{ type, assetId?/launcherId? }`.
+fn tx_json(tx: &digstore_chain::wallet::Tx) -> serde_json::Value {
+    use digstore_chain::wallet::{TxAsset, TxDirection, TxStatus};
+    let asset = match tx.asset {
+        TxAsset::Xch => serde_json::json!({ "type": "xch" }),
+        TxAsset::Cat { tail } => {
+            serde_json::json!({ "type": "cat", "assetId": format!("0x{}", hex::encode(tail)) })
+        }
+        TxAsset::Nft { launcher_id } => serde_json::json!({
+            "type": "nft", "launcherId": format!("0x{}", hex::encode(launcher_id)),
+        }),
+        TxAsset::Did { launcher_id } => serde_json::json!({
+            "type": "did", "launcherId": format!("0x{}", hex::encode(launcher_id)),
+        }),
+    };
+    serde_json::json!({
+        "direction": match tx.direction { TxDirection::In => "in", TxDirection::Out => "out" },
+        "asset": asset,
+        "amount": tx.amount.to_string(),
+        "fee": tx.fee.to_string(),
+        "height": tx.height,
+        "timestamp": tx.timestamp,
+        "coinIds": tx.coin_ids.iter().map(|c| format!("0x{}", hex::encode(c))).collect::<Vec<_>>(),
+        "status": match tx.status { TxStatus::Pending => "pending", TxStatus::Confirmed => "confirmed" },
+    })
+}
+
 /// Render an [`OwnedDid`] as the JSON the wallet UI consumes (the DID's on-chain
 /// identity + location). Ids are `0x` hex.
 fn owned_did_json(d: &digstore_chain::did::OwnedDid) -> serde_json::Value {
@@ -1944,6 +2096,8 @@ pub async fn run() {
         .route("/api/unlock", post(unlock))
         .route("/api/balance", get(balance))
         .route("/api/send", post(send))
+        .route("/api/stores", get(stores_list))
+        .route("/api/stores/history", get(store_history))
         .route("/api/lock", post(lock))
         .route("/api/dig-config", get(dig_config_get).post(dig_config_set))
         .route("/api/dig-cache/clear", post(dig_cache_clear))
@@ -2238,6 +2392,67 @@ mod tests {
             assert_eq!(wc_gate(m, true), Gate::Allowed, "{m} allowed approved");
             assert!(wc_method_needs_wallet(m), "{m} needs a wallet");
         }
+    }
+
+    #[test]
+    fn tx_json_renders_direction_asset_and_amounts() {
+        use digstore_chain::wallet::{Tx, TxAsset, TxDirection, TxStatus};
+        let tx = Tx {
+            direction: TxDirection::Out,
+            asset: TxAsset::Cat {
+                tail: chia_protocol::Bytes32::new([0x42u8; 32]),
+            },
+            amount: 1234,
+            fee: 0,
+            height: 100,
+            timestamp: 99,
+            coin_ids: vec![chia_protocol::Bytes32::new([0x01u8; 32])],
+            memos: vec![],
+            status: TxStatus::Confirmed,
+        };
+        let j = tx_json(&tx);
+        assert_eq!(j["direction"], "out");
+        assert_eq!(j["asset"]["type"], "cat");
+        assert_eq!(j["asset"]["assetId"], format!("0x{}", "42".repeat(32)));
+        assert_eq!(j["amount"], "1234"); // decimal string (BigInt-safe)
+        assert_eq!(j["status"], "confirmed");
+        assert_eq!(j["coinIds"][0], format!("0x{}", "01".repeat(32)));
+        // XCH renders without an assetId.
+        let xch = Tx {
+            asset: TxAsset::Xch,
+            direction: TxDirection::In,
+            status: TxStatus::Pending,
+            ..tx
+        };
+        let j = tx_json(&xch);
+        assert_eq!(j["asset"]["type"], "xch");
+        assert!(j["asset"].get("assetId").is_none());
+        assert_eq!(j["direction"], "in");
+        assert_eq!(j["status"], "pending");
+    }
+
+    #[test]
+    fn transactions_method_is_gated_and_needs_a_wallet() {
+        assert_eq!(wc_gate("chia_getTransactions", false), Gate::Forbidden);
+        assert_eq!(wc_gate("chia_getTransactions", true), Gate::Allowed);
+        assert!(wc_method_needs_wallet("chia_getTransactions"));
+    }
+
+    #[tokio::test]
+    async fn store_endpoints_require_an_unlocked_wallet() {
+        // Both store endpoints are wallet-local: a locked wallet is refused (401),
+        // proving they never run a discovery/sync without a session.
+        let st = Arc::new(AppState::default());
+        let r = stores_list(State(st.clone())).await;
+        assert!(matches!(r, Err((StatusCode::UNAUTHORIZED, _))));
+        let r = store_history(
+            State(st),
+            axum::extract::Query(StoreHistoryQuery {
+                store_id: format!("0x{}", "ab".repeat(32)),
+            }),
+        )
+        .await;
+        assert!(matches!(r, Err((StatusCode::UNAUTHORIZED, _))));
     }
 
     #[test]
