@@ -20,6 +20,7 @@ pub mod singleton;
 pub mod streaming;
 pub mod unlock;
 pub mod vault;
+pub mod vc;
 pub mod wallet;
 
 pub use error::{ChainError, Result};
