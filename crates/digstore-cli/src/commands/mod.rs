@@ -10,12 +10,14 @@ pub mod balance;
 pub mod cat;
 pub mod checkout;
 pub mod clone;
+pub mod collection;
 pub mod commit;
 pub mod compile;
 pub mod completion;
 pub mod deploy;
 pub mod deploy_key;
 pub mod dev;
+pub mod did;
 pub mod diff;
 pub mod dir;
 pub mod doctor;
@@ -27,6 +29,8 @@ pub mod log;
 pub mod login;
 pub mod logout;
 pub mod new;
+pub mod nft;
+pub mod offer;
 pub mod pull;
 pub mod push;
 pub mod remote;
@@ -68,6 +72,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
             | Command::Dev(_)
             | Command::Doctor(_)
             | Command::Link(_)
+            | Command::Nft(_)
     ) {
         CliContext::init_workspace(cli.dig_dir.clone())
     } else {
@@ -177,6 +182,23 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         // store). `completion` just prints a static script.
         Command::Setup(a) => return setup::run(&ui, a),
         Command::Completion(a) => return completion::run(&ui, a.shell),
+        // Wave-B asset commands. `nft` needs a CWD-anchored context (its `mint` subcommand builds an
+        // ephemeral media capsule under `<workspace>/.dig`, like `compile`); `did`/`offer`/
+        // `collection` are wallet-only (they derive keys + push, no store), like `balance`.
+        Command::Nft(a) => {
+            let ctx = CliContext {
+                dig_dir: workspace_dir.join("stores").join("default"),
+                workspace_dir,
+                op_dir: cwd,
+                store_name: Some("default".to_string()),
+                json: cli.json,
+                verbose: cli.verbose,
+            };
+            return nft::run(&ctx, &ui, a);
+        }
+        Command::Did(a) => return did::run(&ui, a),
+        Command::Offer(a) => return offer::run(&ui, a),
+        Command::Collection(a) => return collection::run(&ui, a),
         // dighub account commands: workspace-independent (the session lives next to
         // the identity key, not in any store).
         Command::Login(a) => return login::run(&ui, a),
@@ -243,7 +265,11 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         | Command::Balance(_)
         | Command::Login(_)
         | Command::Whoami(_)
-        | Command::Logout(_) => {
+        | Command::Logout(_)
+        | Command::Nft(_)
+        | Command::Did(_)
+        | Command::Offer(_)
+        | Command::Collection(_) => {
             unreachable!("handled above")
         }
     }
