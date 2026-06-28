@@ -63,6 +63,25 @@ pub trait ChainAnchor: Send + Sync {
         w: &ScannedWallet,
         fee: u64,
     ) -> Result<UpdateOutcome>;
+    /// Advance `launcher_id`'s root signed by a WRITER DELEGATE key (#17 deploy
+    /// token), NOT the owner master seed. `writer` is the writer-delegate keys
+    /// derived from the deploy-token seed; the store MUST already carry that
+    /// writer's delegated puzzle (the owner pre-authorized it via
+    /// `updateStoreOwnership` — the hub Teams "Deployer" flow). The wallet `w`
+    /// still funds the XCH fee + the DIG payment (atomic in the same bundle, signed
+    /// alongside the writer-authorized singleton spend). `label`/`description` are
+    /// re-sent (the update REPLACES metadata).
+    #[allow(clippy::too_many_arguments)]
+    async fn update_root_writer(
+        &self,
+        launcher_id: Bytes32,
+        new_root: Bytes32,
+        label: Option<String>,
+        description: Option<String>,
+        writer: &crate::keys::WalletKeys,
+        w: &ScannedWallet,
+        fee: u64,
+    ) -> Result<UpdateOutcome>;
     /// Poll until `coin_id` is confirmed (present in a block) or `timeout_secs` elapses.
     async fn confirm(&self, coin_id: Bytes32, timeout_secs: u64) -> Result<ConfirmState>;
 }
@@ -258,6 +277,88 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         };
 
         // Bundle hash == conventional tx id; capture it BEFORE the bundle moves.
+        let tx_id = final_bundle.name();
+        self.chain.push(final_bundle).await?;
+        Ok(UpdateOutcome { new_coin_id, tx_id })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn update_root_writer(
+        &self,
+        launcher_id: Bytes32,
+        new_root: Bytes32,
+        label: Option<String>,
+        description: Option<String>,
+        writer: &crate::keys::WalletKeys,
+        w: &ScannedWallet,
+        fee: u64,
+    ) -> Result<UpdateOutcome> {
+        // Index 0 is the wallet's fee/change address (the writer authorizes the
+        // singleton; the wallet still pays the XCH fee + the DIG payment).
+        let change_ph = w.addrs[0].keys.owner_puzzle_hash;
+        let fee_keys = crate::keys::WalletKeys {
+            synthetic_sk: w.addrs[0].keys.synthetic_sk.clone(),
+            synthetic_pk: w.addrs[0].keys.synthetic_pk,
+            owner_puzzle_hash: w.addrs[0].keys.owner_puzzle_hash,
+        };
+
+        let store = sync_datastore(&self.chain as &dyn ChainReads, launcher_id).await?;
+        let cats = dig_cats_multi(&self.chain as &dyn ChainReads, w).await?;
+
+        // The fee coins are the wallet's spendable XCH at index 0 (the writer path
+        // funds the fee from the change address; multi-address fee aggregation is
+        // the owner path's concern — the deploy token is index-0-funded in CI).
+        let fee_coins: Vec<chia_protocol::Coin> = w.addrs[0].xch.clone();
+
+        let build_writer_bundle = |effective_fee: u64| -> Result<(SpendBundle, Bytes32)> {
+            let update = crate::singleton::build_update_unsigned_writer(
+                writer.synthetic_pk,
+                store.clone(),
+                new_root,
+                label.clone(),
+                description.clone(),
+                &fee_keys,
+                &fee_coins,
+                effective_fee,
+            )?;
+            let new_coin_id = update.new_coin_id;
+
+            let pay = build_dig_payment_multi(
+                w.addrs.iter().map(|a| &a.keys),
+                change_ph,
+                &cats,
+                dig::COMMIT_DIG,
+                launcher_id,
+            )?;
+
+            // ONE bundle, signed by BOTH the writer key (singleton) and ALL wallet
+            // keys (fee + DIG). ATOMICITY: the DIG payment + the writer-authorized
+            // singleton spend ride in a single SpendBundle under one aggregated
+            // signature, admitted all-or-nothing — never split or pushed separately.
+            let mut all = update.coin_spends;
+            all.extend(pay);
+            let mut signers = w.signing_keys();
+            signers.push(writer.synthetic_sk.clone());
+            let signature = sign_coin_spends(&all, &signers, false)
+                .map_err(|e| ChainError::Chain(format!("sign writer update+DIG bundle: {e}")))?;
+            Ok((SpendBundle::new(all, signature), new_coin_id))
+        };
+
+        let (bundle, new_coin_id) = build_writer_bundle(fee)?;
+        let (final_bundle, new_coin_id) = if fee == 0 {
+            let est = self.chain.estimate_fee(&bundle, 60).await.unwrap_or(0);
+            if est > 0 && w.xch_balance() >= est {
+                match build_writer_bundle(est) {
+                    Ok(rebuilt) => rebuilt,
+                    Err(_) => (bundle, new_coin_id),
+                }
+            } else {
+                (bundle, new_coin_id)
+            }
+        } else {
+            (bundle, new_coin_id)
+        };
+
         let tx_id = final_bundle.name();
         self.chain.push(final_bundle).await?;
         Ok(UpdateOutcome { new_coin_id, tx_id })
