@@ -231,7 +231,8 @@ fn create(ui: &Ui, args: CollectionCreateArgs) -> Result<(), CliError> {
     };
 
     if drop.is_some() && !ui.json() {
-        ui.line("⚠ drop mechanics are SCAFFOLDED: recorded in the definition, NOT yet enforced at mint (#40)");
+        // Plain-language warning — no internal tracker numbers in user-facing output.
+        ui.line("⚠ drop mechanics are SCAFFOLDED: recorded in the definition, NOT yet enforced at mint");
     }
 
     let collection = Collection {
