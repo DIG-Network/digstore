@@ -38,12 +38,12 @@ fn parse_target(target: &str) -> Result<Bytes32, CliError> {
 /// is unit-testable and the generated file stays human-readable + comment-rich.
 fn render_dig_toml(store_id: &Bytes32, output_dir: &str, remote: &str) -> String {
     format!(
-        "# dig.toml — linked to an existing DIG project. Committed to your repo; NO secrets.\n\
+        "# dig.toml — linked to an existing DIG store. Committed to your repo; NO secrets.\n\
          #\n\
          # `digstore dev`    — preview locally for free (no chain, no spend).\n\
          # `digstore deploy` — publish a new version (costs 100 DIG + an XCH fee).\n\
          \n\
-         # The on-chain project this folder publishes to.\n\
+         # The on-chain store this folder publishes to.\n\
          store-id = \"{store_id}\"\n\
          \n\
          # The folder `deploy` publishes (your build output).\n\
@@ -96,7 +96,7 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: LinkArgs) -> Result<(), CliError> {
         }));
     } else {
         ui.success(format!(
-            "Linked this folder to project {}",
+            "Linked this folder to store {}",
             store_id.to_hex()
         ));
         ui.line(format!("  wrote {}", toml_path.display()));

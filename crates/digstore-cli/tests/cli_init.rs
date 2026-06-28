@@ -22,7 +22,7 @@ fn init_creates_store_and_trusted_key() {
         .arg("init")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Initialized project"));
+        .stdout(predicate::str::contains("Initialized store"));
     // Multi-store layout: with the workspace at <dir>/.dig, the default store's
     // files live under <dir>/.dig/stores/default/.
     let store = common::store_dir(&dir);
@@ -39,14 +39,14 @@ fn init_twice_fails_with_exit_2() {
 }
 
 /// Roadmap #14: `init`'s default success output is task-first — it leads with the
-/// human "Initialized project" line and does NOT dump the protocol-level
+/// human "Initialized store" line and does NOT dump the protocol-level
 /// `trusted host key:` on the default surface. (It is still available behind
 /// `--verbose` for those who want it; see `init_verbose_shows_protocol_detail`.)
 #[test]
 fn init_default_output_hides_trusted_host_key() {
     let dir = tmp_dig();
     dig(&dir).arg("init").assert().success().stdout(
-        predicate::str::contains("Initialized project")
+        predicate::str::contains("Initialized store")
             .and(predicate::str::contains("trusted host key").not()),
     );
 }

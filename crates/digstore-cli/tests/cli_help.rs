@@ -17,10 +17,10 @@ fn add_help_shows_examples() {
         );
 }
 
-/// Terminology alignment with hub.dig.net: a generation's history reads as
-/// "deployment history" in help, not the protocol word "generation".
+/// Canonical terminology: `log` help reads as the store's "publish history" of
+/// "capsule"s — not the protocol word "generation", and not "project".
 #[test]
-fn log_help_uses_deployment_history() {
+fn log_help_uses_capsule_vocabulary() {
     let d = tmp_dig();
     Command::cargo_bin("digstore")
         .unwrap()
@@ -29,15 +29,16 @@ fn log_help_uses_deployment_history() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("deployment history")
-                .and(predicate::str::contains("generation (commit) history").not()),
+            predicate::str::contains("capsule")
+                .and(predicate::str::contains("generation").not())
+                .and(predicate::str::contains("project").not()),
         );
 }
 
-/// `checkout --help` describes materializing a "deployment root", not a
-/// "generation root".
+/// `checkout --help` describes saving a published "capsule" — not a protocol
+/// "generation", and not "project".
 #[test]
-fn checkout_help_uses_deployment_root() {
+fn checkout_help_uses_capsule_vocabulary() {
     let d = tmp_dig();
     Command::cargo_bin("digstore")
         .unwrap()
@@ -45,7 +46,9 @@ fn checkout_help_uses_deployment_root() {
         .args(["checkout", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("deployment root"));
+        .stdout(
+            predicate::str::contains("capsule").and(predicate::str::contains("project").not()),
+        );
 }
 
 /// Roadmap #14: top-level help leads with the TASK, not protocol jargon. `commit`
@@ -66,7 +69,7 @@ fn top_level_help_is_task_first() {
                     predicate::str::contains("free, no wallet, no spend")
                         .or(predicate::str::contains("template — free")),
                 )
-                .and(predicate::str::contains("Preview your project locally")),
+                .and(predicate::str::contains("Preview your store locally")),
         );
 }
 
@@ -84,6 +87,23 @@ fn new_help_lists_templates_and_says_free() {
             predicate::str::contains("NO spend")
                 .and(predicate::str::contains("static-site"))
                 .and(predicate::str::contains("dapp-window-chia")),
+        );
+}
+
+/// Cross-discovery: `digstore new --help` points JS-first users at the parallel
+/// `npm create dig-app` front door, and names the shared `static-site` template.
+#[test]
+fn new_help_cross_links_create_dig_app() {
+    let d = tmp_dig();
+    Command::cargo_bin("digstore")
+        .unwrap()
+        .current_dir(d.path())
+        .args(["new", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("npm create dig-app")
+                .and(predicate::str::contains("static-site")),
         );
 }
 
@@ -115,8 +135,8 @@ fn commit_help_documents_dry_run() {
         );
 }
 
-/// The `projects` alias is discoverable: `digstore projects --help` resolves
-/// (proves the alias exists) and the old `stores --help` still works.
+/// The `projects` alias is a HIDDEN back-compat alias: `digstore projects --help`
+/// still resolves (proves the alias parses) and the canonical `stores --help` works.
 #[test]
 fn projects_alias_help_resolves() {
     let d = tmp_dig();

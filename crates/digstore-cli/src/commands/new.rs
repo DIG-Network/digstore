@@ -100,7 +100,7 @@ fn write_template(
         }));
     } else {
         ui.success(format!(
-            "Created a {} project in {}",
+            "Created a {} store in {}",
             template.name,
             target.display()
         ));
