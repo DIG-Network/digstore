@@ -2,7 +2,7 @@
 #
 # Copy this to `.github/workflows/deploy.yml` in YOUR repo. On every push to your
 # default branch it builds your site and publishes a new capsule to your existing
-# DIG store — like Vercel's Git integration.
+# DIG store — git-push-to-deploy.
 #
 # ONE-TIME SETUP (on the machine where you created the store with `digstore init`):
 #   1. Get the store id:        digstore log --json   (the "store_id" field)

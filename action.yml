@@ -1,7 +1,7 @@
 name: "Deploy to DIG (digstore)"
 description: >-
   Auto-deploy a built site/dapp to your existing DIG store on every push — a new
-  capsule, published to DIGHub — like Vercel's Git integration. Advances an
+  capsule, published to DIGHub — git-push-to-deploy. Advances an
   existing store (never mints: it does NOT run `init`).
 author: "DIG Network"
 
