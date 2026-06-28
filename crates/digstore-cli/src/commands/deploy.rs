@@ -394,7 +394,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             // #17: pass the WRITER DELEGATE key (deploy token) down so CI advances the
             // root with a revocable writer key, not the owner seed. `--writer-key` /
             // DIGSTORE_WRITER_KEY (distinct from the §21 publisher --deploy-key above).
-            deploy_key: args.writer_key.clone(),
+            writer_key: args.writer_key.clone(),
         },
     )?;
 

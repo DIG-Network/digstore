@@ -507,7 +507,13 @@ pub struct AddArgs {
     after_help = "Publishes your staged files as a new version on Chia — a new capsule \
 (`storeId:rootHash`). Costs 100 DIG + an XCH fee per publish.\n\nUse `--dry-run` to preview the \
 resulting version (root) and the exact DIG/XCH cost WITHOUT spending or publishing anything.\n\n\
-EXAMPLES:\n  digstore commit -m \"first version\"\n  digstore commit --dry-run"
+TWO KINDS OF DEPLOY KEY (don't mix them up):\n  --writer-key  the ON-CHAIN ROOT-ADVANCE authority \
+— a revocable WRITER DELEGATE that advances the store's root WITHOUT the owner master seed (the \
+hub Teams \"Deployer\" flow pre-authorizes it). This command advances the root, so it takes \
+--writer-key. Env: DIGSTORE_WRITER_KEY.\n  --deploy-key  (a DIFFERENT key) the §21 HUB HEAD-PUSH \
+key — lets DIGHub ACCEPT the capsule; used by `digstore deploy`, NOT here. From `digstore \
+deploy-key export`. Env: DIGSTORE_DEPLOY_KEY.\n\nEXAMPLES:\n  digstore commit -m \"first \
+version\"\n  digstore commit --dry-run\n  digstore commit -m deploy --writer-key $DIGSTORE_WRITER_KEY"
 )]
 pub struct CommitArgs {
     #[arg(short, long)]
@@ -541,8 +547,12 @@ pub struct CommitArgs {
     /// the writer can change ONLY the metadata root — never the owner, never melt. Prefer
     /// the `DIGSTORE_WRITER_KEY` env var in CI so it is not visible in the process table.
     /// The wallet seed still pays the 100 DIG + XCH fee.
-    #[arg(long = "deploy-key")]
-    pub deploy_key: Option<String>,
+    ///
+    /// `--deploy-key` is a DEPRECATED hidden alias for this flag (it used to mean the
+    /// writer key here, which clashed with `deploy`'s publisher `--deploy-key`); use
+    /// `--writer-key`. See `digstore deploy --help` for the writer-vs-publisher contrast.
+    #[arg(long = "writer-key", alias = "deploy-key", value_name = "WRITER_SEED")]
+    pub writer_key: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -850,11 +860,17 @@ pub struct LogoutArgs {}
 --output-dir, then commits + pushes to DIGHub as a new capsule. NEVER mints (no `init`).\n\nReads \
 defaults from `dig.toml` in the current directory (store-id, output-dir, build-command, remote, \
 network, wait-timeout). Flags/env override the file.\n\nCosts 100 DIG + an XCH fee per deploy (the \
-on-chain root update), paid from the wallet seed (DIGSTORE_PASSPHRASE).\n\n--if-changed skips the \
-deploy (and the spend) when the built output matches the store's current on-chain version — safe to \
-run on every push. --dry-run previews the resulting version + exact cost WITHOUT spending.\n\n\
-EXAMPLES:\n  digstore deploy\n  digstore deploy --if-changed --message \"deploy ${GITHUB_SHA}\" \
---json\n  digstore deploy --dry-run"
+on-chain root update), paid from the wallet seed (DIGSTORE_PASSPHRASE).\n\nTWO KINDS OF DEPLOY KEY \
+(don't mix them up):\n  --deploy-key  the §21 PUBLISHER / HUB HEAD-PUSH key — lets DIGHub ACCEPT \
+the capsule. Reconstructs the store's local state. From `digstore deploy-key export`. Env: \
+DIGSTORE_DEPLOY_KEY. REQUIRED.\n  --writer-key  (a DIFFERENT, optional key) the ON-CHAIN \
+ROOT-ADVANCE authority — a revocable WRITER DELEGATE that advances the store's root WITHOUT the \
+owner master seed (the hub Teams \"Deployer\" flow pre-authorizes it). Env: DIGSTORE_WRITER_KEY. \
+Omit to advance the root with the wallet's owner seed.\n\n--if-changed skips the deploy (and the \
+spend) when the built output matches the store's current on-chain version — safe to run on every \
+push. --dry-run previews the resulting version + exact cost WITHOUT spending.\n\nEXAMPLES:\n  \
+digstore deploy\n  digstore deploy --if-changed --message \"deploy ${GITHUB_SHA}\" --json\n  \
+digstore deploy --dry-run"
 )]
 pub struct DeployArgs {
     /// The on-chain store id (64-hex) to advance. Overrides `dig.toml`'s `store-id`.
@@ -1012,7 +1028,7 @@ pub struct CompletionArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn parses_init() {
@@ -1378,22 +1394,47 @@ mod tests {
     }
 
     #[test]
-    fn parses_commit_deploy_key_writer() {
-        // #17: `commit --deploy-key <writer-seed>` advances the root with a writer delegate.
+    fn parses_commit_writer_key() {
+        // #17: `commit --writer-key <writer-seed>` advances the root with a writer delegate.
+        // `--writer-key` matches `deploy`'s flag name + the Action; it is the on-chain
+        // root-advance authority (NOT the §21 publisher --deploy-key).
         let cli =
-            Cli::try_parse_from(["digstore", "commit", "--deploy-key", &"ab".repeat(32)]).unwrap();
+            Cli::try_parse_from(["digstore", "commit", "--writer-key", &"ab".repeat(32)]).unwrap();
         match cli.command {
             Command::Commit(c) => {
-                assert_eq!(c.deploy_key.as_deref(), Some("ab".repeat(32).as_str()))
+                assert_eq!(c.writer_key.as_deref(), Some("ab".repeat(32).as_str()))
             }
             _ => panic!("expected commit"),
         }
         // Default: no writer key (owner-signed).
         let cli = Cli::try_parse_from(["digstore", "commit"]).unwrap();
         match cli.command {
-            Command::Commit(c) => assert!(c.deploy_key.is_none()),
+            Command::Commit(c) => assert!(c.writer_key.is_none()),
             _ => panic!("expected commit"),
         }
+    }
+
+    #[test]
+    fn commit_deploy_key_is_hidden_deprecated_alias_for_writer_key() {
+        // Back-compat: `--deploy-key` on `commit` historically meant the WRITER key.
+        // It remains a (hidden, deprecated) alias of `--writer-key` so old scripts work.
+        let cli =
+            Cli::try_parse_from(["digstore", "commit", "--deploy-key", &"cd".repeat(32)]).unwrap();
+        match cli.command {
+            Command::Commit(c) => {
+                assert_eq!(c.writer_key.as_deref(), Some("cd".repeat(32).as_str()))
+            }
+            _ => panic!("expected commit"),
+        }
+        // The canonical OPTION shown in the help options section is `--writer-key`; the
+        // `--deploy-key` alias is a plain (hidden) `alias`, so clap does not list it as
+        // its own option entry. We assert the canonical flag is registered with that id.
+        let commit = Cli::command().find_subcommand("commit").unwrap().clone();
+        let arg = commit
+            .get_arguments()
+            .find(|a: &&clap::Arg| a.get_id() == "writer_key")
+            .expect("writer_key arg exists");
+        assert_eq!(arg.get_long(), Some("writer-key"));
     }
 
     #[test]

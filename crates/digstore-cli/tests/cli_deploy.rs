@@ -523,13 +523,13 @@ fn deploy_preview_writes_to_explicit_out_path() {
     assert!(out_path.exists(), "explicit preview artifact must exist");
 }
 
-/// #17 writer-key: `commit --deploy-key <writer-seed>` advances the on-chain root
+/// #17 writer-key: `commit --writer-key <writer-seed>` advances the on-chain root
 /// signed by a WRITER DELEGATE key (a revocable deploy token) instead of the owner
 /// seed. Under the mock anchor it publishes a new capsule exactly like the owner
 /// path; the writer authorization itself is proven on the Simulator in the chain
 /// crate. This guards the CLI wiring (resolve key → writer update path).
 #[test]
-fn commit_with_writer_deploy_key_publishes_capsule() {
+fn commit_with_writer_key_publishes_capsule() {
     let dir = tmp_dig();
     dig(&dir).arg("init").assert().success();
 
@@ -543,7 +543,7 @@ fn commit_with_writer_deploy_key_publishes_capsule() {
             "commit",
             "-m",
             "writer deploy",
-            "--deploy-key",
+            "--writer-key",
             &writer_key,
             "--wait-timeout",
             "0",
@@ -561,6 +561,39 @@ fn commit_with_writer_deploy_key_publishes_capsule() {
     assert_eq!(v["anchor_status"], "confirmed");
     let root = v["root"].as_str().expect("root present");
     assert_eq!(root.len(), 64, "a real 32-byte root was published");
+}
+
+/// #17 back-compat: the old `commit --deploy-key <writer-seed>` flag still works as
+/// a hidden, deprecated alias of `--writer-key` (so existing scripts don't break),
+/// even though `--deploy-key` now means the PUBLISHER key on `digstore deploy`.
+#[test]
+fn commit_deploy_key_alias_still_advances_root() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    std::fs::write(dir.path().join("index.html"), b"<h1>alias v1</h1>").unwrap();
+    dig(&dir).args(["add", "index.html"]).assert().success();
+    let writer_key = "2a".repeat(32);
+    let out = dig(&dir)
+        .args([
+            "commit",
+            "-m",
+            "alias deploy",
+            "--deploy-key",
+            &writer_key,
+            "--wait-timeout",
+            "0",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "deploy-key alias commit failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["anchor_status"], "confirmed");
 }
 
 /// #17: a malformed writer key is rejected with a clear error (exit 2), never a panic.

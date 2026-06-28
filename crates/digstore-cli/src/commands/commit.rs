@@ -108,7 +108,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     //    update that will not confirm); it spends DIG + an XCH fee again.
     let resume =
         !args.resubmit && state.status == AnchorStatus::Pending && state.last_root == new_root_hex;
-    // #17: an optional WRITER DELEGATE key (`--deploy-key` / `DIGSTORE_WRITER_KEY`)
+    // #17: an optional WRITER DELEGATE key (`--writer-key` / `DIGSTORE_WRITER_KEY`)
     // authorizes the on-chain root advance instead of the owner master seed. When
     // set, the singleton spend is built with the writer's key (the store must carry
     // its delegated puzzle, pre-authorized by the owner via `updateStoreOwnership`);
@@ -375,15 +375,15 @@ fn maybe_offer_push(ctx: &CliContext, ui: &crate::ui::Ui, args: &CommitArgs) {
 }
 
 /// Resolve the optional WRITER DELEGATE (deploy-token) key for the on-chain root
-/// advance (#17): `--deploy-key` (flag) > `DIGSTORE_WRITER_KEY` (env). Returns
-/// `None` for the normal owner-signed path. The key is a 64-hex 32-byte seed (the
-/// form `deploy-key export` emits); it derives the writer's wallet synthetic key,
+/// advance (#17): `--writer-key` (flag, hidden `--deploy-key` alias) >
+/// `DIGSTORE_WRITER_KEY` (env). Returns `None` for the normal owner-signed path.
+/// The key is a 64-hex 32-byte seed; it derives the writer's wallet synthetic key,
 /// which authorizes a metadata-only update of a store that delegated to it.
 fn resolve_writer_keys(
     args: &CommitArgs,
 ) -> Result<Option<digstore_chain::keys::WalletKeys>, CliError> {
     let hex_str = args
-        .deploy_key
+        .writer_key
         .clone()
         .or_else(|| std::env::var("DIGSTORE_WRITER_KEY").ok())
         .filter(|s| !s.trim().is_empty());
