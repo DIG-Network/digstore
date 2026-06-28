@@ -77,39 +77,43 @@ impl Drop for DevServer {
     }
 }
 
-/// Read the OS-assigned port from the dev server's JSON stdout (`--port 0`). The
-/// `dev` command binds FIRST, then prints the real bound URL/port — so reading
-/// this line is a reliable readiness signal AND avoids a fixed-port collision
-/// (the old fixed-port + 40s-poll approach was flaky under CI load).
-fn read_port_from(child: &mut Child) -> Option<u16> {
-    let stdout = child.stdout.take()?;
-    let mut reader = BufReader::new(stdout);
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let mut line = String::new();
-    while Instant::now() < deadline {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => return None, // EOF: process exited before serving.
-            Ok(_) => {
-                // The JSON is pretty-printed, so the port lands on its own line as
-                // `  "port": 47431,`. Match that line directly (parsing one line as
-                // a whole JSON object would fail on a fragment).
-                let t = line.trim();
-                if let Some(rest) = t.strip_prefix("\"port\":") {
-                    let digits: String = rest
-                        .trim()
-                        .chars()
-                        .take_while(|c| c.is_ascii_digit())
-                        .collect();
-                    if let Ok(p) = digits.parse::<u16>() {
-                        return Some(p);
-                    }
+/// Extract the OS-assigned port from a pretty-printed JSON line (`  "port": N,`).
+fn parse_port_line(line: &str) -> Option<u16> {
+    let t = line.trim();
+    let rest = t.strip_prefix("\"port\":")?;
+    let digits: String = rest
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse::<u16>().ok()
+}
+
+/// Drain the dev server's stdout on a background thread, returning a receiver that
+/// yields the OS-assigned port (`--port 0`) once announced. CRITICAL: the thread
+/// keeps READING for the child's whole life, so the child never blocks (or gets a
+/// broken-pipe kill) writing to stdout — if the reader were dropped after the port
+/// line, the child could die on its next write and the server would vanish. The
+/// `dev` command binds FIRST then prints the real port, so this is a reliable
+/// readiness signal that avoids a fixed-port collision (the old fixed-port + poll
+/// approach was flaky under CI load).
+fn spawn_port_reader(child: &mut Child) -> std::sync::mpsc::Receiver<u16> {
+    let stdout = child.stdout.take().expect("piped stdout");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        let mut sent = false;
+        for line in reader.lines().map_while(Result::ok) {
+            if !sent {
+                if let Some(p) = parse_port_line(&line) {
+                    let _ = tx.send(p);
+                    sent = true;
                 }
             }
-            Err(_) => return None,
+            // Keep draining after the port is sent so the child's stdout never fills.
         }
-    }
-    None
+    });
+    rx
 }
 
 #[test]
@@ -134,8 +138,11 @@ fn dev_serves_real_read_path_with_injected_shims() {
         .spawn()
         .unwrap();
 
-    let port = read_port_from(&mut child).expect("dev server did not announce a port");
+    let rx = spawn_port_reader(&mut child);
     let _guard = DevServer(child);
+    let port = rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("dev server did not announce a port");
 
     let body = wait_for_server(port).expect("dev server did not come up");
 
