@@ -73,9 +73,16 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     (0..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
 }
 
-/// GET a path, retrying briefly to ride out a transient connection refusal.
+/// GET a path, retrying to ride out a transient connection refusal OR a slow first response.
+///
+/// The deadline is generous (30s): the FIRST fetch of a given asset goes through the real dig://
+/// read path (compile → verify → decrypt), which on a cold, parallel-loaded CI Windows runner can
+/// take several seconds the first time an asset is touched — long enough that a single attempt's read
+/// could time out. Retrying over a 30s window (well under the per-request 10s read timeout's worst
+/// case × a few attempts) makes the asset fetch as robust as `wait_for_server`'s `/` poll, killing
+/// the intermittent `expect("style.css")` panic seen only under CI load.
 fn http_get_retry(port: u16, path: &str) -> Option<String> {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(body) = http_get(port, path) {
             return Some(body);
