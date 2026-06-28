@@ -42,7 +42,7 @@ fn commit_creates_module_and_log_lists_it() {
         .args(["commit", "-m", "first"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("committed root"));
+        .stdout(predicate::str::contains("Published a new version"));
     let modules: Vec<_> = std::fs::read_dir(common::store_dir(&dir).join("modules"))
         .unwrap()
         .filter_map(|e| e.ok())
@@ -390,7 +390,7 @@ fn commit_push_flag_pushes_to_remote() {
         .args(["commit", "-m", "first", "--push"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("committed root"))
+        .stdout(predicate::str::contains("Published a new version"))
         .stdout(predicate::str::contains("pushed root"));
 
     // The server now serves the committed root.
@@ -433,7 +433,7 @@ fn commit_no_push_flag_does_not_push() {
         .args(["commit", "-m", "first", "--no-push"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("committed root"))
+        .stdout(predicate::str::contains("Published a new version"))
         .stdout(predicate::str::contains("pushed root").not())
         .stdout(predicate::str::contains("digstore push origin"));
 
@@ -477,7 +477,7 @@ fn commit_non_interactive_default_does_not_push_or_hang() {
         .args(["commit", "-m", "first"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("committed root"))
+        .stdout(predicate::str::contains("Published a new version"))
         .stdout(predicate::str::contains("pushed root").not())
         .stdout(predicate::str::contains("digstore push origin"));
 

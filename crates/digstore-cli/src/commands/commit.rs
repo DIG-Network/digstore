@@ -23,6 +23,13 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let prepared = store_ops::stage_to_root(ctx)?;
     let new_root_hex = prepared.root.to_hex();
 
+    // --dry-run: report the resulting version (root) + the exact DIG/XCH cost and
+    // STOP — no seed unlock, no wallet scan, no on-chain update, no finalize.
+    // Nothing is spent and nothing is published; this is a safe cost preview.
+    if args.dry_run {
+        return dry_run(ctx, ui, &prepared.root);
+    }
+
     // 2. Anchor gate: unlock seed (NoSeed → exit 9), build the (mock or real)
     //    backend, warn if mocked, surface the fee.
     let (keys, mnemonic, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
@@ -201,14 +208,20 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                 }
                 ui.emit_json(&obj);
             } else {
-                ui.success(format!("committed root {}", outcome.roothash.to_hex()));
+                // #14: lead with a plain-language success line. Keep the capsule id
+                // (the ecosystem-vocabulary identifier the user shares) on a line
+                // BELOW it, and demote the noisier protocol detail (module bytes /
+                // on-chain coin) behind --verbose so the default surface stays clean.
+                ui.success("Published a new version — it's live and permanent.");
                 ui.line(format!("  capsule: {capsule}  (storeId:rootHash)"));
-                ui.line(format!(
-                    "  module: {} ({} bytes)",
-                    outcome.output_path.display(),
-                    outcome.output_size
-                ));
-                ui.line(format!("  anchored on mainnet (coin {coin_hex})"));
+                if ctx.verbose {
+                    ui.line(format!(
+                        "  module: {} ({} bytes)",
+                        outcome.output_path.display(),
+                        outcome.output_size
+                    ));
+                    ui.line(format!("  anchored on mainnet (coin {coin_hex})"));
+                }
                 // Offer to publish this deployment to DIGHub. Never blocks/prompts in
                 // --json/non-TTY runs (see `maybe_offer_push`).
                 maybe_offer_push(ctx, ui, &args);
@@ -226,6 +239,51 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
             Err(CliError::ConfirmTimeout)
         }
     }
+}
+
+/// `commit --dry-run`: report the resulting version (root) and the EXACT cost of
+/// publishing it (100 DIG + the configured XCH fee) WITHOUT spending, anchoring,
+/// or finalizing anything. The root is computed from staging exactly as a real
+/// commit would (so the previewed root is the one a real commit produces); the
+/// fee is read from the global config without unlocking the seed.
+fn dry_run(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    root: &digstore_core::Bytes32,
+) -> Result<(), CliError> {
+    let store_id = ctx.find_store_id()?;
+    let capsule = format!("{}:{}", store_id.to_hex(), root.to_hex());
+
+    // The XCH fee is a global-config value; load it directly (no wallet/seed). On
+    // any load failure, fall back to the default fee so the preview still works.
+    let fee = digstore_chain::config::dig_home()
+        .and_then(|home| digstore_chain::config::GlobalConfig::load(&home))
+        .map(|g| g.fee)
+        .unwrap_or_else(|_| digstore_chain::config::GlobalConfig::default().fee);
+
+    if ui.json() {
+        ui.emit_json(&serde_json::json!({
+            "dry_run": true,
+            "root": root.to_hex(),
+            "capsule": capsule,
+            "store_id": store_id.to_hex(),
+            "cost_dig": dig::COMMIT_DIG,
+            "cost_dig_display": format_dig(dig::COMMIT_DIG),
+            "fee_xch_mojos": fee,
+            "fee_xch_display": format_xch(fee),
+            "spent": false,
+        }));
+    } else {
+        ui.success(format!("dry run — would publish version {}", root.to_hex()));
+        ui.line(format!("  capsule: {capsule}  (storeId:rootHash)"));
+        ui.line(format!(
+            "  cost: {} DIG + up to {} XCH (fee) — NOTHING spent",
+            format_dig(dig::COMMIT_DIG),
+            format_xch(fee)
+        ));
+        ui.hint("digstore commit -m \"<message>\"   # to actually publish");
+    }
+    Ok(())
 }
 
 /// Decide whether a confirmed deployment should be pushed to DIGHub now, and if

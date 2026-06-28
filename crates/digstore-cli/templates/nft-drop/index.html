@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My NFT drop</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Genesis Drop</h1>
+        <p class="tag">An on-chain NFT collection, served from DIG.</p>
+      </header>
+
+      <section class="grid" id="grid"></section>
+
+      <button id="mint">Connect wallet to mint</button>
+
+      <p class="hint">
+        The art on this page is served through the real DIG read path. When you
+        deploy, the media lives in your capsule — truly permanent NFT media on
+        Chia, not a centralized URL. Wire the mint button to your collection's
+        on-chain mint, signed via <code>window.chia</code>.
+      </p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

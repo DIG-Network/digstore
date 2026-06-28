@@ -1,0 +1,18 @@
+# dig.toml — your DIG project config. Committed to your repo; contains NO secrets.
+#
+# `digstore dev`    — preview locally for free (no chain, no spend).
+# `digstore deploy` — publish to your on-chain store (costs 100 DIG + an XCH fee).
+#
+# This project has NOT been published yet. Create your on-chain store when you're
+# ready to go live (`digstore init`), then put its id below as `store-id`.
+
+# The folder `dev`/`deploy` publish. A plain static site has no build step, so the
+# site IS the output directory.
+output-dir = "."
+
+# No build step for a hand-written static site. Uncomment + edit if you add one.
+# build-command = "npm run build"
+
+# Filled in once you publish (from `digstore log --json`). Left blank for the free
+# local loop, which needs no store id.
+# store-id = "REPLACE_WITH_YOUR_64_HEX_STORE_ID"

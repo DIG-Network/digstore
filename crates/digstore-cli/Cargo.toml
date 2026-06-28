@@ -45,9 +45,9 @@ anstyle = "1"
 ignore = "0.4"
 globset = "0.4"
 indicatif = "0.17"
+axum = "0.7"
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
-axum = "0.7"

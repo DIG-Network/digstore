@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My DIG dapp</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>DIG dapp starter</h1>
+      <p>
+        A decentralized app that talks to a Chia wallet through
+        <code>window.chia</code> — the same provider the DIG Browser injects and
+        any compatible wallet exposes. No WalletConnect setup.
+      </p>
+
+      <button id="connect">Connect wallet</button>
+      <pre id="out" hidden></pre>
+
+      <p class="hint">
+        Running under <code>digstore dev</code>? A <strong>dev</strong>
+        <code>window.chia</code> shim is injected for you, so this button works
+        with no real wallet. In production, a real wallet provides it.
+      </p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
