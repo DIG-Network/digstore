@@ -290,6 +290,38 @@ fn deploy_dry_run_previews_cost_without_spending() {
     assert_eq!(v["cost_dig"].as_u64(), Some(100_000), "raw mojos = 100 DIG");
 }
 
+/// `deploy --dry-run` leaves the source tree byte-identical even when `dig.toml`
+/// declares `ignore` globs — a preview must change NOTHING (no stray `.digignore`).
+#[test]
+fn deploy_dry_run_does_not_mutate_source_tree() {
+    let ci = tmp_dig();
+    let store_id = "ab".repeat(32);
+    let dist = ci.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), b"<h1>preview</h1>").unwrap();
+    std::fs::write(dist.join("app.js.map"), b"sourcemap").unwrap();
+    std::fs::write(
+        ci.path().join("dig.toml"),
+        format!("store-id = \"{store_id}\"\noutput-dir = \"dist\"\nignore = [\"*.map\"]\n"),
+    )
+    .unwrap();
+
+    let digignore = dist.join(".digignore");
+    assert!(!digignore.exists(), "precondition: no .digignore yet");
+
+    dig(&ci)
+        .args(["deploy", "--dry-run", "--json"])
+        .env("DIGSTORE_DEPLOY_KEY", "cd".repeat(32))
+        .assert()
+        .success();
+
+    // The dry run must NOT have left a .digignore behind.
+    assert!(
+        !digignore.exists(),
+        "dry-run must not write .digignore into the source tree"
+    );
+}
+
 /// `deploy --if-changed` is a NO-OP (no spend, no push) when the built output is
 /// byte-identical to the store's current on-chain version. The whole point is a
 /// CI workflow can run `deploy --if-changed` on every push and only pay when the

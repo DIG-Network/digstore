@@ -286,7 +286,10 @@ fn watch_loop(
             Ok(build) => {
                 // Swap in the new build, drop the old ctx's on-disk dir afterwards.
                 let old_dir = {
-                    let mut guard = state.build.lock().unwrap();
+                    let mut guard = state
+                        .build
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let old = std::mem::replace(&mut *guard, build);
                     old.ctx.dig_dir
                 };
@@ -358,7 +361,14 @@ async fn asset_handler(State(state): State<Arc<DevState>>, uri: axum::http::Uri)
     let decoded = percent_decode(raw);
 
     let result = {
-        let build = state.build.lock().unwrap();
+        // Recover from a poisoned lock (a prior request/rebuild panicked) rather
+        // than cascading the panic into a connection reset — the `Build` data is
+        // still valid to read, so the preview keeps serving instead of one bad
+        // request silently taking the whole server down for later fetches.
+        let build = state
+            .build
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let key = resolve_key(&build, &decoded);
         key.and_then(|k| {
             serve::read_resource_plaintext(&build.ctx, &build.cfg, &build.root, &k)

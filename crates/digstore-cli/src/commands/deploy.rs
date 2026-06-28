@@ -145,17 +145,46 @@ fn resolve_config(ctx: &CliContext, args: &DeployArgs) -> Result<DeployConfig, C
     })
 }
 
+/// How to restore the output dir's `.digignore` after a dry run, so a preview
+/// leaves the source tree byte-identical (dry-run must change NOTHING).
+enum IgnoreRestore {
+    /// We changed nothing — leave the file as-is.
+    Noop,
+    /// `.digignore` did not exist before — delete the one we created.
+    Delete(std::path::PathBuf),
+    /// `.digignore` existed — restore its prior contents.
+    Restore(std::path::PathBuf, String),
+}
+
+impl IgnoreRestore {
+    /// Undo the `.digignore` write (dry-run only). Best-effort.
+    fn undo(self) {
+        match self {
+            IgnoreRestore::Noop => {}
+            IgnoreRestore::Delete(p) => {
+                let _ = std::fs::remove_file(p);
+            }
+            IgnoreRestore::Restore(p, prior) => {
+                let _ = std::fs::write(p, prior);
+            }
+        }
+    }
+}
+
 /// Apply `dig.toml`'s `ignore` globs by writing them into a `.digignore` in the
 /// output dir, so the existing `add` walk machinery (which already honors
 /// `.digignore`/`.gitignore`) excludes them — one ignore engine, no duplication.
 /// APPENDS to any existing `.digignore` and de-dupes, so a hand-authored ignore
-/// file is preserved. Best-effort: an IO error never fails the deploy.
-fn apply_ignore_globs(output_dir: &std::path::Path, globs: &[String]) {
+/// file is preserved. Best-effort: an IO error never fails the deploy. Returns an
+/// [`IgnoreRestore`] the caller uses to undo the write after a DRY RUN (a preview
+/// must leave the source tree untouched); a real deploy keeps the `.digignore`.
+fn apply_ignore_globs(output_dir: &std::path::Path, globs: &[String]) -> IgnoreRestore {
     if globs.is_empty() {
-        return;
+        return IgnoreRestore::Noop;
     }
     let path = output_dir.join(".digignore");
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let prior = std::fs::read_to_string(&path).ok(); // None => file did not exist
+    let existing = prior.clone().unwrap_or_default();
     let have: std::collections::HashSet<&str> = existing.lines().map(|l| l.trim()).collect();
     let mut to_add: Vec<&str> = Vec::new();
     for g in globs {
@@ -165,8 +194,12 @@ fn apply_ignore_globs(output_dir: &std::path::Path, globs: &[String]) {
         }
     }
     if to_add.is_empty() {
-        return;
+        return IgnoreRestore::Noop;
     }
+    let restore = match prior {
+        Some(p) => IgnoreRestore::Restore(path.clone(), p),
+        None => IgnoreRestore::Delete(path.clone()),
+    };
     let mut out = existing;
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
@@ -175,7 +208,11 @@ fn apply_ignore_globs(output_dir: &std::path::Path, globs: &[String]) {
         out.push_str(g);
         out.push('\n');
     }
-    let _ = std::fs::write(&path, out);
+    if std::fs::write(&path, out).is_err() {
+        // The write failed, so there is nothing to undo.
+        return IgnoreRestore::Noop;
+    }
+    restore
 }
 
 /// Run the user's build command (if any) from the operating directory.
@@ -265,7 +302,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
     //    directory so resource keys are relative to it (the site root), then
     //    commit + push using the canonical commit path. Apply `dig.toml` ignore
     //    globs first (via a transient `.digignore`) so excluded files never stage.
-    apply_ignore_globs(&output_dir, &cfg.ignore);
+    //    The restore token undoes the `.digignore` write for a dry run (a preview
+    //    must leave the source tree untouched); a real deploy keeps it.
+    let ignore_restore = apply_ignore_globs(&output_dir, &cfg.ignore);
     let stage_ctx = CliContext {
         op_dir: output_dir.clone(),
         ..ctx.clone()
@@ -295,8 +334,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
     let capsule = format!("{}:{}", cfg.store_id.to_hex(), new_root.to_hex());
 
     // --dry-run: preview the resulting version + the EXACT cost and STOP. Nothing
-    // is chain-confirmed, spent, anchored, or pushed.
+    // is chain-confirmed, spent, anchored, or pushed — and the source tree is left
+    // byte-identical (undo the `.digignore` we wrote to compute the faithful root).
     if args.dry_run {
+        ignore_restore.undo();
         return dry_run(
             ui,
             &cfg.store_id,
