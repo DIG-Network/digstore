@@ -207,12 +207,46 @@ then add the workflow ([`examples/github-actions-deploy.yml`](examples/github-ac
 > **⚠ Security:** v1 ships the funded wallet mnemonic into CI as a secret — it can
 > spend ALL of that wallet's DIG/XCH. Use a **dedicated, low-balance deploy
 > wallet** funded with only enough DIG for your expected deploys (each deploy costs
-> 100 DIG + a small XCH fee). Scoped, spend-capped, revocable deploy tokens (no
-> seed in CI) are the planned secure replacement.
+> 100 DIG + a small XCH fee). For the on-chain root advance you can instead use a
+> **revocable writer deploy token** (see [Writer deploy tokens](#writer-deploy-tokens--advance-the-root-without-the-owner-seed)
+> below) so the owner key never enters CI; the funded wallet is still needed to pay
+> the DIG + XCH fee.
 
 `digstore deploy` reconstructs the store locally from the deploy key + the
 on-chain root, stages your `output-dir`, advances the root, and pushes the new
 capsule — all non-interactively. See `digstore deploy --help`.
+
+### Preview a build without spending (free)
+
+`digstore deploy --preview` builds a **free preview capsule** — it runs the real
+compile → verify → decrypt read path on your `output-dir`, writes a local `.dig`
+artifact, and prints its content address (`storeId:rootHash` + `dig://` URN).
+**No chain, no wallet, no deploy key, nothing spent** — the preview store id is a
+fresh ephemeral id, so a preview never touches (or impersonates) your real store.
+Use it to verify a build, or to serve a shareable preview from CI:
+
+```sh
+digstore deploy --preview                       # → <output-dir>/../.dig-preview/<root>.dig
+digstore deploy --preview --preview-out p.dig   # explicit artifact path
+```
+
+### Writer deploy tokens — advance the root without the owner seed
+
+The CI flow above ships the funded wallet into CI. To advance a store's root from
+CI **without exposing the owner key**, use a **writer deploy token**: a revocable
+delegate the owner pre-authorizes (the hub Teams "Deployer" flow / on-chain
+`updateStoreOwnership`). A writer can change **only the metadata root** — it can
+never change ownership or melt the store, and the owner revokes it at any time.
+
+```sh
+digstore commit -m "deploy" --deploy-key $DIGSTORE_WRITER_KEY   # writer-signed root advance
+digstore deploy --writer-key $DIGSTORE_WRITER_KEY               # same, in the CI deploy flow
+```
+
+Prefer the `DIGSTORE_WRITER_KEY` env var so the key isn't visible in the process
+table. The wallet seed still pays the 100 DIG + XCH fee; the writer key only
+authorizes the on-chain root advance. (This is distinct from the §21 publisher
+`--deploy-key`/`DIGSTORE_DEPLOY_KEY` above, which lets DIGHub accept the capsule.)
 
 ---
 
@@ -323,7 +357,7 @@ a hint only — local config and flags always take precedence.
 | `digstore dir [<path>]` | Show or set the active project's content root |
 | `digstore add <path…> [-A] [--key <name>]` | Stage files (`-A` = the whole content root) |
 | `digstore staged` / `digstore unstage` | List the staging area / clear it |
-| `digstore commit [-m <msg>] [--wait-timeout <s>]` | Seal a new deployment, anchor its root on mainnet (blocks until confirmed), compile the module, write the URN manifest |
+| `digstore commit [-m <msg>] [--wait-timeout <s>] [--deploy-key <writer-seed>]` | Seal a new deployment, anchor its root on mainnet (blocks until confirmed), compile the module, write the URN manifest. `--deploy-key` advances the root with a revocable **writer deploy token** instead of the owner seed |
 | `digstore status` | Show staged/modified/untracked + capacity |
 | `digstore log [--limit N]` / `digstore diff <a> <b>` | List / compare deployments |
 | `digstore urn [PATHS…] [--root <hex>]` | Preview the URN(s) files will have |
@@ -331,7 +365,8 @@ a hint only — local config and flags always take precedence.
 | `digstore checkout <root> --out <dir> [--salt <hex>]` | Write a whole deployment to a directory |
 | `digstore remote add\|list\|remove …` | Manage remotes |
 | `digstore clone <url>` / `push [remote]` / `pull [remote]` | Sync with a remote (verified) |
-| `digstore deploy [--store-id <hex>] [--output-dir <dir>] [--build-command <cmd>] [-m <msg>]` | CI auto-deploy: advance an EXISTING store from a fresh checkout (reads `dig.toml`); never mints |
+| `digstore deploy [--store-id <hex>] [--output-dir <dir>] [--build-command <cmd>] [-m <msg>] [--writer-key <seed>]` | CI auto-deploy: advance an EXISTING store from a fresh checkout (reads `dig.toml`); never mints. `--writer-key` advances the root with a revocable writer deploy token (owner seed stays out of CI) |
+| `digstore deploy --preview [--preview-out <file>]` | Build a **free** preview capsule via the real read path (writes a local `.dig` artifact + content address); no chain, no wallet, nothing spent |
 | `digstore deploy-key export [--out <file>]` | Export the store's publisher deploy key (for a CI secret) |
 | `digstore anchor [--wait-timeout <s>]` | Resume a pending on-chain anchor (confirm the coin, flip to confirmed) |
 | `digstore anchor status [--json]` | Show the active project's anchor state + embedded module chain pointer (read-only) |
