@@ -3,6 +3,7 @@
 pub mod anchor_backend;
 pub mod anchor_state;
 pub mod anchor_ux;
+pub mod assets;
 pub mod client_crypto;
 pub mod dighub;
 pub mod discovery;

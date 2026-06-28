@@ -123,6 +123,242 @@ pub enum Command {
     Link(LinkArgs),
     /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
     Completion(CompletionArgs),
+    /// Mint, transfer, and list NFTs (media stored permanently in DIG capsules).
+    Nft(NftArgs),
+    /// Create and bulk-mint NFT collections from a traits manifest.
+    Collection(CollectionArgs),
+    /// Create a creator-identity DID (decentralized identifier).
+    Did(DidArgs),
+    /// Make, take, and inspect Chia offers (XCH/CAT trades).
+    Offer(OfferArgs),
+}
+
+// ===========================================================================
+// Wave-B asset CLI (#35): nft / collection / did / offer.
+//
+// These surface the existing, Simulator-tested `digstore-chain` builders to the
+// terminal. Each on-chain action builds the spend via a chain builder, signs
+// with the wallet seed (the same unlock path as `commit`/`balance`), and pushes
+// via coinset. `--json` is non-interactive/CI-safe. `--dry-run` (where present)
+// BUILDS the spend but never signs/pushes — so the offline suite can exercise
+// the build path without spending. The capsule-media NFT mint (#33) additionally
+// writes the art + CHIP-0007 metadata into a real DIG capsule first.
+// ===========================================================================
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Each on-chain action spends an XCH network fee (and mints cost 1 mojo for the \
+singleton). Signed with your wallet seed; pushed via coinset.\n\nThe `mint` path stores the art + \
+CHIP-0007 metadata PERMANENTLY in a DIG capsule (not a centralized URL) and pins the on-chain hashes \
+to the real bytes — the \"truly permanent NFT\" path.\n\nEXAMPLES:\n  digstore nft mint --art \
+./art.png --name \"DIG Punk #1\" --royalty 300\n  digstore nft mint --art ./art.png --name X \
+--dry-run --json\n  digstore nft transfer --nft <launcher-id> --to <xch-address>\n  digstore nft list \
+--json"
+)]
+pub struct NftArgs {
+    #[command(subcommand)]
+    pub action: NftAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NftAction {
+    /// Mint one NFT whose media lives permanently in a DIG capsule (#33).
+    Mint(NftMintArgs),
+    /// Bulk-mint many NFTs from one funding coin in a single bundle.
+    Bulk(NftBulkArgs),
+    /// Transfer an owned NFT to a new owner address.
+    Transfer(NftTransferArgs),
+    /// List the NFTs the wallet currently owns.
+    List(NftListArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct NftMintArgs {
+    /// Path to the media file (art) to store in the capsule and mint as the NFT's data.
+    #[arg(long)]
+    pub art: PathBuf,
+    /// The NFT name (written into the CHIP-0007 metadata). Required.
+    #[arg(long)]
+    pub name: String,
+    /// Optional NFT description (CHIP-0007 metadata).
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Royalty in basis points (300 = 3%); default 0.
+    #[arg(long, default_value_t = 0)]
+    pub royalty: u16,
+    /// Optional creator DID launcher id (64-hex) to attribute the mint to.
+    #[arg(long)]
+    pub did: Option<String>,
+    /// An https gateway base to use as the data/metadata fallback URI (e.g.
+    /// `https://rpc.dig.net`). The dig:// URN is always the primary URI.
+    #[arg(long = "gateway")]
+    pub gateway: Option<String>,
+    /// Build the capsule + mint spend and print the plan WITHOUT signing or pushing
+    /// (no spend). Use to preview the dig:// URN, computed hashes, and cost.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct NftBulkArgs {
+    /// Path to a JSON manifest: an array of items `[{name, description?, attributes?, media:{data_uris,
+    /// data_hash, ...}}]` (already-parsed traits manifest; the capsule packing is the toolkit's job).
+    #[arg(long)]
+    pub manifest: PathBuf,
+    /// Optional creator DID launcher id (64-hex) to attribute every mint to.
+    #[arg(long)]
+    pub did: Option<String>,
+    /// Build the bulk-mint spend and print the plan WITHOUT signing or pushing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct NftTransferArgs {
+    /// The NFT to transfer, by its launcher id (64-hex) or `nft1…` id.
+    #[arg(long)]
+    pub nft: String,
+    /// The recipient mainnet address (`xch1…`).
+    #[arg(long)]
+    pub to: String,
+    /// Build the transfer spend and print the plan WITHOUT signing or pushing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct NftListArgs {}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "EXAMPLES:\n  digstore collection create --name \"DIG Punks\" --id dig-punks \
+--royalty 300\n  digstore collection mint --collection ./collection.json --manifest ./items.json \
+--did <did> --dry-run"
+)]
+pub struct CollectionArgs {
+    #[command(subcommand)]
+    pub action: CollectionAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollectionAction {
+    /// Define a collection (shared id/name/royalty) and write its definition JSON.
+    Create(CollectionCreateArgs),
+    /// Bulk-mint every item in a traits manifest into a collection, attributed to a DID.
+    Mint(CollectionMintArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CollectionCreateArgs {
+    /// Human-readable collection name. Required.
+    #[arg(long)]
+    pub name: String,
+    /// Stable collection id (defaults to a slug of the name).
+    #[arg(long)]
+    pub id: Option<String>,
+    /// Shared royalty in basis points for every item (300 = 3%); default 0.
+    #[arg(long, default_value_t = 0)]
+    pub royalty: u16,
+    /// Royalty recipient mainnet address (`xch1…`); defaults to the wallet's own address.
+    #[arg(long = "royalty-address")]
+    pub royalty_address: Option<String>,
+    /// Write the collection definition JSON to this file instead of stdout.
+    #[arg(long, short)]
+    pub out: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct CollectionMintArgs {
+    /// Path to a collection definition JSON (from `collection create`).
+    #[arg(long)]
+    pub collection: PathBuf,
+    /// Path to the items manifest JSON (array of parsed manifest items).
+    #[arg(long)]
+    pub manifest: PathBuf,
+    /// The creator DID launcher id (64-hex) the collection is minted under. Required (a collection
+    /// mint is DID-attributed).
+    #[arg(long)]
+    pub did: String,
+    /// Build the bulk-mint spend and print the plan WITHOUT signing or pushing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "A DID is your on-chain creator identity. Attribute mints to it so collectors can \
+verify who made an NFT.\n\nEXAMPLES:\n  digstore did create\n  digstore did create --dry-run --json"
+)]
+pub struct DidArgs {
+    #[command(subcommand)]
+    pub action: DidAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DidAction {
+    /// Create a new simple DID owned by the wallet.
+    Create(DidCreateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DidCreateArgs {
+    /// Build the create-DID spend and print the plan WITHOUT signing or pushing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "EXAMPLES:\n  digstore offer make --offer 1000xch --request 100dig\n  digstore \
+offer take --offer offer1...\n  digstore offer show --offer offer1..."
+)]
+pub struct OfferArgs {
+    #[command(subcommand)]
+    pub action: OfferAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OfferAction {
+    /// Make an offer: offer XCH/DIG and request XCH/DIG (prints an `offer1…` string).
+    Make(OfferMakeArgs),
+    /// Take an existing `offer1…` string with the wallet's funds.
+    Take(OfferTakeArgs),
+    /// Show what an `offer1…` string offers, requests, and costs to take (no spend).
+    Show(OfferShowArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct OfferMakeArgs {
+    /// Asset to OFFER, as `<amount><asset>` where asset is `xch` or `dig` (e.g. `1000xch`, `100dig`).
+    /// Repeatable.
+    #[arg(long = "offer")]
+    pub offer: Vec<String>,
+    /// Asset to REQUEST, as `<amount><asset>` (e.g. `100dig`). Repeatable.
+    #[arg(long = "request")]
+    pub request: Vec<String>,
+    /// Network fee in mojos (default 0).
+    #[arg(long, default_value_t = 0)]
+    pub fee: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct OfferTakeArgs {
+    /// The bech32 `offer1…` string to take.
+    #[arg(long)]
+    pub offer: String,
+    /// Network fee in mojos (default 0).
+    #[arg(long, default_value_t = 0)]
+    pub fee: u64,
+    /// Decode + price the offer and print the plan WITHOUT signing or pushing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct OfferShowArgs {
+    /// The bech32 `offer1…` string to inspect.
+    #[arg(long)]
+    pub offer: String,
 }
 
 #[derive(Debug, Args)]
@@ -1143,5 +1379,187 @@ mod tests {
         // backward-compat guard: the original --store flag is unchanged.
         let cli = Cli::try_parse_from(["digstore", "--store", "site", "status"]).unwrap();
         assert_eq!(cli.store_name.as_deref(), Some("site"));
+    }
+
+    // --- Wave-B asset CLI (#35) parse guards ---
+
+    #[test]
+    fn parses_nft_mint() {
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "nft",
+            "mint",
+            "--art",
+            "a.png",
+            "--name",
+            "DIG Punk #1",
+            "--royalty",
+            "300",
+            "--dry-run",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Nft(NftArgs {
+                action: NftAction::Mint(m),
+            }) => {
+                assert_eq!(m.art.to_str().unwrap(), "a.png");
+                assert_eq!(m.name, "DIG Punk #1");
+                assert_eq!(m.royalty, 300);
+                assert!(m.dry_run);
+                assert!(m.did.is_none());
+            }
+            _ => panic!("expected nft mint"),
+        }
+    }
+
+    #[test]
+    fn parses_nft_transfer_and_list() {
+        let cli = Cli::try_parse_from([
+            "digstore", "nft", "transfer", "--nft", "abcd", "--to", "xch1z",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Nft(NftArgs {
+                action: NftAction::Transfer(t),
+            }) => {
+                assert_eq!(t.nft, "abcd");
+                assert_eq!(t.to, "xch1z");
+            }
+            _ => panic!("expected nft transfer"),
+        }
+        let cli = Cli::try_parse_from(["digstore", "nft", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Nft(NftArgs {
+                action: NftAction::List(_)
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_nft_bulk() {
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "nft",
+            "bulk",
+            "--manifest",
+            "items.json",
+            "--dry-run",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Nft(NftArgs {
+                action: NftAction::Bulk(b),
+            }) => {
+                assert_eq!(b.manifest.to_str().unwrap(), "items.json");
+                assert!(b.dry_run);
+            }
+            _ => panic!("expected nft bulk"),
+        }
+    }
+
+    #[test]
+    fn parses_collection_create_and_mint() {
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "collection",
+            "create",
+            "--name",
+            "DIG Punks",
+            "--royalty",
+            "300",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Collection(CollectionArgs {
+                action: CollectionAction::Create(c),
+            }) => {
+                assert_eq!(c.name, "DIG Punks");
+                assert_eq!(c.royalty, 300);
+                assert!(c.id.is_none());
+            }
+            _ => panic!("expected collection create"),
+        }
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "collection",
+            "mint",
+            "--collection",
+            "c.json",
+            "--manifest",
+            "i.json",
+            "--did",
+            "abcd",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Collection(CollectionArgs {
+                action: CollectionAction::Mint(m),
+            }) => {
+                assert_eq!(m.collection.to_str().unwrap(), "c.json");
+                assert_eq!(m.did, "abcd");
+            }
+            _ => panic!("expected collection mint"),
+        }
+    }
+
+    #[test]
+    fn parses_did_create() {
+        let cli = Cli::try_parse_from(["digstore", "did", "create", "--dry-run"]).unwrap();
+        match cli.command {
+            Command::Did(DidArgs {
+                action: DidAction::Create(c),
+            }) => assert!(c.dry_run),
+            _ => panic!("expected did create"),
+        }
+    }
+
+    #[test]
+    fn parses_offer_make_take_show() {
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "offer",
+            "make",
+            "--offer",
+            "1000xch",
+            "--request",
+            "100dig",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Offer(OfferArgs {
+                action: OfferAction::Make(m),
+            }) => {
+                assert_eq!(m.offer, vec!["1000xch".to_string()]);
+                assert_eq!(m.request, vec!["100dig".to_string()]);
+            }
+            _ => panic!("expected offer make"),
+        }
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "offer",
+            "take",
+            "--offer",
+            "offer1xyz",
+            "--dry-run",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Offer(OfferArgs {
+                action: OfferAction::Take(t),
+            }) => {
+                assert_eq!(t.offer, "offer1xyz");
+                assert!(t.dry_run);
+            }
+            _ => panic!("expected offer take"),
+        }
+        let cli =
+            Cli::try_parse_from(["digstore", "offer", "show", "--offer", "offer1xyz"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Offer(OfferArgs {
+                action: OfferAction::Show(_)
+            })
+        ));
     }
 }
