@@ -65,8 +65,8 @@ struct DevState {
 }
 
 pub fn run(ctx: &CliContext, ui: &Ui, args: DevArgs) -> Result<(), CliError> {
-    // 1. Resolve the content dir + build command (dig.toml < flags).
-    let file = DigToml::read(&ctx.op_dir)?;
+    // 1. Resolve the content dir + build command (precedence: flags > env > dig.toml).
+    let file = DigToml::read_with_env(&ctx.op_dir)?;
     let content_rel = args
         .dir
         .clone()

@@ -116,6 +116,13 @@ pub enum Command {
     Deploy(DeployArgs),
     /// Manage the per-store publisher deploy key (export it once for CI; import it).
     DeployKey(DeployKeyArgs),
+    /// Get set up to publish: seed (import/generate), fund check, optional login.
+    #[command(visible_alias = "auth")]
+    Setup(SetupArgs),
+    /// Connect this folder to an existing project (writes dig.toml + remote).
+    Link(LinkArgs),
+    /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
+    Completion(CompletionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -565,8 +572,11 @@ pub struct LogoutArgs {}
 --output-dir, then commits + pushes to DIGHub as a new capsule. NEVER mints (no `init`).\n\nReads \
 defaults from `dig.toml` in the current directory (store-id, output-dir, build-command, remote, \
 network, wait-timeout). Flags/env override the file.\n\nCosts 100 DIG + an XCH fee per deploy (the \
-on-chain root update), paid from the wallet seed (DIGSTORE_PASSPHRASE).\n\nEXAMPLES:\n  digstore \
-deploy\n  digstore deploy --output-dir dist --message \"deploy ${GITHUB_SHA}\" --json"
+on-chain root update), paid from the wallet seed (DIGSTORE_PASSPHRASE).\n\n--if-changed skips the \
+deploy (and the spend) when the built output matches the store's current on-chain version — safe to \
+run on every push. --dry-run previews the resulting version + exact cost WITHOUT spending.\n\n\
+EXAMPLES:\n  digstore deploy\n  digstore deploy --if-changed --message \"deploy ${GITHUB_SHA}\" \
+--json\n  digstore deploy --dry-run"
 )]
 pub struct DeployArgs {
     /// The on-chain store id (64-hex) to advance. Overrides `dig.toml`'s `store-id`.
@@ -600,6 +610,14 @@ pub struct DeployArgs {
     /// self-hosted node URL). Overrides `dig.toml`'s `remote`. Defaults to the public RPC.
     #[arg(long)]
     pub remote: Option<String>,
+    /// Skip the deploy (and the 100 DIG + XCH spend) when the built output is identical to the
+    /// store's current on-chain version — a no-op guard for CI that runs on every push.
+    #[arg(long = "if-changed")]
+    pub if_changed: bool,
+    /// Preview the resulting version (root) + the exact DIG/XCH cost WITHOUT spending,
+    /// anchoring, or publishing anything. Builds + stages so the previewed root is real.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -628,6 +646,70 @@ pub struct UpdateArgs {
     /// Only report whether an update is available; never download.
     #[arg(long)]
     pub check: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "One guided first-run to get you ready to PUBLISH. It walks three things, in \
+order:\n  1. Seed — import an existing BIP-39 mnemonic or generate a new one. The seed signs every \
+on-chain action and pays the 100 DIG + XCH per publish. It NEVER leaves your machine.\n  2. Funds — \
+checks your wallet has enough DIG + XCH for a publish, and points you at where to get more if \
+not.\n  3. Login (optional) — a dighub account so your published projects appear in your dashboard. \
+The login only GATES the push to the public hub; it has NO on-chain authority. (Seed signs the \
+chain; login gates the push — two different things.)\n\nEverything except generating a brand-new \
+seed is safe to re-run. `digstore auth` is an alias.\n\nEXAMPLES:\n  digstore setup\n  digstore \
+setup --generate\n  digstore setup --no-login --json"
+)]
+pub struct SetupArgs {
+    /// Generate a brand-new seed instead of importing one (skips the import prompt).
+    #[arg(long, conflicts_with = "import")]
+    pub generate: bool,
+    /// Import an existing seed (prompts for the mnemonic). The default when a seed
+    /// is absent and neither flag is given in interactive mode.
+    #[arg(long, conflicts_with = "generate")]
+    pub import: bool,
+    /// Skip the optional dighub login step.
+    #[arg(long)]
+    pub no_login: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Connects the CURRENT folder to a project you ALREADY published (from the hub or \
+on-chain), so you can iterate + redeploy it from here. It writes a committable `dig.toml` pinning \
+the project's id (and, when given a full URN, its remote), and registers `origin`. It does NOT mint, \
+spend, download content, or need your seed — it just records where to publish.\n\nAfter linking, \
+publish a new version with `digstore deploy` (which reconstructs the store from your deploy key).\n\n\
+EXAMPLES:\n  digstore link 7e3a…  (a 64-hex store id)\n  digstore link urn:dig:chia:<storeID>\n  \
+digstore link <storeID> --output-dir dist --remote dig://<storeID>"
+)]
+pub struct LinkArgs {
+    /// The project to attach to: a 64-hex store id, or a `urn:dig:chia:<storeID>[:<root>]` URN.
+    pub target: String,
+    /// The built-output directory to publish (written to `dig.toml`; default `dist`).
+    #[arg(long = "output-dir")]
+    pub output_dir: Option<String>,
+    /// The remote to publish to (written to `dig.toml`'s `remote`). Defaults to the
+    /// public DIGHub for the linked store when omitted.
+    #[arg(long)]
+    pub remote: Option<String>,
+    /// Overwrite an existing `dig.toml` in this folder (otherwise linking refuses).
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Generates a shell completion script for `digstore` on stdout. Install it the way \
+your shell expects, e.g.:\n  bash:        digstore completion bash > /etc/bash_completion.d/digstore\n  \
+zsh:         digstore completion zsh  > \"${fpath[1]}/_digstore\"\n  fish:        digstore completion \
+fish > ~/.config/fish/completions/digstore.fish\n  powershell:  digstore completion powershell >> \
+$PROFILE\n\nEXAMPLES:\n  digstore completion bash\n  digstore completion zsh"
+)]
+pub struct CompletionArgs {
+    /// The shell to generate completions for.
+    #[arg(value_enum)]
+    pub shell: clap_complete::Shell,
 }
 
 #[cfg(test)]
@@ -707,6 +789,35 @@ mod tests {
         match cli.command {
             Command::Commit(c) => assert!(!c.dry_run),
             _ => panic!("expected commit"),
+        }
+    }
+
+    #[test]
+    fn parses_deploy_if_changed_and_dry_run() {
+        let cli = Cli::try_parse_from(["digstore", "deploy", "--if-changed"]).unwrap();
+        match cli.command {
+            Command::Deploy(d) => {
+                assert!(d.if_changed);
+                assert!(!d.dry_run);
+            }
+            _ => panic!("expected deploy"),
+        }
+        let cli = Cli::try_parse_from(["digstore", "deploy", "--dry-run"]).unwrap();
+        match cli.command {
+            Command::Deploy(d) => {
+                assert!(d.dry_run);
+                assert!(!d.if_changed);
+            }
+            _ => panic!("expected deploy"),
+        }
+        // defaults off
+        let cli = Cli::try_parse_from(["digstore", "deploy"]).unwrap();
+        match cli.command {
+            Command::Deploy(d) => {
+                assert!(!d.if_changed);
+                assert!(!d.dry_run);
+            }
+            _ => panic!("expected deploy"),
         }
     }
 
@@ -827,6 +938,61 @@ mod tests {
     fn parses_balance() {
         let cli = Cli::try_parse_from(["digstore", "balance"]).unwrap();
         assert!(matches!(cli.command, Command::Balance(_)));
+    }
+
+    #[test]
+    fn parses_setup_and_auth_alias() {
+        let cli = Cli::try_parse_from(["digstore", "setup"]).unwrap();
+        assert!(matches!(cli.command, Command::Setup(_)));
+        // `auth` is a visible alias for `setup`.
+        let cli = Cli::try_parse_from(["digstore", "auth"]).unwrap();
+        assert!(matches!(cli.command, Command::Setup(_)));
+    }
+
+    #[test]
+    fn parses_setup_flags() {
+        let cli = Cli::try_parse_from(["digstore", "setup", "--generate", "--no-login"]).unwrap();
+        match cli.command {
+            Command::Setup(s) => {
+                assert!(s.generate);
+                assert!(s.no_login);
+                assert!(!s.import);
+            }
+            _ => panic!("expected setup"),
+        }
+        // --generate and --import are mutually exclusive.
+        assert!(Cli::try_parse_from(["digstore", "setup", "--generate", "--import"]).is_err());
+    }
+
+    #[test]
+    fn parses_link_target_and_flags() {
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "link",
+            "urn:dig:chia:abcd",
+            "--output-dir",
+            "dist",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Link(l) => {
+                assert_eq!(l.target, "urn:dig:chia:abcd");
+                assert_eq!(l.output_dir.as_deref(), Some("dist"));
+                assert!(!l.force);
+            }
+            _ => panic!("expected link"),
+        }
+    }
+
+    #[test]
+    fn parses_completion_shell() {
+        let cli = Cli::try_parse_from(["digstore", "completion", "bash"]).unwrap();
+        match cli.command {
+            Command::Completion(c) => assert_eq!(c.shell, clap_complete::Shell::Bash),
+            _ => panic!("expected completion"),
+        }
+        // An unknown shell is rejected by the value_enum.
+        assert!(Cli::try_parse_from(["digstore", "completion", "tcsh"]).is_err());
     }
 
     #[test]

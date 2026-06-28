@@ -216,12 +216,20 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         if first {
             ui.line("  set as active project");
         }
-        ui.line(format!(
-            "  trusted host key: {}",
-            res.host_public_key.to_hex()
-        ));
+        // #14: keep the default surface task-first. The protocol-level trusted
+        // host key and the confirmed on-chain coin id are demoted behind
+        // --verbose. A PENDING anchor stays visible because it carries an
+        // actionable next step (`digstore anchor`).
+        if ctx.verbose {
+            ui.line(format!(
+                "  trusted host key: {}",
+                res.host_public_key.to_hex()
+            ));
+        }
         if confirmed {
-            ui.line(format!("  anchored on mainnet (coin {coin_id_hex})"));
+            if ctx.verbose {
+                ui.line(format!("  anchored on mainnet (coin {coin_id_hex})"));
+            }
         } else {
             ui.line(format!(
                 "  ⏳ anchored on mainnet (coin {coin_id_hex}) — not yet confirmed; run `digstore anchor`"

@@ -25,6 +25,8 @@ digstore-prover = { path = "../digstore-prover" }
 digstore-remote = { path = "../digstore-remote" }
 digstore-crypto = { path = "../digstore-crypto" }
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+clap_mangen = "0.2"
 anyhow = "1"
 thiserror = "1"
 chia-protocol = "0.26"
