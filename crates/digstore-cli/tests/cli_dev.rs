@@ -8,7 +8,7 @@
 
 mod common;
 use assert_cmd::cargo::cargo_bin;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -77,6 +77,41 @@ impl Drop for DevServer {
     }
 }
 
+/// Read the OS-assigned port from the dev server's JSON stdout (`--port 0`). The
+/// `dev` command binds FIRST, then prints the real bound URL/port — so reading
+/// this line is a reliable readiness signal AND avoids a fixed-port collision
+/// (the old fixed-port + 40s-poll approach was flaky under CI load).
+fn read_port_from(child: &mut Child) -> Option<u16> {
+    let stdout = child.stdout.take()?;
+    let mut reader = BufReader::new(stdout);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut line = String::new();
+    while Instant::now() < deadline {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => return None, // EOF: process exited before serving.
+            Ok(_) => {
+                // The JSON is pretty-printed, so the port lands on its own line as
+                // `  "port": 47431,`. Match that line directly (parsing one line as
+                // a whole JSON object would fail on a fragment).
+                let t = line.trim();
+                if let Some(rest) = t.strip_prefix("\"port\":") {
+                    let digits: String = rest
+                        .trim()
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    if let Ok(p) = digits.parse::<u16>() {
+                        return Some(p);
+                    }
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 #[test]
 fn dev_serves_real_read_path_with_injected_shims() {
     let td = tmp_dir();
@@ -88,15 +123,18 @@ fn dev_serves_real_read_path_with_injected_shims() {
         .status()
         .unwrap();
 
-    // A fixed, uncommon port for this test.
-    let port: u16 = 47431;
-    let child = Command::new(cargo_bin("digstore"))
+    // `--port 0` => the OS assigns a free port; `--json` makes `dev` print the
+    // real bound port once it is accepting connections. This removes both the
+    // fixed-port collision and the startup race that made this test flaky in CI.
+    let mut child = Command::new(cargo_bin("digstore"))
         .current_dir(td.path())
-        .args(["dev", "--port", &port.to_string()])
-        .stdout(Stdio::null())
+        .args(["--json", "dev", "--port", "0"])
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+
+    let port = read_port_from(&mut child).expect("dev server did not announce a port");
     let _guard = DevServer(child);
 
     let body = wait_for_server(port).expect("dev server did not come up");

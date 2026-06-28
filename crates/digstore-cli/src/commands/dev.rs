@@ -103,41 +103,8 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: DevArgs) -> Result<(), CliError> {
     });
 
     let bind = format!("127.0.0.1:{}", args.port);
-    let url = format!("http://{bind}/");
 
-    if ui.json() {
-        ui.emit_json(&serde_json::json!({
-            "serving": true,
-            "url": url,
-            "content_dir": content_dir.display().to_string(),
-            "spent": false,
-            "mocked": false,
-        }));
-    } else {
-        ui.success(format!("Preview serving at {url}"));
-        ui.line(format!("  content: {}", content_dir.display()));
-        ui.line("  live reload on save · dev window.chia shim injected · no spend");
-        ui.line("  Press Ctrl-C to stop.");
-    }
-
-    if args.open {
-        let _ = open_in_browser(&url);
-    }
-
-    // 4. Spawn the watch loop: poll the content dir, rebuild + bump version on
-    //    change. A failed rebuild keeps the last good build serving.
-    {
-        let state = state.clone();
-        let content_dir = content_dir.clone();
-        let build_command = build_command.clone();
-        let poll = args.poll.max(1);
-        let ui = ui.clone();
-        std::thread::spawn(move || {
-            watch_loop(&ui, &state, &content_dir, build_command.as_deref(), poll);
-        });
-    }
-
-    // 5. Serve. Build the router and block on the async server.
+    // 4. Serve. Build the router and block on the async server.
     let app = Router::new()
         .route("/__dig/reload", get(reload_handler))
         .route("/", get(asset_handler))
@@ -151,17 +118,66 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: DevArgs) -> Result<(), CliError> {
         .enable_all()
         .build()
         .map_err(|e| CliError::Other(anyhow::anyhow!("tokio runtime: {e}")))?;
+
+    // BIND FIRST, then announce. Binding before printing the URL means:
+    //   - a port already in use fails immediately (a clear error, not a silent
+    //     "serving" line that never answers), and
+    //   - `--port 0` works: the OS assigns a free port and we report the REAL one,
+    //     so callers/tests never race a fixed port or a slow startup — the URL is
+    //     only emitted once the listener is actually accepting connections.
     let result = rt.block_on(async move {
         let listener = tokio::net::TcpListener::bind(&bind)
             .await
             .map_err(|e| CliError::Other(anyhow::anyhow!("bind {bind}: {e}")))?;
+        // The actual bound address (resolves `:0` to the OS-assigned port).
+        let local = listener
+            .local_addr()
+            .map_err(|e| CliError::Other(anyhow::anyhow!("local_addr: {e}")))?;
+        let url = format!("http://{local}/");
+
+        // Announce now that we are bound (stdout so a parent process/test can read
+        // the real URL even when the rest is quiet).
+        if ui.json() {
+            ui.emit_json(&serde_json::json!({
+                "serving": true,
+                "url": url,
+                "port": local.port(),
+                "content_dir": content_dir.display().to_string(),
+                "spent": false,
+                "mocked": false,
+            }));
+        } else {
+            ui.success(format!("Preview serving at {url}"));
+            ui.line(format!("  content: {}", content_dir.display()));
+            ui.line("  live reload on save · dev window.chia shim injected · no spend");
+            ui.line("  Press Ctrl-C to stop.");
+        }
+        if args.open {
+            let _ = open_in_browser(&url);
+        }
+
+        // Spawn the watch loop only AFTER we are serving: poll the content dir,
+        // rebuild + bump version on change. A failed rebuild keeps the last good
+        // build serving.
+        {
+            let state = state.clone();
+            let content_dir = content_dir.clone();
+            let build_command = build_command.clone();
+            let poll = args.poll.max(1);
+            let ui = ui.clone();
+            std::thread::spawn(move || {
+                watch_loop(&ui, &state, &content_dir, build_command.as_deref(), poll);
+            });
+        }
+
         axum::serve(listener, app)
             .await
             .map_err(|e| CliError::Other(anyhow::anyhow!("server error: {e}")))
     });
 
-    // Best-effort cleanup of the scratch area.
-    let _ = std::fs::remove_dir_all(&state.work_root);
+    // Best-effort cleanup of the scratch area. Use the outer `work_root` (the same
+    // path `state.work_root` holds) since `state` was moved into the server block.
+    let _ = std::fs::remove_dir_all(&work_root);
     result
 }
 
