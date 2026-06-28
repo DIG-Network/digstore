@@ -899,6 +899,19 @@ pub fn stage_to_root(ctx: &CliContext) -> Result<PreparedCommit, CliError> {
     stage_to_root_with(ctx, false)
 }
 
+/// Compute the staged generation's root WITHOUT the no-op guard, returning
+/// `(root, is_noop)` where `is_noop` is true when the staged content reproduces
+/// the store's current head (committing it would be a no-op). This is the basis
+/// for `deploy --if-changed`/`--dry-run`, which must SEE the resulting root even
+/// when it is unchanged (and decide what to do) rather than have `stage_to_root`
+/// reject it. Reuses the exact same build as a real commit, so the previewed root
+/// is the one a commit would produce.
+pub fn staged_root_or_noop(ctx: &CliContext) -> Result<(Bytes32, bool), CliError> {
+    let prepared = build_prepared(ctx, false)?;
+    let is_noop = current_root(ctx)? == Some(prepared.root);
+    Ok((prepared.root, is_noop))
+}
+
 /// Like [`stage_to_root`], but when `pre_encrypted` is true each staged resource's bytes are
 /// treated as ALREADY-SEALED ciphertext (the client encrypted them under the per-URN key before
 /// upload — the server never sees plaintext or the key). The resource is stored as a SINGLE chunk
@@ -908,6 +921,30 @@ pub fn stage_to_root_with(
     ctx: &CliContext,
     pre_encrypted: bool,
 ) -> Result<PreparedCommit, CliError> {
+    let prepared = build_prepared(ctx, pre_encrypted)?;
+
+    // Refuse a no-op commit. Committing clears staging, so re-`add`ing identical
+    // content re-stages it and produces the SAME root as the current head. Without
+    // this guard `commit` would anchor that identical root on-chain (spending real
+    // XCH) and append a duplicate-root generation. Bail BEFORE any wallet/anchor
+    // work, like `git commit` refusing an empty commit. (`staged_root_or_noop`
+    // computes the same root WITHOUT this guard for the deploy preview/guard.)
+    if current_root(ctx)? == Some(prepared.root) {
+        return Err(CliError::InvalidArgument(format!(
+            "nothing changed since the last commit (staged content produces the current root {}); \
+             stage different content, or `digstore unstage` to discard",
+            prepared.root.to_hex()
+        )));
+    }
+    Ok(prepared)
+}
+
+/// Build the [`PreparedCommit`] (encrypt chunks, build the merkle tree, compute
+/// the root) from staging WITHOUT applying the no-op guard. Shared by
+/// [`stage_to_root_with`] (which adds the guard) and [`staged_root_or_noop`]
+/// (which reports the no-op instead of erroring), so the root is computed in
+/// exactly ONE place.
+fn build_prepared(ctx: &CliContext, pre_encrypted: bool) -> Result<PreparedCommit, CliError> {
     let cfg = ctx.load_config()?;
     let salt = salt_of(&cfg);
 
@@ -1005,19 +1042,6 @@ pub fn stage_to_root_with(
 
     let tree = MerkleTree::from_leaves(resource_leaves);
     let root = tree.root();
-
-    // Refuse a no-op commit. Committing clears staging, so re-`add`ing identical
-    // content re-stages it and produces the SAME root as the current head. Without
-    // this guard `commit` would anchor that identical root on-chain (spending real
-    // XCH) and append a duplicate-root generation. Bail BEFORE any wallet/anchor
-    // work, like `git commit` refusing an empty commit.
-    if current_root(ctx)? == Some(root) {
-        return Err(CliError::InvalidArgument(format!(
-            "nothing changed since the last commit (staged content produces the current root {}); \
-             stage different content, or `digstore unstage` to discard",
-            root.to_hex()
-        )));
-    }
 
     let next_id = RootHistory::open(ctx.history_path())
         .and_then(|h| h.next_id())

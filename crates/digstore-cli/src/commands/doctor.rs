@@ -156,8 +156,8 @@ pub fn run(ctx: &CliContext, ui: &Ui, _args: DoctorArgs) -> Result<(), CliError>
         Err(e) => checks.push(Check::skip("default remote", format!("{remote_url}: {e}"))),
     }
 
-    // 6. Content/output directory exists (from dig.toml or the default).
-    let file = DigToml::read(&ctx.op_dir).unwrap_or_default();
+    // 6. Content/output directory exists (from dig.toml/env or the default).
+    let file = DigToml::read_with_env(&ctx.op_dir).unwrap_or_default();
     let content_rel = file.output_dir.unwrap_or_else(|| ".".to_string());
     let content_dir = if std::path::Path::new(&content_rel).is_absolute() {
         std::path::PathBuf::from(&content_rel)

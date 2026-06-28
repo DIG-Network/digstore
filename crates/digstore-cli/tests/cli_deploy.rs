@@ -247,6 +247,175 @@ fn deploy_advances_existing_store_with_original_publisher_key() {
     );
 }
 
+/// `deploy --dry-run` previews the resulting version (root) + the exact DIG/XCH
+/// cost and STOPS — it never spends, never adopts a chain root, never pushes. It
+/// must work from a FRESH checkout with only a deploy key (no wallet scan).
+#[test]
+fn deploy_dry_run_previews_cost_without_spending() {
+    let ci = tmp_dig();
+    let store_id = "ab".repeat(32);
+    let dist = ci.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), b"<h1>preview</h1>").unwrap();
+    std::fs::write(
+        ci.path().join("dig.toml"),
+        format!("store-id = \"{store_id}\"\noutput-dir = \"dist\"\n"),
+    )
+    .unwrap();
+
+    let out = dig(&ci)
+        .args(["deploy", "--dry-run", "--json"])
+        .env("DIGSTORE_DEPLOY_KEY", "cd".repeat(32))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "dry-run deploy failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["dry_run"].as_bool(), Some(true));
+    assert_eq!(v["spent"].as_bool(), Some(false));
+    // A real, computed root for the staged content (capsule = storeId:rootHash).
+    let root = v["root"].as_str().expect("root in dry-run output");
+    assert_eq!(root.len(), 64, "root is a 32-byte hex");
+    assert_eq!(v["capsule"].as_str().unwrap(), format!("{store_id}:{root}"));
+    // `cost_dig` is raw mojos (1 DIG = 1000 mojos); the human display reads "100…".
+    assert!(
+        v["cost_dig_display"].as_str().unwrap().starts_with("100"),
+        "dig cost display should be 100 DIG, got {:?}",
+        v["cost_dig_display"]
+    );
+    assert_eq!(v["cost_dig"].as_u64(), Some(100_000), "raw mojos = 100 DIG");
+}
+
+/// `deploy --if-changed` is a NO-OP (no spend, no push) when the built output is
+/// byte-identical to the store's current on-chain version. The whole point is a
+/// CI workflow can run `deploy --if-changed` on every push and only pay when the
+/// content actually changed.
+#[test]
+fn deploy_if_changed_is_noop_when_unchanged() {
+    // Phase 1: create + publish v1 locally, capture its root + deploy key.
+    let dev = tmp_dig();
+    dig(&dev).arg("init").assert().success();
+    let pk = host_pubkey(&dev);
+    let store_id = store_id_of(&dev);
+    let server = TestServer::start_empty(&store_id, pk);
+    let store_url = format!("{}/stores/{}", server.base_url(), store_id);
+    dig(&dev)
+        .args(["remote", "add", "origin", &store_url])
+        .assert()
+        .success();
+    std::fs::write(dev.path().join("index.html"), b"<h1>same</h1>").unwrap();
+    dig(&dev).args(["add", "index.html"]).assert().success();
+    dig(&dev)
+        .args(["commit", "-m", "v1", "--push"])
+        .assert()
+        .success();
+    let (_sid, root_v1) = store_id_and_root(&dev);
+
+    let key_out = dig(&dev).args(["deploy-key", "export"]).output().unwrap();
+    let deploy_key = String::from_utf8(key_out.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+
+    // Phase 2: a fresh checkout with the SAME content as v1 and --if-changed.
+    let ci = tmp_dig();
+    let dist = ci.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), b"<h1>same</h1>").unwrap();
+    std::fs::write(
+        ci.path().join("dig.toml"),
+        format!("store-id = \"{store_id}\"\noutput-dir = \"dist\"\nremote = \"{store_url}\"\n"),
+    )
+    .unwrap();
+
+    let out = dig(&ci)
+        .args(["deploy", "--if-changed", "--wait-timeout", "0", "--json"])
+        .env("DIGSTORE_DEPLOY_KEY", &deploy_key)
+        .env("DIGSTORE_ANCHOR_MOCK_CHAIN_ROOT", &root_v1)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "if-changed no-op deploy failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["skipped"].as_bool(),
+        Some(true),
+        "unchanged content must be skipped"
+    );
+    assert_eq!(v["spent"].as_bool(), Some(false));
+    // The remote must still serve v1 (nothing was pushed).
+    assert_eq!(
+        server_served_root(&server, &store_id).as_deref(),
+        Some(root_v1.as_str()),
+        "no-op deploy must not advance the remote"
+    );
+}
+
+/// `deploy --if-changed` STILL deploys when the content differs from the on-chain
+/// version (the guard only suppresses no-ops).
+#[test]
+fn deploy_if_changed_deploys_when_changed() {
+    let dev = tmp_dig();
+    dig(&dev).arg("init").assert().success();
+    let pk = host_pubkey(&dev);
+    let store_id = store_id_of(&dev);
+    let server = TestServer::start_empty(&store_id, pk);
+    let store_url = format!("{}/stores/{}", server.base_url(), store_id);
+    dig(&dev)
+        .args(["remote", "add", "origin", &store_url])
+        .assert()
+        .success();
+    std::fs::write(dev.path().join("index.html"), b"<h1>v1</h1>").unwrap();
+    dig(&dev).args(["add", "index.html"]).assert().success();
+    dig(&dev)
+        .args(["commit", "-m", "v1", "--push"])
+        .assert()
+        .success();
+    let (_sid, root_v1) = store_id_and_root(&dev);
+
+    let key_out = dig(&dev).args(["deploy-key", "export"]).output().unwrap();
+    let deploy_key = String::from_utf8(key_out.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let ci = tmp_dig();
+    let dist = ci.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), b"<h1>v2 CHANGED</h1>").unwrap();
+    std::fs::write(
+        ci.path().join("dig.toml"),
+        format!("store-id = \"{store_id}\"\noutput-dir = \"dist\"\nremote = \"{store_url}\"\n"),
+    )
+    .unwrap();
+
+    let out = dig(&ci)
+        .args(["deploy", "--if-changed", "--wait-timeout", "0", "--json"])
+        .env("DIGSTORE_DEPLOY_KEY", &deploy_key)
+        .env("DIGSTORE_ANCHOR_MOCK_CHAIN_ROOT", &root_v1)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    // Changed content => NOT skipped, and the remote advanced.
+    assert_ne!(v["skipped"].as_bool(), Some(true));
+    let new_root = v["root"].as_str().unwrap();
+    assert_ne!(new_root, root_v1);
+    assert_eq!(
+        server_served_root(&server, &store_id).as_deref(),
+        Some(new_root),
+        "changed content must advance the remote"
+    );
+}
+
 /// `deploy` refuses to run without a deploy key (the one irreducible CI secret
 /// beyond the wallet), with a clear message — never a panic.
 #[test]

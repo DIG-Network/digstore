@@ -38,6 +38,31 @@ fn init_twice_fails_with_exit_2() {
     dig(&dir).arg("init").assert().failure().code(2);
 }
 
+/// Roadmap #14: `init`'s default success output is task-first — it leads with the
+/// human "Initialized project" line and does NOT dump the protocol-level
+/// `trusted host key:` on the default surface. (It is still available behind
+/// `--verbose` for those who want it; see `init_verbose_shows_protocol_detail`.)
+#[test]
+fn init_default_output_hides_trusted_host_key() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success().stdout(
+        predicate::str::contains("Initialized project")
+            .and(predicate::str::contains("trusted host key").not()),
+    );
+}
+
+/// `--verbose init` still surfaces the protocol detail (trusted host key + the
+/// on-chain coin) for users who want it — progressive disclosure, not removal.
+#[test]
+fn init_verbose_shows_protocol_detail() {
+    let dir = tmp_dig();
+    dig(&dir)
+        .args(["--verbose", "init"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("trusted host key"));
+}
+
 #[test]
 fn init_when_disk_store_exists_but_registry_lost_fails_before_minting() {
     // Money-relevant guard: if the workspace registry (workspace.toml) and the

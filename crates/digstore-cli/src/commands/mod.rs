@@ -12,6 +12,7 @@ pub mod checkout;
 pub mod clone;
 pub mod commit;
 pub mod compile;
+pub mod completion;
 pub mod deploy;
 pub mod deploy_key;
 pub mod dev;
@@ -20,6 +21,7 @@ pub mod dir;
 pub mod doctor;
 pub mod init;
 pub mod keys;
+pub mod link;
 pub mod lock;
 pub mod log;
 pub mod login;
@@ -31,6 +33,7 @@ pub mod remote;
 pub mod revoke;
 pub mod seed;
 pub mod serve;
+pub mod setup;
 pub mod staged;
 pub mod status;
 pub mod stores;
@@ -64,6 +67,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
             | Command::New(_)
             | Command::Dev(_)
             | Command::Doctor(_)
+            | Command::Link(_)
     ) {
         CliContext::init_workspace(cli.dig_dir.clone())
     } else {
@@ -99,6 +103,20 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
                 verbose: cli.verbose,
             };
             return doctor::run(&ctx, &ui, a);
+        }
+        // `link` writes a committable `dig.toml` into CWD (where the developer's
+        // source lives); like `doctor` it operates on the op_dir and needs no
+        // existing workspace/store.
+        Command::Link(a) => {
+            let ctx = CliContext {
+                dig_dir: workspace_dir.clone(),
+                workspace_dir,
+                op_dir: cwd,
+                store_name: Some("default".to_string()),
+                json: cli.json,
+                verbose: cli.verbose,
+            };
+            return link::run(&ctx, &ui, a);
         }
         Command::Init(a) => {
             let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
@@ -154,6 +172,11 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Command::Seed(a) => return seed::run(&ui, a),
         Command::Lock(_) => return lock::run(&ui),
+        // `setup`/`auth` guides seed + fund check + optional login; like `seed`/
+        // `login` it is workspace-independent (it touches the identity dir, not a
+        // store). `completion` just prints a static script.
+        Command::Setup(a) => return setup::run(&ui, a),
+        Command::Completion(a) => return completion::run(&ui, a.shell),
         // dighub account commands: workspace-independent (the session lives next to
         // the identity key, not in any store).
         Command::Login(a) => return login::run(&ui, a),
@@ -205,6 +228,9 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::New(_)
         | Command::Dev(_)
         | Command::Doctor(_)
+        | Command::Link(_)
+        | Command::Setup(_)
+        | Command::Completion(_)
         | Command::Init(_)
         | Command::Clone(_)
         | Command::Compile(_)

@@ -4,6 +4,14 @@ use digstore_cli::cli::{Cli, Command};
 use digstore_cli::commands;
 
 fn main() {
+    // `--help-json`: print the machine-readable CLI schema and exit, BEFORE clap
+    // parses (so it works with no subcommand: `digstore --help-json`). Mirrors how
+    // clap itself intercepts `--help`/`--version`. Agents/docs read the whole
+    // command surface from this instead of scraping `--help`.
+    if std::env::args().any(|a| a == "--help-json") {
+        commands::completion::print_help_json();
+        std::process::exit(0);
+    }
     let cli = Cli::parse();
     if cli.verbose {
         let _ = tracing_subscriber::fmt()
