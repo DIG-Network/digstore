@@ -164,45 +164,78 @@ fn mint(ctx: &CliContext, ui: &Ui, args: NftMintArgs) -> Result<(), CliError> {
     let metadata_program = digstore_chain::collection::item_to_metadata_program(&item, 1, 1)
         .map_err(CliError::from)?;
 
-    // 3. Unlock the wallet + select a funding coin for the 1-mojo launcher.
+    // 3. Unlock the wallet + chain backend.
     let mnemonic = assets::unlock_mnemonic(ui)?;
     let (chain, mocked) = assets::chain_reads();
     assets::warn_if_mocked(ui, mocked);
-    let (keys, funding) = block_on(assets::scan_and_select_funding(
-        chain.as_ref(),
-        &mnemonic,
-        SINGLETON_MOJO,
-    ))??;
 
-    // 4. Optional DID attribution (the DID's acknowledging spend is the caller's responsibility for a
-    //    plain XCH-funded mint; see chain `build_nft_mint` docs — TODO end-to-end DID compose, #38).
-    let did = match &args.did {
-        Some(_) => {
-            return Err(CliError::InvalidArgument(
-                "--did attribution from a plain mint is not wired end-to-end yet (the DID's \
-                 acknowledging spend must be composed into the bundle — roadmap #38); mint without \
-                 --did for now, or use `collection mint` which spends the DID"
-                    .into(),
-            ))
+    // 4. Two mint paths:
+    //    (a) DID-ATTRIBUTED (#38): reconstruct the owned DID, build the mint with the
+    //        DID's acknowledging spend composed into the SAME bundle (the launcher is
+    //        created off the DID coin — no separate XCH funding coin needed, the DID
+    //        singleton carries the mojo), so the NFT is verifiably DID-attributed.
+    //    (b) PLAIN: fund the 1-mojo launcher from an XCH coin (no attribution).
+    let (spends, launcher_id, signer_sk) = match &args.did {
+        Some(did_hex) => {
+            let did_launcher = assets::parse_launcher_id(did_hex)?;
+            // The minter key is the wallet's primary (index 0); the DID is reconstructed
+            // over chain (its current coin is what the mint spends to acknowledge).
+            // TODO(#35): map the DID's p2 puzzle hash back to its exact HD index.
+            let owner_phs = scan_owner_phs(&mnemonic)?;
+            let dids = block_on(digstore_chain::did::list_owned_dids(
+                chain.as_ref(),
+                &owner_phs,
+            ))??;
+            let owned = dids
+                .into_iter()
+                .find(|d| d.launcher_id == did_launcher)
+                .ok_or_else(|| {
+                    CliError::NotFound(format!(
+                        "the wallet does not own DID {} (create one with `digstore did create`, \
+                         or mint without --did)",
+                        hex::encode(did_launcher)
+                    ))
+                })?;
+            let keys = digstore_chain::keys::derive_indexed_keys(&mnemonic, 0..1)
+                .map_err(CliError::from)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| CliError::Chain("could not derive wallet key".into()))?;
+            let (spends, nft) = digstore_chain::nft::build_nft_mint_with_did(
+                &keys,
+                owned.did,
+                metadata_program,
+                keys.owner_puzzle_hash,
+                args.royalty,
+            )
+            .map_err(CliError::from)?;
+            let launcher_id = nft.info.launcher_id;
+            (spends, launcher_id, keys.synthetic_sk)
         }
-        None => None,
+        None => {
+            let (keys, funding) = block_on(assets::scan_and_select_funding(
+                chain.as_ref(),
+                &mnemonic,
+                SINGLETON_MOJO,
+            ))??;
+            let spec = MintSpec {
+                metadata: metadata_program,
+                owner_ph: keys.owner_puzzle_hash,
+                royalty_basis_points: args.royalty,
+                did: None,
+            };
+            let (spends, nft) = build_nft_mint(&keys, funding, &spec).map_err(CliError::from)?;
+            let launcher_id = nft.info.launcher_id;
+            (spends, launcher_id, keys.synthetic_sk)
+        }
     };
-
-    let spec = MintSpec {
-        metadata: metadata_program,
-        owner_ph: keys.owner_puzzle_hash,
-        royalty_basis_points: args.royalty,
-        did,
-    };
-    let (spends, nft) = build_nft_mint(&keys, funding, &spec).map_err(CliError::from)?;
-    let launcher_id = nft.info.launcher_id;
 
     if args.dry_run {
         emit_mint(ui, &media, launcher_id, None, true, mocked);
         return Ok(());
     }
 
-    let sig = sign_nft_spends(&spends, std::slice::from_ref(&keys.synthetic_sk), false)
+    let sig = sign_nft_spends(&spends, std::slice::from_ref(&signer_sk), false)
         .map_err(CliError::from)?;
     let tx_id = block_on(assets::push_signed(
         chain.as_ref(),

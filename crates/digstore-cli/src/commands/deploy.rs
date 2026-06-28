@@ -30,7 +30,7 @@ use crate::cli::{CommitArgs, DeployArgs};
 use crate::context::CliContext;
 use crate::dig_toml::DigToml;
 use crate::error::CliError;
-use crate::ops::{remote_ops, store_ops};
+use crate::ops::{remote_ops, serve, store_ops};
 use crate::runtime::block_on;
 
 /// Best-effort human "view it on the hub" URL for a published capsule. DIGHub
@@ -246,6 +246,15 @@ fn run_build(ui: &crate::ui::Ui, op_dir: &std::path::Path, cmd: &str) -> Result<
 }
 
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(), CliError> {
+    // #18 PREVIEW: free, no chain, no wallet, no deploy key, NO store id. Run the
+    // real compile→verify→decrypt read path on the build, write a local preview
+    // artifact (`.dig` module) + a content-address, and STOP — before any
+    // store-id/key/wallet/chain logic (a preview never touches the production store).
+    // This is the headline modern-deploy preview: a shareable build, nothing spent.
+    if args.preview {
+        return preview(ctx, ui, &args);
+    }
+
     let cfg = resolve_config(ctx, &args)?;
     let deploy_seed = resolve_deploy_key(&args)?;
     let visibility = resolve_visibility(&args)?;
@@ -382,6 +391,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             push: true,
             no_push: false,
             dry_run: false,
+            // #17: pass the WRITER DELEGATE key (deploy token) down so CI advances the
+            // root with a revocable writer key, not the owner seed. `--writer-key` /
+            // DIGSTORE_WRITER_KEY (distinct from the §21 publisher --deploy-key above).
+            deploy_key: args.writer_key.clone(),
         },
     )?;
 
@@ -447,4 +460,153 @@ fn dry_run(
         ui.hint("digstore deploy   # to actually publish");
     }
     Ok(())
+}
+
+/// #18 `deploy --preview`: build a PREVIEW capsule via the REAL read path and
+/// produce a shareable local artifact — FREE (no chain, no wallet, no deploy key,
+/// no DIG spent). Steps:
+///   1. (optional) run the build command,
+///   2. compile the output dir into an EPHEMERAL store (the same
+///      `init_store`→`add_files`→`commit` pipeline `dev`/`compile` use — a real,
+///      self-defending module + generation root, no mint),
+///   3. read a resource back through the genuine serve→verify→decrypt path to PROVE
+///      the compiled module actually verifies + decrypts (the "real read path"),
+///   4. copy the compiled `.dig` module to the preview artifact path, and
+///   5. print the artifact path + the content-address (the capsule `storeId:rootHash`
+///      + its `dig://` URN) the caller (the deploy-action) serves to preview hosting.
+///
+/// The preview store id is content-derived (a fresh ephemeral store) — it is NOT the
+/// production store id (no on-chain singleton is touched), so a preview NEVER advances
+/// or impersonates the real store. The artifact + content-address are stable for the
+/// same content (the root is the content merkle root).
+fn preview(ctx: &CliContext, ui: &crate::ui::Ui, args: &DeployArgs) -> Result<(), CliError> {
+    // Resolve only what a preview needs — output dir + build command (flags > env >
+    // dig.toml). A preview needs NO store id, deploy key, salt, remote, or wallet.
+    let file = DigToml::read_with_env(&ctx.op_dir)?;
+    let output_rel = args
+        .output_dir
+        .clone()
+        .or(file.output_dir)
+        .unwrap_or_else(|| "dist".to_string());
+    let build_command = args.build_command.clone().or(file.build_command);
+
+    // 1. Build (optional) — same as a real deploy.
+    if let Some(cmd) = &build_command {
+        run_build(ui, &ctx.op_dir, cmd)?;
+    }
+
+    let output_dir = if PathBuf::from(&output_rel).is_absolute() {
+        PathBuf::from(&output_rel)
+    } else {
+        ctx.op_dir.join(&output_rel)
+    };
+    if !output_dir.is_dir() {
+        return Err(CliError::InvalidArgument(format!(
+            "output directory '{}' does not exist (build it first, or set output-dir)",
+            output_dir.display()
+        )));
+    }
+
+    // 2. Compile the output dir into an EPHEMERAL preview store (no chain, no mint).
+    //    A private scratch `.dig` so the preview never touches the project workspace.
+    let work_root = std::env::temp_dir().join(format!(
+        "digstore-preview-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&work_root).map_err(|e| CliError::Other(e.into()))?;
+    let preview_ctx = CliContext {
+        dig_dir: work_root.clone(),
+        workspace_dir: work_root.clone(),
+        op_dir: output_dir.clone(),
+        store_name: Some("default".to_string()),
+        json: ctx.json,
+        verbose: ctx.verbose,
+    };
+
+    let result = (|| -> Result<(), CliError> {
+        store_ops::init_store(&preview_ctx, false, None, None, None, None, None, None)?;
+        let staged = store_ops::add_files(&preview_ctx, &[], true, false, None)?;
+        if staged.staged.is_empty() {
+            return Err(CliError::InvalidArgument(format!(
+                "nothing to preview: '{}' is empty",
+                output_dir.display()
+            )));
+        }
+        let outcome = store_ops::commit(&preview_ctx, None, crate::ops::serve::empty_manifest())?;
+        let root = outcome.roothash;
+        let preview_cfg = preview_ctx.load_config()?;
+        let preview_store_id = preview_ctx.find_store_id()?;
+
+        // 3. Read a resource back through the REAL serve→verify→decrypt path to prove
+        //    the compiled module actually verifies + decrypts (the whole point of a
+        //    "real read path" preview, not just a build). Use index.html if present,
+        //    else the first committed resource.
+        let keys = store_ops::list_generation_resources(&preview_ctx, &root)?;
+        let probe = keys
+            .iter()
+            .find(|k| k.as_str() == digstore_core::DEFAULT_RESOURCE_KEY)
+            .or_else(|| keys.first())
+            .ok_or_else(|| CliError::Chain("preview produced no resources".into()))?;
+        serve::read_resource_plaintext(&preview_ctx, &preview_cfg, &root, probe)
+            .map_err(|e| CliError::Chain(format!("preview read-path verification failed: {e}")))?;
+
+        // 4. Copy the compiled module to the preview artifact path (default
+        //    `<output-dir>/../.dig-preview/<root>.dig`). This is the artifact the
+        //    deploy-action publishes to preview hosting.
+        let artifact = match &args.preview_out {
+            Some(p) => p.clone(),
+            None => {
+                let dir = output_dir
+                    .parent()
+                    .unwrap_or(&output_dir)
+                    .join(".dig-preview");
+                std::fs::create_dir_all(&dir).map_err(|e| CliError::Other(e.into()))?;
+                dir.join(format!("{}.dig", root.to_hex()))
+            }
+        };
+        if let Some(parent) = artifact.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| CliError::Other(e.into()))?;
+        }
+        std::fs::copy(&outcome.output_path, &artifact).map_err(|e| {
+            CliError::Other(anyhow::anyhow!(
+                "write preview artifact {}: {e}",
+                artifact.display()
+            ))
+        })?;
+
+        // 5. The content-address: the PREVIEW capsule (storeId:rootHash) + its dig://
+        //    URN. NOTE this is the ephemeral preview store id, NOT the production store.
+        let capsule = format!("{}:{}", preview_store_id.to_hex(), root.to_hex());
+        let dig_uri = format!("dig://{}:{}/", preview_store_id.to_hex(), root.to_hex());
+
+        if ui.json() {
+            ui.emit_json(&serde_json::json!({
+                "preview": true,
+                "spent": false,
+                "mocked": false,
+                "root": root.to_hex(),
+                "store_id": preview_store_id.to_hex(),
+                "capsule": capsule,
+                "content_address": dig_uri,
+                "artifact": artifact.display().to_string(),
+                "artifact_size": outcome.output_size,
+                "resources": keys.len(),
+            }));
+        } else {
+            ui.success("Built a free preview — nothing spent, no chain.");
+            ui.line(format!("  capsule: {capsule}  (preview storeId:rootHash)"));
+            ui.line(format!("  content address: {dig_uri}"));
+            ui.line(format!("  artifact: {}", artifact.display()));
+            ui.line("  verified through the real dig:// read path. Serve it to preview hosting.");
+        }
+        Ok(())
+    })();
+
+    // Best-effort cleanup of the ephemeral preview store (the ARTIFACT was copied out).
+    let _ = std::fs::remove_dir_all(&work_root);
+    result
 }

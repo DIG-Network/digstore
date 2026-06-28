@@ -448,6 +448,144 @@ fn deploy_if_changed_deploys_when_changed() {
     );
 }
 
+/// #18 preview: `deploy --preview` builds a FREE preview capsule via the real
+/// compile→verify→decrypt read path — no chain, no wallet, no deploy key, no spend.
+/// It writes a local `.dig` artifact and prints a content-address (the preview
+/// capsule + dig:// URN). This is the headline modern-deploy preview.
+#[test]
+fn deploy_preview_builds_free_artifact_and_content_address() {
+    let ci = tmp_dig();
+    let dist = ci.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), b"<h1>preview build</h1>").unwrap();
+    std::fs::write(ci.path().join("dig.toml"), "output-dir = \"dist\"\n").unwrap();
+
+    // No deploy key, no store id, no wallet — preview is free.
+    let out = dig(&ci)
+        .args(["deploy", "--preview", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "preview failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["preview"].as_bool(), Some(true));
+    assert_eq!(v["spent"].as_bool(), Some(false));
+    let root = v["root"].as_str().expect("preview root");
+    assert_eq!(root.len(), 64);
+    let store_id = v["store_id"].as_str().unwrap();
+    assert_eq!(v["capsule"].as_str().unwrap(), format!("{store_id}:{root}"));
+    assert!(v["content_address"]
+        .as_str()
+        .unwrap()
+        .starts_with(&format!("dig://{store_id}:{root}/")));
+
+    // The artifact file (a real compiled .dig module) exists on disk.
+    let artifact = v["artifact"].as_str().unwrap();
+    assert!(
+        std::path::Path::new(artifact).exists(),
+        "preview artifact must be written to {artifact}"
+    );
+    assert!(v["artifact_size"].as_u64().unwrap() > 0);
+}
+
+/// #18 preview honors `--preview-out` for the artifact path, and never spends/anchors.
+#[test]
+fn deploy_preview_writes_to_explicit_out_path() {
+    let ci = tmp_dig();
+    let dist = ci.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), b"<h1>x</h1>").unwrap();
+    let out_path = ci.path().join("my-preview.dig");
+
+    let out = dig(&ci)
+        .args([
+            "deploy",
+            "--preview",
+            "--output-dir",
+            "dist",
+            "--preview-out",
+            out_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "preview --preview-out failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["artifact"].as_str().unwrap(), out_path.to_str().unwrap());
+    assert!(out_path.exists(), "explicit preview artifact must exist");
+}
+
+/// #17 writer-key: `commit --deploy-key <writer-seed>` advances the on-chain root
+/// signed by a WRITER DELEGATE key (a revocable deploy token) instead of the owner
+/// seed. Under the mock anchor it publishes a new capsule exactly like the owner
+/// path; the writer authorization itself is proven on the Simulator in the chain
+/// crate. This guards the CLI wiring (resolve key → writer update path).
+#[test]
+fn commit_with_writer_deploy_key_publishes_capsule() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+
+    std::fs::write(dir.path().join("index.html"), b"<h1>writer v1</h1>").unwrap();
+    dig(&dir).args(["add", "index.html"]).assert().success();
+
+    // A writer delegate key (a throwaway 32-byte seed) advances the root.
+    let writer_key = "1f".repeat(32);
+    let out = dig(&dir)
+        .args([
+            "commit",
+            "-m",
+            "writer deploy",
+            "--deploy-key",
+            &writer_key,
+            "--wait-timeout",
+            "0",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "writer-key commit failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["anchor_status"], "confirmed");
+    let root = v["root"].as_str().expect("root present");
+    assert_eq!(root.len(), 64, "a real 32-byte root was published");
+}
+
+/// #17: a malformed writer key is rejected with a clear error (exit 2), never a panic.
+#[test]
+fn commit_rejects_malformed_writer_key() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    std::fs::write(dir.path().join("a.txt"), b"x").unwrap();
+    dig(&dir).args(["add", "a.txt"]).assert().success();
+    dig(&dir)
+        .args([
+            "commit",
+            "-m",
+            "x",
+            "--deploy-key",
+            "not-hex",
+            "--wait-timeout",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("writer deploy key"));
+}
+
 /// `deploy` refuses to run without a deploy key (the one irreducible CI secret
 /// beyond the wallet), with a clear message — never a panic.
 #[test]

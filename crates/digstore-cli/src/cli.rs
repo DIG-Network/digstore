@@ -246,7 +246,22 @@ pub enum CollectionAction {
     Create(CollectionCreateArgs),
     /// Bulk-mint every item in a traits manifest into a collection, attributed to a DID.
     Mint(CollectionMintArgs),
+    /// Show one collection's items, owners, and royalty — read from coinset (no third-party API).
+    Show(CollectionShowArgs),
+    /// List the collections this wallet holds items for (grouped by creator DID).
+    List(CollectionListArgs),
 }
+
+#[derive(Debug, Args)]
+pub struct CollectionShowArgs {
+    /// The collection's creator DID launcher id (64-hex) — the on-chain identity its items
+    /// are attributed to.
+    #[arg(long)]
+    pub did: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CollectionListArgs {}
 
 #[derive(Debug, Args)]
 pub struct CollectionCreateArgs {
@@ -265,6 +280,25 @@ pub struct CollectionCreateArgs {
     /// Write the collection definition JSON to this file instead of stdout.
     #[arg(long, short)]
     pub out: Option<PathBuf>,
+    // --- #40 DROP MECHANICS (SCAFFOLDED): these set the drop data model in the
+    // collection definition. The model is committed; ENFORCEMENT in the mint path is
+    // TODO (see digstore_chain::collection::Drop). ---
+    /// DELAYED REVEAL: Unix epoch seconds before which items mint with placeholder
+    /// metadata (real art swapped in at/after this time). Scaffolded — see Drop docs.
+    #[arg(long = "reveal-at")]
+    pub reveal_at: Option<u64>,
+    /// ALLOWLIST: an address/DID permitted to mint during allowlist phases. Repeatable.
+    /// Scaffolded — membership is recorded, not yet enforced at mint.
+    #[arg(long = "allow")]
+    pub allow: Vec<String>,
+    /// PHASED: a mint phase as `name[:start_unix[:supply]]` (e.g. `allowlist:1800000000:100`).
+    /// Repeatable, in order. Scaffolded — the schedule is recorded, not yet enforced.
+    #[arg(long = "phase")]
+    pub phase: Vec<String>,
+    /// LAZY MINT: mint items on-demand at claim time instead of the full supply up-front.
+    /// Scaffolded — records intent; the claim/lazy-mint flow is TODO.
+    #[arg(long = "lazy-mint")]
+    pub lazy_mint: bool,
 }
 
 #[derive(Debug, Args)]
@@ -501,6 +535,14 @@ pub struct CommitArgs {
     /// `digstore push origin` hint). Mutually exclusive with `--push`.
     #[arg(long)]
     pub no_push: bool,
+    /// Advance the on-chain root signed by a WRITER DELEGATE key (a revocable CI deploy
+    /// token, 64-hex seed) instead of the owner master seed. The store owner must have
+    /// pre-authorized this writer (via the hub Teams "Deployer" / `updateStoreOwnership`);
+    /// the writer can change ONLY the metadata root — never the owner, never melt. Prefer
+    /// the `DIGSTORE_WRITER_KEY` env var in CI so it is not visible in the process table.
+    /// The wallet seed still pays the 100 DIG + XCH fee.
+    #[arg(long = "deploy-key")]
+    pub deploy_key: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -826,9 +868,17 @@ pub struct DeployArgs {
     #[arg(long = "build-command")]
     pub build_command: Option<String>,
     /// The publisher deploy-key seed (64-hex), from `digstore deploy-key export`. Prefer the
-    /// `DIGSTORE_DEPLOY_KEY` env var in CI so it is not visible in the process table.
+    /// `DIGSTORE_DEPLOY_KEY` env var in CI so it is not visible in the process table. This is
+    /// the §21 HEAD-PUSH key (lets DIGHub accept the capsule) — distinct from `--writer-key`,
+    /// which is the on-chain root-advance authority.
     #[arg(long = "deploy-key")]
     pub deploy_key: Option<String>,
+    /// The on-chain WRITER DELEGATE key (64-hex seed) that advances the store's root WITHOUT the
+    /// owner master seed (#17). The owner pre-authorized this writer (hub Teams "Deployer" /
+    /// `updateStoreOwnership`); it can change ONLY the metadata root. Prefer `DIGSTORE_WRITER_KEY`
+    /// in CI. Omitted => the wallet seed (owner) signs the root advance.
+    #[arg(long = "writer-key")]
+    pub writer_key: Option<String>,
     /// The 32-byte secret salt (64-hex) for a PRIVATE store. Public stores omit it. Prefer
     /// `DIGSTORE_STORE_SALT` in CI.
     #[arg(long = "salt")]
@@ -854,6 +904,17 @@ pub struct DeployArgs {
     /// anchoring, or publishing anything. Builds + stages so the previewed root is real.
     #[arg(long = "dry-run")]
     pub dry_run: bool,
+    /// Build a PREVIEW capsule: run the real compile→verify→decrypt read path on your
+    /// build, producing a local preview artifact (a `.dig` module) + a content-address,
+    /// WITHOUT minting, WITHOUT advancing the on-chain root, and WITHOUT spending DIG.
+    /// FREE — no chain, no wallet, no deploy key. The deploy-action serves this artifact
+    /// to preview hosting. Mutually exclusive with `--dry-run`.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub preview: bool,
+    /// Where to write the `--preview` artifact (the compiled `.dig` module). Default:
+    /// `<output-dir>/../.dig-preview/<root>.dig`.
+    #[arg(long = "preview-out")]
+    pub preview_out: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -1055,6 +1116,33 @@ mod tests {
             }
             _ => panic!("expected deploy"),
         }
+    }
+
+    #[test]
+    fn parses_deploy_preview() {
+        // #18: `deploy --preview` builds a free preview capsule (no chain).
+        let cli = Cli::try_parse_from(["digstore", "deploy", "--preview"]).unwrap();
+        match cli.command {
+            Command::Deploy(d) => {
+                assert!(d.preview);
+                assert!(!d.dry_run);
+                assert!(d.preview_out.is_none());
+            }
+            _ => panic!("expected deploy"),
+        }
+        // --preview-out sets the artifact path.
+        let cli =
+            Cli::try_parse_from(["digstore", "deploy", "--preview", "--preview-out", "p.dig"])
+                .unwrap();
+        match cli.command {
+            Command::Deploy(d) => {
+                assert!(d.preview);
+                assert_eq!(d.preview_out.unwrap().to_str().unwrap(), "p.dig");
+            }
+            _ => panic!("expected deploy"),
+        }
+        // --preview and --dry-run are mutually exclusive.
+        assert!(Cli::try_parse_from(["digstore", "deploy", "--preview", "--dry-run"]).is_err());
     }
 
     #[test]
@@ -1290,6 +1378,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_commit_deploy_key_writer() {
+        // #17: `commit --deploy-key <writer-seed>` advances the root with a writer delegate.
+        let cli =
+            Cli::try_parse_from(["digstore", "commit", "--deploy-key", &"ab".repeat(32)]).unwrap();
+        match cli.command {
+            Command::Commit(c) => {
+                assert_eq!(c.deploy_key.as_deref(), Some("ab".repeat(32).as_str()))
+            }
+            _ => panic!("expected commit"),
+        }
+        // Default: no writer key (owner-signed).
+        let cli = Cli::try_parse_from(["digstore", "commit"]).unwrap();
+        match cli.command {
+            Command::Commit(c) => assert!(c.deploy_key.is_none()),
+            _ => panic!("expected commit"),
+        }
+    }
+
+    #[test]
     fn parses_anchor_resume() {
         let cli = Cli::try_parse_from(["digstore", "anchor"]).unwrap();
         match cli.command {
@@ -1501,6 +1608,25 @@ mod tests {
             }
             _ => panic!("expected collection mint"),
         }
+    }
+
+    #[test]
+    fn parses_collection_show_and_list() {
+        // #39: collection reads off coinset.
+        let cli = Cli::try_parse_from(["digstore", "collection", "show", "--did", "abcd"]).unwrap();
+        match cli.command {
+            Command::Collection(CollectionArgs {
+                action: CollectionAction::Show(s),
+            }) => assert_eq!(s.did, "abcd"),
+            _ => panic!("expected collection show"),
+        }
+        let cli = Cli::try_parse_from(["digstore", "collection", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Collection(CollectionArgs {
+                action: CollectionAction::List(_)
+            })
+        ));
     }
 
     #[test]
