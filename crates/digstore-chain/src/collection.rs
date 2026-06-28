@@ -49,6 +49,11 @@ pub struct Collection {
     pub royalty_puzzle_hash: Bytes32,
     /// Shared royalty in basis points for every item (e.g. 300 = 3%).
     pub royalty_basis_points: u16,
+    /// Optional drop mechanics (#40 — delayed reveal / allowlist / phased / lazy).
+    /// Absent (skipped in JSON) for an ordinary open, immediate, revealed collection.
+    /// SCAFFOLDED: the data model is committed; enforcement is TODO (see [`Drop`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drop: Option<Drop>,
 }
 
 impl Collection {
@@ -59,6 +64,77 @@ impl Collection {
             name: self.name.clone(),
             attributes: self.attributes.clone(),
         }
+    }
+}
+
+/// One scheduled mint phase of a drop (#40): an optional public-mint start time + an
+/// optional per-phase supply cap. Phases run in order; a `None` start means "open as
+/// soon as the previous phase fills / from the drop's start".
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DropPhase {
+    /// Human label (e.g. "allowlist", "public").
+    pub name: String,
+    /// Unix epoch seconds this phase opens minting; `None` = no time gate.
+    #[serde(default)]
+    pub start_unix: Option<u64>,
+    /// Max items mintable in this phase; `None` = uncapped (bounded by total supply).
+    #[serde(default)]
+    pub supply: Option<u64>,
+    /// Whether this phase is allowlist-gated (only `Drop::allowlist` may mint).
+    #[serde(default)]
+    pub allowlist_only: bool,
+}
+
+/// Drop mechanics for a collection (#40): delayed reveal, allowlist gating, and phased
+/// scheduling. This is the SCAFFOLDED data model — it captures the drop's intent so the
+/// definition is committable + tooling-readable; the ENFORCEMENT (gating mints on the
+/// reveal time / allowlist membership / phase schedule) is NOT yet implemented in the
+/// mint path. See the TODOs below.
+///
+/// All fields are optional and default to "no drop mechanics" (an immediate, open,
+/// fully-revealed mint), so an ordinary collection serializes without a `drop` block.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Drop {
+    /// DELAYED REVEAL: until this Unix time, items mint with placeholder metadata and
+    /// the real metadata/art is swapped in at/after reveal. `None` = revealed at mint.
+    ///
+    /// TODO(#40 reveal): the mint path must (1) mint with the placeholder metadata
+    /// before `reveal_unix`, and (2) provide a post-reveal metadata-update spend that
+    /// swaps each item to its real metadata (an NFT metadata-update / re-mint flow).
+    #[serde(default)]
+    pub reveal_unix: Option<u64>,
+    /// ALLOWLIST: the puzzle hashes (or DID launcher ids) permitted to mint during
+    /// allowlist-gated phases. Empty = no allowlist.
+    ///
+    /// TODO(#40 allowlist): enforce membership at mint time (gate the mint spend on the
+    /// recipient being in this set — e.g. an allowlist-merkle assertion or a per-address
+    /// claim coin), and add a claim/redeem flow.
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    /// PHASED SCHEDULE: ordered mint phases (allowlist → public, timed waves). Empty =
+    /// a single open phase.
+    ///
+    /// TODO(#40 phases): enforce the phase order + per-phase start time + supply caps at
+    /// mint time (assert the current time is within the active phase and the phase cap is
+    /// not exceeded), and surface the active phase in `collection show`.
+    #[serde(default)]
+    pub phases: Vec<DropPhase>,
+    /// LAZY MINT: when true, items are minted on-demand at claim time rather than all
+    /// up-front. `false` = eager (mint the whole supply now).
+    ///
+    /// TODO(#40 lazy): a claim-coin / lazy-mint flow (the buyer's claim triggers the
+    /// per-item mint), instead of `collection mint` minting the full supply eagerly.
+    #[serde(default)]
+    pub lazy_mint: bool,
+}
+
+impl Drop {
+    /// Whether any drop mechanic is configured (an all-default `Drop` is "no drop").
+    pub fn is_configured(&self) -> bool {
+        self.reveal_unix.is_some()
+            || !self.allowlist.is_empty()
+            || !self.phases.is_empty()
+            || self.lazy_mint
     }
 }
 
@@ -277,7 +353,49 @@ mod tests {
             }],
             royalty_puzzle_hash: Bytes32::from([0x22; 32]),
             royalty_basis_points: 300,
+            drop: None,
         }
+    }
+
+    /// #40 drop model: an unconfigured `Drop` is "no drop"; configured flags round-trip
+    /// through JSON and a plain collection serializes WITHOUT a `drop` block (so existing
+    /// definitions are unchanged). Scaffold guard — pins the committable data model.
+    #[test]
+    fn drop_model_round_trips_and_is_optional() {
+        // Default drop is not configured.
+        assert!(!Drop::default().is_configured());
+
+        // A configured drop round-trips every mechanic.
+        let drop = Drop {
+            reveal_unix: Some(1_900_000_000),
+            allowlist: vec!["abcd".into()],
+            phases: vec![DropPhase {
+                name: "allowlist".into(),
+                start_unix: Some(1_800_000_000),
+                supply: Some(100),
+                allowlist_only: true,
+            }],
+            lazy_mint: true,
+        };
+        assert!(drop.is_configured());
+        let json = serde_json::to_string(&drop).unwrap();
+        let back: Drop = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, drop);
+
+        // A plain collection omits the drop block entirely.
+        let plain = serde_json::to_string(&collection()).unwrap();
+        assert!(
+            !plain.contains("\"drop\""),
+            "no drop block on a plain collection: {plain}"
+        );
+
+        // A collection WITH a drop serializes it and round-trips.
+        let mut c = collection();
+        c.drop = Some(drop);
+        let s = serde_json::to_string(&c).unwrap();
+        assert!(s.contains("\"drop\""));
+        let back: Collection = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, c);
     }
 
     fn items() -> Vec<ManifestItem> {

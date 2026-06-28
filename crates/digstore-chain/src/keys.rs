@@ -38,6 +38,27 @@ pub fn derive_wallet_keys(mnemonic: &str) -> Result<WalletKeys> {
     })
 }
 
+/// Derive wallet keys from a RAW 32-byte master seed (not a BIP-39 mnemonic).
+///
+/// Used by the #17 writer-delegate (deploy-token) path: a deploy token is a raw
+/// 32-byte seed (the same form `deploy-key export` emits), and the on-chain writer
+/// authorization needs that seed's WALLET SYNTHETIC key — the standard wallet
+/// derivation (`master → wallet synthetic`), so the curried writer puzzle hash
+/// (`StandardArgs::curry_tree_hash(synthetic_pk)`) matches what the owner
+/// delegated. The returned `owner_puzzle_hash` is the writer's own p2 standard
+/// puzzle hash (the writer delegate is not the store owner; it never holds coins).
+pub fn wallet_keys_from_seed(seed: &[u8; 32]) -> WalletKeys {
+    let master_sk = SecretKey::from_seed(seed);
+    let synthetic_sk = master_secret_key_to_wallet_synthetic_secret_key(&master_sk);
+    let synthetic_pk = secret_key_to_public_key(&synthetic_sk);
+    let owner_puzzle_hash = StandardArgs::curry_tree_hash(synthetic_pk).into();
+    WalletKeys {
+        synthetic_sk,
+        synthetic_pk,
+        owner_puzzle_hash,
+    }
+}
+
 /// Wallet keys for a single unhardened HD index. Index 0 byte-matches
 /// `derive_wallet_keys` (the legacy single-address path).
 #[derive(Clone)]
@@ -134,6 +155,19 @@ mod tests {
         let b = derive_wallet_keys(ABANDON).unwrap();
         assert_eq!(a.owner_puzzle_hash, b.owner_puzzle_hash);
         assert_eq!(a.synthetic_pk.to_bytes(), b.synthetic_pk.to_bytes());
+    }
+
+    #[test]
+    fn wallet_keys_from_seed_is_deterministic_and_distinct() {
+        // #17: a raw 32-byte deploy-token seed derives a stable wallet synthetic key.
+        let seed = [7u8; 32];
+        let a = wallet_keys_from_seed(&seed);
+        let b = wallet_keys_from_seed(&seed);
+        assert_eq!(a.synthetic_pk.to_bytes(), b.synthetic_pk.to_bytes());
+        assert_eq!(a.owner_puzzle_hash, b.owner_puzzle_hash);
+        // A different seed yields a different key (so a writer delegate is its own identity).
+        let c = wallet_keys_from_seed(&[8u8; 32]);
+        assert_ne!(a.synthetic_pk.to_bytes(), c.synthetic_pk.to_bytes());
     }
 
     #[test]

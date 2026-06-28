@@ -549,6 +549,87 @@ pub fn build_update_unsigned_multi(
     })
 }
 
+/// The [`DelegatedPuzzle::Writer`] for a writer-delegate synthetic key — the
+/// on-chain authorization the store owner curries in (via `updateStoreOwnership`)
+/// so this key can advance the metadata root WITHOUT being the owner master seed.
+///
+/// A re-export of `datalayer_driver::writer_delegated_puzzle_from_key` so callers
+/// (the CLI deploy-token path, the hub Teams "Deployer") name the writer delegate
+/// from one place. The owner adds this `DelegatedPuzzle` to the store's delegated
+/// set; thereafter `build_update_unsigned_writer` can sign a root advance with the
+/// writer key alone. The writer can change the metadata root only — it can NOT
+/// change ownership or melt the store (that is the owner's Admin/Owner authority).
+pub fn writer_delegated_puzzle(writer_synthetic_pk: PublicKey) -> DelegatedPuzzle {
+    datalayer_driver::writer_delegated_puzzle_from_key(&writer_synthetic_pk)
+}
+
+/// Builds the UNSIGNED root update of `store` to `new_root` authorized by a WRITER
+/// DELEGATE key (a revocable CI deploy key) rather than the owner master seed
+/// (#17). The store MUST already carry this writer's [`writer_delegated_puzzle`] in
+/// its delegated set (the owner pre-authorizes it via `updateStoreOwnership` — the
+/// hub Teams "Deployer" flow); `sync_datastore` preserves that delegated set, so a
+/// reconstructed `store` is ready for a writer spend.
+///
+/// The singleton spend is built with [`DataStoreInnerSpend::Writer`], so it is the
+/// writer's synthetic key — NOT the owner key — that authorizes the metadata
+/// update. A writer spend canNOT change the owner or melt the store (the writer
+/// puzzle only permits a metadata update), so a leaked/abused deploy key can never
+/// take over or destroy the store — the owner revokes it by re-running
+/// `updateStoreOwnership` without that delegated puzzle.
+///
+/// The XCH `fee` is still drawn from the wallet's `fee_coins` and signed by the
+/// wallet key — the writer authorizes the singleton spend; the wallet pays the
+/// network fee + the DIG payment (concatenated by the caller, exactly as the owner
+/// path does). `writer_synthetic_pk` authorizes the singleton; `fee_keys` authorize
+/// the fee coins.
+///
+/// **Pure: does NOT sign or broadcast.** The caller signs with BOTH the writer key
+/// and the fee/DIG-coin keys (one aggregated signature over the whole bundle).
+#[allow(clippy::too_many_arguments)]
+pub fn build_update_unsigned_writer(
+    writer_synthetic_pk: PublicKey,
+    store: DataStore,
+    new_root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
+    fee_keys: &WalletKeys,
+    fee_coins: &[Coin],
+    fee: u64,
+) -> Result<UpdateUnsigned> {
+    // Writer-authorized metadata update (REPLACES metadata, so re-send label/desc).
+    let SuccessResponse {
+        coin_spends: update_spends,
+        new_datastore,
+    } = update_store_metadata(
+        store,
+        new_root,
+        label,
+        description,
+        None,
+        None,
+        DataStoreInnerSpend::Writer(writer_synthetic_pk),
+    )
+    .map_err(|e| ChainError::Chain(format!("update_store_metadata (writer): {e}")))?;
+
+    let mut coin_spends = Vec::new();
+    if fee > 0 {
+        let selected = select_coins(fee_coins, fee)
+            .map_err(|e| ChainError::Chain(format!("select_coins (fee): {e}")))?;
+        let coin_ids: Vec<Bytes32> = selected.iter().map(|c| c.coin_id()).collect();
+        let fee_spends = add_fee(&fee_keys.synthetic_pk, &selected, &coin_ids, fee)
+            .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
+        coin_spends.extend(fee_spends);
+    }
+    coin_spends.extend(update_spends);
+
+    let new_coin_id = new_datastore.coin.coin_id();
+    Ok(UpdateUnsigned {
+        coin_spends,
+        new_coin_id,
+        datastore: new_datastore,
+    })
+}
+
 /// Builds + signs an owner-authorized update of `store`'s root to `new_root`.
 /// `fee_coins` are the wallet's spendable XCH coins for the fee; `fee` mojos.
 pub fn build_update(
@@ -708,6 +789,124 @@ mod tests {
         let keys = derive_wallet_keys(ABANDON).unwrap();
         let coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1); // < fee+1
         assert!(build_mint(&keys, &[coin], Bytes32::default(), None, None, 1_000).is_err());
+    }
+
+    /// #17 writer-key: a store minted with a writer's [`writer_delegated_puzzle`]
+    /// can have its metadata root advanced by the WRITER key (not the owner), and
+    /// the writer-authorized update VALIDATES on the in-process Chia simulator.
+    /// This is the deploy-token primitive: a revocable delegate advances the root
+    /// without the owner master seed. (No fee/DIG here — those are wallet-signed and
+    /// concatenated by the caller; this proves the writer authorization itself.)
+    #[test]
+    fn writer_delegate_advances_root_on_simulator() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        // Owner funds + mints a store that delegates writer authority to `writer`.
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let writer = sim.bls(0); // the deploy-token key (no coins of its own)
+        let writer_dp = writer_delegated_puzzle(writer.pk);
+
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: Bytes32::default(),
+                label: Some("site".into()),
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            vec![writer_dp],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        // The writer (NOT the owner) advances the root — no fee, no fee_keys needed.
+        let new_root = Bytes32::new([0xab; 32]);
+        let owner_keys = WalletKeys {
+            synthetic_sk: owner.sk.clone(),
+            synthetic_pk: owner.pk,
+            owner_puzzle_hash: owner.puzzle_hash,
+        };
+        let upd = build_update_unsigned_writer(
+            writer.pk,
+            store,
+            new_root,
+            Some("site".into()),
+            None,
+            &owner_keys,
+            &[],
+            0,
+        )?;
+        // The writer key alone signs the writer-authorized singleton spend (the
+        // simulator validates against TESTNET11, so sign for testnet).
+        let sig = sign_coin_spends(&upd.coin_spends, std::slice::from_ref(&writer.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(upd.coin_spends, sig))?;
+
+        // The advanced singleton carries the new root.
+        assert_eq!(upd.datastore.info.metadata.root_hash, new_root);
+        Ok(())
+    }
+
+    /// #17: the writer authorization is REQUIRED — a store that does NOT delegate to
+    /// the writer rejects a writer-authorized update (the puzzle is not in the set),
+    /// so a stray key can never advance a store it was not granted.
+    #[test]
+    fn writer_update_rejected_without_delegation() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let writer = sim.bls(0);
+
+        // Mint WITHOUT the writer's delegated puzzle.
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: Bytes32::default(),
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            vec![],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        let owner_keys = WalletKeys {
+            synthetic_sk: owner.sk.clone(),
+            synthetic_pk: owner.pk,
+            owner_puzzle_hash: owner.puzzle_hash,
+        };
+        // Building the writer update against an un-delegated store fails (no writer
+        // puzzle in the merkle set → the driver cannot construct the writer spend).
+        let res = build_update_unsigned_writer(
+            writer.pk,
+            store,
+            Bytes32::new([1u8; 32]),
+            None,
+            None,
+            &owner_keys,
+            &[],
+            0,
+        );
+        assert!(
+            res.is_err(),
+            "writer update on an un-delegated store must fail"
+        );
+        Ok(())
     }
 }
 
