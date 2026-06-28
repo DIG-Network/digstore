@@ -1,0 +1,13 @@
+# dig.toml — your DIG project config. Committed to your repo; contains NO secrets.
+#
+# `digstore dev`    — preview locally for free (runs the build, serves the real
+#                     dig:// read path; no chain, no spend).
+# `digstore deploy` — build + publish on Chia (costs 100 DIG + an XCH fee).
+
+# Vite builds to `dist/`. That is what we publish.
+output-dir = "dist"
+
+# Build the production bundle before staging.
+build-command = "npm install && npm run build"
+
+# store-id = "REPLACE_WITH_YOUR_64_HEX_STORE_ID"

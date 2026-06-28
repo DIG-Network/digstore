@@ -27,6 +27,7 @@ use digstore_core::{Bytes32, SecretSalt, Visibility};
 
 use crate::cli::{CommitArgs, DeployArgs};
 use crate::context::CliContext;
+use crate::dig_toml::DigToml;
 use crate::error::CliError;
 use crate::ops::{remote_ops, store_ops};
 use crate::runtime::block_on;
@@ -41,38 +42,6 @@ struct DeployConfig {
     remote: Option<String>,
     #[allow(dead_code)]
     network: String,
-}
-
-/// The committable `dig.toml` project file (all fields optional; flags/env win).
-#[derive(Debug, Default, serde::Deserialize)]
-struct DigToml {
-    #[serde(default, rename = "store-id", alias = "store_id")]
-    store_id: Option<String>,
-    #[serde(default, rename = "output-dir", alias = "output_dir")]
-    output_dir: Option<String>,
-    #[serde(default, rename = "build-command", alias = "build_command")]
-    build_command: Option<String>,
-    #[serde(default)]
-    message: Option<String>,
-    #[serde(default, rename = "wait-timeout", alias = "wait_timeout")]
-    wait_timeout: Option<u64>,
-    #[serde(default)]
-    network: Option<String>,
-    #[serde(default)]
-    remote: Option<String>,
-}
-
-/// Read `dig.toml` from the operating directory, if present. A missing file is
-/// fine (all config can come from flags/env); a malformed file is an error so a
-/// typo never silently deploys the wrong thing.
-fn read_dig_toml(dir: &std::path::Path) -> Result<DigToml, CliError> {
-    let path = dir.join("dig.toml");
-    if !path.exists() {
-        return Ok(DigToml::default());
-    }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| CliError::Other(anyhow::anyhow!("read dig.toml: {e}")))?;
-    toml::from_str(&text).map_err(|e| CliError::InvalidArgument(format!("parse dig.toml: {e}")))
 }
 
 /// `DIGSTORE_DEPLOY_KEY` / `--deploy-key` → the 32-byte publisher seed.
@@ -119,7 +88,7 @@ fn resolve_visibility(args: &DeployArgs) -> Result<Visibility, CliError> {
 }
 
 fn resolve_config(ctx: &CliContext, args: &DeployArgs) -> Result<DeployConfig, CliError> {
-    let file = read_dig_toml(&ctx.op_dir)?;
+    let file = DigToml::read(&ctx.op_dir)?;
 
     let store_id_hex = args.store_id.clone().or(file.store_id).ok_or_else(|| {
         CliError::InvalidArgument(
@@ -265,6 +234,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             resubmit: false,
             push: true,
             no_push: false,
+            dry_run: false,
         },
     )
 }

@@ -14,14 +14,17 @@ pub mod commit;
 pub mod compile;
 pub mod deploy;
 pub mod deploy_key;
+pub mod dev;
 pub mod diff;
 pub mod dir;
+pub mod doctor;
 pub mod init;
 pub mod keys;
 pub mod lock;
 pub mod log;
 pub mod login;
 pub mod logout;
+pub mod new;
 pub mod pull;
 pub mod push;
 pub mod remote;
@@ -48,9 +51,19 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
     // discovers an existing workspace by walking up.
     // `deploy` also CREATES/adopts the store from a fresh checkout (like
     // init/clone), so it anchors to CWD/.dig with no walk-up.
+    // `new`/`dev`/`doctor` do not require an existing `.dig` workspace: `new`
+    // only writes template files; `dev` builds into an ephemeral scratch `.dig`;
+    // `doctor` reads dig.toml + config from CWD. Like init/deploy they anchor to
+    // CWD/.dig with no walk-up (they never load a real workspace).
     let workspace_dir = if matches!(
         cli.command,
-        Command::Init(_) | Command::Clone(_) | Command::Compile(_) | Command::Deploy(_)
+        Command::Init(_)
+            | Command::Clone(_)
+            | Command::Compile(_)
+            | Command::Deploy(_)
+            | Command::New(_)
+            | Command::Dev(_)
+            | Command::Doctor(_)
     ) {
         CliContext::init_workspace(cli.dig_dir.clone())
     } else {
@@ -60,6 +73,33 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
     // init/clone create the workspace+store themselves; all other commands load
     // (and migrate) the workspace first.
     match cli.command {
+        // `new` is workspace-independent: it scaffolds template files into a target
+        // dir. No chain, no spend, no `.dig`.
+        Command::New(a) => return new::run(&ui, a),
+        // `dev` and `doctor` operate on CWD (where `dig.toml` + content live),
+        // never walk up, and own a CWD-anchored op_dir context like `deploy`.
+        Command::Dev(a) => {
+            let ctx = CliContext {
+                dig_dir: workspace_dir.clone(),
+                workspace_dir,
+                op_dir: cwd,
+                store_name: Some("default".to_string()),
+                json: cli.json,
+                verbose: cli.verbose,
+            };
+            return dev::run(&ctx, &ui, a);
+        }
+        Command::Doctor(a) => {
+            let ctx = CliContext {
+                dig_dir: workspace_dir.clone(),
+                workspace_dir,
+                op_dir: cwd,
+                store_name: Some("default".to_string()),
+                json: cli.json,
+                verbose: cli.verbose,
+            };
+            return doctor::run(&ctx, &ui, a);
+        }
         Command::Init(a) => {
             let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
             return init::run(&ctx, &ui, a);
@@ -162,7 +202,10 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Serve(a) => serve::run(&ctx, &ui, a),
         Command::Anchor(a) => anchor::run(&ctx, &ui, a),
         Command::DeployKey(a) => deploy_key::run(&ctx, &ui, a),
-        Command::Init(_)
+        Command::New(_)
+        | Command::Dev(_)
+        | Command::Doctor(_)
+        | Command::Init(_)
         | Command::Clone(_)
         | Command::Compile(_)
         | Command::Deploy(_)

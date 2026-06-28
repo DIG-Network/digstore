@@ -1,0 +1,11 @@
+# dig.toml — your DIG dapp config. Committed to your repo; contains NO secrets.
+#
+# `digstore dev`    — preview locally for free (no chain, no spend). `dev` injects
+#                     a `window.chia` DEV shim so you can build the wallet flow
+#                     without a real wallet.
+# `digstore deploy` — publish to your on-chain store (costs 100 DIG + an XCH fee).
+
+# A hand-written static dapp has no build step, so the dapp IS the output dir.
+output-dir = "."
+
+# store-id = "REPLACE_WITH_YOUR_64_HEX_STORE_ID"

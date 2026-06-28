@@ -1,0 +1,97 @@
+:root {
+  color-scheme: dark;
+  --bg: #0c0f14;
+  --fg: #e7ecf3;
+  --muted: #9aa7b8;
+  --accent: #5eead4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(1200px 600px at 50% -10%, #16202c, var(--bg));
+  color: var(--fg);
+  font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+main {
+  max-width: 48rem;
+  padding: 2rem;
+  width: 100%;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+h1 {
+  font-size: clamp(2rem, 6vw, 3rem);
+  margin: 0 0 0.25rem;
+  letter-spacing: -0.02em;
+}
+
+.tag {
+  color: var(--muted);
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  background: #11181f;
+  border: 1px solid #1d2733;
+  border-radius: 0.6em;
+}
+
+.art {
+  aspect-ratio: 1;
+  border-radius: 0.4em;
+  background: linear-gradient(135deg, #5eead4, #6366f1);
+  margin-bottom: 0.5rem;
+}
+
+.traits {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+code {
+  color: var(--accent);
+}
+
+button {
+  display: block;
+  margin: 2rem auto 0;
+  padding: 0.8em 1.6em;
+  font: inherit;
+  font-weight: 600;
+  color: #06231d;
+  background: var(--accent);
+  border: 0;
+  border-radius: 0.5em;
+  cursor: pointer;
+}
+
+.hint {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #1d2733;
+  color: var(--muted);
+  font-size: 0.9em;
+  text-align: center;
+}

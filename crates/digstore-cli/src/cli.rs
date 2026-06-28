@@ -42,31 +42,37 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Initialize a new project in the current directory.
+    /// Start a new project from a template — free, no wallet, no spend.
+    New(NewArgs),
+    /// Preview your project locally — builds on save, serves the real dig://
+    /// read path with live reload. Free, no chain, no spend.
+    Dev(DevArgs),
+    /// Check you're ready to publish (seed, funds, login, remote, content).
+    Doctor(DoctorArgs),
+    /// Create your project on Chia so you can publish it (mints on mainnet).
     Init(InitArgs),
-    /// Stage files, directories, or glob patterns for the next commit.
+    /// Stage files, directories, or glob patterns for your next publish.
     Add(AddArgs),
-    /// Commit the staged content as a new deployment — a new capsule
-    /// (`storeId:rootHash`). A store is a sequence of capsules, one per commit.
+    /// Publish your staged files as a new version (a new on-chain deployment).
     Commit(CommitArgs),
-    /// Compile a directory into a hostable module + root, with NO chain/wallet
+    /// Build a hostable module + root from a directory, with NO chain/wallet
     /// (headless). The caller anchors the printed root on-chain separately.
     Compile(CompileArgs),
-    /// Show the active project, its content root, and pending staged changes.
+    /// Show the active project, its content folder, and unpublished changes.
     Status(StatusArgs),
-    /// Show the project's deployment history (its sequence of capsules).
+    /// Show your project's deployment history (each published version).
     Log(LogArgs),
-    /// Show what changed between two deployment roots (capsules).
+    /// Show what changed between two published versions.
     Diff(DiffArgs),
-    /// Materialize a deployment root (capsule) content into an output directory.
+    /// Save a published deployment root's files into a local folder.
     Checkout(CheckoutArgs),
-    /// Stream a resource out by URN (decrypted) or retrieval key (encrypted).
+    /// Read a published file by its share link (URN) or retrieval key.
     Cat(CatArgs),
     /// Manage remote endpoints for this project (add, list, remove).
     Remote(RemoteArgs),
     /// Clone a project from a remote into the current directory.
     Clone(CloneArgs),
-    /// Push the local project's content and signed head to a remote.
+    /// Upload your project's content and signed head to a remote.
     Push(PushArgs),
     /// Pull the latest content and signed head from a remote.
     Pull(PullArgs),
@@ -111,6 +117,66 @@ pub enum Command {
     /// Manage the per-store publisher deploy key (export it once for CI; import it).
     DeployKey(DeployKeyArgs),
 }
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Scaffolds a working project locally — NO wallet, NO chain, NO spend. Preview it \
+with `digstore dev`, then publish it with `digstore deploy` when it's ready.\n\nTEMPLATES:\n  \
+static-site        a plain HTML/CSS site (no build step)\n  vite-react         a Vite + React app \
+(window.chia wired)\n  next-static        a statically-exported Next.js app\n  nft-drop           \
+an NFT drop / mint page\n  dapp-window-chia   a minimal dapp using the window.chia wallet\n\n\
+EXAMPLES:\n  digstore new static-site\n  digstore new vite-react ./my-app\n  digstore new \
+dapp-window-chia ./dapp --force"
+)]
+pub struct NewArgs {
+    /// Which template to scaffold (static-site, vite-react, next-static, nft-drop, dapp-window-chia).
+    pub template: String,
+    /// Target directory to create the project in (default: the current directory).
+    pub dir: Option<PathBuf>,
+    /// Write into a non-empty directory (overwriting any same-named files).
+    #[arg(long)]
+    pub force: bool,
+    /// List the available templates and exit.
+    #[arg(long)]
+    pub list: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Builds your project on every save and serves it over the REAL dig:// read path \
+locally (compile → verify → decrypt, exactly as a visitor's browser does), with live reload and an \
+injected dev `window.chia` wallet shim. FREE — no wallet, no chain, no spend.\n\nReads `output-dir` \
+and `build-command` from `dig.toml` (flags override). Open the printed http://127.0.0.1:<port> URL.\n\n\
+EXAMPLES:\n  digstore dev\n  digstore dev --dir dist --port 5000\n  digstore dev --build \"npm run \
+build\" --open"
+)]
+pub struct DevArgs {
+    /// The content/output directory to serve. Overrides `dig.toml`'s `output-dir` (default `.`).
+    #[arg(long = "dir", visible_alias = "output-dir")]
+    pub dir: Option<String>,
+    /// A build command to run before each (re)build. Overrides `dig.toml`'s `build-command`.
+    #[arg(long = "build", visible_alias = "build-command")]
+    pub build_command: Option<String>,
+    /// Port to bind the local preview server to (default 4343).
+    #[arg(long, default_value_t = 4343)]
+    pub port: u16,
+    /// Open the preview URL in your default browser once it's serving.
+    #[arg(long)]
+    pub open: bool,
+    /// Seconds between filesystem polls for the watch loop (default 1).
+    #[arg(long, default_value_t = 1)]
+    pub poll: u64,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Runs pre-publish checks so a costly on-chain publish doesn't fail halfway: is \
+your seed present + unlocked, do you have enough DIG + XCH for a publish, are you logged in to \
+dighub, is the default remote reachable, and does your content directory exist. Prints each as \
+pass/fail and exits non-zero if any hard check fails.\n\nEXAMPLES:\n  digstore doctor\n  digstore \
+doctor --json"
+)]
+pub struct DoctorArgs {}
 
 #[derive(Debug, Args)]
 #[command(
@@ -161,11 +227,18 @@ pub struct AddArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Costs 100 DIG + an XCH fee per commit.\n\nEXAMPLES:\n  digstore commit -m \"first generation\""
+    after_help = "Publishes your staged files as a new version on Chia — a new capsule \
+(`storeId:rootHash`). Costs 100 DIG + an XCH fee per publish.\n\nUse `--dry-run` to preview the \
+resulting version (root) and the exact DIG/XCH cost WITHOUT spending or publishing anything.\n\n\
+EXAMPLES:\n  digstore commit -m \"first version\"\n  digstore commit --dry-run"
 )]
 pub struct CommitArgs {
     #[arg(short, long)]
     pub message: Option<String>,
+    /// Preview the resulting version (root) + exact DIG/XCH cost WITHOUT spending,
+    /// anchoring, or finalizing anything. Nothing is published.
+    #[arg(long)]
+    pub dry_run: bool,
     /// Seconds to wait for on-chain confirmation (default 300; 0 = a single
     /// check, do not block). On a timeout the local generation is NOT finalized
     /// and a resumable pending anchor is left; re-run `digstore commit` to finish.
@@ -566,6 +639,75 @@ mod tests {
     fn parses_init() {
         let cli = Cli::try_parse_from(["digstore", "init"]).unwrap();
         assert!(matches!(cli.command, Command::Init(_)));
+    }
+
+    #[test]
+    fn parses_new_template_and_dir() {
+        let cli = Cli::try_parse_from(["digstore", "new", "static-site", "./site"]).unwrap();
+        match cli.command {
+            Command::New(a) => {
+                assert_eq!(a.template, "static-site");
+                assert_eq!(a.dir.unwrap().to_str().unwrap(), "./site");
+                assert!(!a.force);
+            }
+            _ => panic!("expected new"),
+        }
+    }
+
+    #[test]
+    fn parses_new_list_flag() {
+        let cli = Cli::try_parse_from(["digstore", "new", "x", "--list"]).unwrap();
+        match cli.command {
+            Command::New(a) => assert!(a.list),
+            _ => panic!("expected new"),
+        }
+    }
+
+    #[test]
+    fn parses_dev_defaults() {
+        let cli = Cli::try_parse_from(["digstore", "dev"]).unwrap();
+        match cli.command {
+            Command::Dev(a) => {
+                assert_eq!(a.port, 4343);
+                assert!(a.dir.is_none());
+                assert!(!a.open);
+            }
+            _ => panic!("expected dev"),
+        }
+    }
+
+    #[test]
+    fn parses_dev_flags() {
+        let cli =
+            Cli::try_parse_from(["digstore", "dev", "--dir", "dist", "--port", "5000"]).unwrap();
+        match cli.command {
+            Command::Dev(a) => {
+                assert_eq!(a.dir.as_deref(), Some("dist"));
+                assert_eq!(a.port, 5000);
+            }
+            _ => panic!("expected dev"),
+        }
+    }
+
+    #[test]
+    fn parses_doctor() {
+        let cli = Cli::try_parse_from(["digstore", "doctor"]).unwrap();
+        assert!(matches!(cli.command, Command::Doctor(_)));
+    }
+
+    #[test]
+    fn parses_commit_dry_run() {
+        let cli = Cli::try_parse_from(["digstore", "commit", "--dry-run"]).unwrap();
+        match cli.command {
+            Command::Commit(c) => assert!(c.dry_run),
+            _ => panic!("expected commit"),
+        }
+        // default off
+        let cli = Cli::try_parse_from(["digstore", "commit"]).unwrap();
+        match cli.command {
+            Command::Commit(c) => assert!(!c.dry_run),
+            _ => panic!("expected commit"),
+        }
     }
 
     #[test]
