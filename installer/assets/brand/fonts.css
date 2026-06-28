@@ -1,9 +1,0 @@
-/* DIG Network — brand fonts.
-   Space Grotesk ships as local TTFs (this folder). Open Sans + Space Mono
-   load from Google Fonts. Paths are relative to this file. */
-@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
-
-@font-face{font-family:'Space Grotesk';font-weight:400;font-style:normal;font-display:swap;src:url('fonts/space-grotesk-400.ttf') format('truetype');}
-@font-face{font-family:'Space Grotesk';font-weight:500;font-style:normal;font-display:swap;src:url('fonts/space-grotesk-500.ttf') format('truetype');}
-@font-face{font-family:'Space Grotesk';font-weight:600;font-style:normal;font-display:swap;src:url('fonts/space-grotesk-600.ttf') format('truetype');}
-@font-face{font-family:'Space Grotesk';font-weight:700;font-style:normal;font-display:swap;src:url('fonts/space-grotesk-700.ttf') format('truetype');}
