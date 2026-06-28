@@ -251,7 +251,7 @@ delegate the owner pre-authorizes (the hub Teams "Deployer" flow / on-chain
 never change ownership or melt the store, and the owner revokes it at any time.
 
 ```sh
-digstore commit -m "deploy" --deploy-key $DIGSTORE_WRITER_KEY   # writer-signed root advance
+digstore commit -m "deploy" --writer-key $DIGSTORE_WRITER_KEY   # writer-signed root advance
 digstore deploy --writer-key $DIGSTORE_WRITER_KEY               # same, in the CI deploy flow
 ```
 
@@ -369,7 +369,7 @@ a hint only — local config and flags always take precedence.
 | `digstore dir [<path>]` | Show or set the active project's content root |
 | `digstore add <path…> [-A] [--key <name>]` | Stage files (`-A` = the whole content root) |
 | `digstore staged` / `digstore unstage` | List the staging area / clear it |
-| `digstore commit [-m <msg>] [--wait-timeout <s>] [--deploy-key <writer-seed>]` | Seal a new deployment, anchor its root on mainnet (blocks until confirmed), compile the module, write the URN manifest. `--deploy-key` advances the root with a revocable **writer deploy token** instead of the owner seed |
+| `digstore commit [-m <msg>] [--wait-timeout <s>] [--writer-key <writer-seed>]` | Seal a new deployment, anchor its root on mainnet (blocks until confirmed), compile the module, write the URN manifest. `--writer-key` advances the root with a revocable **writer deploy token** instead of the owner seed (the deprecated `--deploy-key` alias still works) |
 | `digstore status` | Show staged/modified/untracked + capacity |
 | `digstore log [--limit N]` / `digstore diff <a> <b>` | List / compare deployments |
 | `digstore urn [PATHS…] [--root <hex>]` | Preview the URN(s) files will have |
