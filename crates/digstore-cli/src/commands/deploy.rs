@@ -2,7 +2,7 @@
 //!
 //! This is the "deploy from GitHub Actions" entry point: on a fresh checkout
 //! with no local `.dig`, advance the store's on-chain root and publish the new
-//! capsule to DIGHub, like Vercel's Git integration. It NEVER mints (`init`
+//! capsule to DIGHub, git-push-to-deploy. It NEVER mints (`init`
 //! creates a store and spends 100 DIG; `deploy` only ADVANCES an existing one).
 //!
 //! Flow:

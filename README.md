@@ -181,7 +181,7 @@ for `localhost`).
 ## Deploy from GitHub Actions (CI)
 
 Auto-publish your built site/dapp to your existing store on every push — a new
-capsule, like Vercel's Git integration. The store must already exist (you ran
+capsule, git-push-to-deploy. The store must already exist (you ran
 `digstore init` once); CI only **advances** it (it never mints).
 
 One-time setup, on the machine that created the store:

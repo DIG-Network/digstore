@@ -112,7 +112,7 @@ pub enum Command {
     /// Log out of dighub (clear the stored session).
     Logout(LogoutArgs),
     /// Deploy a built site/dapp to an EXISTING store from CI (a new capsule),
-    /// reading `dig.toml` — like Vercel's Git integration. Never mints (no init).
+    /// reading `dig.toml` — git-push-to-deploy. Never mints (no init).
     Deploy(DeployArgs),
     /// Manage the per-store publisher deploy key (export it once for CI; import it).
     DeployKey(DeployKeyArgs),
