@@ -17,21 +17,123 @@
 
 use chia_protocol::SpendBundle;
 
-use crate::cli::{CollectionAction, CollectionArgs, CollectionCreateArgs, CollectionMintArgs};
+use crate::cli::{
+    CollectionAction, CollectionArgs, CollectionCreateArgs, CollectionListArgs, CollectionMintArgs,
+    CollectionShowArgs,
+};
 use crate::error::CliError;
 use crate::ops::assets;
 use crate::runtime::block_on;
 use crate::ui::Ui;
 
-use digstore_chain::collection::{build_collection_mint, Collection, ManifestItem};
+use digstore_chain::collection::{
+    build_collection_mint, Collection, Drop, DropPhase, ManifestItem,
+};
 use digstore_chain::did::list_owned_dids;
-use digstore_chain::nft::sign_nft_spends;
+use digstore_chain::nft::{list_collections, read_collection, sign_nft_spends, CollectionView};
 
 pub fn run(ui: &Ui, args: CollectionArgs) -> Result<(), CliError> {
     match args.action {
         CollectionAction::Create(a) => create(ui, a),
         CollectionAction::Mint(a) => mint(ui, a),
+        CollectionAction::Show(a) => show(ui, a),
+        CollectionAction::List(a) => list(ui, a),
     }
+}
+
+/// The wallet's owner puzzle hashes to enumerate NFTs against (the first 20 HD indices).
+fn scan_owner_phs(mnemonic: &str) -> Result<Vec<chia_protocol::Bytes32>, CliError> {
+    let keys =
+        digstore_chain::keys::derive_indexed_keys(mnemonic, 0..20).map_err(CliError::from)?;
+    Ok(keys.iter().map(|k| k.owner_puzzle_hash).collect())
+}
+
+/// #39 `collection show --did <did>`: read one collection's items, owners, and royalty
+/// from coinset (NO third-party indexer). Enumerates the wallet's NFTs attributed to
+/// the DID and reports each item's launcher id + current owner + the shared royalty.
+fn show(ui: &Ui, args: CollectionShowArgs) -> Result<(), CliError> {
+    let did_launcher = assets::parse_launcher_id(&args.did)?;
+    let mnemonic = assets::unlock_mnemonic(ui)?;
+    let (chain, mocked) = assets::chain_reads();
+    assets::warn_if_mocked(ui, mocked);
+    let phs = scan_owner_phs(&mnemonic)?;
+    let view = block_on(read_collection(chain.as_ref(), &phs, did_launcher))??;
+
+    if ui.json() {
+        ui.emit_json(&collection_view_json("collection.show", &view, mocked));
+    } else {
+        ui.line(format!(
+            "collection {}  ({} item(s){})",
+            hex::encode(view.did_launcher),
+            view.items.len(),
+            view.royalty_basis_points
+                .map(|bp| format!(", royalty {bp}bp"))
+                .unwrap_or_default()
+        ));
+        for n in &view.items {
+            ui.line(format!(
+                "  {}  owner {}",
+                hex::encode(n.launcher_id),
+                hex::encode(n.p2_puzzle_hash)
+            ));
+        }
+        if view.items.is_empty() {
+            ui.line("  (no items held by this wallet for that DID)");
+        }
+    }
+    Ok(())
+}
+
+/// #39 `collection list`: list every collection (creator DID) the wallet holds items
+/// for, with each collection's item count + royalty — from coinset, no indexer.
+fn list(ui: &Ui, _args: CollectionListArgs) -> Result<(), CliError> {
+    let mnemonic = assets::unlock_mnemonic(ui)?;
+    let (chain, mocked) = assets::chain_reads();
+    assets::warn_if_mocked(ui, mocked);
+    let phs = scan_owner_phs(&mnemonic)?;
+    let cols = block_on(list_collections(chain.as_ref(), &phs))??;
+
+    if ui.json() {
+        ui.emit_json(&serde_json::json!({
+            "action": "collection.list",
+            "mocked": mocked,
+            "collections": cols.iter().map(|v| serde_json::json!({
+                "did_launcher": hex::encode(v.did_launcher),
+                "items": v.items.len(),
+                "royalty_basis_points": v.royalty_basis_points,
+            })).collect::<Vec<_>>(),
+        }));
+    } else if cols.is_empty() {
+        ui.line("no collections held by this wallet");
+    } else {
+        for v in &cols {
+            ui.line(format!(
+                "{}  {} item(s){}",
+                hex::encode(v.did_launcher),
+                v.items.len(),
+                v.royalty_basis_points
+                    .map(|bp| format!("  royalty {bp}bp"))
+                    .unwrap_or_default()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// JSON for a single [`CollectionView`] (shared by `show`).
+fn collection_view_json(action: &str, view: &CollectionView, mocked: bool) -> serde_json::Value {
+    serde_json::json!({
+        "action": action,
+        "mocked": mocked,
+        "did_launcher": hex::encode(view.did_launcher),
+        "royalty_basis_points": view.royalty_basis_points,
+        "items": view.items.iter().map(|n| serde_json::json!({
+            "launcher_id": hex::encode(n.launcher_id),
+            "coin_id": hex::encode(n.coin_id),
+            "owner_puzzle_hash": hex::encode(n.p2_puzzle_hash),
+            "royalty_basis_points": n.royalty_basis_points,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// Slugify a name into a stable default collection id (lowercase, non-alnum → `-`, collapsed).
@@ -50,8 +152,64 @@ fn slug(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// Parse one `--phase name[:start_unix[:supply]]` spec into a [`DropPhase`] (#40).
+/// `name` is required; `start_unix`/`supply` are optional positional, colon-separated.
+fn parse_phase(spec: &str) -> Result<DropPhase, CliError> {
+    let mut parts = spec.splitn(3, ':');
+    let name = parts.next().unwrap_or("").trim().to_string();
+    if name.is_empty() {
+        return Err(CliError::InvalidArgument(
+            "--phase needs a name: name[:start_unix[:supply]]".into(),
+        ));
+    }
+    let start_unix =
+        match parts.next() {
+            Some(s) if !s.trim().is_empty() => Some(s.trim().parse::<u64>().map_err(|_| {
+                CliError::InvalidArgument(format!("--phase start not a number: {s}"))
+            })?),
+            _ => None,
+        };
+    let supply =
+        match parts.next() {
+            Some(s) if !s.trim().is_empty() => Some(s.trim().parse::<u64>().map_err(|_| {
+                CliError::InvalidArgument(format!("--phase supply not a number: {s}"))
+            })?),
+            _ => None,
+        };
+    Ok(DropPhase {
+        // A phase with an allowlist (collection-level `--allow`) is allowlist-only by
+        // convention when named "allowlist"; finer per-phase gating is a #40 follow-up.
+        allowlist_only: name.eq_ignore_ascii_case("allowlist"),
+        name,
+        start_unix,
+        supply,
+    })
+}
+
+/// Assemble the optional drop config from `create` flags (#40, scaffolded). Returns
+/// `None` when no drop flag is set (an ordinary open collection).
+fn build_drop(args: &CollectionCreateArgs) -> Result<Option<Drop>, CliError> {
+    let phases = args
+        .phase
+        .iter()
+        .map(|p| parse_phase(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    let drop = Drop {
+        reveal_unix: args.reveal_at,
+        allowlist: args.allow.clone(),
+        phases,
+        lazy_mint: args.lazy_mint,
+    };
+    Ok(drop.is_configured().then_some(drop))
+}
+
 fn create(ui: &Ui, args: CollectionCreateArgs) -> Result<(), CliError> {
-    let id = args.id.unwrap_or_else(|| slug(&args.name));
+    // #40 (scaffolded): assemble the optional drop mechanics from the flags FIRST
+    // (while `args` is fully intact). The model is committed into the definition;
+    // enforcement in the mint path is TODO (see digstore_chain::collection::Drop).
+    let drop = build_drop(&args)?;
+
+    let id = args.id.clone().unwrap_or_else(|| slug(&args.name));
     if id.is_empty() {
         return Err(CliError::InvalidArgument(
             "--name produced an empty id; pass --id explicitly".into(),
@@ -72,12 +230,17 @@ fn create(ui: &Ui, args: CollectionCreateArgs) -> Result<(), CliError> {
         }
     };
 
+    if drop.is_some() && !ui.json() {
+        ui.line("⚠ drop mechanics are SCAFFOLDED: recorded in the definition, NOT yet enforced at mint (#40)");
+    }
+
     let collection = Collection {
         id: id.clone(),
         name: args.name.clone(),
         attributes: Vec::new(),
         royalty_puzzle_hash,
         royalty_basis_points: args.royalty,
+        drop,
     };
     let json = serde_json::to_string_pretty(&collection)
         .map_err(|e| CliError::Other(anyhow::anyhow!("serialize collection: {e}")))?;
@@ -151,11 +314,7 @@ fn mint(ui: &Ui, args: CollectionMintArgs) -> Result<(), CliError> {
     assets::warn_if_mocked(ui, mocked);
 
     // Reconstruct the creator DID the wallet owns (its current coin is what the mint spends).
-    let owner_phs = {
-        let keys =
-            digstore_chain::keys::derive_indexed_keys(&mnemonic, 0..20).map_err(CliError::from)?;
-        keys.iter().map(|k| k.owner_puzzle_hash).collect::<Vec<_>>()
-    };
+    let owner_phs = scan_owner_phs(&mnemonic)?;
     let dids = block_on(list_owned_dids(chain.as_ref(), &owner_phs))??;
     let owned = dids
         .into_iter()
@@ -238,5 +397,62 @@ mod tests {
         assert_eq!(slug("  Hello, World! "), "hello-world");
         assert_eq!(slug("a___b"), "a-b");
         assert_eq!(slug("!!!"), "");
+    }
+
+    #[test]
+    fn parse_phase_parses_name_start_supply() {
+        // #40: name only.
+        let p = parse_phase("public").unwrap();
+        assert_eq!(p.name, "public");
+        assert_eq!(p.start_unix, None);
+        assert_eq!(p.supply, None);
+        assert!(!p.allowlist_only);
+        // name:start.
+        let p = parse_phase("early:1800000000").unwrap();
+        assert_eq!(p.start_unix, Some(1_800_000_000));
+        assert_eq!(p.supply, None);
+        // name:start:supply, allowlist named phase is allowlist_only.
+        let p = parse_phase("allowlist:1800000000:100").unwrap();
+        assert_eq!(p.start_unix, Some(1_800_000_000));
+        assert_eq!(p.supply, Some(100));
+        assert!(p.allowlist_only);
+        // empty name / bad number error.
+        assert!(parse_phase("").is_err());
+        assert!(parse_phase("p:notanumber").is_err());
+    }
+
+    fn create_args() -> CollectionCreateArgs {
+        CollectionCreateArgs {
+            name: "C".into(),
+            id: None,
+            royalty: 0,
+            royalty_address: None,
+            out: None,
+            reveal_at: None,
+            allow: vec![],
+            phase: vec![],
+            lazy_mint: false,
+        }
+    }
+
+    #[test]
+    fn build_drop_is_none_without_flags() {
+        // #40: no drop flags → no drop block.
+        assert!(build_drop(&create_args()).unwrap().is_none());
+    }
+
+    #[test]
+    fn build_drop_collects_all_mechanics() {
+        let mut a = create_args();
+        a.reveal_at = Some(1_900_000_000);
+        a.allow = vec!["abcd".into()];
+        a.phase = vec!["allowlist:1800000000:50".into(), "public".into()];
+        a.lazy_mint = true;
+        let drop = build_drop(&a).unwrap().expect("drop configured");
+        assert_eq!(drop.reveal_unix, Some(1_900_000_000));
+        assert_eq!(drop.allowlist, vec!["abcd".to_string()]);
+        assert_eq!(drop.phases.len(), 2);
+        assert!(drop.phases[0].allowlist_only);
+        assert!(drop.lazy_mint);
     }
 }

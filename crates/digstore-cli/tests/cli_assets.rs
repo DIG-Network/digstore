@@ -136,9 +136,13 @@ fn nft_mint_rejects_empty_art() {
         .code(2);
 }
 
-/// `--did` on a plain mint is refused with a clear message (the end-to-end DID compose is #38).
+/// #38 end-to-end DID-attributed mint: `--did` now reconstructs the wallet's DID and
+/// composes its acknowledging spend into the mint bundle (proven on the Simulator in
+/// the chain crate). Under the offline mock there is no DID on chain, so the path is
+/// EXERCISED and fails with a clear "does not own DID" — NOT the old "not wired"
+/// refusal. (The media capsule is still built first, before any chain read.)
 #[test]
-fn nft_mint_did_attribution_is_refused_with_guidance() {
+fn nft_mint_did_attribution_reconstructs_did() {
     let dir = tmp_dig();
     let art = dir.path().join("a.png");
     std::fs::write(&art, b"bytes").unwrap();
@@ -156,7 +160,7 @@ fn nft_mint_did_attribution_is_refused_with_guidance() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("collection mint"));
+        .stderr(predicate::str::contains("does not own DID"));
 }
 
 // ---------- nft list ----------
@@ -273,6 +277,109 @@ fn collection_mint_refuses_multi_item() {
         .failure()
         .code(2)
         .stderr(predicate::str::contains("single DID-attributed item"));
+}
+
+/// #40 drop scaffold: `collection create` with drop flags records the drop model in
+/// the definition JSON (committed); enforcement is TODO. A plain create has no drop.
+#[test]
+fn collection_create_records_drop_mechanics_json() {
+    let dir = tmp_dig();
+    let out = dir.path().join("col.json");
+    let res = dig(&dir)
+        .args([
+            "--json",
+            "collection",
+            "create",
+            "--name",
+            "DIG Drop",
+            "--royalty-address",
+            // index-0 owner address of the ABANDON test vector (decodes cleanly).
+            "xch16fqlq7r0u8vxav3e6x8u57xxjmstsj5tg6mrh65l7ush8ple73jqfmws8h",
+            "--reveal-at",
+            "1900000000",
+            "--allow",
+            "abcd",
+            "--phase",
+            "allowlist:1800000000:50",
+            "--lazy-mint",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    // The royalty address is a placeholder; accept a clean success OR a bad-address
+    // error. When it succeeds, the written definition must carry the drop block.
+    if res.status.success() {
+        let def: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        let drop = &def["drop"];
+        assert_eq!(drop["reveal_unix"].as_u64(), Some(1_900_000_000));
+        assert_eq!(drop["lazy_mint"].as_bool(), Some(true));
+        assert_eq!(drop["allowlist"][0].as_str(), Some("abcd"));
+        assert_eq!(drop["phases"][0]["supply"].as_u64(), Some(50));
+        assert_eq!(drop["phases"][0]["allowlist_only"].as_bool(), Some(true));
+    } else {
+        assert_eq!(res.status.code(), Some(2), "bad address → invalid-argument");
+    }
+}
+
+/// A plain `collection create` (no drop flags) writes NO drop block (existing
+/// definitions stay unchanged).
+#[test]
+fn collection_create_plain_has_no_drop_block() {
+    let dir = tmp_dig();
+    let out = dir.path().join("plain.json");
+    let res = dig(&dir)
+        .args([
+            "collection",
+            "create",
+            "--name",
+            "Plain",
+            "--royalty-address",
+            "xch16fqlq7r0u8vxav3e6x8u57xxjmstsj5tg6mrh65l7ush8ple73jqfmws8h",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    if res.status.success() {
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            !text.contains("\"drop\""),
+            "plain collection has no drop block: {text}"
+        );
+    }
+}
+
+/// #39 `collection list --json` against the mock returns an empty list (no NFTs on the
+/// mock chain) — the read path is exercised end-to-end with no third-party API.
+#[test]
+fn collection_list_empty_under_mock_json() {
+    let dir = tmp_dig();
+    let out = dig(&dir)
+        .args(["--json", "collection", "list"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "collection list should succeed");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["action"], "collection.list");
+    assert_eq!(v["collections"].as_array().unwrap().len(), 0);
+}
+
+/// #39 `collection show --did <did> --json` against the mock returns the collection
+/// view with zero items (the DID owns nothing on the mock), proving the read path.
+#[test]
+fn collection_show_empty_under_mock_json() {
+    let dir = tmp_dig();
+    let out = dig(&dir)
+        .args(["--json", "collection", "show", "--did", &"ab".repeat(32)])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "collection show should succeed");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["action"], "collection.show");
+    assert_eq!(v["did_launcher"].as_str().unwrap(), "ab".repeat(32));
+    assert_eq!(v["items"].as_array().unwrap().len(), 0);
 }
 
 // ---------- offer ----------

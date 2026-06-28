@@ -173,6 +173,29 @@ impl ChainAnchor for MockAnchor {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn update_root_writer(
+        &self,
+        _launcher_id: Bytes32,
+        _new_root: Bytes32,
+        _label: Option<String>,
+        _description: Option<String>,
+        _writer: &digstore_chain::keys::WalletKeys,
+        _w: &ScannedWallet,
+        _fee: u64,
+    ) -> ChainResult<UpdateOutcome> {
+        // The mock treats a writer-authorized advance like an owner one (it does no
+        // on-chain validation); the writer authorization itself is proven on the
+        // Simulator in `digstore_chain::singleton` tests.
+        if let Some(msg) = &self.fail_update {
+            return Err(ChainError::Chain(msg.clone()));
+        }
+        Ok(UpdateOutcome {
+            new_coin_id: random_bytes32(),
+            tx_id: random_bytes32(),
+        })
+    }
+
     async fn confirm(&self, _coin_id: Bytes32, _timeout_secs: u64) -> ChainResult<ConfirmState> {
         if self.confirm_pending {
             Ok(ConfirmState::Pending)
