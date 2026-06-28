@@ -22,8 +22,8 @@ pub struct Cli {
     /// Suppress progress and hints.
     #[arg(short, long, global = true)]
     pub quiet: bool,
-    /// Operate on a specific project by name (overrides the active project).
-    #[arg(long = "store", visible_alias = "project", global = true)]
+    /// Operate on a specific store by name (overrides the active store).
+    #[arg(long = "store", alias = "project", global = true)]
     pub store_name: Option<String>,
     /// Operating directory for add/urn/status (overrides the store's content root).
     #[arg(short = 'C', long = "cwd", global = true)]
@@ -42,50 +42,50 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Start a new project from a template — free, no wallet, no spend.
+    /// Start a new store from a template — free, no wallet, no spend.
     New(NewArgs),
-    /// Preview your project locally — builds on save, serves the real dig://
+    /// Preview your store locally — builds on save, serves the real dig://
     /// read path with live reload. Free, no chain, no spend.
     Dev(DevArgs),
     /// Check you're ready to publish (seed, funds, login, remote, content).
     Doctor(DoctorArgs),
-    /// Create your project on Chia so you can publish it (mints on mainnet).
+    /// Create your store on Chia so you can publish it (mints on mainnet).
     Init(InitArgs),
     /// Stage files, directories, or glob patterns for your next publish.
     Add(AddArgs),
-    /// Publish your staged files as a new version (a new on-chain deployment).
+    /// Publish your staged files as a new version (a new on-chain capsule).
     Commit(CommitArgs),
     /// Build a hostable module + root from a directory, with NO chain/wallet
     /// (headless). The caller anchors the printed root on-chain separately.
     Compile(CompileArgs),
-    /// Show the active project, its content folder, and unpublished changes.
+    /// Show the active store, its content folder, and unpublished changes.
     Status(StatusArgs),
-    /// Show your project's deployment history (each published version).
+    /// Show your store's publish history (each published capsule).
     Log(LogArgs),
     /// Show what changed between two published versions.
     Diff(DiffArgs),
-    /// Save a published deployment root's files into a local folder.
+    /// Save a published capsule's files into a local folder.
     Checkout(CheckoutArgs),
     /// Read a published file by its share link (URN) or retrieval key.
     Cat(CatArgs),
-    /// Manage remote endpoints for this project (add, list, remove).
+    /// Manage remote endpoints for this store (add, list, remove).
     Remote(RemoteArgs),
-    /// Clone a project from a remote into the current directory.
+    /// Clone a store from a remote into the current directory.
     Clone(CloneArgs),
-    /// Upload your project's content and signed head to a remote.
+    /// Upload your store's content and signed head to a remote.
     Push(PushArgs),
     /// Pull the latest content and signed head from a remote.
     Pull(PullArgs),
-    /// Revoke a published root (or the whole project) with a signed tombstone.
+    /// Revoke a published root (or the whole store) with a signed tombstone.
     Revoke(RevokeArgs),
-    /// Run a dig:// remote node serving the active project (clone/pull/push, §21).
+    /// Run a dig:// remote node serving the active store (clone/pull/push, §21).
     Serve(ServeArgs),
-    /// List the projects in this workspace.
-    #[command(visible_alias = "projects")]
+    /// List the stores in this workspace.
+    #[command(alias = "projects")]
     Stores(StoresArgs),
-    /// Switch the active project by name.
+    /// Switch the active store by name.
     Use(UseArgs),
-    /// Show or set the active project's content root directory.
+    /// Show or set the active store's content root directory.
     Dir(DirArgs),
     /// Clear the staging area (discard all staged entries).
     Unstage(UnstageArgs),
@@ -101,7 +101,7 @@ pub enum Command {
     Seed(SeedArgs),
     /// Lock the seed (clear the cached-unlock session).
     Lock(LockArgs),
-    /// Resume or inspect the project's on-chain anchor.
+    /// Resume or inspect the store's on-chain anchor.
     Anchor(AnchorArgs),
     /// Show wallet XCH + DIG balance.
     Balance(BalanceArgs),
@@ -119,7 +119,7 @@ pub enum Command {
     /// Get set up to publish: seed (import/generate), fund check, optional login.
     #[command(visible_alias = "auth")]
     Setup(SetupArgs),
-    /// Connect this folder to an existing project (writes dig.toml + remote).
+    /// Connect this folder to an existing store (writes dig.toml + remote).
     Link(LinkArgs),
     /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
     Completion(CompletionArgs),
@@ -397,18 +397,19 @@ pub struct OfferShowArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Scaffolds a working project locally — NO wallet, NO chain, NO spend. Preview it \
+    after_help = "Scaffolds a working store locally — NO wallet, NO chain, NO spend. Preview it \
 with `digstore dev`, then publish it with `digstore deploy` when it's ready.\n\nTEMPLATES:\n  \
 static-site        a plain HTML/CSS site (no build step)\n  vite-react         a Vite + React app \
 (window.chia wired)\n  next-static        a statically-exported Next.js app\n  nft-drop           \
 an NFT drop / mint page\n  dapp-window-chia   a minimal dapp using the window.chia wallet\n\n\
-EXAMPLES:\n  digstore new static-site\n  digstore new vite-react ./my-app\n  digstore new \
+Prefer JS? `npm create dig-app` scaffolds the same `static-site` template (and more) from \
+Node.\n\nEXAMPLES:\n  digstore new static-site\n  digstore new vite-react ./my-app\n  digstore new \
 dapp-window-chia ./dapp --force"
 )]
 pub struct NewArgs {
     /// Which template to scaffold (static-site, vite-react, next-static, nft-drop, dapp-window-chia).
     pub template: String,
-    /// Target directory to create the project in (default: the current directory).
+    /// Target directory to create the store in (default: the current directory).
     pub dir: Option<PathBuf>,
     /// Write into a non-empty directory (overwriting any same-named files).
     #[arg(long)]
@@ -420,7 +421,7 @@ pub struct NewArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Builds your project on every save and serves it over the REAL dig:// read path \
+    after_help = "Builds your store on every save and serves it over the REAL dig:// read path \
 locally (compile → verify → decrypt, exactly as a visitor's browser does), with live reload and an \
 injected dev `window.chia` wallet shim. FREE — no wallet, no chain, no spend.\n\nReads `output-dir` \
 and `build-command` from `dig.toml` (flags override). Open the printed http://127.0.0.1:<port> URL.\n\n\
@@ -460,13 +461,13 @@ pub struct DoctorArgs {}
     after_help = "Costs 100 DIG + an XCH fee (paid on-chain at mint).\n\nEXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
 )]
 pub struct InitArgs {
-    /// Project name (default: "default").
+    /// Store name (default: "default").
     pub name: Option<String>,
-    /// Display name written to the on-chain project metadata (shown in DIGHUb). Optional —
+    /// Display name written to the on-chain store metadata (shown in DIGHUb). Optional —
     /// prompted at init if not given; when left unset, displays fall back to the store id.
     #[arg(long)]
     pub label: Option<String>,
-    /// Project description written to the on-chain metadata (optional).
+    /// Store description written to the on-chain metadata (optional).
     #[arg(long)]
     pub description: Option<String>,
     #[arg(long)]
@@ -560,7 +561,7 @@ pub struct CommitArgs {
     after_help = "Headless: NO wallet, NO chain, NO signing. Stages <in>, computes the\ngeneration root, and writes the compiled module to <out>. The caller anchors\nthe printed root on-chain (e.g. via a wallet) separately.\n\nEXAMPLES:\n  digstore compile --in ./content --out ./module.dig --store-id <64-hex> --json"
 )]
 pub struct CompileArgs {
-    /// Directory of files to compile into the project deployment (the content root).
+    /// Directory of files to compile into the store's capsule (the content root).
     #[arg(long)]
     pub r#in: PathBuf,
     /// Path to write the compiled module to.
@@ -967,7 +968,7 @@ pub struct UpdateArgs {
 order:\n  1. Seed — import an existing BIP-39 mnemonic or generate a new one. The seed signs every \
 on-chain action and pays the 100 DIG + XCH per publish. It NEVER leaves your machine.\n  2. Funds — \
 checks your wallet has enough DIG + XCH for a publish, and points you at where to get more if \
-not.\n  3. Login (optional) — a dighub account so your published projects appear in your dashboard. \
+not.\n  3. Login (optional) — a dighub account so your published stores appear in your dashboard. \
 The login only GATES the push to the public hub; it has NO on-chain authority. (Seed signs the \
 chain; login gates the push — two different things.)\n\nEverything except generating a brand-new \
 seed is safe to re-run. `digstore auth` is an alias.\n\nEXAMPLES:\n  digstore setup\n  digstore \
@@ -988,16 +989,16 @@ pub struct SetupArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Connects the CURRENT folder to a project you ALREADY published (from the hub or \
+    after_help = "Connects the CURRENT folder to a store you ALREADY published (from the hub or \
 on-chain), so you can iterate + redeploy it from here. It writes a committable `dig.toml` pinning \
-the project's id (and, when given a full URN, its remote), and registers `origin`. It does NOT mint, \
+the store's id (and, when given a full URN, its remote), and registers `origin`. It does NOT mint, \
 spend, download content, or need your seed — it just records where to publish.\n\nAfter linking, \
 publish a new version with `digstore deploy` (which reconstructs the store from your deploy key).\n\n\
 EXAMPLES:\n  digstore link 7e3a…  (a 64-hex store id)\n  digstore link urn:dig:chia:<storeID>\n  \
 digstore link <storeID> --output-dir dist --remote dig://<storeID>"
 )]
 pub struct LinkArgs {
-    /// The project to attach to: a 64-hex store id, or a `urn:dig:chia:<storeID>[:<root>]` URN.
+    /// The store to attach to: a 64-hex store id, or a `urn:dig:chia:<storeID>[:<root>]` URN.
     pub target: String,
     /// The built-output directory to publish (written to `dig.toml`; default `dist`).
     #[arg(long = "output-dir")]
@@ -1500,8 +1501,10 @@ mod tests {
         }
     }
 
-    // --- Terminology alignment with hub.dig.net (store→project): additive,
-    // backward-compatible aliases. The old names MUST keep working. ---
+    // --- Vocabulary (SYSTEM.md "Canonical terminology"): user-facing copy says
+    // `store`/`capsule`, never "project". `--project`/`projects` remain ONLY as
+    // HIDDEN, deprecated back-compat aliases — they must keep parsing, but must NOT
+    // appear in `--help`. ---
 
     #[test]
     fn projects_is_alias_for_stores() {
@@ -1520,6 +1523,31 @@ mod tests {
     fn project_flag_is_alias_for_store() {
         let cli = Cli::try_parse_from(["digstore", "--project", "site", "status"]).unwrap();
         assert_eq!(cli.store_name.as_deref(), Some("site"));
+    }
+
+    /// The `projects` command alias and the `--project` global flag alias are HIDDEN:
+    /// they still parse, but neither the word "project" nor the alias is advertised in
+    /// help. (Vocabulary purge — store/capsule are the only user-facing terms.)
+    #[test]
+    fn project_aliases_are_hidden_from_help() {
+        let cmd = Cli::command();
+        // `stores` advertises no visible alias (the `projects` alias is hidden).
+        let stores = cmd.find_subcommand("stores").unwrap();
+        assert!(
+            stores.get_visible_aliases().next().is_none(),
+            "the `projects` alias must be hidden"
+        );
+        // The global `--store` flag advertises no visible alias either (the
+        // `--project` alias is a plain hidden `alias`).
+        let store_flag = cmd
+            .get_arguments()
+            .find(|a: &&clap::Arg| a.get_id() == "store_name")
+            .expect("store flag exists");
+        let visible = store_flag
+            .get_visible_aliases()
+            .map(|v| v.iter().any(|s| *s == "project"))
+            .unwrap_or(false);
+        assert!(!visible, "the `--project` flag alias must be hidden");
     }
 
     #[test]

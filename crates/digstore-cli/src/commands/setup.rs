@@ -89,7 +89,7 @@ pub fn run(ui: &Ui, args: SetupArgs) -> Result<(), CliError> {
         true
     } else if ui.can_prompt() {
         if ui.confirm(
-            "Log in to dighub now (so your projects show in your dashboard)?",
+            "Log in to dighub now (so your stores show in your dashboard)?",
             true,
         ) {
             // Reuse the exact login path; a login failure here is non-fatal — the
@@ -125,7 +125,7 @@ pub fn run(ui: &Ui, args: SetupArgs) -> Result<(), CliError> {
         ui.line("  Your LOGIN only gates the push to the public hub — no on-chain authority.");
         ui.line("");
         ui.line("Next:");
-        ui.line("  digstore new <template>   # start a project (free)");
+        ui.line("  digstore new <template>   # start a store (free)");
         ui.line("  digstore doctor           # re-check you're ready to publish");
     }
     Ok(())

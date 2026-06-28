@@ -50,7 +50,7 @@ pub fn run(
         return Ok(());
     }
     if rows.is_empty() {
-        ui.line("no projects; create one with `digstore init`");
+        ui.line("no stores; create one with `digstore init`");
         return Ok(());
     }
     for r in &rows {
