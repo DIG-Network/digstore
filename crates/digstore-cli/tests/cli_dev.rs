@@ -14,30 +14,63 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// A minimal HTTP/1.1 GET against 127.0.0.1:<port><path>, returning the response
-/// body as a (lossy) string. Reads raw bytes until EOF (the server sends
-/// `Connection: close`), which is robust against partial reads / non-UTF8 — unlike
-/// `read_to_string`. Returns None if the connection fails (server not up).
+/// body as a (lossy) string.
+///
+/// Reads the headers, then exactly `Content-Length` body bytes — it does NOT wait
+/// for EOF. hyper/axum keeps HTTP/1.1 connections alive (it does not honor the
+/// client's `Connection: close` REQUEST header by closing), so an EOF-based read
+/// only ends on the socket read timeout; under parallel CI load that timeout made
+/// this fragile ("server did not come up"). Reading by Content-Length returns as
+/// soon as the body is complete, so the exchange is deterministic regardless of
+/// keep-alive or load. Returns None if the connection/exchange fails.
 fn http_get(port: u16, path: &str) -> Option<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(8))).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .ok()?;
     let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).ok()?;
-    let mut bytes = Vec::new();
+
+    let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
-    loop {
+    // 1. Read until the end of the header block (blank line).
+    let header_end = loop {
+        if let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
+            break pos + 4;
+        }
         match stream.read(&mut chunk) {
-            Ok(0) => break, // EOF: server closed the connection.
-            Ok(n) => bytes.extend_from_slice(&chunk[..n]),
-            Err(_) => break, // timeout / reset: use whatever we have.
+            Ok(0) => return None, // closed before headers were complete
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(_) => return None,
+        }
+    };
+
+    // 2. Parse Content-Length (case-insensitive) from the header block.
+    let headers = String::from_utf8_lossy(&buf[..header_end]).to_ascii_lowercase();
+    let content_len: usize = headers
+        .lines()
+        .find_map(|l| l.strip_prefix("content-length:"))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+
+    // 3. Read exactly Content-Length body bytes (some may already be buffered).
+    let mut body = buf[header_end..].to_vec();
+    while body.len() < content_len {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => body.extend_from_slice(&chunk[..n]),
+            Err(_) => break,
         }
     }
-    if bytes.is_empty() {
+    Some(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// Index of the first occurrence of `needle` in `haystack` (small, no deps).
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    // Split headers/body on the blank line.
-    text.split_once("\r\n\r\n")
-        .map(|(_, body)| body.to_string())
+    (0..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
 }
 
 /// GET a path, retrying briefly to ride out a transient connection refusal.
