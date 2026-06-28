@@ -66,7 +66,10 @@ cargo deny check advisories bans sources
 | `digstore-prover` | Execution-proof backends (mock + RISC0) |
 | `digstore-remote` | HTTPS sync server/client |
 | `digstore-cli` | The `digstore` binary (owns client-side crypto + UX) |
-| `installer/app` | The Tauri desktop installer (isolated workspace) |
+
+The desktop/universal installer now lives in its own repo,
+[DIG-Network/dig-installer](https://github.com/DIG-Network/dig-installer); this
+repo only builds and publishes the `digstore` binary that the installer consumes.
 
 ## Security
 

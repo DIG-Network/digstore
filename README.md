@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="installer/assets/brand/logos/Wordmark-Stacked-Glow.svg" alt="DigStore — by DIG Network" width="320">
-</p>
-
 <h1 align="center">digstore</h1>
 
 <p align="center">
@@ -38,17 +34,33 @@ project at a directory like `dist/` and it captures what's there.
 
 ## Install
 
-### Windows (installer)
+### Universal installer (recommended)
 
-1. Download `DigStore *-setup.exe` (or the `.msi`) from the
-   [Releases](https://github.com/DIG-Network/digstore/releases) page.
-2. Run it. It installs per-user (no admin prompt) and adds `digstore` to your
-   `PATH`.
-3. Open a **new** terminal and check it works:
+The DIG installer downloads the right `digstore` binary for your OS and adds it
+to your `PATH`. It lives in its own repo,
+[**DIG-Network/dig-installer**](https://github.com/DIG-Network/dig-installer)
+(the GUI desktop installer — the single-file `DigStore-Setup-*` — lives there
+too, and it can optionally also install the `dig-node` local node).
 
-   ```sh
-   digstore --version
-   ```
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/DIG-Network/dig-installer/main/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/DIG-Network/dig-installer/main/install.ps1 | iex
+```
+
+Then open a **new** terminal and check it works:
+
+```sh
+digstore --version
+```
+
+You can also grab the raw per-OS `digstore` binary directly from this repo's
+[Releases](https://github.com/DIG-Network/digstore/releases) page
+(`digstore-<ver>-<os_arch>`) and drop it on your `PATH`.
 
 ### Build from source (any platform)
 

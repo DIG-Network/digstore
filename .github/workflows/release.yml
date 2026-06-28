@@ -1,13 +1,22 @@
 name: Release
 
-# On a version tag (v*), build the digstore CLI in release mode and produce ONE
-# run-once installer artifact per OS. The digstore binary is embedded directly
-# into the installer (build.rs), so each download is a single self-contained
-# file that, when run, installs digstore — no installer-installs-the-installer:
+# On a version tag (v*), build the raw `digstore` CLI binary in release mode for
+# every supported OS/arch and attach them to a GitHub Release. These per-OS raw
+# binaries are what the universal installer (DIG-Network/dig-installer) downloads
+# and places on PATH:
 #
-#   * Windows → DigStore-Setup-<ver>-windows-x64.exe   (raw Tauri exe, no NSIS/MSI)
-#   * macOS   → DigStore-Setup-<ver>-macos.dmg          (one mountable run-once .app)
-#   * Linux   → DigStore-Setup-<ver>-linux-x86_64.AppImage (single executable)
+#   * windows-x64  → digstore-<ver>-windows-x64.exe
+#   * linux-x64    → digstore-<ver>-linux-x64
+#   * macos-arm64  → digstore-<ver>-macos-arm64
+#   * macos-x64    → digstore-<ver>-macos-x64
+#
+# The polished desktop GUI installer (the single-file DigStore-Setup-*.exe /
+# *.dmg / *.AppImage) now lives in DIG-Network/dig-installer, which CONSUMES the
+# binaries published here — it is no longer built in this repo. This repo's job
+# is to cargo-build and publish the `digstore` binary.
+#
+# The publish-s3-binary job below ALSO uploads the Linux x86_64 binary to the
+# dighub artifact bucket for the hub compile-worker (unchanged).
 on:
   push:
     tags:
@@ -22,28 +31,28 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  installer:
-    name: Installer (${{ matrix.os }})
+  binary:
+    name: Build digstore CLI (${{ matrix.out_name }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
+            target: x86_64-pc-windows-msvc
             bin: digstore.exe
-            # Windows ships the raw, self-contained exe (no NSIS/MSI wrapper).
-            build_args: "--no-bundle"
-            artifact_glob: "src-tauri/target/release/*.exe"
-            out_name: "windows-x64.exe"
+            out_name: windows-x64.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: digstore
+            out_name: linux-x64
           - os: macos-latest
+            target: aarch64-apple-darwin
             bin: digstore
-            build_args: "--bundles dmg"
-            artifact_glob: "src-tauri/target/release/bundle/dmg/*.dmg"
-            out_name: "macos.dmg"
-          - os: ubuntu-22.04
+            out_name: macos-arm64
+          - os: macos-13 # Intel runner
+            target: x86_64-apple-darwin
             bin: digstore
-            build_args: "--bundles appimage"
-            artifact_glob: "src-tauri/target/release/bundle/appimage/*.AppImage"
-            out_name: "linux-x86_64.AppImage"
+            out_name: macos-x64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -51,22 +60,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned Rust toolchain
+      - name: Install pinned Rust toolchain + target
+        shell: bash
         run: |
           rustup show   # installs the toolchain pinned in rust-toolchain.toml (incl. wasm32 target)
+          rustup target add ${{ matrix.target }}
           rustc --version
-
-      # Linux needs the webkit2gtk stack for Tauri.
-      - name: Install Linux Tauri deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
 
       - name: Cache cargo + targets
         uses: actions/cache@v4
@@ -76,70 +75,48 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-            installer/app/src-tauri/target
-          key: ${{ runner.os }}-tauri-release-${{ hashFiles('**/Cargo.lock', 'installer/app/src-tauri/Cargo.toml', 'installer/app/package-lock.json') }}
-          restore-keys: ${{ runner.os }}-tauri-release-
+          key: ${{ runner.os }}-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-release-${{ matrix.target }}-
 
       # digstore-cli's build.rs embeds the real guest wasm (BINDING contract D6).
       - name: Build guest wasm
         run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
 
       - name: Build digstore CLI (release)
-        run: cargo build -p digstore-cli --release --locked
+        run: cargo build -p digstore-cli --release --locked --target ${{ matrix.target }} --bin digstore
 
       - name: Derive version from tag
         shell: bash
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - name: Install frontend deps
-        working-directory: installer/app
-        run: npm ci || npm install
-
-      # Stage the just-built digstore binary so the installer's build.rs embeds
-      # it (single-file install) + records its SHA-256 for the verify gate.
-      - name: Stage bundled digstore binary
-        working-directory: installer/app
-        run: node scripts/stage-binary.mjs --src ../../target/release/${{ matrix.bin }}
-
-      - name: Build the installer
-        working-directory: installer/app
-        run: npx tauri build ${{ matrix.build_args }}
-
-      - name: Collect single installer artifact
-        id: collect
+      - name: Stage binary artifact
         shell: bash
-        working-directory: installer/app
         run: |
-          mkdir -p ../../dist-installers
-          artifact="$(ls -1 ${{ matrix.artifact_glob }} | head -n1)"
-          if [ -z "$artifact" ]; then
-            echo "no artifact matched ${{ matrix.artifact_glob }}"; exit 1
-          fi
-          dest="../../dist-installers/DigStore-Setup-${VERSION}-${{ matrix.out_name }}"
-          cp "$artifact" "$dest"
-          echo "staged $dest"
-          ls -la ../../dist-installers
+          mkdir -p dist
+          SRC="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          test -f "$SRC" || { echo "binary not produced: $SRC"; exit 1; }
+          cp "$SRC" "dist/digstore-${VERSION}-${{ matrix.out_name }}"
+          ls -la dist
 
-      - name: Upload installer as workflow artifact
+      - name: Upload binary as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: digstore-installer-${{ matrix.os }}
-          path: dist-installers/*
+          name: digstore-binary-${{ matrix.out_name }}
+          path: dist/*
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Single publish job — runs after ALL matrix builds so there is no race to
-  # create the GitHub Release (the previous per-matrix publish raced: the first
-  # job created the release, the others 401'd / "release not found").
+  # create the GitHub Release.
   # ---------------------------------------------------------------------------
   publish:
     name: Publish release
-    needs: installer
+    needs: binary
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all installer artifacts
+      - name: Download all binary artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
