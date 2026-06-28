@@ -323,6 +323,37 @@ fn collection_create_records_drop_mechanics_json() {
     }
 }
 
+/// The human-mode drop-scaffold warning must NOT leak an internal tracker number
+/// (e.g. `(#40)`) into user-facing output — plain language only.
+#[test]
+fn collection_create_drop_warning_has_no_tracker_number() {
+    let dir = tmp_dig();
+    let out = dir.path().join("warn.json");
+    let res = dig(&dir)
+        .args([
+            "collection",
+            "create",
+            "--name",
+            "DIG Drop",
+            "--royalty-address",
+            "xch16fqlq7r0u8vxav3e6x8u57xxjmstsj5tg6mrh65l7ush8ple73jqfmws8h",
+            "--lazy-mint",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&res.stdout),
+        String::from_utf8_lossy(&res.stderr)
+    );
+    assert!(
+        !combined.contains("(#"),
+        "user-facing output must not leak a tracker number: {combined}"
+    );
+}
+
 /// A plain `collection create` (no drop flags) writes NO drop block (existing
 /// definitions stay unchanged).
 #[test]
