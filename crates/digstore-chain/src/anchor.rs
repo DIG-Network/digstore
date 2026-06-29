@@ -133,76 +133,22 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         fee: u64,
         dig_amount: u64,
     ) -> Result<MintOutcome> {
-        // Index 0 is the store owner and change destination.
-        let change_ph = w.addrs[0].keys.owner_puzzle_hash;
-
-        // 2) UNSIGNED DIG payment: `dig_amount` DIG to the treasury, memo = launcher id.
-        //    Gather DIG cats across ALL scanned addresses.
-        //    (Must be done once before the build closure since it requires async.)
-        let cats = dig_cats_multi(&self.chain as &dyn ChainReads, w).await?;
-
-        // Helper: build + sign the combined mint+DIG bundle for a given fee.
-        let build_mint_bundle = |effective_fee: u64| -> Result<(SpendBundle, Bytes32, Bytes32)> {
-            // 1) UNSIGNED mint coin spends: gather XCH across ALL scanned addresses.
-            let all_xch = coins_with_keys_from_wallet(w);
-            let mint = build_mint_unsigned_multi(
-                &all_xch,
-                change_ph,
-                Bytes32::default(),
-                label.clone(),
-                description.clone(),
-                effective_fee,
-            )?;
-            let coin_id = mint.datastore.coin.coin_id();
-            let launcher_id = mint.launcher_id;
-
-            let pay = build_dig_payment_multi(
-                w.addrs.iter().map(|a| &a.keys),
-                change_ph,
-                &cats,
-                dig_amount,
-                launcher_id,
-            )?;
-
-            // 3) Combine into ONE bundle and sign atomically with ALL address keys.
-            //    ATOMICITY: the DIG payment and the singleton spend ride in a single
-            //    SpendBundle under one aggregated signature, so the mempool admits
-            //    them all-or-nothing. This co-signing is the SOLE atomicity guarantee
-            //    between the DIG payment and the anchor — these coin spends must never
-            //    be split across bundles or pushed separately.
-            let mut all = mint.coin_spends;
-            all.extend(pay);
-            let signature = sign_coin_spends(&all, &w.signing_keys(), false)
-                .map_err(|e| ChainError::Chain(format!("sign combined mint+DIG bundle: {e}")))?;
-            Ok((SpendBundle::new(all, signature), coin_id, launcher_id))
-        };
-
-        // Build the initial bundle (fee=0 if auto-estimating, or the caller's fee override).
-        let (bundle, coin_id, launcher_id) = build_mint_bundle(fee)?;
-
-        // Auto-estimate fee when the caller supplied fee=0.
-        // Fail-open: if estimation returns 0 or wallet can't cover it, use the fee-0 bundle.
-        let (final_bundle, coin_id, launcher_id) = if fee == 0 {
-            let est = self.chain.estimate_fee(&bundle, 60).await.unwrap_or(0);
-            if est > 0 && w.xch_balance() >= est {
-                // Rebuild + re-sign with the estimated fee.
-                match build_mint_bundle(est) {
-                    Ok(rebuilt) => rebuilt,
-                    Err(_) => (bundle, coin_id, launcher_id), // rebuild failed → fall back
-                }
-            } else {
-                (bundle, coin_id, launcher_id) // empty mempool or insufficient XCH → fee 0
-            }
-        } else {
-            (bundle, coin_id, launcher_id) // explicit fee override
-        };
-
+        // Build + sign the atomic mint+DIG bundle (with fee auto-estimate), then push.
+        let built = build_mint_store_bundle(
+            &self.chain as &dyn ChainReads,
+            w,
+            label,
+            description,
+            fee,
+            dig_amount,
+        )
+        .await?;
         // Bundle hash == conventional tx id; capture it BEFORE the bundle moves.
-        let tx_id = final_bundle.name();
-        self.chain.push(final_bundle).await?;
+        let tx_id = built.bundle.name();
+        self.chain.push(built.bundle).await?;
         Ok(MintOutcome {
-            launcher_id,
-            coin_id,
+            launcher_id: built.launcher_id,
+            coin_id: built.coin_id,
             tx_id,
         })
     }
@@ -217,79 +163,24 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         fee: u64,
         dig_amount: u64,
     ) -> Result<UpdateOutcome> {
-        // Index 0 is the store owner (the singleton was minted by its synthetic_pk)
-        // and the change destination.
-        let change_ph = w.addrs[0].keys.owner_puzzle_hash;
-        let owner_pk = w.addrs[0].keys.synthetic_pk;
-
-        // &self.chain is &C; coerces to &dyn ChainReads because C: ChainReads.
-        let store = sync_datastore(&self.chain as &dyn ChainReads, launcher_id).await?;
-
-        // 2) UNSIGNED DIG payment: `dig_amount` DIG to the treasury, memo = store id.
-        //    Gather DIG cats across ALL scanned addresses.
-        //    (Must be done once before the build closure since it requires async.)
-        let cats = dig_cats_multi(&self.chain as &dyn ChainReads, w).await?;
-
-        // Helper: build + sign the combined update+DIG bundle for a given fee.
-        let build_update_bundle = |effective_fee: u64| -> Result<(SpendBundle, Bytes32)> {
-            // 1) UNSIGNED update coin spends (singleton + XCH fee) across all addresses.
-            let all_xch = coins_with_keys_from_wallet(w);
-            let update = build_update_unsigned_multi(
-                owner_pk,
-                store.clone(),
-                new_root,
-                label.clone(),
-                description.clone(),
-                &all_xch,
-                effective_fee,
-            )?;
-            let new_coin_id = update.new_coin_id;
-
-            let pay = build_dig_payment_multi(
-                w.addrs.iter().map(|a| &a.keys),
-                change_ph,
-                &cats,
-                dig_amount,
-                launcher_id,
-            )?;
-
-            // 3) Combine into ONE bundle and sign atomically with ALL address keys.
-            //    ATOMICITY: the DIG payment and the singleton spend ride in a single
-            //    SpendBundle under one aggregated signature, so the mempool admits
-            //    them all-or-nothing. This co-signing is the SOLE atomicity guarantee
-            //    between the DIG payment and the anchor — these coin spends must never
-            //    be split across bundles or pushed separately.
-            let mut all = update.coin_spends;
-            all.extend(pay);
-            let signature = sign_coin_spends(&all, &w.signing_keys(), false)
-                .map_err(|e| ChainError::Chain(format!("sign combined update+DIG bundle: {e}")))?;
-            Ok((SpendBundle::new(all, signature), new_coin_id))
-        };
-
-        // Build the initial bundle (fee=0 if auto-estimating, or the caller's fee override).
-        let (bundle, new_coin_id) = build_update_bundle(fee)?;
-
-        // Auto-estimate fee when the caller supplied fee=0.
-        // Fail-open: if estimation returns 0 or wallet can't cover it, use the fee-0 bundle.
-        let (final_bundle, new_coin_id) = if fee == 0 {
-            let est = self.chain.estimate_fee(&bundle, 60).await.unwrap_or(0);
-            if est > 0 && w.xch_balance() >= est {
-                // Rebuild + re-sign with the estimated fee.
-                match build_update_bundle(est) {
-                    Ok(rebuilt) => rebuilt,
-                    Err(_) => (bundle, new_coin_id), // rebuild failed → fall back
-                }
-            } else {
-                (bundle, new_coin_id) // empty mempool or insufficient XCH → fee 0
-            }
-        } else {
-            (bundle, new_coin_id) // explicit fee override
-        };
-
+        let built = build_advance_store_bundle(
+            &self.chain as &dyn ChainReads,
+            launcher_id,
+            new_root,
+            label,
+            description,
+            w,
+            fee,
+            dig_amount,
+        )
+        .await?;
         // Bundle hash == conventional tx id; capture it BEFORE the bundle moves.
-        let tx_id = final_bundle.name();
-        self.chain.push(final_bundle).await?;
-        Ok(UpdateOutcome { new_coin_id, tx_id })
+        let tx_id = built.bundle.name();
+        self.chain.push(built.bundle).await?;
+        Ok(UpdateOutcome {
+            new_coin_id: built.new_coin_id,
+            tx_id,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -304,75 +195,24 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         fee: u64,
         dig_amount: u64,
     ) -> Result<UpdateOutcome> {
-        // Index 0 is the wallet's fee/change address (the writer authorizes the
-        // singleton; the wallet still pays the XCH fee + the DIG payment).
-        let change_ph = w.addrs[0].keys.owner_puzzle_hash;
-        let fee_keys = crate::keys::WalletKeys {
-            synthetic_sk: w.addrs[0].keys.synthetic_sk.clone(),
-            synthetic_pk: w.addrs[0].keys.synthetic_pk,
-            owner_puzzle_hash: w.addrs[0].keys.owner_puzzle_hash,
-        };
-
-        let store = sync_datastore(&self.chain as &dyn ChainReads, launcher_id).await?;
-        let cats = dig_cats_multi(&self.chain as &dyn ChainReads, w).await?;
-
-        // The fee coins are the wallet's spendable XCH at index 0 (the writer path
-        // funds the fee from the change address; multi-address fee aggregation is
-        // the owner path's concern — the deploy token is index-0-funded in CI).
-        let fee_coins: Vec<chia_protocol::Coin> = w.addrs[0].xch.clone();
-
-        let build_writer_bundle = |effective_fee: u64| -> Result<(SpendBundle, Bytes32)> {
-            let update = crate::singleton::build_update_unsigned_writer(
-                writer.synthetic_pk,
-                store.clone(),
-                new_root,
-                label.clone(),
-                description.clone(),
-                &fee_keys,
-                &fee_coins,
-                effective_fee,
-            )?;
-            let new_coin_id = update.new_coin_id;
-
-            let pay = build_dig_payment_multi(
-                w.addrs.iter().map(|a| &a.keys),
-                change_ph,
-                &cats,
-                dig_amount,
-                launcher_id,
-            )?;
-
-            // ONE bundle, signed by BOTH the writer key (singleton) and ALL wallet
-            // keys (fee + DIG). ATOMICITY: the DIG payment + the writer-authorized
-            // singleton spend ride in a single SpendBundle under one aggregated
-            // signature, admitted all-or-nothing — never split or pushed separately.
-            let mut all = update.coin_spends;
-            all.extend(pay);
-            let mut signers = w.signing_keys();
-            signers.push(writer.synthetic_sk.clone());
-            let signature = sign_coin_spends(&all, &signers, false)
-                .map_err(|e| ChainError::Chain(format!("sign writer update+DIG bundle: {e}")))?;
-            Ok((SpendBundle::new(all, signature), new_coin_id))
-        };
-
-        let (bundle, new_coin_id) = build_writer_bundle(fee)?;
-        let (final_bundle, new_coin_id) = if fee == 0 {
-            let est = self.chain.estimate_fee(&bundle, 60).await.unwrap_or(0);
-            if est > 0 && w.xch_balance() >= est {
-                match build_writer_bundle(est) {
-                    Ok(rebuilt) => rebuilt,
-                    Err(_) => (bundle, new_coin_id),
-                }
-            } else {
-                (bundle, new_coin_id)
-            }
-        } else {
-            (bundle, new_coin_id)
-        };
-
-        let tx_id = final_bundle.name();
-        self.chain.push(final_bundle).await?;
-        Ok(UpdateOutcome { new_coin_id, tx_id })
+        let built = build_advance_store_writer_bundle(
+            &self.chain as &dyn ChainReads,
+            launcher_id,
+            new_root,
+            label,
+            description,
+            writer,
+            w,
+            fee,
+            dig_amount,
+        )
+        .await?;
+        let tx_id = built.bundle.name();
+        self.chain.push(built.bundle).await?;
+        Ok(UpdateOutcome {
+            new_coin_id: built.new_coin_id,
+            tx_id,
+        })
     }
 
     /// Polls chain every 10 s until `coin_id` appears or the poll budget expires.
@@ -393,6 +233,240 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
             }
         }
         Ok(ConfirmState::Pending)
+    }
+}
+
+// ===========================================================================
+// Build-only (no-push) bundle builders — shared by the CLI anchor (which then
+// pushes) AND the in-process wallet (which applies its own broadcast gate).
+//
+// These hold the SOLE copy of the atomic "singleton spend + DIG payment, signed
+// together under one aggregated signature" logic + the fee auto-estimate, so the
+// CLI and the wallet can never drift. Each returns a fully-signed SpendBundle but
+// does NOT broadcast — pushing is the caller's gated decision.
+// ===========================================================================
+
+/// A built + signed mint bundle (mint singleton + DIG payment), not yet pushed.
+pub struct MintStoreBundle {
+    pub bundle: SpendBundle,
+    pub launcher_id: Bytes32, // == store_id
+    pub coin_id: Bytes32,     // eve singleton coin to poll for confirmation
+}
+
+/// A built + signed root-advance bundle (singleton update + DIG payment), not yet pushed.
+pub struct AdvanceStoreBundle {
+    pub bundle: SpendBundle,
+    pub new_coin_id: Bytes32,
+}
+
+/// Auto-estimate the fee for `bundle` when `requested_fee == 0`, returning the fee to
+/// actually use. Fail-open: if estimation yields 0 or the wallet can't cover it, keep
+/// fee 0 (the empty-mempool case). An explicit non-zero `requested_fee` is honoured.
+async fn resolve_fee(
+    chain: &dyn ChainReads,
+    bundle: &SpendBundle,
+    w: &ScannedWallet,
+    requested_fee: u64,
+) -> u64 {
+    if requested_fee != 0 {
+        return requested_fee;
+    }
+    let est = chain.estimate_fee(bundle, 60).await.unwrap_or(0);
+    if est > 0 && w.xch_balance() >= est {
+        est
+    } else {
+        0
+    }
+}
+
+/// Build + sign the atomic mint+DIG bundle for a store with `root = 0`, gathering XCH +
+/// DIG across ALL scanned HD addresses and signing with all keys. Auto-estimates the
+/// fee when `fee == 0`. Does NOT push — the caller broadcasts (CLI) or gates it (wallet).
+pub async fn build_mint_store_bundle(
+    chain: &dyn ChainReads,
+    w: &ScannedWallet,
+    label: Option<String>,
+    description: Option<String>,
+    fee: u64,
+    dig_amount: u64,
+) -> Result<MintStoreBundle> {
+    // Index 0 is the store owner and change destination.
+    let change_ph = w.addrs[0].keys.owner_puzzle_hash;
+    // DIG cats across ALL scanned addresses (async — gathered once before building).
+    let cats = dig_cats_multi(chain, w).await?;
+
+    // Build + sign the combined mint+DIG bundle for a given fee.
+    let build = |effective_fee: u64| -> Result<MintStoreBundle> {
+        let all_xch = coins_with_keys_from_wallet(w);
+        let mint = build_mint_unsigned_multi(
+            &all_xch,
+            change_ph,
+            Bytes32::default(),
+            label.clone(),
+            description.clone(),
+            effective_fee,
+        )?;
+        let coin_id = mint.datastore.coin.coin_id();
+        let launcher_id = mint.launcher_id;
+        let pay = build_dig_payment_multi(
+            w.addrs.iter().map(|a| &a.keys),
+            change_ph,
+            &cats,
+            dig_amount,
+            launcher_id,
+        )?;
+        // ATOMICITY: the DIG payment and the singleton spend ride in ONE SpendBundle
+        // under one aggregated signature, so the mempool admits them all-or-nothing.
+        // This co-signing is the SOLE atomicity guarantee — never split these spends
+        // across bundles or push them separately.
+        let mut all = mint.coin_spends;
+        all.extend(pay);
+        let signature = sign_coin_spends(&all, &w.signing_keys(), false)
+            .map_err(|e| ChainError::Chain(format!("sign combined mint+DIG bundle: {e}")))?;
+        Ok(MintStoreBundle {
+            bundle: SpendBundle::new(all, signature),
+            launcher_id,
+            coin_id,
+        })
+    };
+
+    let first = build(fee)?;
+    let effective = resolve_fee(chain, &first.bundle, w, fee).await;
+    if effective == fee {
+        Ok(first)
+    } else {
+        // Rebuild with the estimated fee; fall back to the fee-0 bundle on failure.
+        build(effective).or(Ok(first))
+    }
+}
+
+/// Build + sign the atomic owner-authorized root-advance+DIG bundle for `launcher_id`
+/// → `new_root`, gathering XCH + DIG across ALL scanned addresses. Syncs the live
+/// singleton, auto-estimates the fee when `fee == 0`. Does NOT push.
+#[allow(clippy::too_many_arguments)]
+pub async fn build_advance_store_bundle(
+    chain: &dyn ChainReads,
+    launcher_id: Bytes32,
+    new_root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
+    w: &ScannedWallet,
+    fee: u64,
+    dig_amount: u64,
+) -> Result<AdvanceStoreBundle> {
+    let change_ph = w.addrs[0].keys.owner_puzzle_hash;
+    let owner_pk = w.addrs[0].keys.synthetic_pk;
+    let store = sync_datastore(chain, launcher_id).await?;
+    let cats = dig_cats_multi(chain, w).await?;
+
+    let build = |effective_fee: u64| -> Result<AdvanceStoreBundle> {
+        let all_xch = coins_with_keys_from_wallet(w);
+        let update = build_update_unsigned_multi(
+            owner_pk,
+            store.clone(),
+            new_root,
+            label.clone(),
+            description.clone(),
+            &all_xch,
+            effective_fee,
+        )?;
+        let new_coin_id = update.new_coin_id;
+        let pay = build_dig_payment_multi(
+            w.addrs.iter().map(|a| &a.keys),
+            change_ph,
+            &cats,
+            dig_amount,
+            launcher_id,
+        )?;
+        // ATOMICITY: DIG payment + singleton update in ONE co-signed bundle (see
+        // build_mint_store_bundle) — admitted all-or-nothing, never split.
+        let mut all = update.coin_spends;
+        all.extend(pay);
+        let signature = sign_coin_spends(&all, &w.signing_keys(), false)
+            .map_err(|e| ChainError::Chain(format!("sign combined update+DIG bundle: {e}")))?;
+        Ok(AdvanceStoreBundle {
+            bundle: SpendBundle::new(all, signature),
+            new_coin_id,
+        })
+    };
+
+    let first = build(fee)?;
+    let effective = resolve_fee(chain, &first.bundle, w, fee).await;
+    if effective == fee {
+        Ok(first)
+    } else {
+        build(effective).or(Ok(first))
+    }
+}
+
+/// Build + sign the atomic WRITER-DELEGATE-authorized root-advance+DIG bundle (#17): the
+/// singleton update is authorized by `writer`'s key (NOT the owner seed) while the wallet
+/// `w` funds the XCH fee + DIG payment. The store MUST already carry `writer`'s delegated
+/// puzzle. Does NOT push.
+#[allow(clippy::too_many_arguments)]
+pub async fn build_advance_store_writer_bundle(
+    chain: &dyn ChainReads,
+    launcher_id: Bytes32,
+    new_root: Bytes32,
+    label: Option<String>,
+    description: Option<String>,
+    writer: &crate::keys::WalletKeys,
+    w: &ScannedWallet,
+    fee: u64,
+    dig_amount: u64,
+) -> Result<AdvanceStoreBundle> {
+    // Index 0 is the wallet's fee/change address (the writer authorizes the singleton;
+    // the wallet still pays the XCH fee + the DIG payment).
+    let change_ph = w.addrs[0].keys.owner_puzzle_hash;
+    let fee_keys = crate::keys::WalletKeys {
+        synthetic_sk: w.addrs[0].keys.synthetic_sk.clone(),
+        synthetic_pk: w.addrs[0].keys.synthetic_pk,
+        owner_puzzle_hash: w.addrs[0].keys.owner_puzzle_hash,
+    };
+    let store = sync_datastore(chain, launcher_id).await?;
+    let cats = dig_cats_multi(chain, w).await?;
+    // The deploy token is index-0-funded in CI; fee draws from the change address.
+    let fee_coins: Vec<chia_protocol::Coin> = w.addrs[0].xch.clone();
+
+    let build = |effective_fee: u64| -> Result<AdvanceStoreBundle> {
+        let update = crate::singleton::build_update_unsigned_writer(
+            writer.synthetic_pk,
+            store.clone(),
+            new_root,
+            label.clone(),
+            description.clone(),
+            &fee_keys,
+            &fee_coins,
+            effective_fee,
+        )?;
+        let new_coin_id = update.new_coin_id;
+        let pay = build_dig_payment_multi(
+            w.addrs.iter().map(|a| &a.keys),
+            change_ph,
+            &cats,
+            dig_amount,
+            launcher_id,
+        )?;
+        // ONE bundle, signed by BOTH the writer key (singleton) and ALL wallet keys
+        // (fee + DIG). ATOMICITY as above — never split or pushed separately.
+        let mut all = update.coin_spends;
+        all.extend(pay);
+        let mut signers = w.signing_keys();
+        signers.push(writer.synthetic_sk.clone());
+        let signature = sign_coin_spends(&all, &signers, false)
+            .map_err(|e| ChainError::Chain(format!("sign writer update+DIG bundle: {e}")))?;
+        Ok(AdvanceStoreBundle {
+            bundle: SpendBundle::new(all, signature),
+            new_coin_id,
+        })
+    };
+
+    let first = build(fee)?;
+    let effective = resolve_fee(chain, &first.bundle, w, fee).await;
+    if effective == fee {
+        Ok(first)
+    } else {
+        build(effective).or(Ok(first))
     }
 }
 

@@ -1066,12 +1066,66 @@ fn pubkey_window(params: &serde_json::Value) -> (u32, u32) {
     (offset, limit)
 }
 
-/// Whether a WC method requires an unlocked wallet. The handshake methods
-/// (`chainId`, `connect`) are answered without one; anything that reads keys or
-/// signs requires an unlocked session.
+/// Whether a WC method requires an unlocked wallet. The handshake + introspection
+/// methods (`chainId`, `connect`, `getMethods`) are answered without one; anything
+/// that reads keys or signs requires an unlocked session.
 fn wc_method_needs_wallet(method: &str) -> bool {
-    !matches!(method, "chip0002_chainId" | "chip0002_connect")
+    !matches!(
+        method,
+        "chip0002_chainId" | "chip0002_connect" | "chip0002_getMethods"
+    )
 }
+
+/// The full catalogue of dispatchable `window.chia` / WC methods this wallet serves,
+/// advertised by `chip0002_getMethods` so an agent/dapp can introspect the surface
+/// without scraping prose (agent-friendly self-description). Kept in sync with the
+/// `wc_dispatch` match arms; the `wc_dispatch_method_catalogue_matches_dispatch` test
+/// guards against drift. Export-class methods are deliberately ABSENT — they are never
+/// dispatchable (see `is_export_class_method`).
+const WC_METHOD_CATALOGUE: &[&str] = &[
+    // Handshake + introspection (no wallet needed).
+    "chip0002_chainId",
+    "chip0002_connect",
+    "chip0002_getMethods",
+    // CHIP-0002 keys + signing.
+    "chip0002_getPublicKeys",
+    "chip0002_signMessage",
+    "chip0002_signCoinSpends",
+    "chip0002_getAssetBalance",
+    "chip0002_getAssetCoins",
+    // chia_* wallet surface.
+    "chia_getAddress",
+    "chia_signMessageByAddress",
+    "chia_send",
+    "chia_getTransactions",
+    "chia_getNfts",
+    "chia_transferNft",
+    "chia_mintNft",
+    "chia_bulkMintNfts",
+    "chia_getDids",
+    "chia_createDidWallet",
+    "chia_transferDid",
+    "chia_getOfferSummary",
+    "chia_createOffer",
+    "chia_takeOffer",
+    "chia_cancelOffer",
+    // Local on-chain STORE lifecycle (#95/#96 Pass B).
+    "chia_mintStore",
+    "chia_advanceStore",
+    "chia_meltStore",
+    "chia_setStoreDelegation",
+    "chia_setStoreOwnership",
+    // Advanced coin types (power-user).
+    "dig_clawbackSend",
+    "dig_clawbackClaim",
+    "dig_clawbackRecover",
+    "dig_optionCreate",
+    "dig_streamCreate",
+    "dig_streamClaim",
+    "dig_streamClawback",
+    "dig_vaultCreate",
+    "dig_vcVerify",
+];
 
 /// The per-origin permission decision for a WC request. A dapp's web origin
 /// (from the unspoofable HTTP `Origin` header) must be explicitly approved by the
@@ -1092,7 +1146,7 @@ enum Gate {
 /// Pure so the consent policy is unit-tested independently of HTTP/state.
 fn wc_gate(method: &str, origin_approved: bool) -> Gate {
     match method {
-        "chip0002_chainId" => Gate::Public,
+        "chip0002_chainId" | "chip0002_getMethods" => Gate::Public,
         "chip0002_connect" => {
             if origin_approved {
                 Gate::Allowed
@@ -1180,6 +1234,8 @@ async fn wc_dispatch(
         return Ok(match method {
             "chip0002_chainId" => json!("mainnet"),
             "chip0002_connect" => json!(true),
+            // Agent-friendly self-description: the full dispatchable method list.
+            "chip0002_getMethods" => json!(WC_METHOD_CATALOGUE),
             _ => unreachable!("non-wallet method list is exhaustive"),
         });
     }
@@ -1878,6 +1934,22 @@ async fn wc_dispatch(
             }))
         }
 
+        // ---- Local on-chain STORE lifecycle (#95/#96 Pass B) ----------------
+        //
+        // Mint / advance (deploy) / melt / delegate / transfer a CHIP-0035
+        // DataLayer store locally, so the DIG Browser can publish + manage stores
+        // without the hub's spend service. Every spend is BUILT via `digstore-chain`
+        // (the byte-mirror of chip35 — never hand-rolled), signed with the wallet
+        // seed, and broadcast-gated by `DIG_WALLET_ALLOW_BROADCAST` (dry-run
+        // otherwise). mint/advance carry the atomic DIG-CAT payment to the treasury
+        // (the DIG amount is an INPUT, consistent with the configurable dig.rs
+        // pricing — the wallet never fetches a live price).
+        "chia_mintStore" => mint_store(&mnemonic, &params).await,
+        "chia_advanceStore" => advance_store(&mnemonic, &params).await,
+        "chia_meltStore" => melt_store(&mnemonic, &params).await,
+        "chia_setStoreDelegation" => set_store_delegation(&mnemonic, &params).await,
+        "chia_setStoreOwnership" => set_store_ownership(&mnemonic, &params).await,
+
         // ---- Advanced coin types (power-user) -------------------------------
         //
         // Clawback payments, options, streaming/vesting, vaults, and verifiable
@@ -2103,6 +2175,446 @@ async fn delegate_fulfill(st: &AppState, id: u64, result: Result<serde_json::Val
     if let Some(tx) = st.delegate.lock().await.waiters.remove(&id) {
         let _ = tx.send(result);
     }
+}
+
+// ---- Local on-chain STORE lifecycle handlers (#95/#96 Pass B) ----------------
+//
+// Mint / advance / melt / delegate / transfer a CHIP-0035 DataLayer store locally.
+// Every spend is BUILT via `digstore-chain` (the byte-mirror of chip35 — these
+// handlers NEVER hand-roll a spend bundle) and broadcast-gated by
+// `DIG_WALLET_ALLOW_BROADCAST` (dry-run / "signed" otherwise), exactly like the
+// other spend methods. mint/advance carry the atomic DIG-CAT payment; the DIG
+// amount is an INPUT param (the wallet never fetches a live price — it stays
+// deterministic, consistent with the configurable `dig.rs` pricing).
+
+/// The DIG amount (base units) for a mint/advance, from `digAmount` (number or decimal
+/// string), defaulting to `default_units` ([`INIT_DIG`]/[`COMMIT_DIG`]) when omitted —
+/// mirroring the CLI's deterministic [`resolve_dig_amount`]. The hub's dynamic,
+/// USD-pegged amount is passed in here as an explicit input; the wallet never fetches a
+/// live price. An explicit `0` is rejected (a capsule must pay the protocol fee).
+fn store_dig_amount(
+    params: &serde_json::Value,
+    default_units: u64,
+) -> Result<u64, (StatusCode, String)> {
+    match json_u64(params, "digAmount") {
+        Some(0) => Err(wc_err(
+            StatusCode::BAD_REQUEST,
+            "digAmount must be greater than zero (a capsule must pay the protocol DIG fee)",
+        )),
+        other => Ok(digstore_chain::dig::resolve_dig_amount(
+            other,
+            default_units,
+        )),
+    }
+}
+
+/// Resolve the live `DataStore` for a request's `storeId` AND the wallet [`WalletKeys`]
+/// of the HD address that OWNS it. Scans the wallet, finds which scanned address's owner
+/// puzzle hash matches the store's on-chain `owner_puzzle_hash`, and returns both — so
+/// melt / delegation / transfer are authorized by the correct owner key (a wallet that
+/// rotated addresses owns different stores under different indices). Errors clearly if
+/// the wallet does not own the store.
+async fn resolve_owned_store(
+    chain: &Coinset,
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<
+    (
+        digstore_chain::singleton::DataStore,
+        digstore_chain::keys::WalletKeys,
+    ),
+    (StatusCode, String),
+> {
+    let store_id = requested_store_id(params)?;
+    let store = digstore_chain::singleton::sync_datastore(chain, store_id)
+        .await
+        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("store sync failed: {e}")))?;
+    let owner_ph = store.info.owner_puzzle_hash;
+    let scanned = scan_wallet(chain, mnemonic)
+        .await
+        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}")))?;
+    let owner = scanned
+        .addrs
+        .iter()
+        .find(|a| a.keys.owner_puzzle_hash == owner_ph)
+        .map(|a| digstore_chain::keys::WalletKeys {
+            synthetic_sk: a.keys.synthetic_sk.clone(),
+            synthetic_pk: a.keys.synthetic_pk,
+            owner_puzzle_hash: a.keys.owner_puzzle_hash,
+        })
+        .ok_or_else(|| {
+            wc_err(
+                StatusCode::BAD_REQUEST,
+                "this wallet does not own that store (no HD address matches its owner)",
+            )
+        })?;
+    Ok((store, owner))
+}
+
+/// The `storeId` (launcher id) a store-lifecycle request targets, as a 32-byte id.
+/// Accepts `storeId`, `launcherId`, or `id` (any `0x`/bare hex).
+fn requested_store_id(
+    params: &serde_json::Value,
+) -> Result<chia_protocol::Bytes32, (StatusCode, String)> {
+    let raw = params
+        .get("storeId")
+        .or_else(|| params.get("launcherId"))
+        .or_else(|| params.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'storeId'"))?;
+    parse_asset_id_hex(raw).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))
+}
+
+/// Standard JSON for a store-lifecycle spend: the broadcast `status` ("broadcast" when
+/// pushed, "signed" on a dry run), the coin-spend count, and the aggregated signature.
+/// (Same shape as [`singleton_spend_json`], named for the store flows.)
+fn store_spend_json(status: &str, bundle: &chia_protocol::SpendBundle) -> serde_json::Value {
+    singleton_spend_json(status, bundle.coin_spends.len(), bundle)
+}
+
+/// `chia_mintStore` — mint a NEW empty (root = 0) CHIP-0035 store with the atomic DIG-CAT
+/// payment, all in one co-signed bundle. Params: `label?`, `description?`, `digAmount?`
+/// (base units; default [`INIT_DIG`]), `fee?` (mojos; 0 → auto-estimate). Returns the new
+/// `storeId`/`launcherId`, the broadcast status, and the DIG paid. The DIG amount is an
+/// input (no live-price fetch). Built via `digstore_chain::anchor::build_mint_store_bundle`
+/// (byte-exact CHIP-0035 mint + DIG payment) — never hand-rolled.
+async fn mint_store(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let label = params
+        .get("label")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let description = params
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let fee = json_u64(params, "fee").unwrap_or(0);
+    let dig_amount = store_dig_amount(params, digstore_chain::dig::INIT_DIG)?;
+
+    let chain = Coinset::mainnet();
+    let scanned = scan_wallet(&chain, mnemonic)
+        .await
+        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}")))?;
+    let built = digstore_chain::anchor::build_mint_store_bundle(
+        &chain as &dyn ChainReads,
+        &scanned,
+        label,
+        description,
+        fee,
+        dig_amount,
+    )
+    .await
+    .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let status = broadcast_or_dry_run(&chain, built.bundle.clone()).await?;
+    let mut out = store_spend_json(status, &built.bundle);
+    out["storeId"] = serde_json::json!(format!("0x{}", hex::encode(built.launcher_id)));
+    out["launcherId"] = serde_json::json!(format!("0x{}", hex::encode(built.launcher_id)));
+    out["coinId"] = serde_json::json!(format!("0x{}", hex::encode(built.coin_id)));
+    out["digPaid"] = serde_json::json!(dig_amount.to_string());
+    Ok(out)
+}
+
+/// `chia_advanceStore` — advance an existing store's root (deploy / metadata / root
+/// advance) to `newRoot`, with the atomic DIG-CAT payment, in one co-signed bundle.
+/// Params: `storeId` (required), `newRoot` (required, 32-byte hex), `label?`,
+/// `description?` (RE-SENT — an update REPLACES metadata), `digAmount?` (default
+/// [`COMMIT_DIG`]), `fee?`, and optional `writerSeed` (a 32-byte hex deploy-token seed):
+/// when present, the singleton update is authorized by that WRITER DELEGATE key (the
+/// store must already carry its delegated puzzle) instead of the owner seed, while the
+/// wallet still funds the fee + DIG. Built via
+/// `digstore_chain::anchor::build_advance_store_bundle` /
+/// `build_advance_store_writer_bundle` — never hand-rolled.
+async fn advance_store(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let store_id = requested_store_id(params)?;
+    let new_root_raw = params
+        .get("newRoot")
+        .or_else(|| params.get("root"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'newRoot'"))?;
+    let new_root =
+        parse_asset_id_hex(new_root_raw).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?;
+    let label = params
+        .get("label")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let description = params
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let fee = json_u64(params, "fee").unwrap_or(0);
+    let dig_amount = store_dig_amount(params, digstore_chain::dig::COMMIT_DIG)?;
+
+    let chain = Coinset::mainnet();
+    let scanned = scan_wallet(&chain, mnemonic)
+        .await
+        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}")))?;
+
+    // Optional writer-delegate seed (a 32-byte hex deploy token) authorizes the
+    // singleton update via the writer puzzle instead of the owner seed.
+    let writer_seed = params.get("writerSeed").and_then(|v| v.as_str());
+    let built = if let Some(seed_hex) = writer_seed.filter(|s| !s.trim().is_empty()) {
+        let seed = parse_seed32(seed_hex)?;
+        let writer = digstore_chain::keys::wallet_keys_from_seed(&seed);
+        digstore_chain::anchor::build_advance_store_writer_bundle(
+            &chain as &dyn ChainReads,
+            store_id,
+            new_root,
+            label,
+            description,
+            &writer,
+            &scanned,
+            fee,
+            dig_amount,
+        )
+        .await
+    } else {
+        digstore_chain::anchor::build_advance_store_bundle(
+            &chain as &dyn ChainReads,
+            store_id,
+            new_root,
+            label,
+            description,
+            &scanned,
+            fee,
+            dig_amount,
+        )
+        .await
+    }
+    .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let status = broadcast_or_dry_run(&chain, built.bundle.clone()).await?;
+    let mut out = store_spend_json(status, &built.bundle);
+    out["storeId"] = serde_json::json!(format!("0x{}", hex::encode(store_id)));
+    out["newCoinId"] = serde_json::json!(format!("0x{}", hex::encode(built.new_coin_id)));
+    out["newRoot"] = serde_json::json!(format!("0x{}", hex::encode(new_root)));
+    out["digPaid"] = serde_json::json!(dig_amount.to_string());
+    Ok(out)
+}
+
+/// `chia_meltStore` — permanently retire a store by melting its singleton (no further
+/// capsules can ever be anchored under its launcher id). Params: `storeId` (required).
+/// Owner-authorized; the melt reserves the singleton's 1 mojo as fee, so no DIG payment
+/// / fee coin is needed. Built via `digstore_chain::singleton::build_melt` — never
+/// hand-rolled.
+async fn melt_store(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let chain = Coinset::mainnet();
+    let store_id = requested_store_id(params)?;
+    let (store, owner) = resolve_owned_store(&chain, mnemonic, params).await?;
+    let built = digstore_chain::singleton::build_melt(&owner, store)
+        .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let status = broadcast_or_dry_run(&chain, built.bundle.clone()).await?;
+    let mut out = store_spend_json(status, &built.bundle);
+    out["storeId"] = serde_json::json!(format!("0x{}", hex::encode(store_id)));
+    Ok(out)
+}
+
+/// `chia_setStoreDelegation` — set the store's delegated-puzzle set (admin / writer /
+/// oracle delegates — Teams #43, deploy tokens #17), keeping the SAME owner. Params:
+/// `storeId` (required), `delegates` (array of `{ role:"admin"|"writer"|"oracle",
+/// publicKey? (admin/writer synthetic pk hex), oraclePuzzleHash? + oracleFee? (oracle) }`),
+/// `fee?`. The delegated set REPLACES the prior set (re-send every delegate to keep; omit
+/// to revoke). Built via `digstore_chain::singleton::build_update_ownership` (owner
+/// unchanged) using the same admin/writer/oracle derivations the hub/chip35 use.
+async fn set_store_delegation(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let chain = Coinset::mainnet();
+    let store_id = requested_store_id(params)?;
+    let (store, owner) = resolve_owned_store(&chain, mnemonic, params).await?;
+    let delegated = parse_delegates(params)?;
+    let fee = json_u64(params, "fee").unwrap_or(0);
+    let fee_coins = owner_xch_coins(&chain, mnemonic, owner.owner_puzzle_hash, fee).await?;
+
+    let built = digstore_chain::singleton::build_update_ownership(
+        &owner,
+        store,
+        owner.owner_puzzle_hash, // ownership unchanged — delegation only
+        delegated,
+        &fee_coins,
+        fee,
+    )
+    .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let status = broadcast_or_dry_run(&chain, built.bundle.clone()).await?;
+    let mut out = store_spend_json(status, &built.bundle);
+    out["storeId"] = serde_json::json!(format!("0x{}", hex::encode(store_id)));
+    out["newCoinId"] = serde_json::json!(format!("0x{}", hex::encode(built.new_coin_id)));
+    Ok(out)
+}
+
+/// `chia_setStoreOwnership` — TRANSFER a store to a new owner. Params: `storeId`
+/// (required), `newOwner` (an `xch1…` address OR a 32-byte owner puzzle-hash hex),
+/// `delegates?` (the delegated set for the new owner — defaults to NONE, so a plain
+/// transfer hands over a clean store; pass `delegates` to carry roles across), `fee?`.
+/// Built via `digstore_chain::singleton::build_update_ownership` (new `owner_ph`) — the
+/// same primitive as delegation, with the owner re-targeted. Never hand-rolled.
+async fn set_store_ownership(
+    mnemonic: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    let chain = Coinset::mainnet();
+    let store_id = requested_store_id(params)?;
+    let (store, owner) = resolve_owned_store(&chain, mnemonic, params).await?;
+
+    // `newOwner` accepts an xch address or a raw 32-byte puzzle hash.
+    let raw = params
+        .get("newOwner")
+        .or_else(|| params.get("to"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "missing 'newOwner'"))?;
+    let new_owner_ph = if raw.trim().starts_with("xch1") {
+        digstore_chain::send::decode_xch_address(raw.trim())
+            .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))?
+    } else {
+        parse_asset_id_hex(raw).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?
+    };
+    // A transfer defaults to NO delegates (clean handover); honour `delegates` if given.
+    let delegated = if params.get("delegates").is_some() {
+        parse_delegates(params)?
+    } else {
+        Vec::new()
+    };
+    let fee = json_u64(params, "fee").unwrap_or(0);
+    let fee_coins = owner_xch_coins(&chain, mnemonic, owner.owner_puzzle_hash, fee).await?;
+
+    let built = digstore_chain::singleton::build_update_ownership(
+        &owner,
+        store,
+        new_owner_ph,
+        delegated,
+        &fee_coins,
+        fee,
+    )
+    .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let status = broadcast_or_dry_run(&chain, built.bundle.clone()).await?;
+    let mut out = store_spend_json(status, &built.bundle);
+    out["storeId"] = serde_json::json!(format!("0x{}", hex::encode(store_id)));
+    out["newOwner"] = serde_json::json!(format!("0x{}", hex::encode(new_owner_ph)));
+    out["newCoinId"] = serde_json::json!(format!("0x{}", hex::encode(built.new_coin_id)));
+    Ok(out)
+}
+
+/// Parse a 32-byte hex seed (a writer-delegate / deploy-token seed) into `[u8; 32]`.
+fn parse_seed32(s: &str) -> Result<[u8; 32], (StatusCode, String)> {
+    let hex = s.trim().trim_start_matches("0x");
+    let bytes =
+        hex::decode(hex).map_err(|_| wc_err(StatusCode::BAD_REQUEST, "writerSeed must be hex"))?;
+    bytes
+        .try_into()
+        .map_err(|_| wc_err(StatusCode::BAD_REQUEST, "writerSeed must be 32 bytes"))
+}
+
+/// The owner's spendable XCH coins to fund a `fee` (across the owning address). Returns
+/// an empty vec when `fee == 0` (no fee coin needed). Scans coinset for the owner's
+/// unspent XCH at `owner_ph`.
+async fn owner_xch_coins(
+    chain: &Coinset,
+    mnemonic: &str,
+    owner_ph: chia_protocol::Bytes32,
+    fee: u64,
+) -> Result<Vec<chia_protocol::Coin>, (StatusCode, String)> {
+    if fee == 0 {
+        return Ok(Vec::new());
+    }
+    let scanned = scan_wallet(chain, mnemonic)
+        .await
+        .map_err(|e| wc_err(StatusCode::BAD_GATEWAY, format!("coinset scan failed: {e}")))?;
+    Ok(scanned
+        .addrs
+        .iter()
+        .find(|a| a.keys.owner_puzzle_hash == owner_ph)
+        .map(|a| a.xch.clone())
+        .unwrap_or_default())
+}
+
+/// Parse the `delegates` array into a `Vec<DelegatedPuzzle>` using the same
+/// admin/writer/oracle derivations the hub/chip35 use. Each entry is
+/// `{ role:"admin"|"writer"|"oracle", publicKey? (admin/writer synthetic pk hex),
+/// oraclePuzzleHash? + oracleFee? }`. Empty/absent → an empty set (revoke all).
+fn parse_delegates(
+    params: &serde_json::Value,
+) -> Result<Vec<digstore_chain::singleton::DelegatedPuzzle>, (StatusCode, String)> {
+    let Some(arr) = params.get("delegates").and_then(|v| v.as_array()) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for d in arr {
+        let role = d
+            .get("role")
+            .and_then(|r| r.as_str())
+            .ok_or_else(|| wc_err(StatusCode::BAD_REQUEST, "each delegate needs a 'role'"))?;
+        match role {
+            "admin" | "writer" => {
+                let pk_hex = d
+                    .get("publicKey")
+                    .or_else(|| d.get("syntheticPublicKey"))
+                    .and_then(|p| p.as_str())
+                    .ok_or_else(|| {
+                        wc_err(
+                            StatusCode::BAD_REQUEST,
+                            format!("{role} delegate needs a 'publicKey' (synthetic pk hex)"),
+                        )
+                    })?;
+                let pk = parse_public_key_hex(pk_hex)?;
+                out.push(if role == "admin" {
+                    digstore_chain::singleton::admin_delegated_puzzle(pk)
+                } else {
+                    digstore_chain::singleton::writer_delegated_puzzle(pk)
+                });
+            }
+            "oracle" => {
+                let oph = d
+                    .get("oraclePuzzleHash")
+                    .and_then(|p| p.as_str())
+                    .ok_or_else(|| {
+                        wc_err(
+                            StatusCode::BAD_REQUEST,
+                            "oracle delegate needs 'oraclePuzzleHash'",
+                        )
+                    })?;
+                let oracle_ph =
+                    parse_asset_id_hex(oph).map_err(|e| wc_err(StatusCode::BAD_REQUEST, e))?;
+                let oracle_fee = json_u64(d, "oracleFee").unwrap_or(0);
+                out.push(digstore_chain::singleton::oracle_delegated_puzzle(
+                    oracle_ph, oracle_fee,
+                ));
+            }
+            other => {
+                return Err(wc_err(
+                    StatusCode::BAD_REQUEST,
+                    format!("unknown delegate role '{other}' (admin|writer|oracle)"),
+                ))
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Parse a 48-byte BLS G1 public key from hex (a synthetic pk for an admin/writer
+/// delegate).
+fn parse_public_key_hex(
+    s: &str,
+) -> Result<digstore_chain::singleton::PublicKey, (StatusCode, String)> {
+    let hex = s.trim().trim_start_matches("0x");
+    let bytes =
+        hex::decode(hex).map_err(|_| wc_err(StatusCode::BAD_REQUEST, "publicKey must be hex"))?;
+    let arr: [u8; 48] = bytes.try_into().map_err(|_| {
+        wc_err(
+            StatusCode::BAD_REQUEST,
+            "publicKey must be 48 bytes (BLS G1)",
+        )
+    })?;
+    digstore_chain::singleton::PublicKey::from_bytes(&arr)
+        .map_err(|e| wc_err(StatusCode::BAD_REQUEST, format!("invalid publicKey: {e}")))
 }
 
 // ---- Advanced coin-type handlers --------------------------------------------
@@ -4637,6 +5149,146 @@ mod tests {
             assert_eq!(wc_gate(m, true), Gate::Allowed, "{m} allowed approved");
             assert!(wc_method_needs_wallet(m), "{m} needs a wallet");
         }
+    }
+
+    // -- Local on-chain STORE lifecycle (#95/#96 Pass B) -----------------------
+
+    #[test]
+    fn store_lifecycle_methods_are_gated_and_need_a_wallet() {
+        // mint/advance/melt/delegate/transfer are all key/sign methods: forbidden
+        // until the origin is approved, allowed once approved, and need an unlocked
+        // wallet — the same gate as every other spend method.
+        for m in [
+            "chia_mintStore",
+            "chia_advanceStore",
+            "chia_meltStore",
+            "chia_setStoreDelegation",
+            "chia_setStoreOwnership",
+        ] {
+            assert_eq!(
+                wc_gate(m, false),
+                Gate::Forbidden,
+                "{m} forbidden unapproved"
+            );
+            assert_eq!(wc_gate(m, true), Gate::Allowed, "{m} allowed approved");
+            assert!(wc_method_needs_wallet(m), "{m} needs a wallet");
+        }
+    }
+
+    #[tokio::test]
+    async fn get_methods_is_public_and_advertises_the_store_lifecycle() {
+        // chip0002_getMethods is an agent-friendly self-description: PUBLIC (no
+        // origin approval, no unlocked wallet), and it lists every dispatchable
+        // method — including the new local on-chain store-lifecycle methods.
+        assert_eq!(wc_gate("chip0002_getMethods", false), Gate::Public);
+        assert!(!wc_method_needs_wallet("chip0002_getMethods"));
+        let st = AppState::default(); // locked wallet — must still answer
+        let v = wc_dispatch(&st, "chip0002_getMethods", serde_json::Value::Null)
+            .await
+            .expect("getMethods is answered without a wallet");
+        let methods: Vec<String> = serde_json::from_value(v).unwrap();
+        for m in [
+            "chia_mintStore",
+            "chia_advanceStore",
+            "chia_meltStore",
+            "chia_setStoreDelegation",
+            "chia_setStoreOwnership",
+            "chip0002_getMethods",
+        ] {
+            assert!(
+                methods.contains(&m.to_string()),
+                "catalogue must advertise {m}"
+            );
+        }
+    }
+
+    #[test]
+    fn method_catalogue_matches_the_gate_and_never_leaks_export() {
+        // Every advertised method must be reachable through the gate (Public for the
+        // handshake/introspection, Allowed-when-approved for the rest) and NONE may be
+        // an export-class method — the catalogue can never become a seed-exfil hint.
+        for m in WC_METHOD_CATALOGUE {
+            assert!(
+                !is_export_class_method(m),
+                "{m} must never appear in the public method catalogue"
+            );
+            // Approved origin → never Forbidden (Public or Allowed).
+            assert_ne!(
+                wc_gate(m, true),
+                Gate::Forbidden,
+                "{m} unreachable when approved"
+            );
+        }
+        // The handshake/introspection trio is public; everything else needs a wallet.
+        assert!(WC_METHOD_CATALOGUE.contains(&"chia_mintStore"));
+        assert!(WC_METHOD_CATALOGUE.contains(&"chip0002_getMethods"));
+    }
+
+    #[test]
+    fn store_dig_amount_defaults_and_rejects_zero() {
+        use digstore_chain::dig::{COMMIT_DIG, INIT_DIG};
+        // Omitted → the protocol default (deterministic; no live-price fetch).
+        let none = serde_json::json!({});
+        assert_eq!(store_dig_amount(&none, INIT_DIG).unwrap(), INIT_DIG);
+        assert_eq!(store_dig_amount(&none, COMMIT_DIG).unwrap(), COMMIT_DIG);
+        // Explicit amount (number or decimal string) wins — the hub's USD-pegged value.
+        let n = serde_json::json!({ "digAmount": 42_000 });
+        assert_eq!(store_dig_amount(&n, INIT_DIG).unwrap(), 42_000);
+        let s = serde_json::json!({ "digAmount": "37500" });
+        assert_eq!(store_dig_amount(&s, INIT_DIG).unwrap(), 37_500);
+        // Explicit 0 is rejected (a capsule must pay the protocol DIG fee).
+        let z = serde_json::json!({ "digAmount": 0 });
+        assert!(store_dig_amount(&z, INIT_DIG).is_err());
+    }
+
+    #[test]
+    fn requested_store_id_accepts_storeid_launcherid_or_id() {
+        let id = format!("0x{}", "ab".repeat(32));
+        for key in ["storeId", "launcherId", "id"] {
+            let p = serde_json::json!({ key: id });
+            assert!(
+                requested_store_id(&p).is_ok(),
+                "{key} must resolve a store id"
+            );
+        }
+        // Missing → a clear 400.
+        let (code, _) = requested_store_id(&serde_json::json!({})).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn parse_delegates_builds_admin_writer_oracle_and_rejects_unknown() {
+        use digstore_chain::singleton::DelegatedPuzzle;
+        // A 48-byte BLS pk (the abandon test wallet's synthetic pk) for admin/writer.
+        let keys = digstore_chain::keys::derive_wallet_keys(ABANDON_24).unwrap();
+        let pk_hex = format!("0x{}", hex::encode(keys.synthetic_pk.to_bytes()));
+        let oph = format!("0x{}", "cd".repeat(32));
+        let params = serde_json::json!({
+            "delegates": [
+                { "role": "admin", "publicKey": pk_hex },
+                { "role": "writer", "publicKey": pk_hex },
+                { "role": "oracle", "oraclePuzzleHash": oph, "oracleFee": 1000 },
+            ]
+        });
+        let dps = parse_delegates(&params).unwrap();
+        assert_eq!(dps.len(), 3);
+        assert!(matches!(dps[0], DelegatedPuzzle::Admin(_)));
+        assert!(matches!(dps[1], DelegatedPuzzle::Writer(_)));
+        assert!(matches!(dps[2], DelegatedPuzzle::Oracle(_, 1000)));
+        // No delegates array → an empty set (revoke-all / clean transfer).
+        assert!(parse_delegates(&serde_json::json!({})).unwrap().is_empty());
+        // Unknown role → a 400.
+        let bad = serde_json::json!({ "delegates": [{ "role": "wizard" }] });
+        assert_eq!(
+            parse_delegates(&bad).unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+        // admin/writer missing publicKey → a 400.
+        let nopk = serde_json::json!({ "delegates": [{ "role": "admin" }] });
+        assert_eq!(
+            parse_delegates(&nopk).unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
     }
 
     /// The legs the digstore-chain builders cannot support standalone are surfaced as
