@@ -2,7 +2,7 @@
 //!
 //! The deploy key is the 32-byte seed behind the store's BLS PUBLISHER key
 //! (`signing_key.bin`), generated at `init`. CI needs it to sign the §21 head
-//! push so DIGHub (which pinned this store's publisher pubkey at first push)
+//! push so DIGHUb (which pinned this store's publisher pubkey at first push)
 //! accepts a new capsule. It is the ONE piece of owner state that cannot be
 //! reconstructed from the wallet seed, so it is exported once and stored as a CI
 //! secret. It carries NO on-chain spend authority — only head-push authority —
@@ -36,9 +36,10 @@ fn export(
         } else {
             ui.success(format!("deploy key written to {}", path.display()));
             ui.line("Store it as a CI secret (e.g. DIGSTORE_DEPLOY_KEY). It authorizes publishing");
-            ui.line(
-                "capsules to DIGHub; it has NO spend authority, but treat it like a credential.",
-            );
+            ui.line(format!(
+                "capsules to {}; it has NO spend authority, but treat it like a credential.",
+                crate::branding::DIGHUB
+            ));
         }
         return Ok(());
     }

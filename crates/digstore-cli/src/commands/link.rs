@@ -41,7 +41,7 @@ fn render_dig_toml(store_id: &Bytes32, output_dir: &str, remote: &str) -> String
         "# dig.toml — linked to an existing DIG store. Committed to your repo; NO secrets.\n\
          #\n\
          # `digstore dev`    — preview locally for free (no chain, no spend).\n\
-         # `digstore deploy` — publish a new version (costs 100 DIG + an XCH fee).\n\
+         # `digstore deploy` — publish a new version (costs the capsule price in $DIG + an XCH fee).\n\
          \n\
          # The on-chain store this folder publishes to.\n\
          store-id = \"{store_id}\"\n\
@@ -49,7 +49,7 @@ fn render_dig_toml(store_id: &Bytes32, output_dir: &str, remote: &str) -> String
          # The folder `deploy` publishes (your build output).\n\
          output-dir = \"{output_dir}\"\n\
          \n\
-         # Where to publish. The public DIGHub by default for this store.\n\
+         # Where to publish. The public DIGHUb by default for this store.\n\
          remote = \"{remote}\"\n\
          \n\
          # Uncomment to run a build before each deploy.\n\

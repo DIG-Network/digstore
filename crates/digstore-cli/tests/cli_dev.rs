@@ -1,6 +1,6 @@
 //! `digstore dev` — the FREE local preview loop (roadmap #6).
 //!
-//! `dev` serves the project over the REAL dig:// read path (compile → verify →
+//! `dev` serves the project over the REAL chia:// read path (compile → verify →
 //! decrypt) locally, with NO chain and NO spend, injecting a dev `window.chia`
 //! shim + live reload into HTML. This test drives the INSTALLED binary: it
 //! scaffolds a project with `digstore new`, starts `dev` on a port, and asserts
@@ -75,7 +75,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// GET a path, retrying to ride out a transient connection refusal OR a slow first response.
 ///
-/// The deadline is generous (30s): the FIRST fetch of a given asset goes through the real dig://
+/// The deadline is generous (30s): the FIRST fetch of a given asset goes through the real chia://
 /// read path (compile → verify → decrypt), which on a cold, parallel-loaded CI Windows runner can
 /// take several seconds the first time an asset is touched — long enough that a single attempt's read
 /// could time out. Retrying over a 30s window (well under the per-request 10s read timeout's worst

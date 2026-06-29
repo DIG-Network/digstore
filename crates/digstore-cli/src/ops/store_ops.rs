@@ -172,11 +172,11 @@ pub fn init_store(
 /// Reconstruct the per-store `.dig` state for an EXISTING store so a fresh
 /// checkout (e.g. a CI runner) can ADVANCE it without re-minting it.
 ///
-/// `init` MINTS a new singleton (spends 100 DIG) and is the wrong tool for CI:
-/// the store already exists. To advance an existing store, `commit` needs four
-/// pieces of local state that a fresh checkout lacks: `config.toml` (store id +
-/// visibility/salt), `signing_key.bin` (the per-store BLS PUBLISHER key whose
-/// pubkey the DIGHub remote pinned at first push — `commit --push` signs the §21
+/// `init` MINTS a new singleton (spends the per-capsule $DIG price) and is the wrong
+/// tool for CI: the store already exists. To advance an existing store, `commit`
+/// needs four pieces of local state that a fresh checkout lacks: `config.toml`
+/// (store id + visibility/salt), `signing_key.bin` (the per-store BLS PUBLISHER key
+/// whose pubkey the DIGHUb remote pinned at first push — `commit --push` signs the §21
 /// head with it), `anchor.toml` (so `commit` does not hard-error "store is not
 /// anchored"), and a `roots.log` whose head is the store's current on-chain root
 /// (so `next_id` and the no-op guard are correct and the new commit fast-forwards

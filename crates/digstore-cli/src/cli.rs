@@ -44,7 +44,7 @@ pub struct Cli {
 pub enum Command {
     /// Start a new store from a template — free, no wallet, no spend.
     New(NewArgs),
-    /// Preview your store locally — builds on save, serves the real dig://
+    /// Preview your store locally — builds on save, serves the real chia://
     /// read path with live reload. Free, no chain, no spend.
     Dev(DevArgs),
     /// Check you're ready to publish (seed, funds, login, remote, content).
@@ -105,11 +105,11 @@ pub enum Command {
     Anchor(AnchorArgs),
     /// Show wallet XCH + DIG balance.
     Balance(BalanceArgs),
-    /// Log in to your dighub account via device pairing.
+    /// Log in to your DIGHUb account via device pairing.
     Login(LoginArgs),
-    /// Show the current dighub login (handle / token presence).
+    /// Show the current DIGHUb login (handle / token presence).
     Whoami(WhoamiArgs),
-    /// Log out of dighub (clear the stored session).
+    /// Log out of DIGHUb (clear the stored session).
     Logout(LogoutArgs),
     /// Deploy a built site/dapp to an EXISTING store from CI (a new capsule),
     /// reading `dig.toml` — git-push-to-deploy. Never mints (no init).
@@ -190,11 +190,12 @@ pub struct NftMintArgs {
     #[arg(long)]
     pub did: Option<String>,
     /// An https gateway base to use as the data/metadata fallback URI (e.g.
-    /// `https://rpc.dig.net`). The dig:// URN is always the primary URI.
+    /// `https://rpc.dig.net`). The on-chain `dig://` URN (a wire value, not the
+    /// address you open) is always the primary URI.
     #[arg(long = "gateway")]
     pub gateway: Option<String>,
     /// Build the capsule + mint spend and print the plan WITHOUT signing or pushing
-    /// (no spend). Use to preview the dig:// URN, computed hashes, and cost.
+    /// (no spend). Use to preview the on-chain `dig://` URN, computed hashes, and cost.
     #[arg(long = "dry-run")]
     pub dry_run: bool,
 }
@@ -421,7 +422,7 @@ pub struct NewArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Builds your store on every save and serves it over the REAL dig:// read path \
+    after_help = "Builds your store on every save and serves it over the REAL chia:// read path \
 locally (compile → verify → decrypt, exactly as a visitor's browser does), with live reload and an \
 injected dev `window.chia` wallet shim. FREE — no wallet, no chain, no spend.\n\nReads `output-dir` \
 and `build-command` from `dig.toml` (flags override). Open the printed http://127.0.0.1:<port> URL.\n\n\
@@ -449,8 +450,8 @@ pub struct DevArgs {
 #[derive(Debug, Args)]
 #[command(
     after_help = "Runs pre-publish checks so a costly on-chain publish doesn't fail halfway: is \
-your seed present + unlocked, do you have enough DIG + XCH for a publish, are you logged in to \
-dighub, is the default remote reachable, and does your content directory exist. Prints each as \
+your seed present + unlocked, do you have enough $DIG + XCH for a publish, are you logged in to \
+DIGHUb, is the default remote reachable, and does your content directory exist. Prints each as \
 pass/fail and exits non-zero if any hard check fails.\n\nEXAMPLES:\n  digstore doctor\n  digstore \
 doctor --json"
 )]
@@ -458,7 +459,7 @@ pub struct DoctorArgs {}
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Costs 100 DIG + an XCH fee (paid on-chain at mint).\n\nEXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
+    after_help = "Costs a uniform per-capsule price (paid in $DIG at the live rate) + an XCH fee, paid on-chain at mint.\n\nEXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
 )]
 pub struct InitArgs {
     /// Store name (default: "default").
@@ -475,10 +476,11 @@ pub struct InitArgs {
     /// Content root (the build-output directory this store captures).
     #[arg(long)]
     pub dir: Option<String>,
-    /// DIG to pay for this mint, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
+    /// $DIG to pay for this mint, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
     /// Pricing is dynamic + USD-pegged — the hub computes the live amount and you
-    /// pass it here; the CLI is deterministic and never fetches a price. Defaults to
-    /// 100 DIG. Precedence: this flag > `DIGSTORE_DIG_AMOUNT` > dig.toml `dig-amount`.
+    /// pass it here; the CLI is deterministic and never fetches a price. Falls back
+    /// to a protocol default if unset. Precedence: this flag > `DIGSTORE_DIG_AMOUNT`
+    /// > dig.toml `dig-amount`.
     #[arg(long = "dig-amount", value_name = "DIG", value_parser = parse_dig_amount)]
     pub dig_amount: Option<u64>,
     /// Seconds to wait for on-chain confirmation (default 300; 0 = a single
@@ -512,13 +514,14 @@ pub struct AddArgs {
 #[derive(Debug, Args)]
 #[command(
     after_help = "Publishes your staged files as a new version on Chia — a new capsule \
-(`storeId:rootHash`). Costs 100 DIG + an XCH fee per publish.\n\nUse `--dry-run` to preview the \
+(`storeId:rootHash`). Costs a uniform per-capsule price (paid in $DIG at the live rate) + an XCH \
+fee per publish.\n\nUse `--dry-run` to preview the \
 resulting version (root) and the exact DIG/XCH cost WITHOUT spending or publishing anything.\n\n\
 TWO KINDS OF DEPLOY KEY (don't mix them up):\n  --writer-key  the ON-CHAIN ROOT-ADVANCE authority \
 — a revocable WRITER DELEGATE that advances the store's root WITHOUT the owner master seed (the \
 hub Teams \"Deployer\" flow pre-authorizes it). This command advances the root, so it takes \
 --writer-key. Env: DIGSTORE_WRITER_KEY.\n  --deploy-key  (a DIFFERENT key) the §21 HUB HEAD-PUSH \
-key — lets DIGHub ACCEPT the capsule; used by `digstore deploy`, NOT here. From `digstore \
+key — lets DIGHUb ACCEPT the capsule; used by `digstore deploy`, NOT here. From `digstore \
 deploy-key export`. Env: DIGSTORE_DEPLOY_KEY.\n\nEXAMPLES:\n  digstore commit -m \"first \
 version\"\n  digstore commit --dry-run\n  digstore commit -m deploy --writer-key $DIGSTORE_WRITER_KEY"
 )]
@@ -539,13 +542,14 @@ pub struct CommitArgs {
     /// confirm. Without it, a re-run reuses the pending update.
     #[arg(long)]
     pub resubmit: bool,
-    /// DIG to pay for this publish, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
+    /// $DIG to pay for this publish, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
     /// Pricing is dynamic + USD-pegged — the hub computes the live amount and you pass
-    /// it here; the CLI is deterministic and never fetches a price. Defaults to 100 DIG.
+    /// it here; the CLI is deterministic and never fetches a price. Falls back to a
+    /// protocol default if unset.
     /// Precedence: this flag > `DIGSTORE_DIG_AMOUNT` > dig.toml `dig-amount`.
     #[arg(long = "dig-amount", value_name = "DIG", value_parser = parse_dig_amount)]
     pub dig_amount: Option<u64>,
-    /// After the deployment confirms, push it to DIGHub (the default remote) WITHOUT
+    /// After the deployment confirms, push it to DIGHUb (the default remote) WITHOUT
     /// asking. For scripting/CI. Mutually exclusive with `--no-push`. Default: ask
     /// when interactive, do nothing when not.
     #[arg(long, conflicts_with = "no_push")]
@@ -559,7 +563,7 @@ pub struct CommitArgs {
     /// pre-authorized this writer (via the hub Teams "Deployer" / `updateStoreOwnership`);
     /// the writer can change ONLY the metadata root — never the owner, never melt. Prefer
     /// the `DIGSTORE_WRITER_KEY` env var in CI so it is not visible in the process table.
-    /// The wallet seed still pays the 100 DIG + XCH fee.
+    /// The wallet seed still pays the per-capsule $DIG price + XCH fee.
     ///
     /// `--deploy-key` is a DEPRECATED hidden alias for this flag (it used to mean the
     /// writer key here, which clashed with `deploy`'s publisher `--deploy-key`); use
@@ -597,7 +601,7 @@ pub struct CompileArgs {
     pub metadata: Option<PathBuf>,
     /// The 48-byte hex BLS public key of the host that will SERVE this module (Digstore §12.2
     /// attestation gate). When set, the compiled module's trusted host-key set is the given key
-    /// instead of a freshly-generated local one, so a delegated serving node (e.g. the dighub
+    /// instead of a freshly-generated local one, so a delegated serving node (e.g. the DIGHUb
     /// retrieval host) can attest and release real content — without it, that host fails the gate
     /// and `serve_blind` returns indistinguishable decoys for every resource. Re-keys ONLY the
     /// TrustedKeys section (chunks/merkle/root preserved byte-for-byte → the generation root is
@@ -864,7 +868,7 @@ pub enum AnchorAction {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Pairs this device with your dighub account (RFC-8628 style): prints a code,\nyou approve it in the web app, then the scoped session token is stored. The token\nproves a dighub account; it has NO on-chain authority and never signs/anchors.\n\nEXAMPLES:\n  digstore login\n  digstore login --json"
+    after_help = "Pairs this device with your DIGHUb account (RFC-8628 style): prints a code,\nyou approve it in the web app, then the scoped session token is stored. The token\nproves a DIGHUb account; it has NO on-chain authority and never signs/anchors.\n\nEXAMPLES:\n  digstore login\n  digstore login --json"
 )]
 pub struct LoginArgs {}
 
@@ -880,11 +884,12 @@ pub struct LogoutArgs {}
 #[command(
     after_help = "Advances an EXISTING store from CI: reconstructs the store's local state \
 (publisher key from --deploy-key / DIGSTORE_DEPLOY_KEY, current root from chain), stages \
---output-dir, then commits + pushes to DIGHub as a new capsule. NEVER mints (no `init`).\n\nReads \
+--output-dir, then commits + pushes to DIGHUb as a new capsule. NEVER mints (no `init`).\n\nReads \
 defaults from `dig.toml` in the current directory (store-id, output-dir, build-command, remote, \
-network, wait-timeout). Flags/env override the file.\n\nCosts 100 DIG + an XCH fee per deploy (the \
+network, wait-timeout). Flags/env override the file.\n\nCosts a uniform per-capsule price (paid in \
+$DIG at the live rate) + an XCH fee per deploy (the \
 on-chain root update), paid from the wallet seed (DIGSTORE_PASSPHRASE).\n\nTWO KINDS OF DEPLOY KEY \
-(don't mix them up):\n  --deploy-key  the §21 PUBLISHER / HUB HEAD-PUSH key — lets DIGHub ACCEPT \
+(don't mix them up):\n  --deploy-key  the §21 PUBLISHER / HUB HEAD-PUSH key — lets DIGHUb ACCEPT \
 the capsule. Reconstructs the store's local state. From `digstore deploy-key export`. Env: \
 DIGSTORE_DEPLOY_KEY. REQUIRED.\n  --writer-key  (a DIFFERENT, optional key) the ON-CHAIN \
 ROOT-ADVANCE authority — a revocable WRITER DELEGATE that advances the store's root WITHOUT the \
@@ -908,7 +913,7 @@ pub struct DeployArgs {
     pub build_command: Option<String>,
     /// The publisher deploy-key seed (64-hex), from `digstore deploy-key export`. Prefer the
     /// `DIGSTORE_DEPLOY_KEY` env var in CI so it is not visible in the process table. This is
-    /// the §21 HEAD-PUSH key (lets DIGHub accept the capsule) — distinct from `--writer-key`,
+    /// the §21 HEAD-PUSH key (lets DIGHUb accept the capsule) — distinct from `--writer-key`,
     /// which is the on-chain root-advance authority.
     #[arg(long = "deploy-key")]
     pub deploy_key: Option<String>,
@@ -931,17 +936,18 @@ pub struct DeployArgs {
     /// Chain network (default `mainnet`).
     #[arg(long)]
     pub network: Option<String>,
-    /// DIG to pay for this deploy, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
+    /// $DIG to pay for this deploy, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
     /// Pricing is dynamic + USD-pegged — the hub computes the live amount and you pass
-    /// it here; the CLI is deterministic and never fetches a price. Defaults to 100 DIG.
+    /// it here; the CLI is deterministic and never fetches a price. Falls back to a
+    /// protocol default if unset.
     /// Overrides `dig.toml`'s `dig-amount` / `DIGSTORE_DIG_AMOUNT`.
     #[arg(long = "dig-amount", value_name = "DIG", value_parser = parse_dig_amount)]
     pub dig_amount: Option<u64>,
-    /// The `origin` remote to publish to (e.g. `dig://<store-id>` for the public DIGHub, or a
+    /// The `origin` remote to publish to (e.g. `dig://<store-id>` for the public DIGHUb, or a
     /// self-hosted node URL). Overrides `dig.toml`'s `remote`. Defaults to the public RPC.
     #[arg(long)]
     pub remote: Option<String>,
-    /// Skip the deploy (and the 100 DIG + XCH spend) when the built output is identical to the
+    /// Skip the deploy (and the $DIG + XCH spend) when the built output is identical to the
     /// store's current on-chain version — a no-op guard for CI that runs on every push.
     #[arg(long = "if-changed")]
     pub if_changed: bool,
@@ -971,7 +977,7 @@ pub struct DeployKeyArgs {
 #[derive(Debug, Subcommand)]
 pub enum DeployKeyAction {
     /// Print (or write) the active store's publisher deploy key (64-hex seed) so it can be stored
-    /// as a CI secret. This key authorizes publishing new capsules to DIGHub; it has NO spend
+    /// as a CI secret. This key authorizes publishing new capsules to DIGHUb; it has NO spend
     /// authority. Treat it like a credential.
     Export {
         /// Write the key to this file instead of stdout.
@@ -994,9 +1000,10 @@ pub struct UpdateArgs {
 #[command(
     after_help = "One guided first-run to get you ready to PUBLISH. It walks three things, in \
 order:\n  1. Seed — import an existing BIP-39 mnemonic or generate a new one. The seed signs every \
-on-chain action and pays the 100 DIG + XCH per publish. It NEVER leaves your machine.\n  2. Funds — \
-checks your wallet has enough DIG + XCH for a publish, and points you at where to get more if \
-not.\n  3. Login (optional) — a dighub account so your published stores appear in your dashboard. \
+on-chain action and pays the per-capsule $DIG price + XCH per publish. It NEVER leaves your \
+machine.\n  2. Funds — \
+checks your wallet has enough $DIG + XCH for a publish, and points you at where to get more if \
+not.\n  3. Login (optional) — a DIGHUb account so your published stores appear in your dashboard. \
 The login only GATES the push to the public hub; it has NO on-chain authority. (Seed signs the \
 chain; login gates the push — two different things.)\n\nEverything except generating a brand-new \
 seed is safe to re-run. `digstore auth` is an alias.\n\nEXAMPLES:\n  digstore setup\n  digstore \
@@ -1010,7 +1017,7 @@ pub struct SetupArgs {
     /// is absent and neither flag is given in interactive mode.
     #[arg(long, conflicts_with = "generate")]
     pub import: bool,
-    /// Skip the optional dighub login step.
+    /// Skip the optional DIGHUb login step.
     #[arg(long)]
     pub no_login: bool,
 }
@@ -1032,7 +1039,7 @@ pub struct LinkArgs {
     #[arg(long = "output-dir")]
     pub output_dir: Option<String>,
     /// The remote to publish to (written to `dig.toml`'s `remote`). Defaults to the
-    /// public DIGHub for the linked store when omitted.
+    /// public DIGHUb for the linked store when omitted.
     #[arg(long)]
     pub remote: Option<String>,
     /// Overwrite an existing `dig.toml` in this folder (otherwise linking refuses).

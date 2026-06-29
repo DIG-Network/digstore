@@ -2,7 +2,7 @@
 //! wallet, chain, or spend.
 //!
 //! This closes the #1 journey gap: today the only way to start is `init`, which
-//! MINTS on mainnet (spends 100 DIG) into an empty directory. `new` instead
+//! MINTS on mainnet (spends the per-capsule $DIG price) into an empty directory. `new` instead
 //! writes a runnable project — a `dig.toml`, a starter app, and (for the dapp /
 //! NFT templates) a `window.chia` usage example — that the developer can preview
 //! for free with `digstore dev` and only publish (spending DIG) once it's ready.
@@ -116,7 +116,7 @@ fn write_template(
             ui.line(format!("  cd {}", display_cd(target)));
         }
         ui.line("  digstore dev      # free local preview (no spend)");
-        ui.line("  digstore deploy   # publish on Chia (100 DIG + an XCH fee)");
+        ui.line("  digstore deploy   # publish on Chia (the capsule price in $DIG + an XCH fee)");
     }
     Ok(())
 }

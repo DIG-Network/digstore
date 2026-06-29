@@ -1,7 +1,7 @@
 # dig.toml — your DIG NFT drop config. Committed to your repo; contains NO secrets.
 #
 # `digstore dev`    — preview the mint page locally for free (no chain, no spend).
-# `digstore deploy` — publish the mint page on Chia (costs 100 DIG + an XCH fee).
+# `digstore deploy` — publish the mint page on Chia (costs the capsule price in $DIG + an XCH fee).
 #
 # This template scaffolds the DROP PAGE (the public mint/collection site). Minting
 # the NFTs themselves is a separate on-chain step.

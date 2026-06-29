@@ -16,9 +16,10 @@
 #        # build-command = "npm ci && npm run build"   # optional
 #
 # SECURITY: DIG_MNEMONIC can spend ALL of that wallet's DIG/XCH. Use a DEDICATED,
-# low-balance deploy wallet funded only with enough DIG for your expected deploys
-# (each deploy costs 100 DIG + a small XCH fee). Scoped, spend-capped, revocable
-# deploy tokens (no seed in CI) are the planned secure replacement.
+# low-balance deploy wallet funded only with enough $DIG for your expected deploys
+# (each deploy costs a uniform per-capsule price in $DIG + a small XCH fee). Scoped,
+# spend-capped, revocable deploy tokens (no seed in CI) are the planned secure
+# replacement.
 
 name: Deploy to DIG
 
@@ -61,5 +62,5 @@ jobs:
       - name: Show result
         run: |
           echo "Capsule: ${{ steps.dig.outputs.capsule }}"
-          echo "dig://   ${{ steps.dig.outputs.dig-url }}"
-          echo "DIGHub:  ${{ steps.dig.outputs.hub-url }}"
+          echo "Open:    ${{ steps.dig.outputs.chia-url }}"
+          echo "DIGHUb:  ${{ steps.dig.outputs.hub-url }}"

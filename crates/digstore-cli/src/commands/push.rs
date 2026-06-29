@@ -64,7 +64,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PushArgs) -> Result<(), C
             args.remote
         ));
         if out.claimed {
-            ui.line("linked to your dighub account (pending on-chain owner verification)");
+            ui.line(format!(
+                "linked to your {} account (pending on-chain owner verification)",
+                crate::branding::DIGHUB
+            ));
         }
     }
     Ok(())
