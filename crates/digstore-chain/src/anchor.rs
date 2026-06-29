@@ -4,7 +4,6 @@
 
 use crate::cat::{build_dig_payment_multi, dig_cats_multi};
 use crate::coinset::ChainReads;
-use crate::dig;
 use crate::error::{ChainError, Result};
 use crate::singleton::{
     build_mint_unsigned_multi, build_update_unsigned_multi, coins_with_keys_from_wallet,
@@ -44,16 +43,23 @@ pub trait ChainAnchor: Send + Sync {
     /// Mint an empty (root = 0) owner-only store using the full scanned wallet;
     /// gathers XCH + DIG across ALL HD addresses and signs with all keys. Broadcasts.
     /// `label`/`description` are written into the CHIP-0035 singleton metadata.
+    /// `dig_amount` is the DIG (base units) paid to the treasury — the caller resolves
+    /// it (the dynamic, USD-pegged amount, or the [`crate::dig::INIT_DIG`] default).
+    #[allow(clippy::too_many_arguments)]
     async fn mint_empty_store(
         &self,
         w: &ScannedWallet,
         label: Option<String>,
         description: Option<String>,
         fee: u64,
+        dig_amount: u64,
     ) -> Result<MintOutcome>;
     /// Sync the current singleton for `launcher_id`, build+broadcast a root update.
     /// Uses the full scanned wallet for fee coins and DIG across all HD addresses.
     /// `label`/`description` are RE-SENT (the update replaces metadata) so they persist.
+    /// `dig_amount` is the DIG (base units) paid to the treasury — caller-resolved
+    /// (dynamic USD-pegged amount, or the [`crate::dig::COMMIT_DIG`] default).
+    #[allow(clippy::too_many_arguments)]
     async fn update_root(
         &self,
         launcher_id: Bytes32,
@@ -62,6 +68,7 @@ pub trait ChainAnchor: Send + Sync {
         description: Option<String>,
         w: &ScannedWallet,
         fee: u64,
+        dig_amount: u64,
     ) -> Result<UpdateOutcome>;
     /// Advance `launcher_id`'s root signed by a WRITER DELEGATE key (#17 deploy
     /// token), NOT the owner master seed. `writer` is the writer-delegate keys
@@ -81,6 +88,7 @@ pub trait ChainAnchor: Send + Sync {
         writer: &crate::keys::WalletKeys,
         w: &ScannedWallet,
         fee: u64,
+        dig_amount: u64,
     ) -> Result<UpdateOutcome>;
     /// Poll until `coin_id` is confirmed (present in a block) or `timeout_secs` elapses.
     async fn confirm(&self, coin_id: Bytes32, timeout_secs: u64) -> Result<ConfirmState>;
@@ -123,11 +131,12 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         label: Option<String>,
         description: Option<String>,
         fee: u64,
+        dig_amount: u64,
     ) -> Result<MintOutcome> {
         // Index 0 is the store owner and change destination.
         let change_ph = w.addrs[0].keys.owner_puzzle_hash;
 
-        // 2) UNSIGNED DIG payment: 100 DIG to the treasury, memo = launcher id.
+        // 2) UNSIGNED DIG payment: `dig_amount` DIG to the treasury, memo = launcher id.
         //    Gather DIG cats across ALL scanned addresses.
         //    (Must be done once before the build closure since it requires async.)
         let cats = dig_cats_multi(&self.chain as &dyn ChainReads, w).await?;
@@ -151,7 +160,7 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
                 w.addrs.iter().map(|a| &a.keys),
                 change_ph,
                 &cats,
-                dig::INIT_DIG,
+                dig_amount,
                 launcher_id,
             )?;
 
@@ -206,6 +215,7 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         description: Option<String>,
         w: &ScannedWallet,
         fee: u64,
+        dig_amount: u64,
     ) -> Result<UpdateOutcome> {
         // Index 0 is the store owner (the singleton was minted by its synthetic_pk)
         // and the change destination.
@@ -215,7 +225,7 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         // &self.chain is &C; coerces to &dyn ChainReads because C: ChainReads.
         let store = sync_datastore(&self.chain as &dyn ChainReads, launcher_id).await?;
 
-        // 2) UNSIGNED DIG payment: 100 DIG (COMMIT_DIG) to the treasury, memo = store id.
+        // 2) UNSIGNED DIG payment: `dig_amount` DIG to the treasury, memo = store id.
         //    Gather DIG cats across ALL scanned addresses.
         //    (Must be done once before the build closure since it requires async.)
         let cats = dig_cats_multi(&self.chain as &dyn ChainReads, w).await?;
@@ -239,7 +249,7 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
                 w.addrs.iter().map(|a| &a.keys),
                 change_ph,
                 &cats,
-                dig::COMMIT_DIG,
+                dig_amount,
                 launcher_id,
             )?;
 
@@ -292,6 +302,7 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         writer: &crate::keys::WalletKeys,
         w: &ScannedWallet,
         fee: u64,
+        dig_amount: u64,
     ) -> Result<UpdateOutcome> {
         // Index 0 is the wallet's fee/change address (the writer authorizes the
         // singleton; the wallet still pays the XCH fee + the DIG payment).
@@ -327,7 +338,7 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
                 w.addrs.iter().map(|a| &a.keys),
                 change_ph,
                 &cats,
-                dig::COMMIT_DIG,
+                dig_amount,
                 launcher_id,
             )?;
 
@@ -500,7 +511,7 @@ mod tests {
         // Scan to get a ScannedWallet, then call mint with it.
         let w = anchor.scan(ABANDON).await.unwrap();
         let err = anchor
-            .mint_empty_store(&w, None, None, 0)
+            .mint_empty_store(&w, None, None, 0, crate::dig::INIT_DIG)
             .await
             .unwrap_err();
         match err {
@@ -580,7 +591,7 @@ mod tests {
         // mint_empty_store: no DIG coins anywhere → dig_cats_multi returns empty
         // → insufficient DIG. Proves the whole multi-address mint path is wired.
         let err = anchor
-            .mint_empty_store(&w, None, None, 0)
+            .mint_empty_store(&w, None, None, 0, crate::dig::INIT_DIG)
             .await
             .unwrap_err();
         match err {

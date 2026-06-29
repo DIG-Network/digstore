@@ -19,3 +19,8 @@ output-dir = "dist"
 # network = "mainnet"
 # wait-timeout = 600
 # message = "deploy"
+
+# Optional: the per-capsule DIG amount to spend (a DIG amount; max 3 dp).
+# Pricing is dynamic + USD-pegged — the hub computes the live amount; pin a value
+# here (or via --dig-amount / DIGSTORE_DIG_AMOUNT). Defaults to 100 DIG.
+# dig-amount = "100"

@@ -475,6 +475,12 @@ pub struct InitArgs {
     /// Content root (the build-output directory this store captures).
     #[arg(long)]
     pub dir: Option<String>,
+    /// DIG to pay for this mint, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
+    /// Pricing is dynamic + USD-pegged — the hub computes the live amount and you
+    /// pass it here; the CLI is deterministic and never fetches a price. Defaults to
+    /// 100 DIG. Precedence: this flag > `DIGSTORE_DIG_AMOUNT` > dig.toml `dig-amount`.
+    #[arg(long = "dig-amount", value_name = "DIG", value_parser = parse_dig_amount)]
+    pub dig_amount: Option<u64>,
     /// Seconds to wait for on-chain confirmation (default 300; 0 = a single
     /// check, do not block). On a timeout the store is kept resumable; run
     /// `digstore anchor` to resume.
@@ -533,6 +539,12 @@ pub struct CommitArgs {
     /// confirm. Without it, a re-run reuses the pending update.
     #[arg(long)]
     pub resubmit: bool,
+    /// DIG to pay for this publish, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
+    /// Pricing is dynamic + USD-pegged — the hub computes the live amount and you pass
+    /// it here; the CLI is deterministic and never fetches a price. Defaults to 100 DIG.
+    /// Precedence: this flag > `DIGSTORE_DIG_AMOUNT` > dig.toml `dig-amount`.
+    #[arg(long = "dig-amount", value_name = "DIG", value_parser = parse_dig_amount)]
+    pub dig_amount: Option<u64>,
     /// After the deployment confirms, push it to DIGHub (the default remote) WITHOUT
     /// asking. For scripting/CI. Mutually exclusive with `--no-push`. Default: ask
     /// when interactive, do nothing when not.
@@ -800,6 +812,16 @@ pub enum SeedAction {
     Status,
 }
 
+/// clap value parser for `--dig-amount`: a human DIG decimal string (max 3 dp) →
+/// base units. Rejects `0` (a capsule must pay the protocol fee) and malformed input.
+fn parse_dig_amount(s: &str) -> Result<u64, String> {
+    let units = digstore_chain::dig::parse_dig(s)?;
+    if units == 0 {
+        return Err("dig amount must be greater than 0".to_string());
+    }
+    Ok(units)
+}
+
 fn parse_word_count(s: &str) -> Result<usize, String> {
     let n: usize = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
     match n {
@@ -909,6 +931,12 @@ pub struct DeployArgs {
     /// Chain network (default `mainnet`).
     #[arg(long)]
     pub network: Option<String>,
+    /// DIG to pay for this deploy, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
+    /// Pricing is dynamic + USD-pegged — the hub computes the live amount and you pass
+    /// it here; the CLI is deterministic and never fetches a price. Defaults to 100 DIG.
+    /// Overrides `dig.toml`'s `dig-amount` / `DIGSTORE_DIG_AMOUNT`.
+    #[arg(long = "dig-amount", value_name = "DIG", value_parser = parse_dig_amount)]
+    pub dig_amount: Option<u64>,
     /// The `origin` remote to publish to (e.g. `dig://<store-id>` for the public DIGHub, or a
     /// self-hosted node URL). Overrides `dig.toml`'s `remote`. Defaults to the public RPC.
     #[arg(long)]
@@ -1545,7 +1573,7 @@ mod tests {
             .expect("store flag exists");
         let visible = store_flag
             .get_visible_aliases()
-            .map(|v| v.iter().any(|s| *s == "project"))
+            .map(|v| v.contains(&"project"))
             .unwrap_or(false);
         assert!(!visible, "the `--project` flag alias must be hidden");
     }

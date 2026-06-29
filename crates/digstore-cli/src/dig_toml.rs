@@ -62,6 +62,13 @@ pub struct DigToml {
     pub network: Option<String>,
     #[serde(default)]
     pub remote: Option<String>,
+    /// The per-capsule DIG amount to spend on `init`/`commit`/`deploy`, as a human
+    /// DIG decimal string (e.g. `"100"`, `"87.5"`; max 3 dp). When unset, the
+    /// protocol default (100 DIG) applies. Pricing is dynamic + USD-pegged (the hub
+    /// computes the live amount; the CLI accepts it explicitly and stays
+    /// deterministic — it never fetches a live price). Parsed via `dig::parse_dig`.
+    #[serde(default, rename = "dig-amount", alias = "dig_amount")]
+    pub dig_amount: Option<String>,
     /// Glob patterns to exclude from the deployment (in addition to `.digignore`/
     /// `.gitignore`). e.g. `["*.map", "node_modules/**"]`.
     #[serde(default)]
@@ -130,6 +137,31 @@ impl DigToml {
         }
         if let Some(v) = env("DIGSTORE_NETWORK") {
             self.network = Some(v);
+        }
+        if let Some(v) = env("DIGSTORE_DIG_AMOUNT") {
+            self.dig_amount = Some(v);
+        }
+    }
+
+    /// Resolve the per-capsule DIG amount (base units) with the uniform precedence
+    /// `flag > env > dig.toml > default`. `flag` is the parsed `--dig-amount` (already
+    /// in base units); the file/env layer here is the human DIG string in
+    /// `self.dig_amount`. Falls back to `default_units` when nothing is set. The
+    /// resolution is DETERMINISTIC — no network/price fetch (SYSTEM.md: the hub
+    /// computes the dynamic USD-pegged amount and passes it in).
+    pub fn resolve_dig_amount(
+        &self,
+        flag: Option<u64>,
+        default_units: u64,
+    ) -> Result<u64, CliError> {
+        if let Some(units) = flag {
+            return Ok(units);
+        }
+        match &self.dig_amount {
+            Some(s) => digstore_chain::dig::parse_dig(s).map_err(|e| {
+                CliError::InvalidArgument(format!("invalid dig.toml `dig-amount`: {e}"))
+            }),
+            None => Ok(default_units),
         }
     }
 }
@@ -228,6 +260,42 @@ keywords = ["chia", "dapp"]
 
         assert_eq!(cfg.store_id.as_deref(), Some("env-id"));
         assert_eq!(cfg.output_dir.as_deref(), Some("env-dist"));
+    }
+
+    /// `resolve_dig_amount` precedence: flag (base units) > file/env `dig-amount`
+    /// (human DIG string) > the supplied default. Deterministic; no price fetch.
+    #[test]
+    fn resolve_dig_amount_precedence() {
+        // No flag, no file value → the default.
+        let cfg = DigToml::default();
+        assert_eq!(cfg.resolve_dig_amount(None, 100_000).unwrap(), 100_000);
+        // File `dig-amount` (human DIG) wins over the default.
+        let cfg = DigToml {
+            dig_amount: Some("87.5".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(cfg.resolve_dig_amount(None, 100_000).unwrap(), 87_500);
+        // The flag (already base units) wins over the file value.
+        assert_eq!(
+            cfg.resolve_dig_amount(Some(42_000), 100_000).unwrap(),
+            42_000
+        );
+        // A malformed file value is a hard error (never silently spends the default).
+        let bad = DigToml {
+            dig_amount: Some("not-a-number".to_string()),
+            ..Default::default()
+        };
+        assert!(bad.resolve_dig_amount(None, 100_000).is_err());
+    }
+
+    /// The `dig-amount` field reads from both kebab and snake keys.
+    #[test]
+    fn reads_dig_amount_field() {
+        let td = TempDir::new().unwrap();
+        std::fs::write(td.path().join("dig.toml"), "dig-amount = \"50\"\n").unwrap();
+        let cfg = DigToml::read(td.path()).unwrap();
+        assert_eq!(cfg.dig_amount.as_deref(), Some("50"));
+        assert_eq!(cfg.resolve_dig_amount(None, 100_000).unwrap(), 50_000);
     }
 
     /// An UNSET env var leaves the file value intact (env layer is additive).

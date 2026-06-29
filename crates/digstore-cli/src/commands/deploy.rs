@@ -59,6 +59,9 @@ struct DeployConfig {
     /// Extra exclude globs from `dig.toml`'s `ignore` (applied at staging via a
     /// transient `.digignore` in the output dir).
     ignore: Vec<String>,
+    /// The per-capsule DIG amount (base units) to spend on this deploy — resolved
+    /// flag > env > dig.toml > the 100 DIG default (deterministic; no price fetch).
+    dig_amount: u64,
 }
 
 /// `DIGSTORE_DEPLOY_KEY` / `--deploy-key` → the 32-byte publisher seed.
@@ -109,6 +112,12 @@ fn resolve_config(ctx: &CliContext, args: &DeployArgs) -> Result<DeployConfig, C
     // env layer over the file; flags (`args.*.or(file.*)`) are applied last.
     let file = DigToml::read_with_env(&ctx.op_dir)?;
 
+    // Per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml `dig-amount`
+    // > the 100 DIG default. Resolved FIRST (it borrows `file`) before the field moves
+    // below consume `file`. Deterministic — the dynamic, USD-pegged amount is computed
+    // by the hub and passed in; the CLI never fetches a live price.
+    let dig_amount = file.resolve_dig_amount(args.dig_amount, dig::COMMIT_DIG)?;
+
     let store_id_hex = args.store_id.clone().or(file.store_id).ok_or_else(|| {
         CliError::InvalidArgument(
             "no store id: set `store-id` in dig.toml or pass --store-id".into(),
@@ -142,6 +151,7 @@ fn resolve_config(ctx: &CliContext, args: &DeployArgs) -> Result<DeployConfig, C
         remote,
         network,
         ignore: file.ignore,
+        dig_amount,
     })
 }
 
@@ -353,6 +363,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             &new_root,
             &capsule,
             cfg.remote.as_deref(),
+            cfg.dig_amount,
         );
     }
 
@@ -395,6 +406,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             // root with a revocable writer key, not the owner seed. `--writer-key` /
             // DIGSTORE_WRITER_KEY (distinct from the §21 publisher --deploy-key above).
             writer_key: args.writer_key.clone(),
+            // Per-capsule DIG amount already resolved (flag>env>dig.toml>default); pass
+            // it explicitly so commit does not re-resolve from a different op_dir.
+            dig_amount: Some(cfg.dig_amount),
         },
     )?;
 
@@ -415,12 +429,14 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
 /// publishing it (100 DIG + the configured XCH fee) and the hub URL it WOULD go
 /// live at, WITHOUT spending, anchoring, or pushing. The root is real (computed
 /// from the staged build); the fee is read from global config without a wallet.
+#[allow(clippy::too_many_arguments)]
 fn dry_run(
     ui: &crate::ui::Ui,
     store_id: &Bytes32,
     root: &Bytes32,
     capsule: &str,
     remote: Option<&str>,
+    dig_amount: u64,
 ) -> Result<(), CliError> {
     // The XCH fee is a global-config value; load it directly (no wallet/seed). On
     // any load failure, fall back to the default fee so the preview still works.
@@ -436,8 +452,8 @@ fn dry_run(
             "root": root.to_hex(),
             "capsule": capsule,
             "store_id": store_id.to_hex(),
-            "cost_dig": dig::COMMIT_DIG,
-            "cost_dig_display": format_dig(dig::COMMIT_DIG),
+            "cost_dig": dig_amount,
+            "cost_dig_display": format_dig(dig_amount),
             "fee_xch_mojos": fee,
             "fee_xch_display": format_xch(fee),
             "spent": false,
@@ -451,7 +467,7 @@ fn dry_run(
         ui.line(format!("  capsule: {capsule}  (storeId:rootHash)"));
         ui.line(format!(
             "  cost: {} DIG + up to {} XCH (fee) — NOTHING spent",
-            format_dig(dig::COMMIT_DIG),
+            format_dig(dig_amount),
             format_xch(fee)
         ));
         if let Some(u) = &url {

@@ -46,9 +46,7 @@ fn checkout_help_uses_capsule_vocabulary() {
         .args(["checkout", "--help"])
         .assert()
         .success()
-        .stdout(
-            predicate::str::contains("capsule").and(predicate::str::contains("project").not()),
-        );
+        .stdout(predicate::str::contains("capsule").and(predicate::str::contains("project").not()));
 }
 
 /// Roadmap #14: top-level help leads with the TASK, not protocol jargon. `commit`
