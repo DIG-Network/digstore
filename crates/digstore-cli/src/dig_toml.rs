@@ -64,7 +64,7 @@ pub struct DigToml {
     pub remote: Option<String>,
     /// The per-capsule DIG amount to spend on `init`/`commit`/`deploy`, as a human
     /// DIG decimal string (e.g. `"100"`, `"87.5"`; max 3 dp). When unset, the
-    /// protocol default (100 DIG) applies. Pricing is dynamic + USD-pegged (the hub
+    /// protocol default applies. Pricing is dynamic + USD-pegged (the hub
     /// computes the live amount; the CLI accepts it explicitly and stays
     /// deterministic — it never fetches a live price). Parsed via `dig::parse_dig`.
     #[serde(default, rename = "dig-amount", alias = "dig_amount")]

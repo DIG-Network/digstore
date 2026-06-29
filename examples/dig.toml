@@ -11,7 +11,7 @@ output-dir = "dist"
 # Optional: a build command run before staging. Omit if you build in a CI step.
 # build-command = "npm ci && npm run build"
 
-# Optional: the DIGHub remote. Defaults to the public DIGHub for your store.
+# Optional: the DIGHUb remote. Defaults to the public DIGHUb for your store.
 # Override only for a self-hosted node.
 # remote = "dig://REPLACE_WITH_YOUR_64_HEX_STORE_ID"
 
@@ -20,7 +20,7 @@ output-dir = "dist"
 # wait-timeout = 600
 # message = "deploy"
 
-# Optional: the per-capsule DIG amount to spend (a DIG amount; max 3 dp).
+# Optional: the per-capsule $DIG amount to spend (a DIG amount; max 3 dp).
 # Pricing is dynamic + USD-pegged — the hub computes the live amount; pin a value
-# here (or via --dig-amount / DIGSTORE_DIG_AMOUNT). Defaults to 100 DIG.
+# here (or via --dig-amount / DIGSTORE_DIG_AMOUNT). Falls back to a protocol default.
 # dig-amount = "100"

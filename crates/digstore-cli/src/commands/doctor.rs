@@ -1,14 +1,14 @@
 //! `digstore doctor` — pre-publish preflight.
 //!
-//! Publishing is a costly, irreversible on-chain action (100 DIG + an XCH fee per
-//! version). `doctor` runs the checks that a publish depends on and prints each as
-//! pass/fail, so a developer can fix problems BEFORE spending — not discover them
-//! halfway through a paid commit. It reads only; it never spends, anchors, or
-//! mutates anything.
+//! Publishing is a costly, irreversible on-chain action (the per-capsule $DIG price,
+//! plus an XCH fee, per version). `doctor` runs the checks that a publish depends on
+//! and prints each as pass/fail, so a developer can fix problems BEFORE spending —
+//! not discover them halfway through a paid commit. It reads only; it never spends,
+//! anchors, or mutates anything.
 //!
 //! Checks:
 //!   - seed present + unlocked (so a publish can sign),
-//!   - wallet funds vs the 100 DIG capsule cost + the XCH fee (only when the seed
+//!   - wallet funds vs the per-capsule $DIG price + the XCH fee (only when the seed
 //!     is unlocked, so `doctor` never prompts for a passphrase),
 //!   - dighub login (so `push` to the default remote is authorized),
 //!   - the default remote is reachable,
@@ -92,8 +92,8 @@ pub fn run(ctx: &CliContext, ui: &Ui, _args: DoctorArgs) -> Result<(), CliError>
         }
     };
 
-    // 3. Funds vs the publish cost (100 DIG + the XCH fee). Only scan when the
-    //    seed is unlocked, so `doctor` never blocks on a passphrase prompt.
+    // 3. Funds vs the publish cost (the per-capsule DIG amount + the XCH fee). Only
+    //    scan when the seed is unlocked, so `doctor` never blocks on a passphrase prompt.
     let need_dig = dig::COMMIT_DIG;
     if seed_present && seed_unlocked {
         match scan_balances(ui) {
@@ -109,6 +109,12 @@ pub fn run(ctx: &CliContext, ui: &Ui, _args: DoctorArgs) -> Result<(), CliError>
                 );
                 if dig_ok && xch_ok {
                     checks.push(Check::pass("funds", detail));
+                } else if !dig_ok {
+                    // Short on DIG: name where to get $DIG so the check is actionable.
+                    checks.push(Check::fail(
+                        "funds",
+                        format!("{detail} — {}", crate::branding::get_dig_hint()),
+                    ));
                 } else {
                     checks.push(Check::fail("funds", detail));
                 }
@@ -125,7 +131,7 @@ pub fn run(ctx: &CliContext, ui: &Ui, _args: DoctorArgs) -> Result<(), CliError>
         ));
     }
 
-    // 4. dighub login (gates `push` to the default DIGHub remote).
+    // 4. dighub login (gates `push` to the default DIGHUb remote).
     match crate::ops::dighub::load_session() {
         Some(s) if !s.is_expired() && !s.access_token.is_empty() => {
             let who = s.handle.clone().unwrap_or_else(|| "logged in".to_string());

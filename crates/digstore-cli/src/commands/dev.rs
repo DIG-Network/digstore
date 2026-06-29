@@ -1,7 +1,7 @@
 //! `digstore dev` — the free local preview loop.
 //!
 //! This is the core inner loop the platform was missing: watch the project,
-//! rebuild on save, and serve the site over the REAL dig:// read path locally —
+//! rebuild on save, and serve the site over the REAL chia:// read path locally —
 //! compile the content into a genuine module, then for each request drive that
 //! module through the host runtime, verify the merkle proof against the root, and
 //! AES-256-GCM-decrypt the bytes, exactly as a visitor's browser does. It is
@@ -368,7 +368,7 @@ async fn reload_handler(State(state): State<Arc<DevState>>) -> Response {
         .unwrap()
 }
 
-/// Serve a resource through the real dig:// read path. Resolves the request path
+/// Serve a resource through the real chia:// read path. Resolves the request path
 /// to a resource key (defaulting `/` and directory paths to `index.html`), reads
 /// + verifies + decrypts it, and — for HTML — injects the dev shims.
 async fn asset_handler(State(state): State<Arc<DevState>>, uri: axum::http::Uri) -> Response {

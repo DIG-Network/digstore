@@ -61,6 +61,115 @@ fn status_does_not_say_project() {
         .stdout(predicate::str::contains("project").not());
 }
 
+// --- Canonical branding (SYSTEM.md "Canonical terminology & branding") ---
+
+/// Help text never renders the mis-cased hub wordmark `DIGHub`. The canonical
+/// form is `DIGHUb` (capital U). Checked across the whole `--help` tree via the
+/// commands most likely to name the hub.
+#[test]
+fn help_uses_canonical_dighub_casing() {
+    for args in [
+        vec!["--help"],
+        vec!["init", "--help"],
+        vec!["commit", "--help"],
+        vec!["deploy", "--help"],
+        vec!["deploy-key", "--help"],
+        vec!["setup", "--help"],
+        vec!["login", "--help"],
+    ] {
+        let out = dig(&tmp_dig()).args(&args).output().unwrap();
+        let help = String::from_utf8_lossy(&out.stdout);
+        // The off-canon `DIGHub` (capital H, lowercase u) must never appear; the
+        // canonical `DIGHUb` may. (The lowercase code id `dighub` is allowed.)
+        assert!(
+            !help.contains("DIGHub"),
+            "`{args:?}` help must use DIGHUb, not DIGHub:\n{help}"
+        );
+    }
+}
+
+/// `deploy --preview` content-open address uses the canonical `chia://` scheme
+/// (what the DIG Browser/extension register), NOT `dig://`. The §21 remote and
+/// `urn:dig:` namespace are unaffected.
+#[test]
+fn deploy_preview_content_address_is_chia_scheme() {
+    let ci = tmp_dig();
+    let dist = ci.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), b"<h1>hi</h1>").unwrap();
+    std::fs::write(ci.path().join("dig.toml"), "output-dir = \"dist\"\n").unwrap();
+
+    let out = dig(&ci)
+        .args(["deploy", "--preview", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let addr = v["content_address"].as_str().expect("content_address");
+    assert!(
+        addr.starts_with("chia://"),
+        "preview content address must be chia://, got {addr}"
+    );
+    assert!(
+        !addr.starts_with("dig://"),
+        "preview content address must not be dig://, got {addr}"
+    );
+}
+
+/// Static help/after_help prose never pins a flat "100 DIG" price — pricing copy
+/// is NEUTRAL (the live computed amount is shown only at spend time, not in prose).
+/// `init`/`commit`/`deploy` help are the surfaces that historically said it.
+#[test]
+fn help_pricing_prose_is_neutral_not_flat_100() {
+    for args in [
+        vec!["init", "--help"],
+        vec!["commit", "--help"],
+        vec!["deploy", "--help"],
+    ] {
+        let out = dig(&tmp_dig()).args(&args).output().unwrap();
+        let help = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !help.contains("100 DIG"),
+            "`{args:?}` help must not pin a flat `100 DIG`:\n{help}"
+        );
+        assert!(
+            !help.contains("Costs 100"),
+            "`{args:?}` help must not say `Costs 100`:\n{help}"
+        );
+    }
+}
+
+/// The `$DIG` sigil appears on the token's first reference in user-facing help.
+#[test]
+fn help_uses_dig_sigil() {
+    let out = dig(&tmp_dig()).args(["init", "--help"]).output().unwrap();
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        help.contains("$DIG"),
+        "init --help should reference the $DIG token with its sigil:\n{help}"
+    );
+}
+
+/// When the CLI dead-ends a user on insufficient DIG, it names where to get $DIG
+/// (the three canonical venues), so the user is never stuck without a path.
+#[test]
+fn insufficient_dig_hint_names_get_dig_venues() {
+    let dir = tmp_dig();
+    let out = dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_DIG", "0")
+        .arg("init")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(12));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("TibetSwap")
+            && stderr.contains("dexie.space")
+            && stderr.contains("xch.9mm.pro"),
+        "insufficient-DIG hint must name the 3 Get-$DIG venues:\n{stderr}"
+    );
+}
+
 // --- Hidden back-compat aliases (must keep working, but are not advertised) ---
 
 #[test]

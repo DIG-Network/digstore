@@ -81,16 +81,16 @@ somewhere on your `PATH`.
 ## Quick start
 
 Start **free** — scaffold a store from a template and preview it over the real
-`dig://` read path locally, with **no wallet, no chain, and nothing spent**. Only
-`init`/`deploy` touch mainnet (and cost DIG).
+`chia://` read path locally, with **no wallet, no chain, and nothing spent**. Only
+`init`/`deploy` touch mainnet (and cost `$DIG`).
 
 ```sh
 digstore new static-site my-store   # scaffold a working store — FREE, no wallet/chain
 cd my-store
-digstore dev                        # live local preview over the real dig:// read path — FREE
+digstore dev                        # live local preview over the real chia:// read path — FREE
 ```
 
-When it's ready, publish it on Chia (this spends 100 DIG + a small XCH fee):
+When it's ready, publish it on Chia (this spends the per-capsule `$DIG` price + a small XCH fee):
 
 ```sh
 digstore init                       # create the on-chain store (mints; store id = launcher id)
@@ -229,8 +229,9 @@ then add the workflow ([`examples/github-actions-deploy.yml`](examples/github-ac
 
 > **⚠ Security:** v1 ships the funded wallet mnemonic into CI as a secret — it can
 > spend ALL of that wallet's DIG/XCH. Use a **dedicated, low-balance deploy
-> wallet** funded with only enough DIG for your expected deploys (each deploy costs
-> 100 DIG + a small XCH fee). For the on-chain root advance you can instead use a
+> wallet** funded with only enough `$DIG` for your expected deploys (each deploy
+> costs a uniform per-capsule price in `$DIG` + a small XCH fee). For the on-chain
+> root advance you can instead use a
 > **revocable writer deploy token** (see [Writer deploy tokens](#writer-deploy-tokens--advance-the-root-without-the-owner-seed)
 > below) so the owner key never enters CI; the funded wallet is still needed to pay
 > the DIG + XCH fee.
@@ -267,9 +268,10 @@ digstore deploy --writer-key $DIGSTORE_WRITER_KEY               # same, in the C
 ```
 
 Prefer the `DIGSTORE_WRITER_KEY` env var so the key isn't visible in the process
-table. The wallet seed still pays the 100 DIG + XCH fee; the writer key only
-authorizes the on-chain root advance. (This is distinct from the §21 publisher
-`--deploy-key`/`DIGSTORE_DEPLOY_KEY` above, which lets DIGHub accept the capsule.)
+table. The wallet seed still pays the per-capsule `$DIG` price + XCH fee; the writer
+key only authorizes the on-chain root advance. (This is distinct from the §21
+publisher `--deploy-key`/`DIGSTORE_DEPLOY_KEY` above, which lets DIGHUb accept the
+capsule.)
 
 ---
 
@@ -287,18 +289,19 @@ the deployment locally.
 > through [coinset.org](https://coinset.org) over HTTPS (no peer node or TLS cert
 > to run).
 >
-> **DIG token fee (per capsule):** every `init` and every `commit`/`deploy` pays a
-> DIG fee to the DIG treasury — embedded atomically in the same spend bundle as the
-> mint/update (memo = store id). The amount is **dynamic and USD-pegged**
+> **`$DIG` fee (per capsule):** every `init` and every `commit`/`deploy` pays a
+> `$DIG` fee to the DIG treasury — embedded atomically in the same spend bundle as
+> the mint/update (memo = store id). The price is **dynamic and USD-pegged**
 > (≈ $1/capsule/year of hosting ÷ the live DIG price), **uniform per capsule**; the
 > hub computes the live amount in the browser. The CLI stays **deterministic** — it
-> never fetches a price itself: it takes the amount as input and **defaults to
-> 100 DIG**. Set it explicitly with `--dig-amount <DIG>` (e.g. `--dig-amount 87.5`),
-> the `DIGSTORE_DIG_AMOUNT` env var, or `dig-amount` in `dig.toml` (precedence:
-> flag > env > dig.toml > default). Before submitting, each command prints the cost
-> and your current balance; if the wallet is short on XCH **or** DIG the command
-> blocks and tells you what's missing. Use `digstore balance` to check your spendable
-> XCH (mojos) and DIG at any time.
+> never fetches a price itself: it takes the amount as input and falls back to a
+> protocol default if unset. Set it explicitly with `--dig-amount <DIG>` (e.g.
+> `--dig-amount 87.5`), the `DIGSTORE_DIG_AMOUNT` env var, or `dig-amount` in
+> `dig.toml` (precedence: flag > env > dig.toml > default). Before submitting, each
+> command prints the cost and your current balance; if the wallet is short on XCH
+> **or** `$DIG` the command blocks and tells you what's missing. Need `$DIG`? Get it
+> on TibetSwap, dexie.space, or xch.9mm.pro. Use `digstore balance` to check your
+> spendable XCH (mojos) and DIG at any time.
 
 ### 1. Set up a wallet seed
 
@@ -331,6 +334,10 @@ insufficient funds: need <N> mojos, have <M>; fund xch1…
 
 Both XCH and DIG are received at the same `xch1…` receive address (DIG as a CAT).
 Send funds there, wait for them to confirm, then retry.
+
+**Where to get `$DIG`:** [TibetSwap](https://v2.tibetswap.io/),
+[dexie.space](https://dexie.space), or [xch.9mm.pro](https://xch.9mm.pro) — the DIG
+CAT is `a406d3a9…832f81`. Get XCH from any Chia exchange or wallet.
 
 ### 3. Init mints, commit anchors
 
@@ -476,6 +483,11 @@ BIP-39 wallet seed used for on-chain anchoring — see
 Security posture, the hardening applied, and known residual risks are documented
 in [`SECURITY.md`](SECURITY.md). Please report vulnerabilities privately to the
 maintainer rather than opening a public issue.
+
+## Help & community
+
+- **Docs:** [docs.dig.net](https://docs.dig.net)
+- **Discord:** [discord.gg/dignetwork](https://discord.gg/dignetwork) — questions, help, and project chat.
 
 ## Contributing
 

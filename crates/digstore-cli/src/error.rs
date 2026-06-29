@@ -165,6 +165,14 @@ impl CliError {
             CliError::VerificationFailed(_) => Some(
                 "content failed verification — wrong salt/key or the store data was tampered with".into(),
             ),
+            // For a DIG shortfall, point the user at where to acquire $DIG (the
+            // three canonical venues) — funding is off-CLI, so a dead-end here
+            // would otherwise leave them stuck. XCH keeps the bare receive-address
+            // line (any Chia exchange / wallet sends XCH).
+            CliError::InsufficientFunds { address, asset, .. } if asset == "DIG" => Some(format!(
+                "send DIG to {address}, then retry. {}",
+                crate::branding::get_dig_hint()
+            )),
             CliError::InsufficientFunds { address, asset, .. } => Some(format!("send {asset} to {address}, then retry")),
             CliError::Chain(_) => Some("check your connection to coinset.org and retry".into()),
             CliError::ConfirmTimeout => Some("the transaction may still confirm; run `digstore anchor status`".into()),

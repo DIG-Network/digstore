@@ -1,8 +1,8 @@
 # dig.toml — your DIG project config. Committed to your repo; contains NO secrets.
 #
 # `digstore dev`    — preview locally for free (runs the build, serves the real
-#                     dig:// read path; no chain, no spend).
-# `digstore deploy` — build + publish on Chia (costs 100 DIG + an XCH fee).
+#                     chia:// read path; no chain, no spend).
+# `digstore deploy` — build + publish on Chia (costs the capsule price in $DIG + an XCH fee).
 
 # Vite builds to `dist/`. That is what we publish.
 output-dir = "dist"

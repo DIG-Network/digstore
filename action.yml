@@ -1,7 +1,7 @@
 name: "Deploy to DIG (digstore)"
 description: >-
   Auto-deploy a built site/dapp to your existing DIG store on every push — a new
-  capsule, published to DIGHub — git-push-to-deploy. Advances an
+  capsule, published to DIGHUb — git-push-to-deploy. Advances an
   existing store (never mints: it does NOT run `init`).
 author: "DIG Network"
 
@@ -18,16 +18,17 @@ inputs:
   mnemonic:
     description: >-
       BIP-39 mnemonic of the FUNDED deploy wallet (the singleton owner). Signs
-      the on-chain root update and pays 100 DIG + an XCH fee PER deploy. SECURITY:
-      this can spend all of the wallet's DIG/XCH — use a DEDICATED low-balance
-      deploy wallet funded only with enough DIG for your expected deploys. Pass a
-      repository secret; never hard-code it.
+      the on-chain root update and pays a uniform per-capsule price (in $DIG at the
+      live rate) + an XCH fee PER deploy. SECURITY: this can spend all of the
+      wallet's DIG/XCH — use a DEDICATED low-balance deploy wallet funded only with
+      enough $DIG for your expected deploys. Pass a repository secret; never
+      hard-code it.
     required: true
   deploy-key:
     description: >-
       The store's publisher deploy key (64-hex), from `digstore deploy-key export`
       run once on the machine that created the store. Authorizes publishing new
-      capsules to DIGHub. It has NO spend authority, but it is still a credential —
+      capsules to DIGHUb. It has NO spend authority, but it is still a credential —
       pass it as a repository secret.
     required: true
   store-id:
@@ -53,7 +54,7 @@ inputs:
     default: ""
   remote:
     description: >-
-      The DIGHub remote to publish to. Defaults to the public DIGHub for your
+      The DIGHUb remote to publish to. Defaults to the public DIGHUb for your
       store. Override only for a self-hosted node. Accepts `dig://<store-id>` or a
       node URL. Optional if set as `remote` in `dig.toml`.
     required: false
@@ -97,11 +98,14 @@ outputs:
   store-id:
     description: "The store id that was advanced."
     value: ${{ steps.deploy.outputs.store_id }}
+  chia-url:
+    description: "The chia:// content-open address of the new capsule (the user-facing scheme the DIG Browser/extension register)."
+    value: ${{ steps.deploy.outputs.chia_url }}
   dig-url:
-    description: "The dig:// URL of the new capsule."
-    value: ${{ steps.deploy.outputs.dig_url }}
+    description: "DEPRECATED alias of `chia-url` (now also a chia:// address). Use `chia-url`."
+    value: ${{ steps.deploy.outputs.chia_url }}
   hub-url:
-    description: "The DIGHub URL for the store."
+    description: "The DIGHUb URL for the store."
     value: ${{ steps.deploy.outputs.hub_url }}
 
 runs:
@@ -168,7 +172,7 @@ runs:
           digstore seed import --mnemonic "$DIG_MNEMONIC"
 
     # 3. Deploy: reconstruct the store locally with the deploy key, stage the
-    #    output, advance the on-chain root, and push the new capsule to DIGHub.
+    #    output, advance the on-chain root, and push the new capsule to DIGHUb.
     - name: Deploy to DIG
       id: deploy
       shell: bash
@@ -205,20 +209,24 @@ runs:
         store_id="${capsule%%:*}"
 
         if [ -z "$capsule" ] || [ "$pushed" != "true" ]; then
-          echo "::error::deploy did not publish a capsule to DIGHub (pushed=$pushed)"
+          echo "::error::deploy did not publish a capsule to DIGHUb (pushed=$pushed)"
           exit 1
         fi
 
+        # chia:// is the user-facing content-open scheme (the DIG Browser/extension
+        # register it). `dig_url` is kept as a DEPRECATED alias carrying the same
+        # chia:// value for back-compat; the §21 remote scheme is a separate concept.
         echo "capsule=$capsule"   >> "$GITHUB_OUTPUT"
         echo "root=$root"         >> "$GITHUB_OUTPUT"
         echo "store_id=$store_id" >> "$GITHUB_OUTPUT"
-        echo "dig_url=dig://$store_id" >> "$GITHUB_OUTPUT"
+        echo "chia_url=chia://$store_id" >> "$GITHUB_OUTPUT"
+        echo "dig_url=chia://$store_id"  >> "$GITHUB_OUTPUT"
         echo "hub_url=https://hub.dig.net/stores/$store_id" >> "$GITHUB_OUTPUT"
 
         {
           echo "### Deployed to DIG 🟢"
           echo ""
           echo "- **Capsule:** \`$capsule\`"
-          echo "- **dig://** \`dig://$store_id\`"
-          echo "- **DIGHub:** https://hub.dig.net/stores/$store_id"
+          echo "- **Open:** \`chia://$store_id\`"
+          echo "- **DIGHUb:** https://hub.dig.net/stores/$store_id"
         } >> "$GITHUB_STEP_SUMMARY"

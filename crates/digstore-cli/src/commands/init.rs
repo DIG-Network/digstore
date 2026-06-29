@@ -71,8 +71,8 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     let description = args.description.clone().filter(|s| !s.trim().is_empty());
 
     // Resolve the per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml
-    // `dig-amount` > the 100 DIG default. Deterministic — no live price fetch (the hub
-    // computes the dynamic, USD-pegged amount and passes it in via the flag/env).
+    // `dig-amount` > the INIT_DIG protocol default. Deterministic — no live price fetch
+    // (the hub computes the dynamic, USD-pegged amount and passes it in via the flag/env).
     let dig_amount = crate::dig_toml::DigToml::read_with_env(&ctx.op_dir)?
         .resolve_dig_amount(args.dig_amount, dig::INIT_DIG)?;
 
@@ -83,7 +83,8 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     let (keys, mnemonic, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
 
     // 3. Preflight balance for BOTH assets, with up-front cost disclosure. A
-    //    mint pays INIT_DIG (100 DIG) embedded in the on-chain bundle PLUS the
+    //    mint pays the resolved per-capsule DIG amount (the INIT_DIG protocol
+    //    default unless overridden) embedded in the on-chain bundle PLUS the
     //    singleton amount (1 mojo) + the XCH fee. Block before any spend if the
     //    wallet is short on EITHER asset; no files exist yet, so nothing rolls back.
     let sp = ui.spinner("Scanning your wallet…");

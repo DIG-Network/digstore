@@ -2,15 +2,15 @@
 //!
 //! The CLI has historically had TWO identities with no unified onboarding:
 //!   - the **seed** — a BIP-39 wallet that SIGNS every on-chain action and pays
-//!     the 100 DIG + XCH per publish; and
-//!   - the **dighub login** — an account that GATES the push to the public hub and
-//!     surfaces your projects in the dashboard, with NO on-chain authority.
+//!     the per-capsule $DIG price + XCH per publish; and
+//!   - the **DIGHUb login** — an account that GATES the push to the public hub and
+//!     surfaces your stores in the dashboard, with NO on-chain authority.
 //!
 //! `setup` collapses both into one flow and explains the difference in one place:
 //!   1. Seed — import an existing mnemonic, or generate a new one.
-//!   2. Funds — does the wallet hold enough DIG + XCH for a publish? (Pointer to
+//!   2. Funds — does the wallet hold enough $DIG + XCH for a publish? (Pointer to
 //!      where to get more if not.)
-//!   3. Login (optional) — pair a dighub account.
+//!   3. Login (optional) — pair a DIGHUb account.
 //!
 //! Everything except generating a brand-new seed is safe to re-run. The seed +
 //! login steps REUSE the exact `seed`/`login` command paths (no duplicate logic),
@@ -19,14 +19,22 @@
 use digstore_chain::dig::{self, format_dig, format_xch};
 use digstore_chain::{config as chain_config, seed as chain_seed, unlock};
 
+use crate::branding;
 use crate::cli::{SeedAction, SeedArgs, SetupArgs};
 use crate::error::CliError;
 use crate::ops::dighub;
 use crate::ui::Ui;
 
-/// Where to acquire XCH/DIG — shown when the wallet is short on funds. A pointer,
-/// not a transaction: funding is the user's call, off-CLI.
-const FUNDING_HINT: &str = "Get XCH/DIG: see https://dig.net (and any Chia exchange for XCH).";
+/// Where to acquire $DIG — shown when the wallet is short on funds. A pointer,
+/// not a transaction: funding is the user's call, off-CLI. The $DIG venues come
+/// from the shared branding source so they match every other Get-$DIG surface;
+/// XCH comes from any Chia exchange.
+fn funding_hint() -> String {
+    format!(
+        "{} XCH: any Chia exchange.",
+        crate::branding::get_dig_hint()
+    )
+}
 
 pub fn run(ui: &Ui, args: SetupArgs) -> Result<(), CliError> {
     let home = chain_config::dig_home().map_err(CliError::from)?;
@@ -75,7 +83,7 @@ pub fn run(ui: &Ui, args: SetupArgs) -> Result<(), CliError> {
     let funds = fund_check(ui);
 
     // --- Step 3: optional dighub login ---------------------------------------
-    section(ui, "3/3  Dighub account (optional)");
+    section(ui, &format!("3/3  {} account (optional)", branding::DIGHUB));
     let logged_in = if args.no_login {
         if !ui.json() {
             ui.line("  skipped (--no-login).");
@@ -89,7 +97,10 @@ pub fn run(ui: &Ui, args: SetupArgs) -> Result<(), CliError> {
         true
     } else if ui.can_prompt() {
         if ui.confirm(
-            "Log in to dighub now (so your stores show in your dashboard)?",
+            &format!(
+                "Log in to {} now (so your stores show in your dashboard)?",
+                branding::DIGHUB
+            ),
             true,
         ) {
             // Reuse the exact login path; a login failure here is non-fatal — the
@@ -144,7 +155,7 @@ fn run_seed(ui: &Ui, action: SeedAction) -> Result<(), CliError> {
     crate::commands::seed::run(ui, SeedArgs { action })
 }
 
-/// Check the wallet has enough DIG + XCH for a publish (100 DIG + the fee). Only
+/// Check the wallet has enough DIG + XCH for a publish (the per-capsule DIG amount + the fee). Only
 /// scans when the seed is unlocked (so `setup --json`/CI never blocks on a
 /// passphrase). Returns `Some(true)`/`Some(false)` when checked, `None` when
 /// skipped. Mirrors `doctor`'s funds check; kept best-effort (a scan error is a
@@ -170,7 +181,7 @@ fn fund_check(ui: &Ui) -> Option<bool> {
                     format_xch(fee),
                 ));
                 if !ok {
-                    ui.line(format!("  not enough yet. {FUNDING_HINT}"));
+                    ui.line(format!("  not enough yet. {}", funding_hint()));
                 }
             }
             Some(ok)

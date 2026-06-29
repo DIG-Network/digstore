@@ -894,8 +894,9 @@ impl Node {
             "root": root_hex,
             "module_path": compiled.module_path.display().to_string(),
             "size": compiled.size,
-            // The dig:// content address for this capsule (matches deploy --preview).
-            "content_address": format!("dig://{store_hex}:{root_hex}/"),
+            // The chia:// content-open address for this capsule (the user-facing
+            // scheme the DIG Browser/extension register; matches deploy --preview).
+            "content_address": format!("chia://{store_hex}:{root_hex}/"),
             "files": compiled.files(),
             // true ⇒ a preview capsule with a content-derived id (NOT a real store).
             "ephemeral": ephemeral,
@@ -1808,10 +1809,10 @@ mod tests {
         assert_eq!(root_hex.len(), 64, "root is 64-hex: {resp}");
         assert_eq!(r["store_id"].as_str(), Some(store_hex));
         assert_eq!(r["root"].as_str(), Some(root_hex));
-        // content_address is the dig:// URN for the capsule.
+        // content_address is the chia:// open address for the capsule.
         assert_eq!(
             r["content_address"].as_str(),
-            Some(format!("dig://{store_hex}:{root_hex}/").as_str())
+            Some(format!("chia://{store_hex}:{root_hex}/").as_str())
         );
         // module_path points at a real on-disk .dig module.
         let module_path = r["module_path"].as_str().expect("module_path");

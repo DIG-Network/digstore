@@ -451,7 +451,7 @@ fn deploy_if_changed_deploys_when_changed() {
 /// #18 preview: `deploy --preview` builds a FREE preview capsule via the real
 /// compile→verify→decrypt read path — no chain, no wallet, no deploy key, no spend.
 /// It writes a local `.dig` artifact and prints a content-address (the preview
-/// capsule + dig:// URN). This is the headline modern-deploy preview.
+/// capsule + chia:// open address). This is the headline modern-deploy preview.
 #[test]
 fn deploy_preview_builds_free_artifact_and_content_address() {
     let ci = tmp_dig();
@@ -481,7 +481,7 @@ fn deploy_preview_builds_free_artifact_and_content_address() {
     assert!(v["content_address"]
         .as_str()
         .unwrap()
-        .starts_with(&format!("dig://{store_id}:{root}/")));
+        .starts_with(&format!("chia://{store_id}:{root}/")));
 
     // The artifact file (a real compiled .dig module) exists on disk.
     let artifact = v["artifact"].as_str().unwrap();

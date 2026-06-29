@@ -2,8 +2,9 @@
 //!
 //! This is the "deploy from GitHub Actions" entry point: on a fresh checkout
 //! with no local `.dig`, advance the store's on-chain root and publish the new
-//! capsule to DIGHub, git-push-to-deploy. It NEVER mints (`init`
-//! creates a store and spends 100 DIG; `deploy` only ADVANCES an existing one).
+//! capsule to DIGHUb, git-push-to-deploy. It NEVER mints (`init`
+//! creates a store and spends the capsule price; `deploy` only ADVANCES an
+//! existing one).
 //!
 //! Flow:
 //!   1. Resolve config from `dig.toml` (overridden by flags/env).
@@ -11,14 +12,16 @@
 //!   3. Reconstruct the store's local `.dig` state with the supplied publisher
 //!      deploy key + the current on-chain root (`store_ops::adopt_existing_store`).
 //!   4. Stage the output dir, then run the SAME `commit -m --push` path the
-//!      interactive CLI uses (on-chain root update + DIGHub push), non-interactively.
-//!   5. Print the new capsule (`storeId:rootHash`) + dig:// URN + hub URL.
+//!      interactive CLI uses (on-chain root update + DIGHUb push), non-interactively.
+//!   5. Print the new capsule (`storeId:rootHash`) + the chia:// open address +
+//!      hub URL.
 //!
 //! Secrets it consumes (the Action injects these from repo secrets):
 //!   - the funded wallet seed (`~/.dig`/`DIGSTORE_HOME` + `DIGSTORE_PASSPHRASE`)
-//!     — signs the on-chain update and pays 100 DIG + fee per deploy;
+//!     — signs the on-chain update and pays the per-capsule price + XCH fee per
+//!     deploy;
 //!   - the publisher deploy key (`--deploy-key` / `DIGSTORE_DEPLOY_KEY`) — signs
-//!     the §21 head push so DIGHub accepts the capsule;
+//!     the §21 head push so DIGHUb accepts the capsule;
 //!   - for a PRIVATE store, the secret salt (`--salt` / `DIGSTORE_STORE_SALT`).
 
 use std::path::PathBuf;
@@ -33,13 +36,13 @@ use crate::error::CliError;
 use crate::ops::{remote_ops, serve, store_ops};
 use crate::runtime::block_on;
 
-/// Best-effort human "view it on the hub" URL for a published capsule. DIGHub
+/// Best-effort human "view it on the hub" URL for a published capsule. DIGHUb
 /// resolves an owned store's latest version at `https://hub.dig.net/stores/<id>`;
 /// only emitted when publishing to the public network (a self-hosted node has no
 /// hub page). Kept here so both the success line and the JSON object agree.
 fn hub_url(remote: Option<&str>, store_id: &Bytes32) -> Option<String> {
     let is_public = match remote {
-        // No explicit remote => the public RPC default (a DIGHub store).
+        // No explicit remote => the public RPC default (a DIGHUb store).
         None => true,
         Some(r) => crate::ops::dighub::is_dighub_remote(r),
     };
@@ -60,7 +63,7 @@ struct DeployConfig {
     /// transient `.digignore` in the output dir).
     ignore: Vec<String>,
     /// The per-capsule DIG amount (base units) to spend on this deploy — resolved
-    /// flag > env > dig.toml > the 100 DIG default (deterministic; no price fetch).
+    /// flag > env > dig.toml > the protocol default (deterministic; no price fetch).
     dig_amount: u64,
 }
 
@@ -113,7 +116,7 @@ fn resolve_config(ctx: &CliContext, args: &DeployArgs) -> Result<DeployConfig, C
     let file = DigToml::read_with_env(&ctx.op_dir)?;
 
     // Per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml `dig-amount`
-    // > the 100 DIG default. Resolved FIRST (it borrows `file`) before the field moves
+    // > the protocol default. Resolved FIRST (it borrows `file`) before the field moves
     // below consume `file`. Deterministic — the dynamic, USD-pegged amount is computed
     // by the hub and passed in; the CLI never fetches a live price.
     let dig_amount = file.resolve_dig_amount(args.dig_amount, dig::COMMIT_DIG)?;
@@ -310,7 +313,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
         store_ops::adopt_existing_store(ctx, cfg.store_id, &deploy_seed, visibility, tip, None)?;
     }
 
-    // Point `origin` at the configured remote (the public DIGHub by default). The
+    // Point `origin` at the configured remote (the public DIGHUb by default). The
     // store dir only exists after adoption, so set this here. `commit --push`
     // publishes to `origin`.
     if let Some(remote) = &cfg.remote {
@@ -368,7 +371,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
     }
 
     // --if-changed: if the staged root equals the store's current on-chain root,
-    // this deploy would be a no-op (same capsule) — skip the 100 DIG + XCH spend
+    // this deploy would be a no-op (same capsule) — skip the DIG + XCH spend
     // and the push entirely. The guard that lets CI run `deploy` on every push.
     if args.if_changed && is_noop {
         if ui.json() {
@@ -389,7 +392,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
         return Ok(());
     }
 
-    // 5. Commit (on-chain root update) + push to DIGHub, non-interactively.
+    // 5. Commit (on-chain root update) + push to DIGHUb, non-interactively.
     //    This reuses the exact `commit -m --push` path the interactive CLI uses;
     //    `--push` publishes to the default `origin` remote without prompting.
     crate::commands::commit::run(
@@ -426,9 +429,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
 }
 
 /// `deploy --dry-run`: report the resulting version (root) + the EXACT cost of
-/// publishing it (100 DIG + the configured XCH fee) and the hub URL it WOULD go
-/// live at, WITHOUT spending, anchoring, or pushing. The root is real (computed
-/// from the staged build); the fee is read from global config without a wallet.
+/// publishing it (the per-capsule DIG amount + the configured XCH fee) and the hub
+/// URL it WOULD go live at, WITHOUT spending, anchoring, or pushing. The root is
+/// real (computed from the staged build); the fee is read from global config
+/// without a wallet.
 #[allow(clippy::too_many_arguments)]
 fn dry_run(
     ui: &crate::ui::Ui,
@@ -488,8 +492,9 @@ fn dry_run(
 ///   3. read a resource back through the genuine serve→verify→decrypt path to PROVE
 ///      the compiled module actually verifies + decrypts (the "real read path"),
 ///   4. copy the compiled `.dig` module to the preview artifact path, and
-///   5. print the artifact path + the content-address (the capsule `storeId:rootHash`
-///      + its `dig://` URN) the caller (the deploy-action) serves to preview hosting.
+///   5. print the artifact path + the content-address — the capsule
+///      `storeId:rootHash` plus its `chia://` open address — that the caller
+///      (the deploy-action) serves to preview hosting.
 ///
 /// The preview store id is content-derived (a fresh ephemeral store) — it is NOT the
 /// production store id (no on-chain singleton is touched), so a preview NEVER advances
@@ -594,10 +599,14 @@ fn preview(ctx: &CliContext, ui: &crate::ui::Ui, args: &DeployArgs) -> Result<()
             ))
         })?;
 
-        // 5. The content-address: the PREVIEW capsule (storeId:rootHash) + its dig://
-        //    URN. NOTE this is the ephemeral preview store id, NOT the production store.
+        // 5. The content-address: the PREVIEW capsule (storeId:rootHash) + its
+        //    user-facing chia:// open address (what a reviewer opens in the DIG
+        //    Browser/extension). NOTE this is the ephemeral preview store id, NOT
+        //    the production store. The on-chain NFT URIs stay dig:// (wire
+        //    contract); this DISPLAYED open address is chia:// (SYSTEM.md).
         let capsule = format!("{}:{}", preview_store_id.to_hex(), root.to_hex());
-        let dig_uri = format!("dig://{}:{}/", preview_store_id.to_hex(), root.to_hex());
+        let content_url =
+            crate::branding::content_url(&preview_store_id.to_hex(), &root.to_hex(), "");
 
         if ui.json() {
             ui.emit_json(&serde_json::json!({
@@ -607,7 +616,7 @@ fn preview(ctx: &CliContext, ui: &crate::ui::Ui, args: &DeployArgs) -> Result<()
                 "root": root.to_hex(),
                 "store_id": preview_store_id.to_hex(),
                 "capsule": capsule,
-                "content_address": dig_uri,
+                "content_address": content_url,
                 "artifact": artifact.display().to_string(),
                 "artifact_size": outcome.output_size,
                 "resources": keys.len(),
@@ -615,9 +624,9 @@ fn preview(ctx: &CliContext, ui: &crate::ui::Ui, args: &DeployArgs) -> Result<()
         } else {
             ui.success("Built a free preview — nothing spent, no chain.");
             ui.line(format!("  capsule: {capsule}  (preview storeId:rootHash)"));
-            ui.line(format!("  content address: {dig_uri}"));
+            ui.line(format!("  content address: {content_url}"));
             ui.line(format!("  artifact: {}", artifact.display()));
-            ui.line("  verified through the real dig:// read path. Serve it to preview hosting.");
+            ui.line("  verified through the real chia:// read path. Serve it to preview hosting.");
         }
         Ok(())
     })();

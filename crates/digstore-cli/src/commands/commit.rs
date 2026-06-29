@@ -24,8 +24,8 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let new_root_hex = prepared.root.to_hex();
 
     // Resolve the per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml
-    // `dig-amount` > the 100 DIG default. Deterministic — no live price fetch (the hub
-    // computes the dynamic, USD-pegged amount and passes it in via the flag/env).
+    // `dig-amount` > the COMMIT_DIG protocol default. Deterministic — no live price fetch
+    // (the hub computes the dynamic, USD-pegged amount and passes it in via the flag/env).
     let dig_amount = crate::dig_toml::DigToml::read_with_env(&ctx.op_dir)?
         .resolve_dig_amount(args.dig_amount, dig::COMMIT_DIG)?;
 
@@ -68,7 +68,8 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let description = store_cfg.as_ref().and_then(|c| c.description.clone());
 
     // 3b. Preflight balance for BOTH assets, with up-front cost disclosure. A
-    //     commit pays COMMIT_DIG (100 DIG) embedded in the on-chain bundle PLUS the
+    //     commit pays the resolved per-capsule DIG amount (the COMMIT_DIG protocol
+    //     default unless overridden) embedded in the on-chain bundle PLUS the
     //     XCH fee. Block before the update if the wallet is short on EITHER asset;
     //     roots.log / staging are untouched on a block.
     let sp = ui.spinner("Scanning your wallet…");
@@ -118,7 +119,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     // authorizes the on-chain root advance instead of the owner master seed. When
     // set, the singleton spend is built with the writer's key (the store must carry
     // its delegated puzzle, pre-authorized by the owner via `updateStoreOwnership`);
-    // the wallet still pays the 100 DIG + XCH fee. Absent => the owner path.
+    // the wallet still pays the per-capsule DIG amount + XCH fee. Absent => the owner path.
     let writer_keys = resolve_writer_keys(&args)?;
     if writer_keys.is_some() && !ui.json() {
         ui.line(
@@ -263,7 +264,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                     ));
                     ui.line(format!("  anchored on mainnet (coin {coin_hex})"));
                 }
-                // Offer to publish this deployment to DIGHub. Never blocks/prompts in
+                // Offer to publish this deployment to DIGHUb. Never blocks/prompts in
                 // --json/non-TTY runs (see `maybe_offer_push`).
                 maybe_offer_push(ctx, ui, &args);
             }
@@ -283,7 +284,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
 }
 
 /// `commit --dry-run`: report the resulting version (root) and the EXACT cost of
-/// publishing it (100 DIG + the configured XCH fee) WITHOUT spending, anchoring,
+/// publishing it (the per-capsule DIG amount + the configured XCH fee) WITHOUT spending, anchoring,
 /// or finalizing anything. The root is computed from staging exactly as a real
 /// commit would (so the previewed root is the one a real commit produces); the
 /// fee is read from the global config without unlocking the seed.
@@ -328,7 +329,7 @@ fn dry_run(
     Ok(())
 }
 
-/// Decide whether a confirmed deployment should be pushed to DIGHub now, and if
+/// Decide whether a confirmed deployment should be pushed to DIGHUb now, and if
 /// so perform it via the shared push path ([`crate::commands::push::push_core`]
 /// against the default `origin` remote — the same target as `digstore push
 /// origin`). This is the ONE push decision, used by BOTH the human and the JSON
@@ -337,7 +338,7 @@ fn dry_run(
 /// Decision (mirrors the TTY/json gating so it never blocks automation):
 /// - `--no-push`: never push (returns `None`).
 /// - `--push`: push without asking (works non-interactively / in `--json` too).
-/// - interactive (TTY, not json): ask `Push this deployment to DIGHub now? [y/N]`
+/// - interactive (TTY, not json): ask `Push this deployment to DIGHUb now? [y/N]`
 ///   (default No); push on yes.
 /// - non-interactive (no flag): do not push (returns `None`).
 ///
@@ -354,7 +355,11 @@ fn do_push(
         return None;
     }
     // `--push` pushes unconditionally; otherwise ask (we are interactive here).
-    let push = args.push || ui.confirm("Push this deployment to DIGHub now?", false);
+    let push = args.push
+        || ui.confirm(
+            &format!("Push this deployment to {} now?", crate::branding::DIGHUB),
+            false,
+        );
     if !push {
         return None;
     }
@@ -372,7 +377,10 @@ fn maybe_offer_push(ctx: &CliContext, ui: &crate::ui::Ui, args: &CommitArgs) {
         Some(Ok(out)) => {
             ui.success(format!("pushed root {} to origin", out.root.to_hex()));
             if out.claimed {
-                ui.line("linked to your dighub account (pending on-chain owner verification)");
+                ui.line(format!(
+                    "linked to your {} account (pending on-chain owner verification)",
+                    crate::branding::DIGHUB
+                ));
             }
         }
         Some(Err(e)) => {
