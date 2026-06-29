@@ -172,6 +172,48 @@ pub trait ChainReads: Send + Sync {
         include_spent: bool,
     ) -> Result<Vec<CoinRecord>>;
 
+    /// All coin records carrying `hint` as a memo hint, optionally including
+    /// already-spent coins — the hint twin of [`coin_records_by_puzzle_hash`].
+    ///
+    /// Unlike [`unspent_coins_by_hint`](ChainReads::unspent_coins_by_hint) (which
+    /// drops spent records), this returns the FULL hint history. It is the
+    /// foundation for owner-independent on-chain indexing where the discovery anchor
+    /// (e.g. an NFT's mint-time owner hint) may itself have been SPENT — the public
+    /// collection index walks each such record's singleton lineage forward to the
+    /// current unspent tip. Wraps coinset's `get_coin_records_by_hint` with
+    /// `include_spent_coins = include_spent`.
+    ///
+    /// Default impl returns an empty vec so existing [`ChainReads`] impls that don't
+    /// model hint history (test simulators, the offline CLI mock) compile unchanged;
+    /// the production [`Coinset`] overrides it with the real coinset query. This keeps
+    /// the trait append-only (a new method with a default, never a changed signature).
+    async fn coin_records_by_hint(
+        &self,
+        _hint: Bytes32,
+        _include_spent: bool,
+    ) -> Result<Vec<CoinRecord>> {
+        Ok(Vec::new())
+    }
+
+    /// All coin records whose `parent_coin_info` is in `parent_ids`, optionally including
+    /// already-spent coins — the on-chain "children of these coins" query.
+    ///
+    /// This is the forward-lineage primitive the public collection index walks with: a
+    /// singleton's NEXT generation is the (single) child of its current coin, so following a
+    /// launcher → eve → … → tip is a sequence of `coin_records_by_parent_ids([current_coin_id])`
+    /// lookups. Wraps coinset's `get_coin_records_by_parent_ids`.
+    ///
+    /// Default impl returns an empty vec (append-only trait extension), so impls that don't
+    /// model child lookups (test simulators, the offline CLI mock) compile unchanged; the
+    /// production [`Coinset`] overrides it, and the test [`mock`] models it from a parent index.
+    async fn coin_records_by_parent_ids(
+        &self,
+        _parent_ids: &[Bytes32],
+        _include_spent: bool,
+    ) -> Result<Vec<CoinRecord>> {
+        Ok(Vec::new())
+    }
+
     async fn coin_record(&self, name: Bytes32) -> Result<Option<CoinInfo>>;
     async fn coin_spend(&self, coin_id: Bytes32, spent_height: u32) -> Result<Option<CoinSpend>>;
     async fn peak_height(&self) -> Result<u32>;
@@ -299,6 +341,60 @@ impl ChainReads for Coinset {
         let coin_records = resp.coin_records.ok_or_else(|| {
             ChainError::Chain(
                 "get_coin_records_by_puzzle_hash: success=true but coin_records absent".to_string(),
+            )
+        })?;
+
+        Ok(coin_records.into_iter().map(map_coin_record).collect())
+    }
+
+    async fn coin_records_by_hint(
+        &self,
+        hint: Bytes32,
+        include_spent: bool,
+    ) -> Result<Vec<CoinRecord>> {
+        let resp = self
+            .client
+            .get_coin_records_by_hint(hint, None, None, Some(include_spent))
+            .await
+            .map_err(|e| ChainError::Chain(format!("get_coin_records_by_hint: {e}")))?;
+
+        if !resp.success {
+            return Err(ChainError::Chain(format!(
+                "get_coin_records_by_hint failed: {:?}",
+                resp.error
+            )));
+        }
+
+        let coin_records = resp.coin_records.ok_or_else(|| {
+            ChainError::Chain(
+                "get_coin_records_by_hint: success=true but coin_records absent".to_string(),
+            )
+        })?;
+
+        Ok(coin_records.into_iter().map(map_coin_record).collect())
+    }
+
+    async fn coin_records_by_parent_ids(
+        &self,
+        parent_ids: &[Bytes32],
+        include_spent: bool,
+    ) -> Result<Vec<CoinRecord>> {
+        let resp = self
+            .client
+            .get_coin_records_by_parent_ids(parent_ids.to_vec(), None, None, Some(include_spent))
+            .await
+            .map_err(|e| ChainError::Chain(format!("get_coin_records_by_parent_ids: {e}")))?;
+
+        if !resp.success {
+            return Err(ChainError::Chain(format!(
+                "get_coin_records_by_parent_ids failed: {:?}",
+                resp.error
+            )));
+        }
+
+        let coin_records = resp.coin_records.ok_or_else(|| {
+            ChainError::Chain(
+                "get_coin_records_by_parent_ids: success=true but coin_records absent".to_string(),
             )
         })?;
 
@@ -440,6 +536,43 @@ pub(crate) mod mock {
                         .collect()
                 })
                 .unwrap_or_default())
+        }
+
+        async fn coin_records_by_hint(
+            &self,
+            hint: Bytes32,
+            include_spent: bool,
+        ) -> Result<Vec<CoinRecord>> {
+            // Mirror the real impl: same hint index, but honour include_spent so the
+            // public collection index can see SPENT mint-time owner-hint records.
+            Ok(self
+                .records_by_hint
+                .get(&hint)
+                .map(|recs| {
+                    recs.iter()
+                        .filter(|r| include_spent || !r.spent)
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default())
+        }
+
+        async fn coin_records_by_parent_ids(
+            &self,
+            parent_ids: &[Bytes32],
+            include_spent: bool,
+        ) -> Result<Vec<CoinRecord>> {
+            // Derive children from the seeded `records` map: a child's `parent_coin_info`
+            // is in `parent_ids`. This models coinset's get_coin_records_by_parent_ids for
+            // the forward singleton-lineage walk without a separate index.
+            Ok(self
+                .records
+                .values()
+                .filter(|r| {
+                    parent_ids.contains(&r.coin.parent_coin_info) && (include_spent || !r.spent)
+                })
+                .cloned()
+                .collect())
         }
 
         async fn coin_record(&self, name: Bytes32) -> Result<Option<CoinInfo>> {

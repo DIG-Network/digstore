@@ -903,6 +903,185 @@ impl Node {
         }})
     }
 
+    // -- Public collection reads (#39) -----------------------------------------
+    //
+    // Owner-independent, third-party-indexer-free reads of an NFT collection from
+    // DIG's own coinset data. Read-only: NO spend bundles are built or pushed. The
+    // item set is the NFT launcher ids the collection mint produced — the stable,
+    // owner-independent anchor (a DID-attributed NFT is hinted to its OWNER at mint,
+    // not to the creator DID, so launcher ids — not the DID — are the discovery key;
+    // see digstore_chain::collection_index). Each launcher is resolved to its CURRENT
+    // on-chain owner + royalty + CHIP-0007 metadata by walking the singleton lineage
+    // forward to the unspent tip, so the reported owner is always live, not mint-time.
+
+    /// Parse `params.launcher_ids` (an array of 64-hex strings) into canonical
+    /// [`chia_protocol::Bytes32`] launcher ids, preserving order (the result is
+    /// deterministic in input order). `Err(bad_value)` names the first malformed id.
+    fn parse_launcher_ids(params: &Value) -> Result<Vec<chia_protocol::Bytes32>, String> {
+        let arr = params
+            .get("launcher_ids")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                "params.launcher_ids must be an array of 64-hex launcher ids".to_string()
+            })?;
+        let mut out = Vec::with_capacity(arr.len());
+        for v in arr {
+            let s = v
+                .as_str()
+                .ok_or_else(|| "each launcher id must be a 64-hex string".to_string())?;
+            let h = s.trim_start_matches("0x");
+            let bytes = hex::decode(h).map_err(|_| format!("launcher id is not hex: {s}"))?;
+            let a: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| format!("launcher id must be 32 bytes (64 hex): {s}"))?;
+            out.push(chia_protocol::Bytes32::new(a));
+        }
+        Ok(out)
+    }
+
+    /// Render one resolved [`IndexedNft`](digstore_chain::collection_index::IndexedNft)
+    /// as the stable JSON-RPC item shape. Field names mirror the asset CLI
+    /// (`launcher_id`/`coin_id`/`owner_did`/`royalty_*`/`owner_puzzle_hash`), with the
+    /// decoded on-chain CHIP-0007 metadata under `metadata` (null when it does not
+    /// decode). The on-chain `NftMetadata` (CLVM struct) carries no serde derive, so
+    /// the metadata object is rendered field-by-field with stable names + lowercase-hex
+    /// 32-byte hashes — a self-describing, agent-consumable shape.
+    fn item_json(item: &digstore_chain::collection_index::IndexedNft) -> Value {
+        let metadata = item
+            .metadata
+            .as_ref()
+            .map(|m| {
+                json!({
+                    "edition_number": m.edition_number,
+                    "edition_total": m.edition_total,
+                    "data_uris": m.data_uris,
+                    "data_hash": m.data_hash.map(hex::encode),
+                    "metadata_uris": m.metadata_uris,
+                    "metadata_hash": m.metadata_hash.map(hex::encode),
+                    "license_uris": m.license_uris,
+                    "license_hash": m.license_hash.map(hex::encode),
+                })
+            })
+            .unwrap_or(Value::Null);
+        json!({
+            "launcher_id": hex::encode(item.launcher_id),
+            "coin_id": hex::encode(item.coin_id),
+            "owner_did": item.owner_did.map(hex::encode),
+            "royalty_puzzle_hash": hex::encode(item.royalty_puzzle_hash),
+            "royalty_basis_points": item.royalty_basis_points,
+            "owner_puzzle_hash": hex::encode(item.owner_puzzle_hash),
+            "metadata": metadata,
+        })
+    }
+
+    /// `dig.getCollection` — collection-level facts for a given item set.
+    ///
+    /// Params: `launcher_ids` (required array of 64-hex), optional `did` (64-hex; the
+    /// collection's creator DID, echoed + used as the expected attribution). Resolves
+    /// every launcher to its current state, then derives the shared creator DID (if
+    /// uniform), the resolved item count, and the uniform royalty.
+    ///
+    /// Result: `{ did, declared_did, item_count, resolved_count, royalty_basis_points }`.
+    /// Errors: `-32602` invalid params.
+    async fn get_collection(params: &Value, id: Value) -> Value {
+        let launcher_ids = match Self::parse_launcher_ids(params) {
+            Ok(v) => v,
+            Err(msg) => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":msg}})
+            }
+        };
+        // Optional declared creator DID (echoed back; the source of truth is the
+        // items' on-chain attribution).
+        let declared_did = params
+            .get("did")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim_start_matches("0x").to_string());
+
+        let chain = resolution_coinset();
+        let items =
+            match digstore_chain::collection_index::index_collection_items(&chain, &launcher_ids)
+                .await
+            {
+                Ok(items) => items,
+                Err(e) => {
+                    return json!({"jsonrpc":"2.0","id":id,"error":{
+                    "code":-32000,"message":format!("read collection: {e}")}})
+                }
+            };
+        let summary = digstore_chain::collection_index::summarize_collection(&items);
+        json!({"jsonrpc":"2.0","id":id,"result":{
+            // The creator DID the items AGREE on (None if mixed/none), lowercase hex.
+            "did": summary.did.map(hex::encode),
+            // The DID the caller declared (echoed; may be null).
+            "declared_did": declared_did,
+            // How many launcher ids were requested vs how many resolved to a live NFT.
+            "item_count": launcher_ids.len(),
+            "resolved_count": summary.item_count,
+            // The royalty every item agrees on (basis points), or null when mixed.
+            "royalty_basis_points": summary.royalty_basis_points,
+        }})
+    }
+
+    /// `dig.listCollectionItems` — a deterministic, paginated page of a collection's
+    /// items resolved to their CURRENT on-chain state.
+    ///
+    /// Params: `launcher_ids` (required array of 64-hex; the authoritative item set),
+    /// optional `offset` (default 0) + `limit` (default 50, capped 200). Pagination is
+    /// applied over the launcher-id list BEFORE resolution, so only the requested page
+    /// is read from chain. Order is the input order (stable).
+    ///
+    /// Result: `{ items: [ {launcher_id, coin_id, owner_did, royalty_puzzle_hash,
+    /// royalty_basis_points, owner_puzzle_hash, metadata} ], offset, limit, total,
+    /// next_offset }`. `next_offset` is null on the last page. Errors: `-32602`.
+    async fn list_collection_items(params: &Value, id: Value) -> Value {
+        let launcher_ids = match Self::parse_launcher_ids(params) {
+            Ok(v) => v,
+            Err(msg) => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":msg}})
+            }
+        };
+        let total = launcher_ids.len();
+        let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        // Default page 50, capped at 200 so one call can't fan out unbounded chain reads.
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|n| n.min(200))
+            .unwrap_or(50) as usize;
+
+        let page: Vec<chia_protocol::Bytes32> = launcher_ids
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .copied()
+            .collect();
+
+        let chain = resolution_coinset();
+        let resolved =
+            match digstore_chain::collection_index::index_collection_items(&chain, &page).await {
+                Ok(items) => items,
+                Err(e) => {
+                    return json!({"jsonrpc":"2.0","id":id,"error":{
+                    "code":-32000,"message":format!("list collection items: {e}")}})
+                }
+            };
+        let items: Vec<Value> = resolved.iter().map(Self::item_json).collect();
+        // next_offset points past this page unless we have reached the end of the input.
+        let consumed = offset.saturating_add(page.len());
+        let next_offset = if consumed < total {
+            json!(consumed)
+        } else {
+            Value::Null
+        };
+        json!({"jsonrpc":"2.0","id":id,"result":{
+            "items": items,
+            "offset": offset,
+            "limit": limit,
+            "total": total,
+            "next_offset": next_offset,
+        }})
+    }
+
     // -- Cached-store management (the DIG-settings cache manager, task #32) -----
     //
     // Every cached module is one CAPSULE — the canonical `(store_id, root_hash)`
@@ -1135,6 +1314,21 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     if method == "dig.stage" {
         let params = req.get("params").cloned().unwrap_or(json!({}));
         return node.stage(&params, id);
+    }
+    // dig.getCollection / dig.listCollectionItems (#39): PUBLIC, owner-independent
+    // collection reads computed from DIG's own coinset data — no third-party indexer.
+    // Read-only (no spend bundles). The item set is the NFT launcher ids the mint
+    // produced (the authoritative, owner-independent anchor; see
+    // digstore_chain::collection_index for why launcher ids, not the creator DID
+    // hint, are the discovery key). Each item is resolved to its CURRENT on-chain
+    // owner + royalty + CHIP-0007 metadata by walking the singleton lineage forward.
+    if method == "dig.getCollection" {
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        return Node::get_collection(&params, id).await;
+    }
+    if method == "dig.listCollectionItems" {
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        return Node::list_collection_items(&params, id).await;
     }
     // cache.* — the local-cache config for the chrome://settings DIG section.
     // The browser's Mojo handler reaches these via the in-process CallDigRpc FFI;
@@ -1647,6 +1841,108 @@ mod tests {
         assert_eq!(resp["id"], json!(7));
         assert_eq!(resp["error"]["code"], json!(-32602));
         assert!(resp.get("result").is_none());
+    }
+
+    // -- #39 public collection reads (param validation + pagination, no chain) --
+    //
+    // These exercise dig.getCollection / dig.listCollectionItems through the real
+    // handle_rpc router WITHOUT touching the network: a bad/empty launcher_ids list
+    // is handled before any coinset read (an empty set resolves to zero items
+    // immediately), so the dispatch, param parsing, and pagination math are verified
+    // offline. (The lineage resolution itself is proven on the in-process Chia
+    // simulator in digstore_chain::collection_index.)
+
+    #[tokio::test]
+    async fn list_collection_items_rejects_missing_launcher_ids() {
+        let (node, _td) = test_node(None);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":3,"method":"dig.listCollectionItems","params":{}}),
+        )
+        .await;
+        assert_eq!(resp["id"], json!(3));
+        assert_eq!(resp["error"]["code"], json!(-32602));
+        assert!(resp.get("result").is_none());
+    }
+
+    #[tokio::test]
+    async fn list_collection_items_rejects_non_hex_launcher_id() {
+        let (node, _td) = test_node(None);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":4,"method":"dig.listCollectionItems",
+                   "params":{"launcher_ids":["nope"]}}),
+        )
+        .await;
+        assert_eq!(resp["error"]["code"], json!(-32602));
+    }
+
+    #[tokio::test]
+    async fn list_collection_items_empty_set_is_a_deterministic_empty_page() {
+        // An empty item set resolves to an empty page with no chain reads, and the
+        // pagination envelope (offset/limit/total/next_offset) is well-formed.
+        let (node, _td) = test_node(None);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":5,"method":"dig.listCollectionItems",
+                   "params":{"launcher_ids":[], "offset":0, "limit":10}}),
+        )
+        .await;
+        let result = &resp["result"];
+        assert_eq!(result["items"], json!([]));
+        assert_eq!(result["total"], json!(0));
+        assert_eq!(result["offset"], json!(0));
+        assert_eq!(result["limit"], json!(10));
+        assert_eq!(
+            result["next_offset"],
+            Value::Null,
+            "no next page past an empty set"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_collection_items_caps_limit_at_200() {
+        // A caller-supplied limit above the 200 cap is clamped (so one call can't
+        // fan out unbounded chain reads); with an empty set the page is still empty.
+        let (node, _td) = test_node(None);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":6,"method":"dig.listCollectionItems",
+                   "params":{"launcher_ids":[], "limit":100000}}),
+        )
+        .await;
+        assert_eq!(resp["result"]["limit"], json!(200), "limit clamped to 200");
+    }
+
+    #[tokio::test]
+    async fn get_collection_empty_set_resolves_to_zero_items() {
+        // dig.getCollection over an empty set: zero resolved items, no uniform DID or
+        // royalty, the declared DID echoed back, item_count == requested length.
+        let (node, _td) = test_node(None);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":8,"method":"dig.getCollection",
+                   "params":{"launcher_ids":[], "did":"ab".repeat(32)}}),
+        )
+        .await;
+        let result = &resp["result"];
+        assert_eq!(result["item_count"], json!(0));
+        assert_eq!(result["resolved_count"], json!(0));
+        assert_eq!(result["did"], Value::Null);
+        assert_eq!(result["declared_did"], json!("ab".repeat(32)));
+        assert_eq!(result["royalty_basis_points"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn get_collection_rejects_bad_launcher_ids() {
+        let (node, _td) = test_node(None);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":9,"method":"dig.getCollection",
+                   "params":{"launcher_ids":"not-an-array"}}),
+        )
+        .await;
+        assert_eq!(resp["error"]["code"], json!(-32602));
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@ pub mod chip0002;
 pub mod clawback;
 pub mod coinset;
 pub mod collection;
+pub mod collection_index;
 pub mod config;
 pub mod did;
 pub mod dig;
