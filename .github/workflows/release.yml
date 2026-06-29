@@ -1,14 +1,24 @@
 name: Release
 
 # On a version tag (v*), build the raw `digstore` CLI binary in release mode for
-# every supported OS/arch and attach them to a GitHub Release. These per-OS raw
-# binaries are what the universal installer (DIG-Network/dig-installer) downloads
-# and places on PATH:
+# every supported OS/arch and attach them to a GitHub Release. Two asset shapes
+# are published, because two independent installers consume them with DIFFERENT
+# naming conventions (both contracts are verified by their own repos' tests):
 #
-#   * windows-x64  → digstore-<ver>-windows-x64.exe
-#   * linux-x64    → digstore-<ver>-linux-x64
-#   * macos-arm64  → digstore-<ver>-macos-arm64
-#   * macos-x64    → digstore-<ver>-macos-x64
+#   1. Bare per-OS binaries for the universal installer
+#      (DIG-Network/dig-installer's RawBinary matcher, src/asset.rs) — a raw
+#      executable it downloads and places on PATH (no archive):
+#        * windows-x64  → digstore-<ver>-windows-x64.exe
+#        * linux-x64    → digstore-<ver>-linux-x64
+#        * macos-arm64  → digstore-<ver>-macos-arm64
+#        * macos-x64    → digstore-<ver>-macos-x64
+#
+#   2. Linux .tar.gz tarballs for the APT repository
+#      (DIG-Network/apt.dig.net's build-deb.sh, ASSET_TEMPLATE
+#      `digstore-{ver}-{arch}-unknown-linux-gnu.tar.gz`) — each archive holds the
+#      bare `digstore` binary at its root, which apt unpacks to /usr/bin/digstore:
+#        * amd64 → digstore-<ver>-x86_64-unknown-linux-gnu.tar.gz
+#        * arm64 → digstore-<ver>-aarch64-unknown-linux-gnu.tar.gz
 #
 # The polished desktop GUI installer (the single-file DigStore-Setup-*.exe /
 # *.dmg / *.AppImage) now lives in DIG-Network/dig-installer, which CONSUMES the
@@ -40,16 +50,41 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bin: digstore.exe
+            # Bare binary for the universal installer (Windows RawBinary = .exe).
             out_name: windows-x64.exe
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             bin: digstore
+            # Bare binary for the universal installer (Linux RawBinary = no ext)…
             out_name: linux-x64
-          - os: macos-latest
+            # …PLUS a .tar.gz for apt, named to apt.dig.net's ASSET_TEMPLATE.
+            tarball: digstore-{ver}-x86_64-unknown-linux-gnu.tar.gz
+          - os: ubuntu-24.04-arm # native arm64 Linux runner
+            target: aarch64-unknown-linux-gnu
+            bin: digstore
+            # apt builds an arm64 .deb from this; the universal installer does not
+            # resolve a linux-arm64 RawBinary today, so only the tarball is needed.
+            tarball: digstore-{ver}-aarch64-unknown-linux-gnu.tar.gz
+          # Both macOS arches build on the fast Apple-silicon macos-14 runner.
+          # The Intel binary is CROSS-COMPILED there (host arm64 → target
+          # x86_64-apple-darwin) rather than on a native macos-13 (Intel) runner:
+          # that Intel runner pool is chronically backlogged, so the macos-x64 job
+          # used to hang for hours (pending, never failing) and the release never
+          # completed. Cross-compiling needs no extra toolchain here — Apple's
+          # clang (Xcode on macos-14) targets both arches and the build steps are
+          # already `--target`-parameterized (rustup target add + cargo build
+          # --target). The one native C dependency in the macOS build graph is
+          # OpenSSL via datalayer-driver, but it is the `openssl-sys` *vendored*
+          # feature (openssl-src builds OpenSSL from source through `cc`), which
+          # the Apple toolchain compiles for x86_64 from the arm host — there is
+          # no SYSTEM openssl to cross-link, so no cross-compile snag. Artifact
+          # names (out_name / tarball) are byte-identical to the old macos-13 job
+          # so the dig-installer + apt asset matchers still resolve them.
+          - os: macos-14 # Apple silicon (arm64)
             target: aarch64-apple-darwin
             bin: digstore
             out_name: macos-arm64
-          - os: macos-13 # Intel runner
+          - os: macos-14 # Apple silicon — cross-compiles the Intel binary
             target: x86_64-apple-darwin
             bin: digstore
             out_name: macos-x64
@@ -89,19 +124,37 @@ jobs:
         shell: bash
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - name: Stage binary artifact
+      - name: Stage release assets
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist
           SRC="target/${{ matrix.target }}/release/${{ matrix.bin }}"
           test -f "$SRC" || { echo "binary not produced: $SRC"; exit 1; }
-          cp "$SRC" "dist/digstore-${VERSION}-${{ matrix.out_name }}"
+
+          # (1) Bare per-OS binary for the universal installer, when this target
+          #     declares an out_name (the installer does not resolve every triple).
+          if [ -n "${{ matrix.out_name }}" ]; then
+            cp "$SRC" "dist/digstore-${VERSION}-${{ matrix.out_name }}"
+          fi
+
+          # (2) .tar.gz (binary at archive root, named `digstore`) for apt, when
+          #     this target declares a tarball template.
+          if [ -n "${{ matrix.tarball }}" ]; then
+            TARBALL="${{ matrix.tarball }}"
+            TARBALL="${TARBALL/\{ver\}/$VERSION}"
+            STAGE="$(mktemp -d)"
+            cp "$SRC" "$STAGE/digstore"
+            chmod 0755 "$STAGE/digstore"
+            tar -czf "dist/${TARBALL}" -C "$STAGE" digstore
+            rm -rf "$STAGE"
+          fi
           ls -la dist
 
-      - name: Upload binary as workflow artifact
+      - name: Upload assets as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: digstore-binary-${{ matrix.out_name }}
+          name: digstore-assets-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
