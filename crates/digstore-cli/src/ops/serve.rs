@@ -43,13 +43,14 @@ use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::store_ops;
 
-/// The REAL `digstore-guest` wasm, embedded at CLI build time (see `build.rs`).
-/// `commit` compiles modules with this as the compiler's `template_override` so
-/// the produced module is genuinely self-serving through
-/// [`digstore_host::HostRuntime::serve_content`] (BINDING contract D6).
-pub fn embedded_guest_wasm() -> &'static [u8] {
-    include_bytes!(concat!(env!("OUT_DIR"), "/digstore_guest.wasm"))
-}
+/// The REAL `digstore-guest` wasm, embedded at build time. Re-exported from the
+/// shared stage→compile engine ([`digstore_stage`]), which now owns the SINGLE
+/// embedded copy (its `build.rs` + `include_bytes!`) so the CLI and the
+/// in-process node use the same wasm. `commit` compiles modules with this as the
+/// compiler's `template_override` so the produced module is genuinely
+/// self-serving through [`digstore_host::HostRuntime::serve_content`] (BINDING
+/// contract D6).
+pub use digstore_stage::embedded_guest_wasm;
 
 /// An empty metadata manifest (the compiler requires one).
 pub fn empty_manifest() -> MetadataManifest {

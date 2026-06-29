@@ -1,18 +1,24 @@
-//! Embed the REAL `digstore-guest` wasm into the CLI binary so a `commit` can
-//! compile a genuinely self-serving module (BINDING contract D6): the compiled
-//! module's `get_content`/`get_proof` run the real guest logic and the host's
-//! `serve_content` returns a real `ContentResponse`.
+//! Embed the REAL `digstore-guest` wasm into this crate so the in-process
+//! stage→compile engine can compile a genuinely self-serving module (BINDING
+//! contract D6): the compiled module's `get_content`/`get_proof` run the real
+//! guest logic and the host's `serve_content` returns a real `ContentResponse`.
+//!
+//! This is the SINGLE embedded copy of the guest wasm for the whole engine —
+//! `digstore-cli` re-exports `digstore_stage::embedded_guest_wasm()` rather than
+//! embedding its own, and `dig-node` (linked by the DIG Browser via
+//! `dig_runtime.dll`) gets the same wasm by depending on this crate, so the
+//! browser can produce a capsule in-process WITHOUT the CLI.
 //!
 //! The guest wasm is produced by:
 //!   cargo build -p digstore-guest --target wasm32-unknown-unknown --release
 //! It lives at `<workspace>/target/wasm32-unknown-unknown/release/digstore_guest.wasm`.
-//! We copy it into OUT_DIR so `src/ops/serve.rs` can `include_bytes!` it.
+//! We copy it into OUT_DIR so `src/lib.rs` can `include_bytes!` it.
 
 use std::path::PathBuf;
 
 fn main() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // crates/digstore-cli -> workspace root is two levels up.
+    // crates/digstore-stage -> workspace root is two levels up.
     let guest = manifest_dir
         .join("..")
         .join("..")
@@ -30,7 +36,7 @@ fn main() {
         }
         Err(e) => {
             panic!(
-                "digstore-cli requires the real guest wasm at {} (BINDING contract D6: \
+                "digstore-stage requires the real guest wasm at {} (BINDING contract D6: \
                  the compiled module must serve itself). Build it first:\n  \
                  cargo build -p digstore-guest --target wasm32-unknown-unknown --release\n\
                  underlying error: {e}",

@@ -1,0 +1,24 @@
+[package]
+name = "digstore-stage"
+license = "GPL-2.0-only"
+version = "0.1.0"
+edition = "2021"
+description = "Context-free stage→compile engine: turn an in-memory file set (or a folder) into a self-serving Digstore capsule (.dig module) — the SAME pipeline the CLI `commit`/`compile`/`deploy` use, callable in-process by the DIG Browser's native dig-node (no CLI binary)."
+
+[lib]
+name = "digstore_stage"
+path = "src/lib.rs"
+
+[dependencies]
+digstore-core = { path = "../digstore-core" }
+digstore-store = { path = "../digstore-store" }
+digstore-chunker = { path = "../digstore-chunker" }
+digstore-crypto = { path = "../digstore-crypto" }
+digstore-compiler = { path = "../digstore-compiler" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

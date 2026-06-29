@@ -20,6 +20,7 @@ zeroize = "1"
 digstore-store = { path = "../digstore-store" }
 digstore-chunker = { path = "../digstore-chunker" }
 digstore-compiler = { path = "../digstore-compiler" }
+digstore-stage = { path = "../digstore-stage" }
 digstore-host = { path = "../digstore-host" }
 digstore-prover = { path = "../digstore-prover" }
 digstore-remote = { path = "../digstore-remote" }
