@@ -43,7 +43,9 @@ fn main() {
             std::process::exit(0);
         }
         Err(e) => {
-            ui.error(&e);
+            // Honor --json: emit a structured {ok:false,error:{code,exit_code,
+            // message,hint}} object to stdout for agents; human lines otherwise.
+            ui.emit_error(&e);
             std::process::exit(e.exit_code());
         }
     }

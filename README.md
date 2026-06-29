@@ -407,6 +407,48 @@ Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`
 (operating directory for this command), `--dig-dir <path>` (workspace location),
 `--json` (machine-readable), `--quiet`, `--verbose`, `--color <auto\|always\|never>`.
 
+### Agent-friendly surface (scripting / CI)
+
+digstore is built to be driven by scripts and agents as well as humans:
+
+- **`--json`** — every command emits ONE structured object to stdout (human prose
+  goes to stderr). On **failure**, `--json` emits a structured error envelope to
+  stdout instead of prose: `{"ok":false,"error":{"code","exit_code","message","hint"}}`
+  — branch on `error.code` (a stable UPPER_SNAKE string) or the exit code, never on
+  the message text.
+- **`digstore --help-json`** — the whole invocation contract as one JSON object:
+  the command tree, the global flags, each arg's `choices`/`default`/`value_name`,
+  and the exit-code table below. One call yields everything needed to invoke the CLI.
+- **`digstore completion <bash|zsh|fish|powershell|elvish>`** — shell completions.
+
+#### Exit codes
+
+Every failure maps to a distinct, stable exit code (and the matching `code` in the
+`--json` envelope), so a script can tell failure classes apart:
+
+| Code | `code` | Meaning |
+|---:|---|---|
+| 0 | `OK` | success |
+| 1 | `ERROR` | an unclassified error |
+| 2 | `INVALID_ARGUMENT` | a bad/missing argument or flag value |
+| 3 | `NO_STORE` | no digstore workspace/store found here |
+| 4 | `NOT_FOUND` | the requested resource/root/key was not found |
+| 5 | `VERIFICATION_FAILED` | content failed verification (tamper, wrong salt/key) |
+| 6 | `NETWORK` | a network/remote error |
+| 7 | `NON_FAST_FORWARD` | the remote root advanced; pull before pushing |
+| 8 | `UNAUTHORIZED` | missing/invalid credentials or signing key |
+| 9 | `NO_SEED` | no wallet seed is set up |
+| 10 | `BAD_PASSPHRASE` | wrong seed passphrase |
+| 11 | `INVALID_MNEMONIC` | the BIP-39 mnemonic is invalid |
+| 12 | `INSUFFICIENT_FUNDS` | not enough XCH or DIG to complete the spend |
+| 13 | `CHAIN` | a Chia chain / coinset.org error |
+| 14 | `CONFIRM_TIMEOUT` | on-chain confirmation timed out (resumable) |
+| 15 | `MINT_FAILED` | the on-chain mint failed |
+| 16 | `UPDATE_FAILED` | the on-chain root update failed |
+
+`digstore --help-json` emits this same table under `exit_codes` (generated from the
+source, so it never drifts).
+
 ### Wallet seed
 
 `digstore seed generate|import|status` and `digstore lock` manage the encrypted
