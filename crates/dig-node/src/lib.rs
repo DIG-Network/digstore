@@ -30,6 +30,7 @@
 //! present (e.g. the user's own digstore stores) and proxies the rest.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
@@ -41,6 +42,7 @@ use digstore_core::wire::ContentResponse;
 use digstore_core::Bytes32;
 use digstore_host::{serve_blind, BlindServeConfig};
 use digstore_remote::{identity, DigClient};
+use fs4::FileExt;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
@@ -72,16 +74,114 @@ pub struct Node {
     identity_seed: Option<[u8; 32]>,
 }
 
-fn cache_dir() -> PathBuf {
-    std::env::var("DIG_NODE_CACHE")
+/// The CANONICAL (shared) cache dir — the one the DIG Browser's in-process
+/// dig-node AND the standalone dig-node/dig-companion both resolve to, so they
+/// share a `.dig` cache by construction (#96). Precedence:
+///
+/// 1. `DIG_NODE_CACHE` env override (the installer points both the browser launch
+///    env and the standalone service at one dir) — UNCHANGED.
+/// 2. Otherwise the per-OS base dir resolved via the `directories` crate (correct
+///    on Windows/macOS/Linux even when the raw env vars are unset), suffixed
+///    `DigNode/cache`.
+/// 3. As a last resort (no home dir resolvable) `./DigNode/cache`.
+///
+/// To stay byte-identical to dig-companion's `cache_dir()` (so the two keep
+/// sharing), Windows uses `data_local_dir()` (= `%LOCALAPPDATA%`) and Unix/macOS
+/// use `home_dir()` + `DigNode/cache` — NOT XDG / `Application Support`.
+///
+/// This is the *intended* shared location; whether it is actually writable (and
+/// thus used) is decided by [`resolve_cache_dir`].
+fn canonical_cache_dir() -> PathBuf {
+    if let Some(env) = std::env::var("DIG_NODE_CACHE")
         .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let root = std::env::var("LOCALAPPDATA")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_else(|_| ".".to_string());
-            PathBuf::from(root).join("DigNode").join("cache")
-        })
+        .filter(|s| !s.is_empty())
+    {
+        return PathBuf::from(env);
+    }
+    let base = directories::BaseDirs::new().map(|b| {
+        if cfg!(windows) {
+            b.data_local_dir().to_path_buf()
+        } else {
+            // Preserve the historic `$HOME/DigNode/cache` default on Unix/macOS
+            // so the path is byte-identical to dig-companion (shared cache).
+            b.home_dir().to_path_buf()
+        }
+    });
+    let root = base
+        .or_else(|| std::env::var("LOCALAPPDATA").ok().map(PathBuf::from))
+        .or_else(|| std::env::var("HOME").ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    root.join("DigNode").join("cache")
+}
+
+/// A deterministic process-private fallback cache dir, used only when the
+/// canonical shared dir is unwritable. Keyed by PID so it is stable for the
+/// process lifetime (every call returns the same path) but isolated from other
+/// processes — a degraded, un-shared mode that never fails the node.
+fn private_fallback_dir() -> PathBuf {
+    std::env::temp_dir()
+        .join(format!("DigNode-{}", std::process::id()))
+        .join("cache")
+}
+
+/// Has the unwritable-canonical-dir warning already been logged this process?
+/// (So the structured fallback warning is emitted once, not on every resolve.)
+static FALLBACK_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Is the canonical cache dir writable? Probes by ensuring the dir exists and
+/// writing+removing a tiny temp file in it. A miss (read-only volume, perms)
+/// means we must fall back to a private dir.
+fn dir_is_writable(dir: &Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(format!(".write-probe-{}", std::process::id()));
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Resolve the EFFECTIVE cache dir and whether it is the canonical shared one.
+/// Returns `(dir, shared)`: the canonical dir with `shared = true` when it is
+/// writable, else the process-private fallback with `shared = false` (logging a
+/// structured one-shot warning). Re-resolved on each call (so a `DIG_NODE_CACHE`
+/// change or a settings-driven path takes effect without a restart) — the
+/// fallback path is deterministic, so all callers within a process agree.
+fn resolve_cache_dir() -> (PathBuf, bool) {
+    let canonical = canonical_cache_dir();
+    if dir_is_writable(&canonical) {
+        return (canonical, true);
+    }
+    let fallback = private_fallback_dir();
+    if !FALLBACK_WARNED.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "dig-node: WARN canonical cache dir {} is not writable; \
+             falling back to a process-private dir {} (cache NOT shared with \
+             other DIG processes this session)",
+            canonical.display(),
+            fallback.display()
+        );
+    }
+    let _ = std::fs::create_dir_all(&fallback);
+    (fallback, false)
+}
+
+/// The effective cache dir (canonical shared dir if writable, else a private
+/// fallback). See [`resolve_cache_dir`].
+fn cache_dir() -> PathBuf {
+    resolve_cache_dir().0
+}
+
+/// Whether the effective [`cache_dir`] is the canonical dir shared with the
+/// standalone dig-node / dig-companion (`true`), or a process-private fallback
+/// because the canonical dir was unwritable (`false`). Surfaced additively in
+/// `cache.getConfig`.
+pub fn cache_dir_is_shared() -> bool {
+    resolve_cache_dir().1
 }
 
 /// Path to the shared DIG node config (cache cap, etc.) — next to the cache dir.
@@ -90,6 +190,105 @@ pub fn config_path() -> PathBuf {
     dir.parent()
         .map(|p| p.join("config.json"))
         .unwrap_or_else(|| dir.join("config.json"))
+}
+
+/// Name of the cross-process advisory lockfile, kept at the ROOT of the cache
+/// dir (next to `modules/`, `responses/`, and `config.json`). One lockfile
+/// coordinates BOTH the config read-modify-write and cache eviction across every
+/// DIG process sharing this cache (the in-process browser node, the standalone
+/// dig-node, dig-companion).
+const LOCKFILE_NAME: &str = ".dignode.lock";
+
+/// Path to the cross-process lockfile for the effective cache dir.
+fn lockfile_path() -> PathBuf {
+    cache_dir().join(LOCKFILE_NAME)
+}
+
+/// A held cross-process advisory lock. Dropping it (or the process exiting)
+/// releases the OS-level `flock`. The inner `File` is kept alive solely to hold
+/// the lock — it is never read or written.
+struct CacheLockGuard {
+    _file: std::fs::File,
+}
+
+/// Acquire the cross-process advisory lock on `<cache>/.dignode.lock`, blocking
+/// briefly until it is free. Best-effort: if the lockfile can't be created or
+/// locked (e.g. a filesystem without `flock`), returns `None` and the caller
+/// proceeds WITHOUT the cross-process guarantee rather than failing — the
+/// in-process mutex + atomic writes still hold, so this only degrades the
+/// two-process lost-update protection, it never breaks single-process use.
+fn acquire_cache_lock() -> Option<CacheLockGuard> {
+    let path = lockfile_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .ok()?;
+    // Blocking exclusive lock — config RMW and eviction are short, and two DIG
+    // processes contending here is rare, so blocking (vs. spin) is fine. Use
+    // fs4's portable advisory lock explicitly (fully-qualified so it's the fs4
+    // implementation, not std's inherent `File::lock`) so the behaviour is the
+    // same flock/LockFileEx across the toolchains CI runs.
+    FileExt::lock(&file).ok()?;
+    Some(CacheLockGuard { _file: file })
+}
+
+/// Read-modify-write the config JSON under the cross-process lock so two
+/// processes can't lose each other's update (the lost-update race). Reads the
+/// current config, applies `mutate`, and writes it back atomically (temp +
+/// rename) — all while holding `<cache>/.dignode.lock`. Pretty-prints to keep
+/// the on-disk `config.json` schema byte-compatible with the prior writer.
+fn update_config_locked(mutate: impl FnOnce(&mut Value)) -> std::io::Result<()> {
+    let path = config_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    // Hold the cross-process lock across the read AND the write so a concurrent
+    // process can't read-then-clobber between our read and our write.
+    let _lock = acquire_cache_lock();
+    let mut v: Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| json!({}));
+    mutate(&mut v);
+    let bytes = serde_json::to_vec_pretty(&v).unwrap_or_default();
+    write_atomic(&path, &bytes)
+}
+
+/// Atomically write `bytes` to `path` via a temp file in the SAME directory +
+/// `fs::rename` (atomic on NTFS and POSIX). A reader (this or another process)
+/// therefore never observes a torn/partial file — it sees either the old
+/// contents or the fully-written new ones. Used for content-addressed module
+/// bytes (immutable per capsule, so concurrent writers converge) and for the
+/// config read-modify-write.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    // Unique temp name in the same dir so `rename` stays within one filesystem
+    // (cross-device rename would fail). PID + nanos + a per-process monotonic
+    // counter keeps concurrent writers (even on a coarse clock) from colliding
+    // on the temp path.
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".tmp-{}-{}-{}", std::process::id(), nanos, seq));
+    std::fs::write(&tmp, bytes)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Clean up the temp file on a failed rename so we don't leak it.
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 /// The local-cache size cap in bytes. Read from config.json (set via the DIG
@@ -112,17 +311,12 @@ pub fn cache_cap_bytes() -> u64 {
 }
 
 /// Persist the cache size cap (bytes) to config.json (the DIG settings page).
+/// Read-modify-write under the cross-process lock so a concurrent writer (e.g.
+/// dig-companion setting `wc_project_id`) can't lose this update or vice-versa.
 pub fn set_cache_cap_bytes(cap: u64) -> std::io::Result<()> {
-    let path = config_path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut v: Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| json!({}));
-    v["cache_cap_bytes"] = json!(cap);
-    std::fs::write(&path, serde_json::to_vec_pretty(&v).unwrap_or_default())
+    update_config_locked(|v| {
+        v["cache_cap_bytes"] = json!(cap);
+    })
 }
 
 /// Total bytes currently held in the local cache (modules + response windows).
@@ -188,24 +382,19 @@ pub fn wc_project_id() -> Option<String> {
 
 /// Persist the WalletConnect projectId to config.json (the DIG settings page).
 /// A blank value clears the persisted override (falling back to the env default).
+/// Read-modify-write under the cross-process lock so a concurrent writer (e.g.
+/// the cache-cap setter) can't lose this update or vice-versa.
 pub fn set_wc_project_id(id: &str) -> std::io::Result<()> {
-    let path = config_path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut v: Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| json!({}));
-    let trimmed = id.trim();
-    if trimmed.is_empty() {
-        if let Some(obj) = v.as_object_mut() {
-            obj.remove(WC_PROJECT_ID_KEY);
+    let trimmed = id.trim().to_string();
+    update_config_locked(|v| {
+        if trimmed.is_empty() {
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove(WC_PROJECT_ID_KEY);
+            }
+        } else {
+            v[WC_PROJECT_ID_KEY] = json!(trimmed);
         }
-    } else {
-        v[WC_PROJECT_ID_KEY] = json!(trimmed);
-    }
-    std::fs::write(&path, serde_json::to_vec_pretty(&v).unwrap_or_default())
+    })
 }
 
 /// Path of a cached store module for (store_id, root), if present. Modules live
@@ -351,7 +540,14 @@ impl Node {
     }
 
     /// LRU-evict cached response windows until total bytes fit under the cap.
+    ///
+    /// Held under the cross-process lock for the whole scan→plan→delete so two
+    /// DIG processes sharing the cache can't both scan the same set and
+    /// double-evict (or race a concurrent write into a torn size accounting).
+    /// The in-process `cache_lock` (held by the caller) serializes this process's
+    /// own writers; the file lock serializes across processes.
     fn evict_if_needed(&self, dir: &Path) {
+        let _xproc = acquire_cache_lock();
         let mut entries = Vec::new();
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
@@ -432,14 +628,16 @@ impl Node {
         );
 
         // Cache under the SERVED root (which may differ from want_root if the
-        // remote head advanced between resolve and sync). Best-effort write.
+        // remote head advanced between resolve and sync). Best-effort.
+        //
+        // ATOMIC + CONTENT-ADDRESSED: a module is keyed by capsule
+        // (storeId:rootHash) and its bytes are immutable, so two writers (the
+        // browser's in-process node + the standalone node sharing this cache)
+        // produce identical bytes. `write_atomic` (temp + rename) guarantees a
+        // reader never observes a torn/partial file and that the two writers
+        // converge on the same final file.
         let path = module_path(&self.cache_dir, store_hex, &served_root.to_hex());
-        if let Some(parent) = path.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
-                return false;
-            }
-        }
-        if std::fs::write(&path, &bytes).is_err() {
+        if write_atomic(&path, &bytes).is_err() {
             return false;
         }
         served_root == want_root
@@ -710,9 +908,18 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     // dig-node owns the cache, so it is the single source of truth (same fns the
     // dig-wallet /api/dig-config endpoint uses).
     if method == "cache.getConfig" {
+        // ADDITIVE fields (#96): `cache_dir` = the effective resolved cache path,
+        // `shared` = whether that path is the canonical dir shared with the
+        // standalone dig-node / dig-companion (`false` = a process-private
+        // fallback because the canonical dir was unwritable). Existing
+        // `cap_bytes`/`used_bytes` are UNCHANGED — the FFI contract is
+        // additive-only (see SYSTEM.md change-impact + the regression test).
+        let (dir, shared) = resolve_cache_dir();
         return json!({"jsonrpc":"2.0","id":id,"result":{
             "cap_bytes": cache_cap_bytes(),
-            "used_bytes": cache_used_bytes()}});
+            "used_bytes": cache_used_bytes(),
+            "cache_dir": dir.display().to_string(),
+            "shared": shared}});
     }
     if method == "cache.setCapBytes" {
         let requested = req
@@ -1229,8 +1436,18 @@ mod tests {
     /// (cache.getConfig / cache.setCapBytes / cache.clear). Points the global
     /// cache dir at a throwaway tempdir via DIG_NODE_CACHE — no other test reads
     /// that env or `cache_dir()`, so the process-global set is safe here.
-    #[tokio::test]
-    async fn cache_rpc_config_roundtrip_and_clear() {
+    // NB: this and `get_config_shape_*` mutate the PROCESS-GLOBAL `DIG_NODE_CACHE`
+    // env and so hold `ENV_GUARD` for the whole body. They are plain `#[test]`
+    // fns driving a current-thread runtime via `block_on` (not `#[tokio::test]`)
+    // so the std mutex guard is never held across an `.await` (clippy
+    // `await_holding_lock`), while still serializing against the other env tests.
+    #[test]
+    fn cache_rpc_config_roundtrip_and_clear() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
         std::env::remove_var("DIG_NODE_CACHE_CAP");
@@ -1238,39 +1455,35 @@ mod tests {
 
         // setCapBytes persists the cap and echoes the effective value.
         let five_gib = 5u64 * 1024 * 1024 * 1024;
-        let set = handle_rpc(
+        let set = rt.block_on(handle_rpc(
             &node,
             json!({"jsonrpc":"2.0","id":1,"method":"cache.setCapBytes",
                    "params":{"cap_bytes": five_gib}}),
-        )
-        .await;
+        ));
         assert_eq!(set["result"]["cap_bytes"].as_u64(), Some(five_gib));
 
         // getConfig reflects the persisted cap and reports a used figure.
-        let got = handle_rpc(
+        let got = rt.block_on(handle_rpc(
             &node,
             json!({"jsonrpc":"2.0","id":2,"method":"cache.getConfig"}),
-        )
-        .await;
+        ));
         assert_eq!(got["result"]["cap_bytes"].as_u64(), Some(five_gib));
         assert!(got["result"]["used_bytes"].as_u64().is_some());
 
         // A below-floor request is clamped up to the 64 MiB minimum (a stray 0
         // must never disable caching).
-        let low = handle_rpc(
+        let low = rt.block_on(handle_rpc(
             &node,
             json!({"jsonrpc":"2.0","id":3,"method":"cache.setCapBytes",
                    "params":{"cap_bytes": 1}}),
-        )
-        .await;
+        ));
         assert_eq!(low["result"]["cap_bytes"].as_u64(), Some(64 * 1024 * 1024));
 
         // clear succeeds with an empty result object.
-        let cleared = handle_rpc(
+        let cleared = rt.block_on(handle_rpc(
             &node,
             json!({"jsonrpc":"2.0","id":4,"method":"cache.clear"}),
-        )
-        .await;
+        ));
         assert!(cleared["result"].is_object());
 
         std::env::remove_var("DIG_NODE_CACHE");
@@ -1440,5 +1653,310 @@ mod tests {
         )
         .await;
         assert_eq!(resp["result"]["status"].as_str(), Some("failed"));
+    }
+
+    // -- Shared .dig cache (#96) -----------------------------------------------
+    //
+    // Tests that drive the PROCESS-GLOBAL `cache_dir()` (via the `DIG_NODE_CACHE`
+    // env) must not run concurrently with each other or with
+    // `cache_rpc_config_roundtrip_and_clear`, since cargo runs tests in parallel
+    // threads of one process. `ENV_GUARD` serializes them.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // Item 1 — Atomic content-addressed module writes.
+
+    #[test]
+    fn write_atomic_leaves_no_partial_and_overwrites_cleanly() {
+        // A module written via write_atomic appears in full or not at all, never
+        // as a torn temp file, and a second write of (immutable) bytes converges.
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("modules").join("aa").join("bb.module");
+        write_atomic(&path, b"capsule-bytes").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"capsule-bytes");
+        // No leftover temp files in the target dir (rename consumed it).
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp-"))
+            .collect();
+        assert!(leftovers.is_empty(), "no .tmp-* partial files left behind");
+        // Re-writing identical immutable bytes converges to the same content.
+        write_atomic(&path, b"capsule-bytes").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"capsule-bytes");
+    }
+
+    #[tokio::test]
+    async fn concurrent_module_writers_converge_with_no_partial_observed() {
+        // Two "writers" race to write the SAME capsule module concurrently; a
+        // reader polling in parallel must only ever see the full bytes (never a
+        // partial), and the final file is exactly the module bytes.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let td = tempfile::tempdir().unwrap();
+        let dir = td.path().to_path_buf();
+        let store = "ab".repeat(32);
+        let root = "cd".repeat(32);
+        let module: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let path = module_path(&dir, &store, &root);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let saw_partial = Arc::new(AtomicBool::new(false));
+        // Reader: while writers run, every readable version must equal `module`.
+        let reader = {
+            let path = path.clone();
+            let module = module.clone();
+            let stop = stop.clone();
+            let saw_partial = saw_partial.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(bytes) = std::fs::read(&path) {
+                        if bytes != module {
+                            saw_partial.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+            })
+        };
+
+        // Two writers of the identical (immutable) module bytes.
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let path = path.clone();
+            let module = module.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..20 {
+                    write_atomic(&path, &module).unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        stop.store(true, Ordering::Relaxed);
+        reader.join().unwrap();
+
+        assert!(
+            !saw_partial.load(Ordering::Relaxed),
+            "a reader observed a torn/partial module — atomic write violated"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            module,
+            "writers converge on the full module bytes"
+        );
+    }
+
+    // Item 2 — Cross-process advisory lock (config lost-update + eviction).
+
+    #[test]
+    fn concurrent_config_rmw_loses_no_update() {
+        // The canonical lost-update test: two "processes" each increment a shared
+        // counter key via the config read-modify-write N times. Each increment is
+        // read-current → +1 → write. WITHOUT the cross-process lock, interleaved
+        // read/read/write/write loses increments and the final count is < 2N;
+        // WITH the lock every increment is serialized and the count is EXACTLY 2N.
+        let _g = ENV_GUARD.lock().unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
+        let _ = std::fs::remove_file(config_path());
+
+        const N: u64 = 100;
+        fn bump() {
+            for _ in 0..N {
+                update_config_locked(|v| {
+                    let cur = v.get("counter").and_then(|c| c.as_u64()).unwrap_or(0);
+                    v["counter"] = json!(cur + 1);
+                })
+                .unwrap();
+            }
+        }
+        let a = std::thread::spawn(bump);
+        let b = std::thread::spawn(bump);
+        a.join().unwrap();
+        b.join().unwrap();
+
+        let txt = std::fs::read_to_string(config_path()).unwrap();
+        let v: Value = serde_json::from_str(&txt).expect("config.json is valid JSON");
+        assert_eq!(
+            v["counter"].as_u64(),
+            Some(2 * N),
+            "no increments lost — every read-modify-write was serialized"
+        );
+
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    #[test]
+    fn concurrent_setters_keep_both_keys() {
+        // The two real config setters (cache cap vs wc projectId) run concurrently;
+        // both keys survive in a single valid config.json (no clobber, no torn file).
+        let _g = ENV_GUARD.lock().unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
+        let _ = std::fs::remove_file(config_path());
+
+        let cap = std::thread::spawn(|| {
+            for i in 0..100 {
+                set_cache_cap_bytes(64 * 1024 * 1024 + i).unwrap();
+            }
+        });
+        let wc = std::thread::spawn(|| {
+            for i in 0..100 {
+                set_wc_project_id(&format!("proj-{i}")).unwrap();
+            }
+        });
+        cap.join().unwrap();
+        wc.join().unwrap();
+
+        let v: Value =
+            serde_json::from_str(&std::fs::read_to_string(config_path()).unwrap()).unwrap();
+        assert!(v.get("cache_cap_bytes").and_then(|x| x.as_u64()).is_some());
+        assert!(v.get("wc_project_id").and_then(|x| x.as_str()).is_some());
+
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    #[test]
+    fn cache_lock_is_exclusive_then_released() {
+        // The advisory lock is genuinely exclusive: while one guard is held a
+        // direct try_lock on the same file would block (WouldBlock); once dropped
+        // it can be re-acquired. Proves eviction/config RMW are actually serialized.
+        let _g = ENV_GUARD.lock().unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
+
+        let guard = acquire_cache_lock().expect("first lock acquires");
+        // A second, independent handle on the same lockfile must NOT acquire.
+        let path = lockfile_path();
+        let other = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .unwrap();
+        assert!(
+            FileExt::try_lock(&other).is_err(),
+            "a held lock must block a concurrent try_lock"
+        );
+        drop(guard);
+        assert!(
+            FileExt::try_lock(&other).is_ok(),
+            "after release the lock is re-acquirable"
+        );
+        let _ = FileExt::unlock(&other);
+
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    // Item 3 — Robust dir resolver + writability fallback.
+
+    #[test]
+    fn canonical_cache_dir_honors_env_override() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let td = tempfile::tempdir().unwrap();
+        let want = td.path().join("custom-cache");
+        std::env::set_var("DIG_NODE_CACHE", &want);
+        assert_eq!(canonical_cache_dir(), want);
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    #[test]
+    fn canonical_cache_dir_default_ends_in_dignode_cache() {
+        // With no override the default path keeps the historic, byte-exact
+        // `.../DigNode/cache` suffix (the shared-cache contract with dig-companion).
+        let _g = ENV_GUARD.lock().unwrap();
+        std::env::remove_var("DIG_NODE_CACHE");
+        let dir = canonical_cache_dir();
+        assert!(
+            dir.ends_with("DigNode/cache") || dir.ends_with("DigNode\\cache"),
+            "default cache dir must end in DigNode/cache, got {}",
+            dir.display()
+        );
+        // On Windows the base is %LOCALAPPDATA%; on Unix/macOS it is $HOME — both
+        // matching dig-companion so the cache is shared by construction.
+    }
+
+    #[test]
+    fn resolve_cache_dir_reports_shared_for_writable_canonical() {
+        let _g = ENV_GUARD.lock().unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
+        let (dir, shared) = resolve_cache_dir();
+        assert!(shared, "a writable canonical dir is reported as shared");
+        assert!(dir.starts_with(td.path()), "uses the canonical (env) dir");
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    #[test]
+    fn resolve_cache_dir_falls_back_to_private_when_unwritable() {
+        // Point the canonical dir at a path that cannot be created (a child of a
+        // regular FILE), forcing the writability probe to fail → private fallback.
+        let _g = ENV_GUARD.lock().unwrap();
+        let td = tempfile::tempdir().unwrap();
+        let file = td.path().join("not-a-dir");
+        std::fs::write(&file, b"x").unwrap();
+        let unwritable = file.join("cache"); // can't mkdir under a file
+        std::env::set_var("DIG_NODE_CACHE", &unwritable);
+
+        let (dir, shared) = resolve_cache_dir();
+        assert!(
+            !shared,
+            "an unwritable canonical dir falls back, shared=false"
+        );
+        assert_eq!(dir, private_fallback_dir(), "uses the process-private dir");
+        assert_ne!(dir, unwritable, "does not use the unwritable canonical dir");
+
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    // Item 4 — Additive cache.getConfig FFI shape (regression guard).
+
+    #[test]
+    fn get_config_shape_is_additive_existing_fields_intact_plus_new() {
+        // FFI change-impact rule (SYSTEM.md): cache.getConfig must keep its
+        // existing fields and ONLY add `cache_dir` + `shared`. This pins the shape
+        // so a rename/removal of cap_bytes/used_bytes breaks the build, not the
+        // browser silently at runtime.
+        let _g = ENV_GUARD.lock().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
+        std::env::remove_var("DIG_NODE_CACHE_CAP");
+        let (node, _node_td) = test_node(None);
+
+        let got = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":42,"method":"cache.getConfig"}),
+        ));
+        let result = got["result"].as_object().expect("result is an object");
+
+        // EXISTING fields (must remain, same types).
+        assert!(
+            result.get("cap_bytes").and_then(|v| v.as_u64()).is_some(),
+            "cap_bytes still present (u64)"
+        );
+        assert!(
+            result.get("used_bytes").and_then(|v| v.as_u64()).is_some(),
+            "used_bytes still present (u64)"
+        );
+        // NEW additive fields.
+        let dir = result
+            .get("cache_dir")
+            .and_then(|v| v.as_str())
+            .expect("cache_dir present (string)");
+        assert!(!dir.is_empty(), "cache_dir is the effective resolved path");
+        let shared = result
+            .get("shared")
+            .and_then(|v| v.as_bool())
+            .expect("shared present (bool)");
+        assert!(shared, "a writable env-set cache dir is shared");
+        // Envelope intact.
+        assert_eq!(got["id"], json!(42));
+        assert_eq!(got["jsonrpc"], json!("2.0"));
+
+        std::env::remove_var("DIG_NODE_CACHE");
     }
 }
