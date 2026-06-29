@@ -211,10 +211,40 @@ pub fn build_dig_payment(
     amount: u64,
     store_id: Bytes32,
 ) -> Result<Vec<CoinSpend>> {
+    // Single-key (index-0) variant: change + every input authorization key off the
+    // owner's inner puzzle hash with its one synthetic key.
+    build_dig_payment_inner(
+        keys.owner_puzzle_hash,
+        indexmap! { keys.owner_puzzle_hash => keys.synthetic_pk },
+        dig_cats,
+        amount,
+        store_id,
+    )
+}
+
+/// The single place the DIG treasury payment spend is constructed (the
+/// [`build_dig_payment`] / [`build_dig_payment_multi`] / [`build_dig_store_payment`]
+/// common core). Selects DIG cats covering `amount`, sends them to the treasury inner
+/// puzzle hash with memos `[treasury_inner_ph (hint), store_id]`, and returns the change
+/// to `change_ph` (hinted). `keys_by_ph` maps each participating address's owner inner
+/// puzzle hash to its synthetic key so the per-input inner spends are authorized
+/// correctly (one entry for single-key, many for the HD ring). Returns UNSIGNED spends.
+fn build_dig_payment_inner(
+    change_ph: Bytes32,
+    keys_by_ph: IndexMap<Bytes32, PublicKey>,
+    dig_cats: &[Cat],
+    amount: u64,
+    store_id: Bytes32,
+) -> Result<Vec<CoinSpend>> {
     let (selected, sum) = select_dig_cats(dig_cats, amount)?;
     // Post-condition of selection: the chosen cats cover the requested amount.
     // (select_dig_cats already errors if short; this makes the guarantee explicit.)
     debug_assert!(sum >= amount, "selection must cover amount");
+    if keys_by_ph.is_empty() {
+        return Err(ChainError::Chain(
+            "build_dig_payment: keys_by_ph must not be empty".into(),
+        ));
+    }
 
     let mut ctx = SpendContext::new();
     let treasury_ph = treasury_inner_puzzle_hash();
@@ -234,9 +264,7 @@ pub fn build_dig_payment(
         memos,
     )];
 
-    // Change + input authorization both key off the owner's inner puzzle hash.
-    let owner_ph = keys.owner_puzzle_hash;
-    let mut spends = Spends::new(owner_ph);
+    let mut spends = Spends::new(change_ph);
     for cat in selected {
         spends.add(cat);
     }
@@ -245,12 +273,58 @@ pub fn build_dig_payment(
         .apply(&mut ctx, &actions)
         .map_err(|e| ChainError::Chain(format!("apply DIG send action: {e}")))?;
 
-    let index_map = indexmap! { owner_ph => keys.synthetic_pk };
     spends
-        .finish_with_keys(&mut ctx, &deltas, Relation::AssertConcurrent, &index_map)
+        .finish_with_keys(&mut ctx, &deltas, Relation::AssertConcurrent, &keys_by_ph)
         .map_err(|e| ChainError::Chain(format!("finish DIG payment spends: {e}")))?;
 
     Ok(ctx.take())
+}
+
+/// Build the (UNSIGNED) DIG-CAT coin spends that pay `amount` base units of $DIG to the
+/// DIG treasury for a capsule (commit) — the chip35-canonical store-payment shape.
+///
+/// This is the byte-mirror of chip35 0.9.0's `build_dig_store_payment`
+/// (`chip35_dl_coin::dig::build_dig_store_payment`): same parameter shape
+/// (`buyer_synthetic_key`, `dig_cats`, `store_id`, `amount`), same treasury recipient
+/// ([`treasury_inner_puzzle_hash`]), same memo layout `[treasury_inner_ph (hint),
+/// store_id]`, same DIG asset id. The buyer's inner (owner) puzzle hash — the change
+/// destination and the inner-spend authorizer — is derived from `buyer_synthetic_key`
+/// (the standard puzzle of that synthetic key), exactly as chip35 does.
+///
+/// **MINT does NOT call this — minting a store is free of $DIG (#111).** Only a COMMIT
+/// (root-advance = a capsule) concatenates these coin spends with the singleton update
+/// into one atomic, co-signed bundle. Returns the CAT `CoinSpend`s UNSIGNED — the anchor
+/// signs the combined bundle.
+///
+/// Single-key path. The CLI / wallet anchor uses the multi-address HD ring
+/// [`build_dig_payment_multi`] (DIG gathered across HD addresses) for the same reason
+/// the hub keeps its ring; this single-key entry point exists for the chip35-canonical
+/// API shape and single-key callers.
+pub fn build_dig_store_payment(
+    buyer_synthetic_key: PublicKey,
+    dig_cats: Vec<Cat>,
+    store_id: Bytes32,
+    amount: u64,
+) -> Result<Vec<CoinSpend>> {
+    if dig_cats.is_empty() {
+        return Err(ChainError::Chain("dig_cats is empty".to_string()));
+    }
+    if dig_cats.iter().any(|c| c.info.asset_id != DIG_ASSET_ID) {
+        return Err(ChainError::Chain(
+            "dig_cats are not the DIG asset".to_string(),
+        ));
+    }
+    // Derive the buyer's inner (owner) puzzle hash from the synthetic key — the change
+    // destination + inner-spend authorizer (byte-mirror of chip35's StandardArgs curry).
+    let owner_puzzle_hash: Bytes32 =
+        chia::puzzles::standard::StandardArgs::curry_tree_hash(buyer_synthetic_key).into();
+    build_dig_payment_inner(
+        owner_puzzle_hash,
+        indexmap! { owner_puzzle_hash => buyer_synthetic_key },
+        &dig_cats,
+        amount,
+        store_id,
+    )
 }
 
 /// The result of building a generic CAT send: the signed bundle plus the value plan.
@@ -409,50 +483,13 @@ pub fn build_dig_payment_multi<'a>(
     amount: u64,
     store_id: Bytes32,
 ) -> Result<Vec<CoinSpend>> {
-    let (selected, sum) = select_dig_cats(dig_cats, amount)?;
-    debug_assert!(sum >= amount, "selection must cover amount");
-
-    let mut ctx = SpendContext::new();
-    let treasury_ph = treasury_inner_puzzle_hash();
-
-    let memos = ctx
-        .memos(&[treasury_ph, store_id])
-        .map_err(|e| ChainError::Chain(format!("alloc memos: {e}")))?;
-
-    let actions = [Action::send(
-        Id::Existing(DIG_ASSET_ID),
-        treasury_ph,
-        amount,
-        memos,
-    )];
-
-    let mut spends = Spends::new(change_ph);
-    for cat in selected {
-        spends.add(cat);
-    }
-
-    let deltas = spends
-        .apply(&mut ctx, &actions)
-        .map_err(|e| ChainError::Chain(format!("apply DIG send action: {e}")))?;
-
-    // Build the key map covering all participating addresses.
-    let mut index_map: IndexMap<Bytes32, PublicKey> = IndexMap::new();
+    // Build the key map covering all participating HD addresses (the DIG ring), then
+    // delegate to the shared core. change_ph (index 0) must be among them.
+    let mut keys_by_ph: IndexMap<Bytes32, PublicKey> = IndexMap::new();
     for k in keys_iter {
-        index_map.insert(k.owner_puzzle_hash, k.synthetic_pk);
+        keys_by_ph.insert(k.owner_puzzle_hash, k.synthetic_pk);
     }
-    // Ensure change_ph is always present (index 0).
-    // The iterator already includes index 0, but guard against an empty iterator.
-    if index_map.is_empty() {
-        return Err(ChainError::Chain(
-            "build_dig_payment_multi: keys_iter must not be empty".into(),
-        ));
-    }
-
-    spends
-        .finish_with_keys(&mut ctx, &deltas, Relation::AssertConcurrent, &index_map)
-        .map_err(|e| ChainError::Chain(format!("finish DIG payment spends: {e}")))?;
-
-    Ok(ctx.take())
+    build_dig_payment_inner(change_ph, keys_by_ph, dig_cats, amount, store_id)
 }
 
 #[cfg(test)]
