@@ -406,6 +406,41 @@ fn module_path(dir: &Path, store_hex: &str, root_hex: &str) -> PathBuf {
         .join(format!("{root_hex}.module"))
 }
 
+/// Recursively read every file under `root` into `(resource_key, bytes)`, where
+/// the key is the file path relative to `root`, FORWARD-SLASHED — the exact key
+/// convention the CLI `add` walk uses (`ops::walk::key_for`), so the same folder
+/// produces the same capsule root through the CLI and the in-process node.
+/// Sorted by key for deterministic staging order. Used by the `dig.stage` RPC
+/// (#95 Pass C); a symlink loop or unreadable entry is skipped best-effort.
+fn walk_dir_files(root: &Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
+    fn rec(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let ft = entry.file_type()?;
+            if ft.is_dir() {
+                rec(base, &path, out)?;
+            } else if ft.is_file() {
+                // Key = path relative to base, forward-slashed (URN-safe).
+                let rel = path.strip_prefix(base).unwrap_or(&path);
+                let key = rel
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let bytes = std::fs::read(&path)?;
+                out.push((key, bytes));
+            }
+            // Symlinks / other types are skipped (not staged).
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    rec(root, root, &mut out)?;
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
 /// Filesystem-safe filename for one cached proxy-response window, keyed by
 /// (store, root, retrieval_key, offset). All inputs are hex (or empty), so the
 /// only sanitizing needed is to reject anything non-hex defensively and bound
@@ -679,6 +714,166 @@ impl Node {
         }
     }
 
+    /// dig.stage (#95 Pass C): turn a local folder into a CAPSULE (`.dig` module)
+    /// in process — the staging/compile half of a local deploy.
+    ///
+    /// This drives the SHARED stage→compile engine ([`digstore_stage`]) the CLI
+    /// `commit`/`compile` use, so the produced module + root are byte-identical to
+    /// a CLI build of the same files. It is build-only: NO wallet, NO chain, NO
+    /// §21 push. The browser then signs the on-chain root advance with the Pass B
+    /// `chia_advanceStore` wallet method and §21-pushes `module_path`.
+    ///
+    /// Params:
+    /// - `dir` (required): absolute path to the folder to publish.
+    /// - `store_id` (optional 64-hex): the EXISTING store's launcher id this
+    ///   capsule advances. Absent ⇒ an EPHEMERAL, content-derived store id
+    ///   (`sha256(fresh host pubkey)`, like `digstore init`) — a preview capsule
+    ///   that NEVER advances or impersonates a real store (`ephemeral:true`).
+    /// - `salt` (optional 64-hex): present ⇒ a PRIVATE store (retrieval keys are
+    ///   derived from `urn + salt`); absent ⇒ public.
+    /// - `metadata` (optional): the dighub `Manifest` JSON embedded in the module.
+    ///
+    /// Result `{capsule, store_id, root, module_path, size, content_address,
+    /// files, ephemeral}`. Catalogued errors: `-32602` invalid params,
+    /// `-32011` dir not a readable directory, `-32012` no files staged,
+    /// `-32013` over the store size cap, `-32014` compile/IO failure.
+    fn stage(&self, params: &Value, id: Value) -> Value {
+        let err = |code: i64, msg: String| -> Value {
+            json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":msg}})
+        };
+
+        // 1. The folder to publish (required, must be a readable directory).
+        let Some(dir) = params
+            .get("dir")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            return err(
+                -32602,
+                "params.dir is required (absolute folder path)".into(),
+            );
+        };
+        let dir = std::path::PathBuf::from(dir);
+        if !dir.is_dir() {
+            return err(-32011, format!("not a directory: {}", dir.display()));
+        }
+
+        // 2. Optional store id (advance an EXISTING store) or ephemeral preview id.
+        let store_id_arg = match params.get("store_id").and_then(|v| v.as_str()) {
+            Some(h) if !h.is_empty() => match Bytes32::from_hex(h.trim_start_matches("0x")) {
+                Ok(b) => Some(b),
+                Err(_) => return err(-32602, "params.store_id must be 64-hex".into()),
+            },
+            _ => None,
+        };
+
+        // 3. Optional secret salt ⇒ a private store.
+        let visibility = match params.get("salt").and_then(|v| v.as_str()) {
+            Some(h) if !h.is_empty() => match Bytes32::from_hex(h.trim_start_matches("0x")) {
+                Ok(b) => digstore_core::Visibility::Private(digstore_core::SecretSalt(b.0)),
+                Err(_) => return err(-32602, "params.salt must be 64-hex".into()),
+            },
+            _ => digstore_core::Visibility::Public,
+        };
+
+        // 4. Fresh host BLS identity for the compiled module's trusted/serving key
+        //    (mirrors `digstore init`: a content-authoring key, persisted nowhere
+        //    here — the browser's wallet signs the on-chain advance, and the §21
+        //    push is authenticated by the node's own §21 identity, not this key).
+        let mut seed = [0u8; 32];
+        getrandom::getrandom(&mut seed).expect("OS CSPRNG must be available for the stage key");
+        let host_pubkey = digstore_crypto::bls::SecretKey::from_seed(&seed)
+            .public_key()
+            .to_bytes();
+
+        // Ephemeral store id is content-derived (= `sha256(host pubkey)`, exactly
+        // like `init_store`); a supplied store_id is used verbatim.
+        let ephemeral = store_id_arg.is_none();
+        let store_id = store_id_arg.unwrap_or_else(|| digstore_crypto::sha256(&host_pubkey.0));
+
+        // 5. Walk the folder into (resource_key, bytes), keys relative to `dir`.
+        let files = match walk_dir_files(&dir) {
+            Ok(f) => f,
+            Err(e) => return err(-32011, format!("read folder {}: {e}", dir.display())),
+        };
+        if files.is_empty() {
+            return err(-32012, format!("no files to stage under {}", dir.display()));
+        }
+
+        // 6. Optional metadata manifest (the dighub `Manifest` JSON); else empty.
+        //    Reuses the SHARED parser the CLI `compile` uses (no fork).
+        let metadata = match params.get("metadata") {
+            Some(v) if !v.is_null() => digstore_stage::manifest_from_json(v),
+            _ => digstore_stage::empty_manifest(),
+        };
+
+        // 7. Scratch data dir under the cache: `<cache>/staging/<store>-<pid>-<ns>`.
+        //    The compiled module lands in `<scratch>/modules/`; the browser §21-pushes it.
+        let scratch = self.cache_dir.join("staging").join(format!(
+            "{}-{}-{}",
+            store_id.to_hex(),
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+
+        let opts = digstore_stage::FinalizeOptions {
+            data_dir: scratch,
+            trusted_keys: vec![digstore_core::TrustedHostKey {
+                public_key: host_pubkey.0,
+                label: format!("dig-host-key-v1:{}", host_pubkey.to_hex()),
+            }],
+            store_pubkey: host_pubkey,
+            metadata,
+            chain_state: None,
+            auth: digstore_stage::no_auth(),
+        };
+
+        // 8. Stage → compile (generation 0; the browser advances the on-chain root).
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let compiled = match digstore_stage::stage_and_compile(
+            &files,
+            store_id,
+            &visibility,
+            digstore_core::MAX_STORE_BYTES,
+            false,
+            0,
+            timestamp,
+            &opts,
+        ) {
+            Ok(c) => c,
+            Err(digstore_stage::StageError::EmptyStaging) => {
+                return err(-32012, format!("no files to stage under {}", dir.display()))
+            }
+            Err(e @ digstore_stage::StageError::OverCap { .. }) => {
+                return err(-32013, e.to_string())
+            }
+            Err(e) => return err(-32014, format!("stage/compile failed: {e}")),
+        };
+
+        let root_hex = compiled.root.to_hex();
+        let store_hex = store_id.to_hex();
+        json!({"jsonrpc":"2.0","id":id,"result":{
+            // The canonical capsule identity (storeId:rootHash) — the unit the
+            // browser advances on-chain + §21-pushes.
+            "capsule": format!("{store_hex}:{root_hex}"),
+            "store_id": store_hex,
+            "root": root_hex,
+            "module_path": compiled.module_path.display().to_string(),
+            "size": compiled.size,
+            // The dig:// content address for this capsule (matches deploy --preview).
+            "content_address": format!("dig://{store_hex}:{root_hex}/"),
+            "files": compiled.files(),
+            // true ⇒ a preview capsule with a content-derived id (NOT a real store).
+            "ephemeral": ephemeral,
+        }})
+    }
+
     // -- Cached-store management (the DIG-settings cache manager, task #32) -----
     //
     // Every cached module is one CAPSULE — the canonical `(store_id, root_hash)`
@@ -902,6 +1097,15 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     if method == "dig.getAnchoredRoot" {
         let params = req.get("params").cloned().unwrap_or(json!({}));
         return node.anchored_root(&params, id).await;
+    }
+    // dig.stage (#95 Pass C): turn a local folder into a capsule (.dig module) IN
+    // PROCESS — the staging/compile half of a local deploy. The DIG Browser's
+    // in-process node calls this (no CLI binary) to produce the artifact, then
+    // signs the on-chain root advance via the Pass B `chia_advanceStore` wallet
+    // method and §21-pushes the module. ADDITIVE — no existing method is touched.
+    if method == "dig.stage" {
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        return node.stage(&params, id);
     }
     // cache.* — the local-cache config for the chrome://settings DIG section.
     // The browser's Mojo handler reaches these via the in-process CallDigRpc FFI;
@@ -1541,6 +1745,142 @@ mod tests {
         let (node, _td) = test_node(None);
         let cached = node.cache_list_cached().await;
         assert!(cached.is_empty(), "no modules → empty capsule list");
+    }
+
+    // -- dig.stage (#95 Pass C): in-process capsule staging/compile -------------
+    //
+    // The browser links `dig_runtime.dll` and reaches dig-node only through this
+    // FFI JSON-RPC; a method/field rename silently breaks it at runtime (no
+    // compile error across the FFI boundary). These tests LOCK the additive
+    // `dig.stage` request params, the success result shape, and the catalogued
+    // error codes (SYSTEM.md change-impact rule for the in-process dig-node FFI).
+
+    #[tokio::test]
+    async fn dig_stage_returns_the_capsule_result_shape() {
+        let (node, _td) = test_node(None);
+        // A folder to publish (nested, to exercise forward-slashed relative keys).
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("index.html"), b"<h1>hi</h1>").unwrap();
+        std::fs::create_dir_all(src.path().join("assets")).unwrap();
+        std::fs::write(src.path().join("assets").join("app.js"), b"console.log(1)").unwrap();
+
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":7,"method":"dig.stage",
+                "params":{"dir": src.path().display().to_string()}}),
+        )
+        .await;
+
+        assert_eq!(resp["id"], 7, "id round-trips: {resp}");
+        let r = &resp["result"];
+        // capsule == storeId:rootHash (canonical capsule identity).
+        let capsule = r["capsule"].as_str().expect("capsule string");
+        let (store_hex, root_hex) = capsule.split_once(':').expect("storeId:rootHash");
+        assert_eq!(store_hex.len(), 64, "store id is 64-hex: {resp}");
+        assert_eq!(root_hex.len(), 64, "root is 64-hex: {resp}");
+        assert_eq!(r["store_id"].as_str(), Some(store_hex));
+        assert_eq!(r["root"].as_str(), Some(root_hex));
+        // content_address is the dig:// URN for the capsule.
+        assert_eq!(
+            r["content_address"].as_str(),
+            Some(format!("dig://{store_hex}:{root_hex}/").as_str())
+        );
+        // module_path points at a real on-disk .dig module.
+        let module_path = r["module_path"].as_str().expect("module_path");
+        assert!(
+            std::path::Path::new(module_path).exists(),
+            "module written to disk: {module_path}"
+        );
+        assert!(
+            r["size"].as_u64().unwrap_or(0) > 0,
+            "module non-empty: {resp}"
+        );
+        assert_eq!(r["files"].as_u64(), Some(2), "two staged files: {resp}");
+        // No store_id supplied ⇒ an ephemeral (preview) capsule.
+        assert_eq!(r["ephemeral"], true, "no store_id ⇒ ephemeral: {resp}");
+    }
+
+    #[tokio::test]
+    async fn dig_stage_honors_a_supplied_store_id_and_is_not_ephemeral() {
+        let (node, _td) = test_node(None);
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("index.html"), b"x").unwrap();
+        let store = "ab".repeat(32);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.stage",
+                "params":{"dir": src.path().display().to_string(), "store_id": store}}),
+        )
+        .await;
+        let r = &resp["result"];
+        assert_eq!(
+            r["store_id"].as_str(),
+            Some(store.as_str()),
+            "store id verbatim: {resp}"
+        );
+        assert_eq!(
+            r["ephemeral"], false,
+            "supplied store_id ⇒ not ephemeral: {resp}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dig_stage_missing_dir_is_invalid_params() {
+        let (node, _td) = test_node(None);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.stage","params":{}}),
+        )
+        .await;
+        assert_eq!(
+            resp["error"]["code"], -32602,
+            "missing dir ⇒ -32602: {resp}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dig_stage_nonexistent_dir_is_catalogued_error() {
+        let (node, _td) = test_node(None);
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.stage",
+                "params":{"dir":"/no/such/folder/xyzzy"}}),
+        )
+        .await;
+        assert_eq!(resp["error"]["code"], -32011, "bad dir ⇒ -32011: {resp}");
+    }
+
+    #[tokio::test]
+    async fn dig_stage_empty_folder_is_catalogued_error() {
+        let (node, _td) = test_node(None);
+        let src = tempfile::tempdir().unwrap();
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.stage",
+                "params":{"dir": src.path().display().to_string()}}),
+        )
+        .await;
+        assert_eq!(
+            resp["error"]["code"], -32012,
+            "empty folder ⇒ -32012: {resp}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dig_stage_bad_store_id_hex_is_invalid_params() {
+        let (node, _td) = test_node(None);
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("index.html"), b"x").unwrap();
+        let resp = handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.stage",
+                "params":{"dir": src.path().display().to_string(), "store_id":"nothex"}}),
+        )
+        .await;
+        assert_eq!(
+            resp["error"]["code"], -32602,
+            "bad store_id ⇒ -32602: {resp}"
+        );
     }
 
     #[tokio::test]

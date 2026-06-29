@@ -18,6 +18,11 @@ digstore-host = { path = "../digstore-host" }
 digstore-core = { path = "../digstore-core" }
 digstore-remote = { path = "../digstore-remote" }
 digstore-chain = { path = "../digstore-chain" }
+# The shared stage→compile engine: turns a folder into a capsule (.dig module) in
+# process (#95 Pass C). Native-only (the compiler's wasmtime is a dev-dep, so no
+# VM is pulled into the node); embeds the guest wasm for D6.
+digstore-stage = { path = "../digstore-stage" }
+digstore-crypto = { path = "../digstore-crypto" }
 chia-protocol = "0.26"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 axum = "0.7"
@@ -29,7 +34,8 @@ filetime = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 fs4 = { version = "1.1.0", features = ["sync"] }
 directories = "6.0.0"
+# OS CSPRNG for the per-stage content-authoring BLS key (#95 Pass C dig.stage).
+getrandom = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
-digstore-crypto = { path = "../digstore-crypto" }
