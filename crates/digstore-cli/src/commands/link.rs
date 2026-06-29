@@ -95,10 +95,7 @@ pub fn run(ctx: &CliContext, ui: &Ui, args: LinkArgs) -> Result<(), CliError> {
             "dig_toml": toml_path.display().to_string(),
         }));
     } else {
-        ui.success(format!(
-            "Linked this folder to store {}",
-            store_id.to_hex()
-        ));
+        ui.success(format!("Linked this folder to store {}", store_id.to_hex()));
         ui.line(format!("  wrote {}", toml_path.display()));
         ui.line(format!("  output: {output_dir}    remote: {remote}"));
         ui.line("");

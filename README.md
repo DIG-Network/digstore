@@ -287,12 +287,18 @@ the deployment locally.
 > through [coinset.org](https://coinset.org) over HTTPS (no peer node or TLS cert
 > to run).
 >
-> **DIG token fees (v0.5.4):** every `init` pays **100 DIG** to the DIG treasury,
-> and every `commit` pays **10 DIG** — embedded atomically in the same spend bundle
-> as the mint/update (memo = store id). Before submitting, each command prints the
-> cost and your current balance; if the wallet is short on XCH **or** DIG the
-> command blocks and tells you what's missing. Use `digstore balance` to check your
-> spendable XCH (mojos) and DIG at any time.
+> **DIG token fee (per capsule):** every `init` and every `commit`/`deploy` pays a
+> DIG fee to the DIG treasury — embedded atomically in the same spend bundle as the
+> mint/update (memo = store id). The amount is **dynamic and USD-pegged**
+> (≈ $1/capsule/year of hosting ÷ the live DIG price), **uniform per capsule**; the
+> hub computes the live amount in the browser. The CLI stays **deterministic** — it
+> never fetches a price itself: it takes the amount as input and **defaults to
+> 100 DIG**. Set it explicitly with `--dig-amount <DIG>` (e.g. `--dig-amount 87.5`),
+> the `DIGSTORE_DIG_AMOUNT` env var, or `dig-amount` in `dig.toml` (precedence:
+> flag > env > dig.toml > default). Before submitting, each command prints the cost
+> and your current balance; if the wallet is short on XCH **or** DIG the command
+> blocks and tells you what's missing. Use `digstore balance` to check your spendable
+> XCH (mojos) and DIG at any time.
 
 ### 1. Set up a wallet seed
 

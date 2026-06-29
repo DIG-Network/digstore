@@ -34,7 +34,8 @@ fn init_reports_initialized_store() {
     let dir = tmp_dig();
     // The canonical vocabulary is `store`; "project" must NOT appear in init output.
     dig(&dir).arg("init").assert().success().stdout(
-        predicate::str::contains("Initialized store").and(predicate::str::contains("project").not()),
+        predicate::str::contains("Initialized store")
+            .and(predicate::str::contains("project").not()),
     );
 }
 

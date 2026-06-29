@@ -23,11 +23,17 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let prepared = store_ops::stage_to_root(ctx)?;
     let new_root_hex = prepared.root.to_hex();
 
+    // Resolve the per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml
+    // `dig-amount` > the 100 DIG default. Deterministic — no live price fetch (the hub
+    // computes the dynamic, USD-pegged amount and passes it in via the flag/env).
+    let dig_amount = crate::dig_toml::DigToml::read_with_env(&ctx.op_dir)?
+        .resolve_dig_amount(args.dig_amount, dig::COMMIT_DIG)?;
+
     // --dry-run: report the resulting version (root) + the exact DIG/XCH cost and
     // STOP — no seed unlock, no wallet scan, no on-chain update, no finalize.
     // Nothing is spent and nothing is published; this is a safe cost preview.
     if args.dry_run {
-        return dry_run(ctx, ui, &prepared.root);
+        return dry_run(ctx, ui, &prepared.root, dig_amount);
     }
 
     // 2. Anchor gate: unlock seed (NoSeed → exit 9), build the (mock or real)
@@ -74,7 +80,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     if !ui.json() {
         ui.line(format!(
             "⛓  Committing anchors a new root on Chia mainnet and costs {} DIG + up to {} XCH (fee).",
-            format_dig(dig::COMMIT_DIG),
+            format_dig(dig_amount),
             format_xch(fee)
         ));
         ui.line(format!(
@@ -92,9 +98,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
             asset: "XCH".into(),
         });
     }
-    if have_dig < dig::COMMIT_DIG {
+    if have_dig < dig_amount {
         return Err(CliError::InsufficientFunds {
-            need: dig::COMMIT_DIG,
+            need: dig_amount,
             have: have_dig,
             address: digstore_chain::keys::owner_address(&keys),
             asset: "DIG".into(),
@@ -136,6 +142,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                             writer,
                             &w,
                             fee,
+                            dig_amount,
                         )
                         .await
                 }
@@ -148,6 +155,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                             description.clone(),
                             &w,
                             fee,
+                            dig_amount,
                         )
                         .await
                 }
@@ -283,6 +291,7 @@ fn dry_run(
     ctx: &CliContext,
     ui: &crate::ui::Ui,
     root: &digstore_core::Bytes32,
+    dig_amount: u64,
 ) -> Result<(), CliError> {
     let store_id = ctx.find_store_id()?;
     let capsule = format!("{}:{}", store_id.to_hex(), root.to_hex());
@@ -300,8 +309,8 @@ fn dry_run(
             "root": root.to_hex(),
             "capsule": capsule,
             "store_id": store_id.to_hex(),
-            "cost_dig": dig::COMMIT_DIG,
-            "cost_dig_display": format_dig(dig::COMMIT_DIG),
+            "cost_dig": dig_amount,
+            "cost_dig_display": format_dig(dig_amount),
             "fee_xch_mojos": fee,
             "fee_xch_display": format_xch(fee),
             "spent": false,
@@ -311,7 +320,7 @@ fn dry_run(
         ui.line(format!("  capsule: {capsule}  (storeId:rootHash)"));
         ui.line(format!(
             "  cost: {} DIG + up to {} XCH (fee) — NOTHING spent",
-            format_dig(dig::COMMIT_DIG),
+            format_dig(dig_amount),
             format_xch(fee)
         ));
         ui.hint("digstore commit -m \"<message>\"   # to actually publish");

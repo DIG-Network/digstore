@@ -70,6 +70,12 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     }
     let description = args.description.clone().filter(|s| !s.trim().is_empty());
 
+    // Resolve the per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml
+    // `dig-amount` > the 100 DIG default. Deterministic — no live price fetch (the hub
+    // computes the dynamic, USD-pegged amount and passes it in via the flag/env).
+    let dig_amount = crate::dig_toml::DigToml::read_with_env(&ctx.op_dir)?
+        .resolve_dig_amount(args.dig_amount, dig::INIT_DIG)?;
+
     // --- HARD GATE: seed → balance → mint, all BEFORE any local files. ---
 
     // 1+2. Unlock the wallet seed (NoSeed → exit 9) and build the anchor backend
@@ -89,7 +95,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     if !ui.json() {
         ui.line(format!(
             "⛓  Minting a store on Chia mainnet costs {} DIG + up to {} XCH (fee).",
-            format_dig(dig::INIT_DIG),
+            format_dig(dig_amount),
             format_xch(fee)
         ));
         ui.line(format!(
@@ -108,9 +114,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
             asset: "XCH".into(),
         });
     }
-    if have_dig < dig::INIT_DIG {
+    if have_dig < dig_amount {
         return Err(CliError::InsufficientFunds {
-            need: dig::INIT_DIG,
+            need: dig_amount,
             have: have_dig,
             address: digstore_chain::keys::owner_address(&keys),
             asset: "DIG".into(),
@@ -120,8 +126,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     // 4. Mint the empty store singleton. The launcher id becomes the store_id.
     //    Pass the full scanned wallet so the mint gathers XCH + DIG from all addresses.
     let sp = ui.spinner("Building & signing the mint…");
-    let mint = block_on(anchor.mint_empty_store(&w, label.clone(), description.clone(), fee))
-        .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
+    let mint =
+        block_on(anchor.mint_empty_store(&w, label.clone(), description.clone(), fee, dig_amount))
+            .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
     sp.finish();
     let store_id = {
         let mut a = [0u8; 32];
