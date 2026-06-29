@@ -79,16 +79,20 @@ it machine-readably:
 - `@dignetwork/dig-client/integrity.json` → `{ version, sha256, sri }`,
 - `package.json` mirrors `digIntegrity.{sha256,sri}`.
 
-The current `dig_client_bg.wasm` SHA-256 is:
+**`integrity.json` is the source of truth for the digest** — it always records the
+SHA-256/SRI of the exact `dig_client_bg.wasm` in that published version. Pin THAT,
+not a hardcoded hex: wasm-bindgen/wasm-opt output can differ slightly by build host
+(local vs CI), so the published digest is whatever `integrity.json` says for the
+version you installed. Verify the installed binary against it:
 
-```
-309d68af80e95e0df515ae46a8bfc049bd730de71d092d95e00275019f553e40
+```sh
+sha256sum node_modules/@dignetwork/dig-client/dig_client_bg.wasm
+# must equal .sha256 in node_modules/@dignetwork/dig-client/integrity.json
 ```
 
-(also emitted by `npm run build:pkg`; it changes only when the crate/deps change).
 **Consumers that vendor today** — `hub.dig.net`, `dig-embed.js`, `dig-companion`,
 `dig-sdk` (each hand-copies the wasm + glue and re-asserts a SHA) — can switch to
-`npm i @dignetwork/dig-client` and pin this digest from `integrity.json`, then drop
+`npm i @dignetwork/dig-client` and pin the digest from `integrity.json`, then drop
 their vendored copies. (Cross-repo follow-on; not done here.)
 
 ## Build (locally)
