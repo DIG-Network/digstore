@@ -51,47 +51,22 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use digstore_chunker::{chunk_slice, Chunk};
+use digstore_chunker::chunk_slice;
 use digstore_core::{
-    AuthenticationInfo, Bytes32, Bytes48, ChunkerConfig, GenerationState, MerkleTree, SecretSalt,
-    StoreConfig, TrustedHostKey, Urn, Visibility, CHAIN, MAX_STORE_BYTES,
+    Bytes32, Bytes48, GenerationState, SecretSalt, StoreConfig, TrustedHostKey, Urn, Visibility,
+    CHAIN, MAX_STORE_BYTES,
 };
-use digstore_store::{
-    ChunkRef, GenerationManifest, KeyTableRecord, RootHistory, StagingArea, Store, SystemClock,
-};
+use digstore_store::{GenerationManifest, RootHistory, StagingArea, Store, SystemClock};
 
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::output::{DiffEntry, LogEntry, StatusView};
 
-/// Canonical chunker config (matches `digstore-store`'s commit defaults).
-fn chunker() -> ChunkerConfig {
-    ChunkerConfig {
-        min_size: 16 * 1024,
-        target_size: 64 * 1024,
-        max_size: 256 * 1024,
-        mask: (1u64 << 16) - 1,
-    }
-}
-
 /// The canonical root-INDEPENDENT URN for a resource (used for both the
-/// retrieval key and the AES key, matching `digstore-store`'s own convention).
-/// The client must reconstruct this same URN (root dropped) when decrypting.
-pub fn canonical_resource_urn(store_id: Bytes32, resource_key: &str) -> Urn {
-    Urn {
-        chain: CHAIN.to_string(),
-        store_id,
-        root_hash: None,
-        resource_key: Some(resource_key.to_string()),
-    }
-}
-
-fn salt_of(cfg: &StoreConfig) -> Option<SecretSalt> {
-    match &cfg.visibility {
-        Visibility::Private(s) => Some(*s),
-        Visibility::Public => None,
-    }
-}
+/// retrieval key and the AES key). Re-exported from the shared stage→compile
+/// engine ([`digstore_stage`]) so the producer (commit/compile) and every
+/// reader resolve the SAME URN — the single source of truth, not a fork.
+pub use digstore_stage::canonical_resource_urn;
 
 #[derive(Debug)]
 pub struct InitResult {
@@ -403,7 +378,9 @@ pub fn add_path(ctx: &CliContext, path: &Path, key: Option<String>) -> Result<Ad
             .map_err(|e| CliError::Other(anyhow::anyhow!("stage: {e}")))?;
     }
 
-    let chunk_count = chunk_slice(&data, &chunker()).len().max(1);
+    let chunk_count = chunk_slice(&data, &digstore_stage::chunker_config())
+        .len()
+        .max(1);
     Ok(AddResult {
         resource_key,
         chunk_count,
@@ -849,21 +826,11 @@ pub struct CommitOutcome {
 /// this between the two halves lets the orchestrator anchor `root` on-chain
 /// (and BLOCK until confirmed) BEFORE any local persistence — so local history
 /// never advances past the chain. Persists nothing on its own.
-pub struct PreparedCommit {
-    cfg: digstore_core::StoreConfig,
-    /// Generation merkle root over the ciphertext resource leaves (D5).
-    pub root: Bytes32,
-    /// Chunk ciphertext bodies, global pool order.
-    pool_bodies: Vec<Vec<u8>>,
-    /// SHA-256(chunk ciphertext) per body, same order (manifest/diff).
-    pool_hashes: Vec<Bytes32>,
-    /// (resource_key, chunk indices into the pool, plaintext total size).
-    key_records: Vec<(String, Vec<u32>, u64)>,
-    /// The generation id this commit will become.
-    next_id: u64,
-    /// Commit timestamp.
-    timestamp: u64,
-}
+///
+/// This is the shared stage→compile engine's type ([`digstore_stage::PreparedCommit`]),
+/// re-exported so the CLI commit two-phase anchor flow and the in-process node
+/// use the SAME prepared-commit shape (no fork).
+pub use digstore_stage::PreparedCommit;
 
 /// Local commit: compute the root then immediately finalize it, with NO on-chain
 /// anchoring. This is the pre-anchoring behavior, preserved for tests and callers
@@ -944,9 +911,15 @@ pub fn stage_to_root_with(
 /// [`stage_to_root_with`] (which adds the guard) and [`staged_root_or_noop`]
 /// (which reports the no-op instead of erroring), so the root is computed in
 /// exactly ONE place.
+///
+/// This reads the CLI's staging area + config, then DELEGATES the
+/// encrypt-chunks→ciphertext-merkle→root computation to the shared
+/// [`digstore_stage::build_prepared`] engine (no fork) — the SAME engine the
+/// in-process node uses. The error wording (empty/over-cap) is preserved
+/// CLI-side so the staged-content guidance ("digstore add"/"digstore unstage")
+/// is unchanged.
 fn build_prepared(ctx: &CliContext, pre_encrypted: bool) -> Result<PreparedCommit, CliError> {
     let cfg = ctx.load_config()?;
-    let salt = salt_of(&cfg);
 
     let staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
         .map_err(|e| CliError::Other(anyhow::anyhow!("load staging: {e}")))?;
@@ -959,103 +932,36 @@ fn build_prepared(ctx: &CliContext, pre_encrypted: bool) -> Result<PreparedCommi
         ));
     }
 
-    // Defensive cap check (§3): the stage cap is enforced atomically at `add`,
-    // but a legacy/migrated staging file could already exceed it. Refuse to
-    // commit content over the store's limit.
-    let cap = cap_of(cfg.max_size);
-    let staged_total: u64 = records.iter().map(|r| r.content.len() as u64).sum();
-    if staged_total > cap {
-        return Err(CliError::InvalidArgument(format!(
-            "staged content is {:.1} MB, over the {:.1} MB limit; unstage some files (digstore unstage) before committing",
-            staged_total as f64 / 1_000_000.0,
-            cap as f64 / 1_000_000.0
-        )));
-    }
-
-    // Build the encrypted chunk pool + key table. Each resource's chunks are
-    // AES-256-GCM-sealed under its per-URN key. The served resource ciphertext is
-    // the PLAIN ordered concat of its chunk ciphertexts (BINDING contract D5/C9:
-    // exactly what the guest's `get_content` returns via `concat_output`). The
-    // generation merkle tree has ONE leaf per resource:
-    // `leaf = SHA-256(concat_output(ordered chunk ciphertexts))`, so a single
-    // `ContentResponse.merkle_proof` fully verifies the served bytes to the root.
-    // Leaves are ordered ascending by `static_key` to match the compiler's
-    // `current_generation_leaves` (D5), so the store-reported root equals the
-    // module's injected `CurrentRoot` and the client gate `proof.root ==
-    // trusted_root` holds.
-    let mut pool_bodies: Vec<Vec<u8>> = Vec::new(); // chunk ciphertext bodies, global order
-    let mut pool_hashes: Vec<Bytes32> = Vec::new(); // SHA-256(chunk ciphertext) (manifest/diff)
-    let mut key_records: Vec<(String, Vec<u32>, u64)> = Vec::new();
-    // (static_key, leaf) so we can sort leaves ascending by static_key (D5).
-    let mut keyed_leaves: Vec<([u8; 32], Bytes32)> = Vec::new();
-
-    for rec in &records {
-        let urn = canonical_resource_urn(cfg.store_id, &rec.resource_key);
-        // Ordered CHUNK CIPHERTEXTS for this resource.
-        let chunk_cts: Vec<Vec<u8>> = if pre_encrypted {
-            // PRE-ENCRYPTED: the staged bytes ARE the resource's already-sealed ciphertext (the
-            // client sealed it under the per-URN key; hub never sees plaintext or the key). Stored
-            // as ONE chunk — D5 leaf = SHA-256(these bytes). No chunking, no encryption here.
-            vec![rec.content.clone()]
-        } else {
-            let aes_key = digstore_crypto::derive_decryption_key(&urn.canonical(), salt.as_ref());
-            let chunks: Vec<Chunk> = chunk_slice(&rec.content, &chunker());
-            let chunks = if chunks.is_empty() {
-                vec![Chunk::new(0, Vec::new())]
-            } else {
-                chunks
-            };
-            chunks
-                .iter()
-                .map(|c| digstore_crypto::encrypt_chunk(&aes_key, &c.data))
-                .collect()
-        };
-        let mut indices = Vec::with_capacity(chunk_cts.len());
-        for ct in &chunk_cts {
-            let h = digstore_crypto::sha256(ct);
-            let idx = pool_bodies.len() as u32;
-            pool_bodies.push(ct.clone());
-            pool_hashes.push(h);
-            indices.push(idx);
-        }
-        // D5: leaf = SHA-256(concat_output(chunks)) — the exact bytes get_content
-        // returns for this resource (plain ordered concat, NO length framing).
-        let slices: Vec<&[u8]> = chunk_cts.iter().map(|c| c.as_slice()).collect();
-        let resource_blob = digstore_core::serving::concat_output(&slices);
-        keyed_leaves.push((
-            urn.retrieval_key().0,
-            digstore_crypto::sha256(&resource_blob),
-        ));
-        // Declared size: plaintext bytes. Pre-encrypted ciphertext carries a 16-byte GCM-SIV tag.
-        let size = if pre_encrypted {
-            rec.content.len().saturating_sub(16) as u64
-        } else {
-            rec.content.len() as u64
-        };
-        key_records.push((rec.resource_key.clone(), indices, size));
-    }
-
-    // Ascending by static_key (raw 32 bytes; Bytes32 has no Ord) — the exact
-    // order the compiler injects and the guest ranks against (D5).
-    keyed_leaves.sort_by(|a, b| a.0.cmp(&b.0));
-    let resource_leaves: Vec<Bytes32> = keyed_leaves.into_iter().map(|(_, l)| l).collect();
-
-    let tree = MerkleTree::from_leaves(resource_leaves);
-    let root = tree.root();
-
     let next_id = RootHistory::open(ctx.history_path())
         .and_then(|h| h.next_id())
         .map_err(|e| CliError::Other(anyhow::anyhow!("history: {e}")))?;
     let timestamp = current_time();
 
-    Ok(PreparedCommit {
-        cfg,
-        root,
-        pool_bodies,
-        pool_hashes,
-        key_records,
+    let files: Vec<(String, Vec<u8>)> = records
+        .into_iter()
+        .map(|r| (r.resource_key, r.content))
+        .collect();
+
+    digstore_stage::build_prepared(
+        &files,
+        cfg.store_id,
+        &cfg.visibility,
+        cfg.max_size,
+        pre_encrypted,
         next_id,
         timestamp,
+    )
+    .map_err(|e| match e {
+        // Map the engine's stable error variants back to the CLI's exact wording
+        // so the staged-content guidance (unstage/add) and over-cap message are
+        // byte-identical to before the extraction.
+        digstore_stage::StageError::OverCap { got_mb, cap_mb } => CliError::InvalidArgument(format!(
+            "staged content is {got_mb:.1} MB, over the {cap_mb:.1} MB limit; unstage some files (digstore unstage) before committing"
+        )),
+        digstore_stage::StageError::EmptyStaging => CliError::InvalidArgument(
+            "nothing staged to commit; run `digstore add <paths>` to stage files first".into(),
+        ),
+        other => CliError::Other(anyhow::anyhow!("{other}")),
     })
 }
 
@@ -1075,53 +981,30 @@ pub fn finalize_commit(
     // the served `.dig` carries verifiable metadata bound to its `program_hash`.
     metadata: digstore_core::MetadataManifest,
 ) -> Result<CommitOutcome, CliError> {
-    let PreparedCommit {
-        cfg,
-        root,
-        pool_bodies,
-        pool_hashes,
-        key_records,
-        next_id,
-        timestamp,
-    } = prepared;
-    let root_hex = root.to_hex();
+    let cfg = ctx.load_config()?;
 
-    // Persist the generation manifest + ciphertext chunk bodies.
-    let chunks_dir = ctx.generations_dir().join(&root_hex).join("chunks");
-    fs::create_dir_all(&chunks_dir).map_err(|e| CliError::Other(e.into()))?;
-    let mut chunk_refs = Vec::with_capacity(pool_bodies.len());
-    for (i, (hash, body)) in pool_hashes.iter().zip(pool_bodies.iter()).enumerate() {
-        fs::write(chunks_dir.join(hash.to_hex()), body).map_err(|e| CliError::Other(e.into()))?;
-        chunk_refs.push(ChunkRef {
-            index: i as u32,
-            hash: *hash,
-            size: body.len() as u64,
-        });
-    }
-    let key_table: Vec<KeyTableRecord> = key_records
-        .iter()
-        .map(|(rk, indices, total)| {
-            let urn = canonical_resource_urn(cfg.store_id, rk);
-            KeyTableRecord {
-                resource_key: rk.clone(),
-                static_key: urn.retrieval_key(),
-                generation: root,
-                chunk_indices: indices.clone(),
-                total_size: *total,
-            }
-        })
-        .collect();
-    let manifest = GenerationManifest {
-        schema_version: 1,
-        generation_id: next_id,
-        root,
-        timestamp,
-        chunks: chunk_refs,
-        key_table,
+    // Persist the generation (chunk bodies + manifest) and compile the serving
+    // module via the SHARED stage→compile engine ([`digstore_stage::finalize`]) —
+    // the SAME engine the in-process node uses (no fork). The engine writes
+    // `<dig_dir>/generations/<root>/…` + `<dig_dir>/modules/<store>-<root>.dig`,
+    // byte-identical to the prior inline persistence. History append, the local
+    // URN index, and clearing staging are CLI-owned presentation state and stay
+    // here.
+    let finalize_opts = digstore_stage::FinalizeOptions {
+        data_dir: ctx.dig_dir.clone(),
+        trusted_keys: load_trusted_keys(ctx)?,
+        store_pubkey: load_host_pubkey(ctx)?,
+        metadata,
+        chain_state,
+        auth: digstore_stage::no_auth(),
     };
-    manifest
-        .write_to(ctx.generations_dir().join(&root_hex).join("manifest.json"))
-        .map_err(|e| CliError::Other(anyhow::anyhow!("write manifest: {e}")))?;
+    let compiled = digstore_stage::finalize(prepared, &finalize_opts)
+        .map_err(|e| CliError::Other(anyhow::anyhow!("{e}")))?;
+    let root = compiled.root;
+    let root_hex = root.to_hex();
+    let next_id = compiled.manifest.generation_id;
+    let timestamp = compiled.manifest.timestamp;
+    let manifest = &compiled.manifest;
 
     // Append history.
     let mut history = RootHistory::open(ctx.history_path())
@@ -1182,17 +1065,9 @@ pub fn finalize_commit(
         fs::write(ctx.dig_dir.join("urns.txt"), txt).map_err(|e| CliError::Other(e.into()))?;
     }
 
-    // Compile a real module (so a real .wasm exists for host/push/clone).
-    let output_path = compile_module(
-        ctx,
-        &cfg,
-        &pool_bodies,
-        &manifest,
-        root,
-        chain_state,
-        &metadata,
-    )?;
-    let output_size = fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
+    // The shared engine already compiled the module to `<dig_dir>/modules/…`.
+    let output_path = compiled.module_path.clone();
+    let output_size = compiled.size;
 
     // Clear staging.
     let mut staging = StagingArea::open(ctx.staging_path(&cfg.store_id))
@@ -1206,112 +1081,6 @@ pub fn finalize_commit(
         output_path,
         output_size,
     })
-}
-
-/// Compile the generation into a real serving module via `digstore-compiler`.
-/// The explicit no-auth policy compiled into a store that requires neither a
-/// session nor a JWT (§4.1/§5.2). A JWT- or session-required store would supply
-/// its configured `AuthenticationInfo` to `Compiler::compile` instead.
-fn default_auth_info() -> AuthenticationInfo {
-    AuthenticationInfo {
-        requires_session: false,
-        requires_jwt: false,
-        jwks_url: None,
-        accepted_algorithms: Vec::new(),
-    }
-}
-
-fn compile_module(
-    ctx: &CliContext,
-    cfg: &StoreConfig,
-    pool_bodies: &[Vec<u8>],
-    manifest: &GenerationManifest,
-    root: Bytes32,
-    chain_state: Option<digstore_core::datasection::ChainState>,
-    metadata: &digstore_core::MetadataManifest,
-) -> Result<PathBuf, CliError> {
-    use digstore_compiler::{Compiler, CompilerConfig, GenerationView, ResourceView};
-
-    struct Res {
-        key: Bytes32,
-        chunks: Vec<(Bytes32, Vec<u8>)>,
-    }
-    impl ResourceView for Res {
-        fn resource_key(&self) -> Bytes32 {
-            self.key
-        }
-        fn chunks(&self) -> Vec<(Bytes32, Vec<u8>)> {
-            self.chunks.clone()
-        }
-    }
-    struct Gen {
-        root: Bytes32,
-        res: Vec<Res>,
-    }
-    impl GenerationView for Gen {
-        fn root(&self) -> Bytes32 {
-            self.root
-        }
-        fn resources(&self) -> Vec<Box<dyn ResourceView + '_>> {
-            self.res
-                .iter()
-                .map(|r| {
-                    Box::new(Res {
-                        key: r.key,
-                        chunks: r.chunks.clone(),
-                    }) as Box<dyn ResourceView + '_>
-                })
-                .collect()
-        }
-    }
-
-    let res: Vec<Res> = manifest
-        .key_table
-        .iter()
-        .map(|kt| Res {
-            key: kt.static_key,
-            chunks: kt
-                .chunk_indices
-                .iter()
-                .map(|&i| {
-                    let body = pool_bodies[i as usize].clone();
-                    (digstore_crypto::sha256(&body), body)
-                })
-                .collect(),
-        })
-        .collect();
-    let gen = Gen { root, res };
-
-    let trusted = load_trusted_keys(ctx)?;
-    let store_pubkey = load_host_pubkey(ctx)?;
-    let ccfg = CompilerConfig {
-        output_dir: ctx.modules_dir(),
-        obfuscate: false,
-        optimize: false,
-        // D6: compile with the REAL guest wasm so the module serves itself via
-        // `HostRuntime::serve_content` (NOT the stub template). The CLI embeds the
-        // guest wasm at build time (see `build.rs` / `serve::embedded_guest_wasm`).
-        template_override: Some(crate::ops::serve::embedded_guest_wasm().to_vec()),
-        // §8.3 uniform-size filler budget: production pads to the 128 MiB default
-        // (or the DIGSTORE_UNIFORM_BLOB_LEN override) so every store is the same
-        // module size.
-        ..CompilerConfig::default()
-    };
-    let outcome = Compiler::compile(
-        &ccfg,
-        cfg.store_id,
-        store_pubkey,
-        &[gen],
-        metadata.clone(),
-        // §4.1/§5.2: per-store auth policy is compiled into the module. The CLI
-        // supplies the explicit no-auth default here; a JWT/session-required
-        // store would thread its configured policy into this argument instead.
-        default_auth_info(),
-        &trusted,
-        chain_state,
-    )
-    .map_err(|e| CliError::Other(anyhow::anyhow!("compile failed: {e:?}")))?;
-    Ok(outcome.result.output_path)
 }
 
 /// Decode the embedded on-chain pointer from a compiled module's bytes, if any.

@@ -2179,9 +2179,11 @@ dependencies = [
  "digstore-crypto",
  "digstore-host",
  "digstore-remote",
+ "digstore-stage",
  "directories",
  "filetime",
  "fs4",
+ "getrandom 0.2.17",
  "hex",
  "reqwest",
  "serde",
@@ -2319,6 +2321,7 @@ dependencies = [
  "digstore-host",
  "digstore-prover",
  "digstore-remote",
+ "digstore-stage",
  "digstore-store",
  "dirs",
  "getrandom 0.2.17",
@@ -2480,6 +2483,22 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tower 0.4.13",
+]
+
+[[package]]
+name = "digstore-stage"
+version = "0.1.0"
+dependencies = [
+ "digstore-chunker",
+ "digstore-compiler",
+ "digstore-core",
+ "digstore-crypto",
+ "digstore-store",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
