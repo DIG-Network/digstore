@@ -4,6 +4,12 @@
 # Generated runtime smoke fixture (regenerate with the example).
 /smoke_fixture.json
 
-# wasm-pack output for the Node smoke test target (the browser deliverable
-# pkg/ is committed; pkg-node/ is verification-only and regenerable).
+# wasm-pack target outputs + the assembled publishable package. All regenerable
+# from source via `npm run build:pkg`; CI builds them fresh before publishing, so
+# nothing under here is committed (no vendored/stale wasm in the tree).
+/pkg
+/pkg-web
 /pkg-node
+
+# npm
+/node_modules

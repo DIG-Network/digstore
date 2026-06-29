@@ -93,6 +93,55 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  # The read-crypto wasm crate (crates/dig-client-wasm) is EXCLUDED from the
+  # workspace (it must resolve without chia-bls/blst, which don't build for
+  # wasm32) so the `--workspace` job above never sees it. Gate it on its own:
+  # fmt + clippy + the native parity tests, then build the publishable
+  # @dignetwork/dig-client package (web + node) and verify it end-to-end. This
+  # keeps the published package buildable and the publish workflow honest.
+  dig-client-wasm:
+    name: dig-client-wasm (read-crypto npm package)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup show
+
+      - name: Install wasm-pack (official installer)
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Format check
+        working-directory: crates/dig-client-wasm
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        working-directory: crates/dig-client-wasm
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Parity tests (native, vs digstore-crypto)
+        working-directory: crates/dig-client-wasm
+        run: cargo test --locked
+
+      - name: Build + assemble package (web + node -> pkg/)
+        working-directory: crates/dig-client-wasm
+        run: npm run build:pkg
+
+      - name: Generate real-crypto smoke fixture
+        working-directory: crates/dig-client-wasm
+        run: cargo run --example gen_smoke_fixture > smoke_fixture.json
+
+      - name: Verify assembled package (exports + .d.ts + integrity + runtime)
+        working-directory: crates/dig-client-wasm
+        run: node scripts/verify-pkg.mjs
+
   supply-chain:
     name: supply-chain audit
     runs-on: ubuntu-latest

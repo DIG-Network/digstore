@@ -1,0 +1,14 @@
+{
+  "name": "@dignetwork/dig-client-dev",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Build harness for the @dignetwork/dig-client npm package (read-crypto WASM). Not published; `npm run build:pkg` assembles the publishable ./pkg.",
+  "scripts": {
+    "build:web": "wasm-pack build . --release --target web --out-dir pkg-web --out-name dig_client",
+    "build:node": "wasm-pack build . --release --target nodejs --out-dir pkg-node --out-name dig_client",
+    "build:pkg": "npm run build:web && npm run build:node && node scripts/assemble-pkg.mjs",
+    "test:pkg": "node scripts/assemble-pkg.mjs --verify-only || (npm run build:pkg) ; node scripts/verify-pkg.mjs",
+    "smoke": "cargo run --example gen_smoke_fixture > smoke_fixture.json && node smoke.mjs"
+  }
+}
