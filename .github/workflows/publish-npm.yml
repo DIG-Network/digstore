@@ -1,0 +1,69 @@
+name: publish-npm
+
+# Publish the read-crypto WASM as @dignetwork/dig-client (roadmap #16 — stop
+# vendoring). Builds BOTH wasm-bindgen targets (web + nodejs) from the
+# `crates/dig-client-wasm` crate, assembles the single dual-target package
+# (crates/dig-client-wasm/pkg), VERIFIES it (exports + .d.ts + integrity + a Node
+# runtime read-path smoke against the real-host-crypto fixture), then publishes.
+#
+# Auth uses the org-level NPM_TOKEN secret (the org token reaches PUBLIC repos;
+# digstore is public). Runs when a GitHub Release is published, or on manual
+# dispatch. Mirrors chip35_dl_coin's publish-npm.yml.
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+# Serialize publishes; never cancel an in-flight one.
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+# Least privilege: only need to read the repo (publish auth is the NPM token).
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: build wasm (web+node) + verify + npm publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      # The dig-client-wasm crate depends ONLY on digstore-core (wasm-clean) — no
+      # BLS, no guest-wasm prereq. Just the wasm32 target + wasm-pack are needed.
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack (official installer)
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Build + assemble package (web + node -> pkg/)
+        working-directory: crates/dig-client-wasm
+        run: npm run build:pkg
+
+      # Verification gate: exports map, .d.ts surface, wasm SRI/integrity, AND a
+      # Node runtime smoke (load the .cjs entry, run verify/decrypt against a
+      # fixture produced by the REAL host crypto). Fails the publish if anything
+      # in the assembled package is wrong.
+      - name: Generate real-crypto smoke fixture
+        working-directory: crates/dig-client-wasm
+        run: cargo run --example gen_smoke_fixture > smoke_fixture.json
+
+      - name: Verify assembled package
+        working-directory: crates/dig-client-wasm
+        run: node scripts/verify-pkg.mjs
+
+      - name: Publish to npmjs
+        working-directory: crates/dig-client-wasm
+        run: npm publish ./pkg --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

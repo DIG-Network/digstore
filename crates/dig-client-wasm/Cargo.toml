@@ -3,6 +3,7 @@ name = "dig-client-wasm"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-2.0-only"
+repository = "https://github.com/DIG-Network/digstore"
 description = "Browser read-crypto for dighub: URN reconstruction, AES-256-GCM-SIV decryption, and merkle inclusion-proof verification, compiled to WASM (globalThis.digClient)."
 
 # NOTE: this crate is intentionally EXCLUDED from the digstore_wasm workspace
