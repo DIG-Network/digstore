@@ -25,6 +25,13 @@ ignore = [
     "RUSTSEC-2025-0052", # async-std: discontinued (httpmock dev-dependency, tests only)
     "RUSTSEC-2025-0055", # tracing/ANSI-escape log-injection advisory (transitive)
     "RUSTSEC-2025-0119", # number_prefix: unmaintained (transitive via indicatif progress bars; display-only)
+    # anyhow <=1.0.102: unsoundness in `Error::downcast_mut()` ONLY when called on
+    # an error that was wrapped via `Error::context` (the resulting borrow chain
+    # includes a shared ref → UB). digstore NEVER calls `downcast_mut` anywhere in
+    # the tree (verified), so the unsound path is unreachable; anyhow is used only
+    # for `?`/`anyhow!`/`#[from]` error wrapping. Accepted; RE-EVALUATE (and remove)
+    # once anyhow ships the fix (commit 6e8c000) and the lock is bumped.
+    "RUSTSEC-2026-0190",
 ]
 
 [bans]
