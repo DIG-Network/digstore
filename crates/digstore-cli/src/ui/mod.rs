@@ -209,6 +209,33 @@ impl Ui {
         let _ = writeln!(o, "{}", text);
     }
 
+    /// Surface a failure to the user, honoring `--json`.
+    ///
+    /// In `--json` mode this emits ONE structured error object to stdout —
+    /// `{"ok":false,"error":{"code","exit_code","message","hint"}}` — so an agent
+    /// driving the CLI gets a parseable failure (the same envelope shape as the
+    /// success payloads), not prose it must scrape. Otherwise it prints the
+    /// human `error:`/`help:` lines to stderr. This is the single error sink the
+    /// process top-level (`main`) calls for every command.
+    pub fn emit_error(&self, e: &crate::error::CliError) {
+        if self.json {
+            let mut obj = serde_json::json!({
+                "ok": false,
+                "error": {
+                    "code": e.code(),
+                    "exit_code": e.exit_code(),
+                    "message": e.to_string(),
+                },
+            });
+            if let Some(h) = e.hint() {
+                obj["error"]["hint"] = serde_json::json!(h);
+            }
+            self.emit_json(&obj);
+        } else {
+            self.error(e);
+        }
+    }
+
     /// Write a cargo-style `error:` + optional `help:` line to stderr.
     pub fn error(&self, e: &crate::error::CliError) {
         let mut err = anstream::AutoStream::auto(std::io::stderr());

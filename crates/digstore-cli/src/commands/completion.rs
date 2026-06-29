@@ -26,16 +26,35 @@ pub fn run(_ui: &Ui, shell: Shell) -> Result<(), CliError> {
     Ok(())
 }
 
-/// `digstore --help-json` (intercepted in `main`): print the whole command tree
-/// as JSON — every command, its one-line `about`, and its flags. Built straight
-/// from the clap model so it always matches the binary's real surface.
+/// `digstore --help-json` (intercepted in `main`): print the WHOLE invocation
+/// contract as JSON — every command, its aliases + one-line `about` + its args
+/// (with value-enum `choices`, `default`, and `value_name`), the global flags
+/// (documented once at the root), AND the differentiated exit-code table. Built
+/// straight from the clap model + [`CliError::exit_code_table`] so it always
+/// matches the binary's real surface. One introspection call yields everything an
+/// agent needs to invoke the CLI and branch on its failures.
 pub fn print_help_json() {
     let cmd = Cli::command();
+    // The global flags (inherited by every subcommand) — documented once here so the
+    // per-command `args` lists stay focused on command-specific flags.
+    let globals: Vec<serde_json::Value> = cmd
+        .get_arguments()
+        .filter(|a| a.is_global_set())
+        .map(arg_json)
+        .collect();
+    let exit_codes: Vec<serde_json::Value> = crate::error::CliError::exit_code_table()
+        .iter()
+        .map(|(code, exit, meaning)| {
+            serde_json::json!({ "code": code, "exit_code": exit, "meaning": meaning })
+        })
+        .collect();
     let json = serde_json::json!({
         "name": cmd.get_name(),
         "version": env!("CARGO_PKG_VERSION"),
         "about": cmd.get_about().map(|s| s.to_string()),
+        "globals": globals,
         "commands": cmd.get_subcommands().map(subcommand_json).collect::<Vec<_>>(),
+        "exit_codes": exit_codes,
     });
     println!("{}", serde_json::to_string_pretty(&json).unwrap());
 }
@@ -44,8 +63,8 @@ pub fn print_help_json() {
 fn subcommand_json(c: &clap::Command) -> serde_json::Value {
     let args: Vec<serde_json::Value> = c
         .get_arguments()
-        // Skip the inherited globals (--json/--verbose/…); they clutter every
-        // entry and are documented once on the root.
+        // Skip the inherited globals (--json/--verbose/…); they are listed once at
+        // the root under `globals` instead of cluttering every command entry.
         .filter(|a| !a.is_global_set())
         .map(arg_json)
         .collect();
@@ -57,9 +76,27 @@ fn subcommand_json(c: &clap::Command) -> serde_json::Value {
     })
 }
 
-/// Describe one argument: its long/short flags (or that it is positional),
-/// whether it takes a value, and its help text.
+/// Describe one argument completely: its long/short flags (or that it is
+/// positional), whether it takes a value, its value-enum `choices`, its `default`,
+/// its `value_name`, and its help text — so an agent learns the full per-arg
+/// contract from `--help-json` alone.
 fn arg_json(a: &clap::Arg) -> serde_json::Value {
+    // Value-enum possible values (e.g. completion shells, --color auto/always/never).
+    let choices: Vec<String> = a
+        .get_possible_values()
+        .iter()
+        .map(|pv| pv.get_name().to_string())
+        .collect();
+    // Default value(s), if any (e.g. --wait-timeout 300, --color auto).
+    let defaults: Vec<String> = a
+        .get_default_values()
+        .iter()
+        .map(|v| v.to_string_lossy().into_owned())
+        .collect();
+    // The placeholder shown in help for the value (e.g. WRITER_SEED, DIG).
+    let value_name = a
+        .get_value_names()
+        .and_then(|names| names.first().map(|s| s.to_string()));
     serde_json::json!({
         "id": a.get_id().as_str(),
         "long": a.get_long(),
@@ -67,6 +104,9 @@ fn arg_json(a: &clap::Arg) -> serde_json::Value {
         "positional": a.is_positional(),
         "takes_value": a.get_num_args().map(|n| n.takes_values()).unwrap_or(false),
         "required": a.is_required_set(),
+        "choices": choices,
+        "default": defaults,
+        "value_name": value_name,
         "help": a.get_help().map(|s| s.to_string()),
     })
 }
@@ -146,6 +186,63 @@ mod tests {
             .collect();
         assert!(longs.contains(&"if-changed".to_string()));
         assert!(longs.contains(&"dry-run".to_string()));
+    }
+
+    #[test]
+    fn help_json_includes_globals_and_exit_codes() {
+        // The full machine contract: globals (the inherited flags) + the exit-code
+        // table are present and complete, so one --help-json call yields everything.
+        let cmd = Cli::command();
+        let globals: Vec<String> = cmd
+            .get_arguments()
+            .filter(|a| a.is_global_set())
+            .filter_map(|a| a.get_long().map(|s| s.to_string()))
+            .collect();
+        // The headline globals are surfaced.
+        for g in ["json", "verbose", "quiet", "color", "store"] {
+            assert!(globals.contains(&g.to_string()), "missing global --{g}");
+        }
+        // The exit-code table mirrors error.rs and includes the success row + a
+        // differentiated non-zero code.
+        let table = crate::error::CliError::exit_code_table();
+        assert!(table.iter().any(|(c, x, _)| *c == "OK" && *x == 0));
+        assert!(table
+            .iter()
+            .any(|(c, x, _)| *c == "INSUFFICIENT_FUNDS" && *x == 12));
+    }
+
+    #[test]
+    fn arg_json_exposes_choices_default_and_value_name() {
+        let cmd = Cli::command();
+        // --color is a value-enum global with a default of "auto".
+        let color = cmd
+            .get_arguments()
+            .find(|a| a.get_long() == Some("color"))
+            .unwrap();
+        let v = arg_json(color);
+        let choices: Vec<String> = v["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        assert!(choices.contains(&"auto".to_string()));
+        assert!(choices.contains(&"never".to_string()));
+        let defaults: Vec<String> = v["default"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        assert!(defaults.contains(&"auto".to_string()), "color default=auto");
+
+        // `commit --writer-key` carries a value_name (WRITER_SEED).
+        let commit = cmd.find_subcommand("commit").unwrap();
+        let wk = commit
+            .get_arguments()
+            .find(|a| a.get_long() == Some("writer-key"))
+            .unwrap();
+        assert_eq!(arg_json(wk)["value_name"].as_str(), Some("WRITER_SEED"));
     }
 
     #[test]
