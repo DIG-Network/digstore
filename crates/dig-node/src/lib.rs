@@ -131,11 +131,22 @@ static FALLBACK_WARNED: AtomicBool = AtomicBool::new(false);
 /// Is the canonical cache dir writable? Probes by ensuring the dir exists and
 /// writing+removing a tiny temp file in it. A miss (read-only volume, perms)
 /// means we must fall back to a private dir.
+///
+/// The probe name is unique PER CALL (pid + a monotonic counter), NOT per-pid:
+/// `resolve_cache_dir` runs on every `cache_dir()`/`config_path()`/`lockfile_path()`
+/// call, so two threads of one process probe concurrently. A shared probe name
+/// let one thread's `remove_file` race the other's `write` (a transient
+/// sharing-violation `Err` on Windows), spuriously reporting the dir UNwritable
+/// → that one call returned the private-fallback dir → its `config_path()` pointed
+/// at a DIFFERENT file → a lost config update. A unique name makes the probe
+/// race-free, so resolution is stable under concurrency.
 fn dir_is_writable(dir: &Path) -> bool {
     if std::fs::create_dir_all(dir).is_err() {
         return false;
     }
-    let probe = dir.join(format!(".write-probe-{}", std::process::id()));
+    static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = PROBE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let probe = dir.join(format!(".write-probe-{}-{}", std::process::id(), seq));
     match std::fs::write(&probe, b"") {
         Ok(()) => {
             let _ = std::fs::remove_file(&probe);
@@ -238,18 +249,35 @@ fn acquire_cache_lock() -> Option<CacheLockGuard> {
     Some(CacheLockGuard { _file: file })
 }
 
-/// Read-modify-write the config JSON under the cross-process lock so two
-/// processes can't lose each other's update (the lost-update race). Reads the
-/// current config, applies `mutate`, and writes it back atomically (temp +
-/// rename) — all while holding `<cache>/.dignode.lock`. Pretty-prints to keep
-/// the on-disk `config.json` schema byte-compatible with the prior writer.
+/// In-process serializer for the config read-modify-write. The cross-process
+/// `flock` (`.dignode.lock`) is NOT sufficient on its own: on Windows
+/// `LockFileEx` is per-handle and does NOT block a SECOND lock taken by the SAME
+/// process (two threads each open their own handle and both acquire), so two
+/// threads of one process can still interleave read/read/write/write and lose an
+/// increment. This process-global mutex makes the RMW atomic *within* this
+/// process; the flock makes it atomic *across* processes. Together they give the
+/// lost-update-free guarantee the doc above promises, on every OS.
+static CONFIG_RMW_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Read-modify-write the config JSON under both an in-process mutex and the
+/// cross-process lock so neither two threads nor two processes can lose each
+/// other's update (the lost-update race). Reads the current config, applies
+/// `mutate`, and writes it back atomically (temp + rename) — all while holding
+/// both locks. Pretty-prints to keep the on-disk `config.json` schema
+/// byte-compatible with the prior writer.
 fn update_config_locked(mutate: impl FnOnce(&mut Value)) -> std::io::Result<()> {
     let path = config_path();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
+    // Serialize this PROCESS's RMWs (recover from a poisoned lock — a prior
+    // panicker left the guarded config in a consistent on-disk state, so the
+    // poison carries no broken invariant we must honor).
+    let _in_proc = CONFIG_RMW_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     // Hold the cross-process lock across the read AND the write so a concurrent
-    // process can't read-then-clobber between our read and our write.
+    // PROCESS can't read-then-clobber between our read and our write.
     let _lock = acquire_cache_lock();
     let mut v: Value = std::fs::read_to_string(&path)
         .ok()
@@ -1647,7 +1675,7 @@ mod tests {
     // `await_holding_lock`), while still serializing against the other env tests.
     #[test]
     fn cache_rpc_config_roundtrip_and_clear() {
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -2000,7 +2028,10 @@ mod tests {
     // Tests that drive the PROCESS-GLOBAL `cache_dir()` (via the `DIG_NODE_CACHE`
     // env) must not run concurrently with each other or with
     // `cache_rpc_config_roundtrip_and_clear`, since cargo runs tests in parallel
-    // threads of one process. `ENV_GUARD` serializes them.
+    // threads of one process. `ENV_GUARD` serializes them. Acquire it with
+    // `.unwrap_or_else(|p| p.into_inner())` so that ONE test's failure (which
+    // poisons the mutex) does not cascade into spurious failures of every other
+    // env-touching test — each failure should stand on its own.
     static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // Item 1 — Atomic content-addressed module writes.
@@ -2094,7 +2125,7 @@ mod tests {
         // read-current → +1 → write. WITHOUT the cross-process lock, interleaved
         // read/read/write/write loses increments and the final count is < 2N;
         // WITH the lock every increment is serialized and the count is EXACTLY 2N.
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
         let _ = std::fs::remove_file(config_path());
@@ -2129,7 +2160,7 @@ mod tests {
     fn concurrent_setters_keep_both_keys() {
         // The two real config setters (cache cap vs wc projectId) run concurrently;
         // both keys survive in a single valid config.json (no clobber, no torn file).
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
         let _ = std::fs::remove_file(config_path());
@@ -2160,7 +2191,7 @@ mod tests {
         // The advisory lock is genuinely exclusive: while one guard is held a
         // direct try_lock on the same file would block (WouldBlock); once dropped
         // it can be re-acquired. Proves eviction/config RMW are actually serialized.
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
 
@@ -2192,7 +2223,7 @@ mod tests {
 
     #[test]
     fn canonical_cache_dir_honors_env_override() {
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let td = tempfile::tempdir().unwrap();
         let want = td.path().join("custom-cache");
         std::env::set_var("DIG_NODE_CACHE", &want);
@@ -2204,7 +2235,7 @@ mod tests {
     fn canonical_cache_dir_default_ends_in_dignode_cache() {
         // With no override the default path keeps the historic, byte-exact
         // `.../DigNode/cache` suffix (the shared-cache contract with dig-companion).
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         std::env::remove_var("DIG_NODE_CACHE");
         let dir = canonical_cache_dir();
         assert!(
@@ -2218,7 +2249,7 @@ mod tests {
 
     #[test]
     fn resolve_cache_dir_reports_shared_for_writable_canonical() {
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
         let (dir, shared) = resolve_cache_dir();
@@ -2231,7 +2262,7 @@ mod tests {
     fn resolve_cache_dir_falls_back_to_private_when_unwritable() {
         // Point the canonical dir at a path that cannot be created (a child of a
         // regular FILE), forcing the writability probe to fail → private fallback.
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let td = tempfile::tempdir().unwrap();
         let file = td.path().join("not-a-dir");
         std::fs::write(&file, b"x").unwrap();
@@ -2257,7 +2288,7 @@ mod tests {
         // existing fields and ONLY add `cache_dir` + `shared`. This pins the shape
         // so a rename/removal of cap_bytes/used_bytes breaks the build, not the
         // browser silently at runtime.
-        let _g = ENV_GUARD.lock().unwrap();
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
