@@ -8,10 +8,17 @@ use crate::keys::WalletKeys;
 use chia_wallet_sdk::driver::{DriverError, Launcher, SpendContext, StandardLayer};
 use chia_wallet_sdk::types::{conditions::CreateCoin, Condition, Conditions};
 use datalayer_driver::{
-    add_fee, select_coins, sign_coin_spends, update_store_metadata, Bytes32, Coin, CoinSpend,
-    DataStore, DataStoreInnerSpend, DataStoreMetadata, DelegatedPuzzle, PublicKey, SpendBundle,
-    SuccessResponse,
+    add_fee, admin_delegated_puzzle_from_key, melt_store, oracle_delegated_puzzle as dl_oracle_dp,
+    select_coins, sign_coin_spends, update_store_metadata, update_store_ownership, Bytes32, Coin,
+    CoinSpend, DataStoreInnerSpend, DataStoreMetadata, SpendBundle, SuccessResponse,
 };
+
+/// Re-export the datalayer types that appear in this module's public builder
+/// signatures, so downstream crates (the in-process `dig-wallet`) can name a
+/// `DataStore` / `DelegatedPuzzle` / `PublicKey` WITHOUT taking a direct
+/// `datalayer-driver` dependency — they speak the store-spend surface through
+/// `digstore-chain` (the byte-mirror of chip35), keeping the one-builder-source rule.
+pub use datalayer_driver::{DataStore, DelegatedPuzzle, PublicKey};
 
 /// An XCH coin tagged with the wallet address it belongs to, so the spend can
 /// be built with the correct `synthetic_pk` (each address has its own key).
@@ -563,6 +570,29 @@ pub fn writer_delegated_puzzle(writer_synthetic_pk: PublicKey) -> DelegatedPuzzl
     datalayer_driver::writer_delegated_puzzle_from_key(&writer_synthetic_pk)
 }
 
+/// The [`DelegatedPuzzle::Admin`] for an admin-delegate synthetic key — the on-chain
+/// authorization the store owner curries in (via [`build_update_ownership_unsigned`])
+/// so this key can advance the metadata root AND re-delegate the store's delegated set
+/// (add/remove writers/admins), WITHOUT being able to transfer ownership or melt the
+/// store (those stay the owner's authority). The DIG Browser / hub Teams "Admin" role.
+///
+/// A thin re-export of `datalayer_driver::admin_delegated_puzzle_from_key` (byte-mirror
+/// of chip35's `DelegatedPuzzle::Admin`) so callers name the admin delegate from one
+/// place. Adds NO new on-chain spend type — it is the same datalayer/chip35 puzzle.
+pub fn admin_delegated_puzzle(admin_synthetic_pk: PublicKey) -> DelegatedPuzzle {
+    admin_delegated_puzzle_from_key(&admin_synthetic_pk)
+}
+
+/// The [`DelegatedPuzzle::Oracle`] for an oracle reader — anyone may spend the store
+/// in oracle mode by paying `oracle_fee` mojos to `oracle_puzzle_hash`, without owner
+/// authorization (a public, paid read commitment). Re-export of
+/// `datalayer_driver::oracle_delegated_puzzle` (byte-mirror of chip35's
+/// `DelegatedPuzzle::Oracle`), so the wallet/CLI/hub derive the oracle delegate
+/// identically. Adds NO new on-chain spend type.
+pub fn oracle_delegated_puzzle(oracle_puzzle_hash: Bytes32, oracle_fee: u64) -> DelegatedPuzzle {
+    dl_oracle_dp(oracle_puzzle_hash, oracle_fee)
+}
+
 /// Builds the UNSIGNED root update of `store` to `new_root` authorized by a WRITER
 /// DELEGATE key (a revocable CI deploy key) rather than the owner master seed
 /// (#17). The store MUST already carry this writer's [`writer_delegated_puzzle`] in
@@ -655,6 +685,150 @@ pub fn build_update(
     let bundle = SpendBundle::new(coin_spends, signature);
     Ok(UpdateBuild {
         bundle,
+        new_coin_id,
+        datastore,
+    })
+}
+
+/// A built, signed store melt ready to broadcast.
+pub struct MeltBuild {
+    pub bundle: SpendBundle,
+}
+
+/// The UNSIGNED melt: the raw singleton spend that destroys the store. Used to
+/// concatenate an XCH fee spend into the SAME bundle before signing (the melt itself
+/// reserves the singleton's 1 mojo as fee, so a melt needs no extra payment).
+pub struct MeltUnsigned {
+    pub coin_spends: Vec<CoinSpend>,
+}
+
+/// Builds the UNSIGNED owner-authorized melt of `store` — destroys the singleton,
+/// permanently retiring the on-chain store (no further capsules can ever be anchored
+/// under its launcher id). Wraps `datalayer_driver::melt_store` (byte-mirror of
+/// chip35's `meltStore`), so this introduces NO new on-chain spend type — it is the
+/// same melt the CLI/hub use. The melt reserves the singleton's 1 mojo as the network
+/// fee, so no DIG payment and no extra fee coin are required.
+///
+/// **Pure: does NOT sign or broadcast.** The caller signs with the owner key.
+pub fn build_melt_unsigned(keys: &WalletKeys, store: DataStore) -> Result<MeltUnsigned> {
+    let coin_spends = melt_store(store, keys.synthetic_pk)
+        .map_err(|e| ChainError::Chain(format!("melt_store: {e}")))?;
+    Ok(MeltUnsigned { coin_spends })
+}
+
+/// Builds + signs an owner-authorized melt of `store`. See [`build_melt_unsigned`].
+pub fn build_melt(keys: &WalletKeys, store: DataStore) -> Result<MeltBuild> {
+    let MeltUnsigned { coin_spends } = build_melt_unsigned(keys, store)?;
+    let signature = sign_coin_spends(
+        &coin_spends,
+        std::slice::from_ref(&keys.synthetic_sk),
+        false,
+    )
+    .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
+    Ok(MeltBuild {
+        bundle: SpendBundle::new(coin_spends, signature),
+    })
+}
+
+/// A built, signed ownership/delegation update ready to broadcast.
+pub struct OwnershipBuild {
+    pub bundle: SpendBundle,
+    pub new_coin_id: Bytes32,
+    pub datastore: DataStore,
+}
+
+/// The UNSIGNED ownership/delegation update: the raw singleton spend that re-targets
+/// the store's owner puzzle hash and/or its delegated-puzzle set, plus derived ids.
+/// Used to concatenate an XCH fee spend into the SAME bundle before signing.
+pub struct OwnershipUnsigned {
+    pub coin_spends: Vec<CoinSpend>,
+    pub new_coin_id: Bytes32,
+    pub datastore: DataStore,
+}
+
+/// Builds the UNSIGNED owner-authorized update of `store`'s OWNERSHIP — re-targets the
+/// owner puzzle hash to `new_owner_ph` and REPLACES the delegated-puzzle set with
+/// `new_delegated_puzzles` (admin/writer/oracle delegates derived via
+/// [`admin_delegated_puzzle`]/[`writer_delegated_puzzle`]/[`oracle_delegated_puzzle`]).
+///
+/// This is the ONE on-chain primitive behind BOTH delegation-management (keep
+/// `new_owner_ph == store.info.owner_puzzle_hash`, change the delegated set — the
+/// Teams admin/writer/oracle flow #43/#17) AND ownership transfer (set `new_owner_ph`
+/// to the recipient's p2 puzzle hash). Wraps `datalayer_driver::update_store_ownership`
+/// (byte-mirror of chip35's `updateStoreOwnership`), so it adds NO new on-chain spend
+/// type. The delegated set REPLACES the prior set, so callers re-send every delegate
+/// they want to keep (this is also how a delegate is revoked — omit it).
+///
+/// An optional XCH `fee` is drawn from `fee_coins` (the wallet's spendable XCH) and
+/// spent by the owner key. **Pure: does NOT sign or broadcast.**
+pub fn build_update_ownership_unsigned(
+    keys: &WalletKeys,
+    store: DataStore,
+    new_owner_ph: Bytes32,
+    new_delegated_puzzles: Vec<DelegatedPuzzle>,
+    fee_coins: &[Coin],
+    fee: u64,
+) -> Result<OwnershipUnsigned> {
+    let SuccessResponse {
+        coin_spends: ownership_spends,
+        new_datastore,
+    } = update_store_ownership(
+        store,
+        new_owner_ph,
+        new_delegated_puzzles,
+        DataStoreInnerSpend::Owner(keys.synthetic_pk),
+    )
+    .map_err(|e| ChainError::Chain(format!("update_store_ownership: {e}")))?;
+
+    let mut coin_spends = Vec::new();
+    if fee > 0 {
+        let selected = select_coins(fee_coins, fee)
+            .map_err(|e| ChainError::Chain(format!("select_coins (fee): {e}")))?;
+        let coin_ids: Vec<Bytes32> = selected.iter().map(|c| c.coin_id()).collect();
+        let fee_spends = add_fee(&keys.synthetic_pk, &selected, &coin_ids, fee)
+            .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
+        coin_spends.extend(fee_spends);
+    }
+    coin_spends.extend(ownership_spends);
+
+    let new_coin_id = new_datastore.coin.coin_id();
+    Ok(OwnershipUnsigned {
+        coin_spends,
+        new_coin_id,
+        datastore: new_datastore,
+    })
+}
+
+/// Builds + signs an owner-authorized ownership/delegation update. See
+/// [`build_update_ownership_unsigned`].
+pub fn build_update_ownership(
+    keys: &WalletKeys,
+    store: DataStore,
+    new_owner_ph: Bytes32,
+    new_delegated_puzzles: Vec<DelegatedPuzzle>,
+    fee_coins: &[Coin],
+    fee: u64,
+) -> Result<OwnershipBuild> {
+    let OwnershipUnsigned {
+        coin_spends,
+        new_coin_id,
+        datastore,
+    } = build_update_ownership_unsigned(
+        keys,
+        store,
+        new_owner_ph,
+        new_delegated_puzzles,
+        fee_coins,
+        fee,
+    )?;
+    let signature = sign_coin_spends(
+        &coin_spends,
+        std::slice::from_ref(&keys.synthetic_sk),
+        false,
+    )
+    .map_err(|e| ChainError::Chain(format!("sign: {e}")))?;
+    Ok(OwnershipBuild {
+        bundle: SpendBundle::new(coin_spends, signature),
         new_coin_id,
         datastore,
     })
@@ -905,6 +1079,201 @@ mod tests {
         assert!(
             res.is_err(),
             "writer update on an un-delegated store must fail"
+        );
+        Ok(())
+    }
+
+    /// The admin/writer/oracle delegated-puzzle derivations are STABLE and produce the
+    /// expected `DelegatedPuzzle` variant — the byte-mirror of chip35's. A writer/admin
+    /// for the same key are NOT interchangeable (distinct variants), and the oracle
+    /// carries its fee + puzzle hash.
+    #[test]
+    fn delegated_puzzle_derivations_are_stable_and_typed() {
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let writer = writer_delegated_puzzle(keys.synthetic_pk);
+        let admin = admin_delegated_puzzle(keys.synthetic_pk);
+        let oracle = oracle_delegated_puzzle(keys.owner_puzzle_hash, 1000);
+        assert!(matches!(writer, DelegatedPuzzle::Writer(_)));
+        assert!(matches!(admin, DelegatedPuzzle::Admin(_)));
+        assert!(
+            matches!(oracle, DelegatedPuzzle::Oracle(ph, fee) if ph == keys.owner_puzzle_hash && fee == 1000)
+        );
+        // Deterministic: the same key derives the same delegate twice.
+        assert_eq!(admin, admin_delegated_puzzle(keys.synthetic_pk));
+        // Writer and admin for the same key are distinct authorities.
+        assert_ne!(
+            format!("{writer:?}"),
+            format!("{admin:?}"),
+            "writer and admin delegates must not collide"
+        );
+    }
+
+    /// An owner can MELT their store on the simulator — the singleton spend validates
+    /// and consumes the singleton (build via `melt_store`, no DIG/fee coin needed).
+    #[test]
+    fn owner_melts_store_on_simulator() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: Bytes32::default(),
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            vec![],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        let owner_keys = WalletKeys {
+            synthetic_sk: owner.sk.clone(),
+            synthetic_pk: owner.pk,
+            owner_puzzle_hash: owner.puzzle_hash,
+        };
+        let melt = build_melt_unsigned(&owner_keys, store.clone())?;
+        let sig = sign_coin_spends(&melt.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(melt.coin_spends, sig))?;
+
+        // The singleton coin is now spent (melted): there is no unspent child.
+        assert!(
+            sim.coin_state(store.coin.coin_id())
+                .is_some_and(|cs| cs.spent_height.is_some()),
+            "melted singleton coin must be spent"
+        );
+        Ok(())
+    }
+
+    /// An owner can DELEGATE writer authority to a new key via an ownership update
+    /// (`update_store_ownership`, owner unchanged, delegated set grows), and that
+    /// newly-delegated writer can then advance the root — proving delegation wires the
+    /// on-chain authorization end-to-end. This is the Teams "add a Deployer" flow.
+    #[test]
+    fn owner_delegates_writer_then_writer_advances_root() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        // Mint a store with NO delegates.
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let writer = sim.bls(0);
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: Bytes32::default(),
+                label: Some("site".into()),
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            vec![],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        let owner_keys = WalletKeys {
+            synthetic_sk: owner.sk.clone(),
+            synthetic_pk: owner.pk,
+            owner_puzzle_hash: owner.puzzle_hash,
+        };
+
+        // Owner delegates writer authority (owner unchanged, delegated set += writer).
+        let writer_dp = writer_delegated_puzzle(writer.pk);
+        let upd = build_update_ownership_unsigned(
+            &owner_keys,
+            store,
+            owner.puzzle_hash, // ownership unchanged
+            vec![writer_dp],   // NEW delegated set
+            &[],
+            0,
+        )?;
+        let sig = sign_coin_spends(&upd.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(upd.coin_spends, sig))?;
+        let delegated_store = upd.datastore;
+
+        // The newly-delegated writer can now advance the root.
+        let new_root = Bytes32::new([0xcd; 32]);
+        let wupd = build_update_unsigned_writer(
+            writer.pk,
+            delegated_store,
+            new_root,
+            Some("site".into()),
+            None,
+            &owner_keys,
+            &[],
+            0,
+        )?;
+        let wsig = sign_coin_spends(&wupd.coin_spends, std::slice::from_ref(&writer.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(wupd.coin_spends, wsig))?;
+        assert_eq!(wupd.datastore.info.metadata.root_hash, new_root);
+        Ok(())
+    }
+
+    /// An owner can TRANSFER the store to a new owner via an ownership update
+    /// (`update_store_ownership`, `new_owner_ph` = recipient). The recreated store
+    /// carries the recipient's owner puzzle hash, and the spend validates on the
+    /// simulator. This is `chia_setStoreOwnership`.
+    #[test]
+    fn owner_transfers_store_to_new_owner_on_simulator() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let recipient = sim.bls(0);
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: Bytes32::default(),
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            vec![],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        let owner_keys = WalletKeys {
+            synthetic_sk: owner.sk.clone(),
+            synthetic_pk: owner.pk,
+            owner_puzzle_hash: owner.puzzle_hash,
+        };
+        let xfer = build_update_ownership_unsigned(
+            &owner_keys,
+            store,
+            recipient.puzzle_hash, // transfer to recipient
+            vec![],
+            &[],
+            0,
+        )?;
+        let sig = sign_coin_spends(&xfer.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(xfer.coin_spends, sig))?;
+        assert_eq!(
+            xfer.datastore.info.owner_puzzle_hash, recipient.puzzle_hash,
+            "transferred store must carry the recipient's owner puzzle hash"
         );
         Ok(())
     }
