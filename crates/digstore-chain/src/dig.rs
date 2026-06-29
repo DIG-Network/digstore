@@ -11,27 +11,27 @@ pub const TREASURY_ADDRESS: &str = "xch1a37rq3cgcl2ecpudttsf35x75qzdan68lgw2l6aj
 
 /// DIG has 3 decimals: 1 DIG = 1000 base units.
 pub const DIG_DECIMALS: u32 = 3;
-/// DEFAULT base units to mint a store (`init`): 100 DIG.
+/// DEFAULT base units per root update (`commit`/`deploy`) — a CAPSULE — 100 DIG.
 ///
-/// This is a DEFAULT, not a hard constant: the per-capsule price is **dynamic and
-/// USD-pegged** (SYSTEM.md — `dig_amount = target_usd ÷ live DIG price`, where
-/// `target_usd ≈ $1/capsule/year` of realistic AWS hosting). The hub computes that
+/// **Minting a store is FREE of $DIG** (#111, SYSTEM.md → "DIG CAT payment"): the mint
+/// only launches the on-chain singleton (empty/initial root) + the XCH network fee, so
+/// there is no `INIT_DIG` mint cost — the DIG payment is attached ONLY to a commit /
+/// root-advance (= a capsule). This is a DEFAULT, not a hard constant: the per-capsule
+/// price is **dynamic and USD-pegged** (SYSTEM.md — `dig_amount = target_usd ÷ live DIG
+/// price`, where `target_usd ≈ $1/capsule/year` of realistic AWS hosting; uniform per
+/// fixed-size capsule → same USD target → obfuscation preserved). The hub computes that
 /// live amount in the browser and the CLI accepts it explicitly (`--dig-amount` /
-/// `DIGSTORE_DIG_AMOUNT` / `dig.toml`'s `dig-amount`). The CLI stays DETERMINISTIC:
-/// it never fetches a live price itself — it takes the amount as input and falls
-/// back to this default when none is given. See [`resolve_dig_amount`].
-pub const INIT_DIG: u64 = 100_000;
-/// DEFAULT base units per root update (`commit`/`deploy`): 100 DIG. Same dynamic,
-/// USD-pegged pricing model as [`INIT_DIG`] — uniform per capsule (fixed-size
-/// capsule → same USD target → obfuscation preserved). Matches the hub web app's
-/// `lib/dig.js` default.
+/// `DIGSTORE_DIG_AMOUNT` / `dig.toml`'s `dig-amount`). The CLI stays DETERMINISTIC: it
+/// never fetches a live price itself — it takes the amount as input and falls back to
+/// this default when none is given. See [`resolve_dig_amount`]. Matches the hub web
+/// app's `lib/dig.js` default and chip35's per-capsule payment.
 pub const COMMIT_DIG: u64 = 100_000;
 
 /// Resolve the DIG amount (base units) to spend for a mint/commit, DETERMINISTICALLY.
 ///
 /// `explicit` carries the amount the CLI already resolved from its own precedence
 /// (flag > env `DIGSTORE_DIG_AMOUNT` > `dig.toml`'s `dig-amount`); when `None`, fall
-/// back to `default_units` (the [`INIT_DIG`]/[`COMMIT_DIG`] protocol default). This
+/// back to `default_units` (the [`COMMIT_DIG`] protocol default). This
 /// function NEVER performs network I/O or a live price fetch — the dynamic,
 /// USD-pegged amount is computed by the caller (the hub) and passed in, so the CLI's
 /// spend is reproducible for a given input. An explicit `0` is rejected by the CLI
@@ -130,9 +130,9 @@ mod tests {
     #[test]
     fn resolve_dig_amount_uses_explicit_then_default() {
         // Explicit wins (the hub's dynamic, USD-pegged amount passed through).
-        assert_eq!(resolve_dig_amount(Some(42_000), INIT_DIG), 42_000);
+        assert_eq!(resolve_dig_amount(Some(42_000), COMMIT_DIG), 42_000);
         // None → the protocol default (deterministic; no live fetch).
-        assert_eq!(resolve_dig_amount(None, INIT_DIG), INIT_DIG);
+        assert_eq!(resolve_dig_amount(None, COMMIT_DIG), COMMIT_DIG);
         assert_eq!(resolve_dig_amount(None, COMMIT_DIG), 100_000);
     }
 

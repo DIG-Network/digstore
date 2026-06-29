@@ -144,7 +144,6 @@ impl ChainAnchor for MockAnchor {
         _label: Option<String>,
         _description: Option<String>,
         _fee: u64,
-        _dig_amount: u64,
     ) -> ChainResult<MintOutcome> {
         if let Some(msg) = &self.fail_mint {
             return Err(ChainError::Chain(msg.clone()));
@@ -272,14 +271,8 @@ mod tests {
     async fn mint_returns_nondefault_and_unique_ids() {
         let m = MockAnchor::default();
         let w = dummy_wallet().await;
-        let a = m
-            .mint_empty_store(&w, None, None, 0, 100_000)
-            .await
-            .unwrap();
-        let b = m
-            .mint_empty_store(&w, None, None, 0, 100_000)
-            .await
-            .unwrap();
+        let a = m.mint_empty_store(&w, None, None, 0).await.unwrap();
+        let b = m.mint_empty_store(&w, None, None, 0).await.unwrap();
         assert_ne!(a.launcher_id, Bytes32::default());
         assert_ne!(a.launcher_id, b.launcher_id, "two mints must differ");
         assert_ne!(a.coin_id, b.coin_id);
@@ -312,10 +305,7 @@ mod tests {
             ..MockAnchor::default()
         };
         let w = dummy_wallet().await;
-        let err = m
-            .mint_empty_store(&w, None, None, 0, 100_000)
-            .await
-            .unwrap_err();
+        let err = m.mint_empty_store(&w, None, None, 0).await.unwrap_err();
         assert!(matches!(err, ChainError::Chain(ref s) if s == "boom"));
     }
 

@@ -151,13 +151,29 @@ fn help_uses_dig_sigil() {
 }
 
 /// When the CLI dead-ends a user on insufficient DIG, it names where to get $DIG
-/// (the three canonical venues), so the user is never stuck without a path.
+/// (the three canonical venues), so the user is never stuck without a path. Minting
+/// (`init`) is free of $DIG (#111), so the dead-end is at `commit` (a capsule pays).
 #[test]
 fn insufficient_dig_hint_names_get_dig_venues() {
     let dir = tmp_dig();
-    let out = dig(&dir)
+    // Mint is free of $DIG, so init succeeds even with zero DIG.
+    dig(&dir)
         .env("DIGSTORE_ANCHOR_MOCK_DIG", "0")
         .arg("init")
+        .assert()
+        .success();
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, b"alpha beta gamma").unwrap();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
+    // Committing a capsule with zero DIG dead-ends with the get-$DIG hint.
+    let out = dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_DIG", "0")
+        .args(["commit", "-m", "first"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(12));

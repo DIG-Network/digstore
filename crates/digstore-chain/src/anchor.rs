@@ -41,18 +41,18 @@ pub trait ChainAnchor: Send + Sync {
     /// Total spendable DIG (base units) across all scanned addresses.
     async fn dig_balance(&self, w: &ScannedWallet) -> Result<u64>;
     /// Mint an empty (root = 0) owner-only store using the full scanned wallet;
-    /// gathers XCH + DIG across ALL HD addresses and signs with all keys. Broadcasts.
+    /// gathers XCH across ALL HD addresses and signs with all keys. Broadcasts.
     /// `label`/`description` are written into the CHIP-0035 singleton metadata.
-    /// `dig_amount` is the DIG (base units) paid to the treasury — the caller resolves
-    /// it (the dynamic, USD-pegged amount, or the [`crate::dig::INIT_DIG`] default).
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// **Minting is FREE of $DIG (#111):** the mint only launches the singleton +
+    /// the XCH network fee — NO DIG payment is attached. The DIG payment is paid only
+    /// on a commit / root-advance (a capsule); see [`ChainAnchor::update_root`].
     async fn mint_empty_store(
         &self,
         w: &ScannedWallet,
         label: Option<String>,
         description: Option<String>,
         fee: u64,
-        dig_amount: u64,
     ) -> Result<MintOutcome>;
     /// Sync the current singleton for `launcher_id`, build+broadcast a root update.
     /// Uses the full scanned wallet for fee coins and DIG across all HD addresses.
@@ -131,18 +131,12 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         label: Option<String>,
         description: Option<String>,
         fee: u64,
-        dig_amount: u64,
     ) -> Result<MintOutcome> {
-        // Build + sign the atomic mint+DIG bundle (with fee auto-estimate), then push.
-        let built = build_mint_store_bundle(
-            &self.chain as &dyn ChainReads,
-            w,
-            label,
-            description,
-            fee,
-            dig_amount,
-        )
-        .await?;
+        // Build + sign the mint bundle (singleton launch + XCH fee, no $DIG; with fee
+        // auto-estimate), then push. Minting a store is free of $DIG (#111).
+        let built =
+            build_mint_store_bundle(&self.chain as &dyn ChainReads, w, label, description, fee)
+                .await?;
         // Bundle hash == conventional tx id; capture it BEFORE the bundle moves.
         let tx_id = built.bundle.name();
         self.chain.push(built.bundle).await?;
@@ -240,13 +234,17 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
 // Build-only (no-push) bundle builders — shared by the CLI anchor (which then
 // pushes) AND the in-process wallet (which applies its own broadcast gate).
 //
-// These hold the SOLE copy of the atomic "singleton spend + DIG payment, signed
-// together under one aggregated signature" logic + the fee auto-estimate, so the
-// CLI and the wallet can never drift. Each returns a fully-signed SpendBundle but
-// does NOT broadcast — pushing is the caller's gated decision.
+// These hold the SOLE copy of the bundle-assembly + fee auto-estimate logic, so the
+// CLI and the wallet can never drift. The MINT bundle is the singleton launch + XCH
+// fee ONLY — minting is FREE of $DIG (#111). The COMMIT (root-advance) bundle holds
+// the atomic "singleton update + DIG payment, signed together under one aggregated
+// signature" logic — the per-capsule $DIG payment rides with the new capsule, never
+// split across bundles. Each returns a fully-signed SpendBundle but does NOT broadcast
+// — pushing is the caller's gated decision.
 // ===========================================================================
 
-/// A built + signed mint bundle (mint singleton + DIG payment), not yet pushed.
+/// A built + signed mint bundle (singleton launch + XCH fee, NO $DIG — #111), not yet
+/// pushed.
 pub struct MintStoreBundle {
     pub bundle: SpendBundle,
     pub launcher_id: Bytes32, // == store_id
@@ -279,23 +277,25 @@ async fn resolve_fee(
     }
 }
 
-/// Build + sign the atomic mint+DIG bundle for a store with `root = 0`, gathering XCH +
-/// DIG across ALL scanned HD addresses and signing with all keys. Auto-estimates the
-/// fee when `fee == 0`. Does NOT push — the caller broadcasts (CLI) or gates it (wallet).
+/// Build + sign the mint bundle for a store with `root = 0`, gathering XCH across ALL
+/// scanned HD addresses and signing with all keys. Auto-estimates the fee when `fee == 0`.
+/// Does NOT push — the caller broadcasts (CLI) or gates it (wallet).
+///
+/// **Minting a store is FREE of $DIG (#111, SYSTEM.md → "DIG CAT payment"):** this
+/// bundle is the CHIP-0035 singleton launch + the XCH network fee ONLY — it carries NO
+/// DIG-CAT payment. The DIG payment is attached only on a commit / root-advance (a
+/// capsule), in [`build_advance_store_bundle`].
 pub async fn build_mint_store_bundle(
     chain: &dyn ChainReads,
     w: &ScannedWallet,
     label: Option<String>,
     description: Option<String>,
     fee: u64,
-    dig_amount: u64,
 ) -> Result<MintStoreBundle> {
     // Index 0 is the store owner and change destination.
     let change_ph = w.addrs[0].keys.owner_puzzle_hash;
-    // DIG cats across ALL scanned addresses (async — gathered once before building).
-    let cats = dig_cats_multi(chain, w).await?;
 
-    // Build + sign the combined mint+DIG bundle for a given fee.
+    // Build + sign the mint bundle (singleton launch + XCH fee, no $DIG) for a given fee.
     let build = |effective_fee: u64| -> Result<MintStoreBundle> {
         let all_xch = coins_with_keys_from_wallet(w);
         let mint = build_mint_unsigned_multi(
@@ -308,21 +308,10 @@ pub async fn build_mint_store_bundle(
         )?;
         let coin_id = mint.datastore.coin.coin_id();
         let launcher_id = mint.launcher_id;
-        let pay = build_dig_payment_multi(
-            w.addrs.iter().map(|a| &a.keys),
-            change_ph,
-            &cats,
-            dig_amount,
-            launcher_id,
-        )?;
-        // ATOMICITY: the DIG payment and the singleton spend ride in ONE SpendBundle
-        // under one aggregated signature, so the mempool admits them all-or-nothing.
-        // This co-signing is the SOLE atomicity guarantee — never split these spends
-        // across bundles or push them separately.
-        let mut all = mint.coin_spends;
-        all.extend(pay);
+        // Minting carries NO DIG payment (#111) — the singleton launch + XCH fee only.
+        let all = mint.coin_spends;
         let signature = sign_coin_spends(&all, &w.signing_keys(), false)
-            .map_err(|e| ChainError::Chain(format!("sign combined mint+DIG bundle: {e}")))?;
+            .map_err(|e| ChainError::Chain(format!("sign mint bundle: {e}")))?;
         Ok(MintStoreBundle {
             bundle: SpendBundle::new(all, signature),
             launcher_id,
@@ -563,17 +552,14 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 2: mint_empty_store now embeds a DIG payment in the SAME bundle, so a
-    // wallet with XCH but NO DIG is blocked before any push (atomic: the mint
-    // cannot ride without its DIG payment). This proves the DIG payment is wired
-    // into the mint path. The happy path (a real DIG CAT reconstructed over
-    // coinset + the combined signed bundle) is validated LIVE by the controller
-    // and by the ignored `dig_cats_live_reconstruct` test — a valid DIG CAT
-    // cannot be reconstructed offline without real CLVM lineage matching the
-    // mainnet DIG asset id.
+    // Test 2 (#111): minting a store is FREE of $DIG. A wallet with XCH but NO DIG
+    // mints SUCCESSFULLY — the mint bundle is the singleton launch + XCH fee only,
+    // never a DIG payment. (Pre-#111 the mint embedded a DIG payment and blocked
+    // without DIG; that coupling is removed — only a commit/capsule pays $DIG.)
+    // The full on-chain validity of the bundle is verified LIVE by the controller.
     // -----------------------------------------------------------------------
     #[tokio::test]
-    async fn mint_empty_store_blocks_without_dig() {
+    async fn mint_empty_store_succeeds_without_dig() {
         let keys = derive_wallet_keys(ABANDON).unwrap();
         let mut mock = MockChain::default();
         let ph = keys.owner_puzzle_hash;
@@ -584,23 +570,14 @@ mod tests {
         let anchor = CoinsetAnchor::new(mock);
         // Scan to get a ScannedWallet, then call mint with it.
         let w = anchor.scan(ABANDON).await.unwrap();
-        let err = anchor
-            .mint_empty_store(&w, None, None, 0, crate::dig::INIT_DIG)
+        let out = anchor
+            .mint_empty_store(&w, None, None, 0)
             .await
-            .unwrap_err();
-        match err {
-            crate::error::ChainError::Chain(msg) => {
-                assert!(msg.contains("insufficient DIG"), "got: {msg}");
-            }
-            other => panic!("expected insufficient DIG, got {other:?}"),
-        }
-
-        // Nothing was pushed — the mint is atomic with its DIG payment.
+            .expect("mint must succeed without any DIG (minting is free of $DIG)");
+        assert_ne!(out.launcher_id, Bytes32::default());
+        // The mint was pushed (the mock push records it) — minting needs no DIG.
         let pushed_count = anchor.chain.pushed.lock().unwrap().len();
-        assert_eq!(
-            pushed_count, 0,
-            "expected no pushed bundle when DIG is short"
-        );
+        assert_eq!(pushed_count, 1, "the DIG-free mint is pushed");
     }
 
     // -----------------------------------------------------------------------
@@ -609,17 +586,15 @@ mod tests {
     //   - signing_keys() covers all kept addresses (multi-address signing),
     //   - coins_with_keys_from_wallet aggregates XCH coins across addresses,
     //   - the coin pool spans multiple distinct puzzle hashes,
-    //   - mint_empty_store fails with insufficient DIG (no DIG coins seeded),
-    //     confirming the full multi-address XCH + DIG path is invoked.
+    //   - mint_empty_store SUCCEEDS with no DIG seeded (#111: minting is free of
+    //     $DIG), confirming the full multi-address XCH mint path is invoked.
     //
     // Note: full bundle validity (CLVM execution, signature check) requires real
     // chain data and is verified live in Task 5.
     // -----------------------------------------------------------------------
     #[tokio::test]
     async fn mint_multi_address_signing_keys_cover_all_addresses() {
-        // Seed XCH at index 0 and index 2 — no DIG anywhere.
-        // (DIG coins in the mock would trigger dig_cats coin-record lookups that
-        // fail on a bare MockChain; we test DIG gathering structurally here.)
+        // Seed XCH at index 0 and index 2 — no DIG anywhere (minting needs none).
         let indexed = derive_indexed_keys(ABANDON, 0..3).unwrap();
         let ph0 = indexed[0].owner_puzzle_hash;
         let ph2 = indexed[2].owner_puzzle_hash;
@@ -662,18 +637,14 @@ mod tests {
             );
         }
 
-        // mint_empty_store: no DIG coins anywhere → dig_cats_multi returns empty
-        // → insufficient DIG. Proves the whole multi-address mint path is wired.
-        let err = anchor
-            .mint_empty_store(&w, None, None, 0, crate::dig::INIT_DIG)
+        // mint_empty_store: no DIG coins anywhere, yet the mint SUCCEEDS (#111 —
+        // minting is free of $DIG). Proves the whole multi-address XCH mint path is
+        // wired and never gathers/pays DIG on the mint.
+        let out = anchor
+            .mint_empty_store(&w, None, None, 0)
             .await
-            .unwrap_err();
-        match err {
-            crate::error::ChainError::Chain(msg) => {
-                assert!(msg.contains("insufficient DIG"), "got: {msg}");
-            }
-            other => panic!("expected insufficient DIG error, got {other:?}"),
-        }
+            .expect("multi-address mint must succeed without any DIG");
+        assert_ne!(out.launcher_id, Bytes32::default());
     }
 
     // -----------------------------------------------------------------------
@@ -717,4 +688,111 @@ mod tests {
     // update_root is NOT unit-tested here because it requires real singleton
     // lineage data for sync_datastore to walk. It is exercised by the live
     // integration test `build_update_live_no_broadcast` in singleton.rs.
+
+    // -----------------------------------------------------------------------
+    // #111: MINT is FREE of $DIG; only COMMIT (a capsule) pays.
+    //
+    // The digstore mirror of chip35's `mint_bundle_has_no_dig_payment_but_commit_does`
+    // (chip35 `core/tests/dig_capsule.rs`). The MINT bundle MUST NOT contain a DIG-CAT
+    // payment to the treasury (mint = launch the singleton + XCH fee only); a COMMIT's
+    // DIG payment MUST. We prove this by a keyless byte-signal: the DIG payment's CAT
+    // spend commits to the treasury INNER puzzle hash (it appears in the spend's
+    // serialized `puzzle_reveal || solution`), while mint/update singleton spends never
+    // reference the treasury. This needs no on-chain CLVM/lineage (matching chip35).
+    // -----------------------------------------------------------------------
+
+    /// True if `coin_spends` pays $DIG to the DIG treasury — i.e. some spend's
+    /// serialized puzzle/solution contains the treasury inner puzzle hash's 32 bytes
+    /// (the DIG payment's CREATE_COIN recipient). Byte-mirror of chip35's
+    /// `bundle_pays_dig_treasury`.
+    fn bundle_pays_dig_treasury(coin_spends: &[chia_protocol::CoinSpend]) -> bool {
+        let needle = crate::dig::treasury_inner_puzzle_hash().to_bytes();
+        coin_spends.iter().any(|cs| {
+            contains_subslice(cs.puzzle_reveal.as_ref(), &needle)
+                || contains_subslice(cs.solution.as_ref(), &needle)
+        })
+    }
+
+    /// True if `haystack` contains the contiguous bytes `needle`.
+    fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+        needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// MINT must NOT pay $DIG (minting a store is free of $DIG — only the XCH fee +
+    /// the 1-mojo singleton ride in the mint bundle), while a COMMIT's DIG payment
+    /// DOES pay the treasury. This is the digstore side of task #111, pinned at the
+    /// chain builder. The mint side uses a real built+signed bundle over a MockChain
+    /// with XCH but NO DIG (which now SUCCEEDS — mint no longer requires DIG); the
+    /// commit-payment side builds the canonical [`crate::cat::build_dig_store_payment`]
+    /// over a keyless synthetic DIG `Cat` (a full owner-signed commit bundle needs
+    /// real CLVM lineage, validated live).
+    #[tokio::test]
+    async fn mint_bundle_has_no_dig_payment_but_commit_does() {
+        use crate::cat::build_dig_store_payment;
+        use chia_wallet_sdk::driver::{Cat, CatInfo};
+
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let ph = keys.owner_puzzle_hash;
+
+        // --- MINT: XCH only, NO DIG anywhere. The mint must build + sign without a
+        //     DIG payment, and the resulting bundle must not pay the treasury. ---
+        let mut mock = MockChain::default();
+        mock.coins_by_ph
+            .insert(ph, vec![Coin::new(Bytes32::default(), ph, 1_000_000)]);
+        let anchor = CoinsetAnchor::new(mock);
+        let w = block_on_local(anchor.scan(ABANDON));
+        let w = w.unwrap();
+        let mint = block_on_local(build_mint_store_bundle(
+            &anchor.chain as &dyn ChainReads,
+            &w,
+            Some("My Store".into()),
+            None,
+            1_000,
+        ))
+        .expect("mint must succeed without any DIG (mint is free of $DIG)");
+        assert!(
+            !bundle_pays_dig_treasury(&mint.bundle.coin_spends),
+            "MINT must NOT pay $DIG to the treasury — minting a store is free of $DIG"
+        );
+
+        // --- COMMIT payment: the per-capsule DIG payment DOES pay the treasury. ---
+        // A keyless synthetic DIG Cat (asset_id == DIG_ASSET_ID); selection/condition
+        // construction does not need a lineage proof.
+        let dig = Cat::new(
+            Coin::new(
+                Bytes32::from([5u8; 32]),
+                Bytes32::from([6u8; 32]),
+                1_000_000,
+            ),
+            None,
+            CatInfo::new(crate::dig::DIG_ASSET_ID, None, ph),
+        );
+        let store_id = mint.launcher_id;
+        let pay = build_dig_store_payment(keys.synthetic_pk, vec![dig], store_id, 100_000)
+            .expect("build_dig_store_payment");
+        assert!(
+            bundle_pays_dig_treasury(&pay),
+            "COMMIT (capsule creation) MUST pay the per-capsule $DIG price to the treasury"
+        );
+    }
+
+    /// Block a future on a fresh current-thread runtime (these tests run under
+    /// `#[tokio::test]`; nesting a `block_on` inside would panic, so build a
+    /// dedicated runtime on a scoped thread for the inner async builder calls).
+    fn block_on_local<F: std::future::Future + Send>(fut: F) -> F::Output
+    where
+        F::Output: Send,
+    {
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("build runtime")
+                    .block_on(fut)
+            })
+            .join()
+            .expect("join")
+        })
+    }
 }

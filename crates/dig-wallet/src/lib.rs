@@ -1941,9 +1941,10 @@ async fn wc_dispatch(
         // without the hub's spend service. Every spend is BUILT via `digstore-chain`
         // (the byte-mirror of chip35 — never hand-rolled), signed with the wallet
         // seed, and broadcast-gated by `DIG_WALLET_ALLOW_BROADCAST` (dry-run
-        // otherwise). mint/advance carry the atomic DIG-CAT payment to the treasury
-        // (the DIG amount is an INPUT, consistent with the configurable dig.rs
-        // pricing — the wallet never fetches a live price).
+        // otherwise). Minting is FREE of $DIG (#111); only `chia_advanceStore` (a
+        // commit / capsule) carries the atomic DIG-CAT payment to the treasury (the
+        // DIG amount is an INPUT, consistent with the configurable dig.rs pricing —
+        // the wallet never fetches a live price).
         "chia_mintStore" => mint_store(&mnemonic, &params).await,
         "chia_advanceStore" => advance_store(&mnemonic, &params).await,
         "chia_meltStore" => melt_store(&mnemonic, &params).await,
@@ -2183,15 +2184,17 @@ async fn delegate_fulfill(st: &AppState, id: u64, result: Result<serde_json::Val
 // Every spend is BUILT via `digstore-chain` (the byte-mirror of chip35 — these
 // handlers NEVER hand-roll a spend bundle) and broadcast-gated by
 // `DIG_WALLET_ALLOW_BROADCAST` (dry-run / "signed" otherwise), exactly like the
-// other spend methods. mint/advance carry the atomic DIG-CAT payment; the DIG
-// amount is an INPUT param (the wallet never fetches a live price — it stays
-// deterministic, consistent with the configurable `dig.rs` pricing).
+// other spend methods. Minting is FREE of $DIG (#111); only `advance` (a commit /
+// capsule) carries the atomic DIG-CAT payment; its DIG amount is an INPUT param (the
+// wallet never fetches a live price — it stays deterministic, consistent with the
+// configurable `dig.rs` pricing).
 
-/// The DIG amount (base units) for a mint/advance, from `digAmount` (number or decimal
-/// string), defaulting to `default_units` ([`INIT_DIG`]/[`COMMIT_DIG`]) when omitted —
-/// mirroring the CLI's deterministic [`resolve_dig_amount`]. The hub's dynamic,
+/// The DIG amount (base units) for a COMMIT / root-advance (a capsule), from `digAmount`
+/// (number or decimal string), defaulting to `default_units` ([`COMMIT_DIG`]) when omitted
+/// — mirroring the CLI's deterministic [`resolve_dig_amount`]. The hub's dynamic,
 /// USD-pegged amount is passed in here as an explicit input; the wallet never fetches a
-/// live price. An explicit `0` is rejected (a capsule must pay the protocol fee).
+/// live price. An explicit `0` is rejected (a capsule must pay the protocol fee). Only the
+/// commit path uses this — minting a store is free of $DIG (#111).
 fn store_dig_amount(
     params: &serde_json::Value,
     default_units: u64,
@@ -2272,12 +2275,15 @@ fn store_spend_json(status: &str, bundle: &chia_protocol::SpendBundle) -> serde_
     singleton_spend_json(status, bundle.coin_spends.len(), bundle)
 }
 
-/// `chia_mintStore` — mint a NEW empty (root = 0) CHIP-0035 store with the atomic DIG-CAT
-/// payment, all in one co-signed bundle. Params: `label?`, `description?`, `digAmount?`
-/// (base units; default [`INIT_DIG`]), `fee?` (mojos; 0 → auto-estimate). Returns the new
-/// `storeId`/`launcherId`, the broadcast status, and the DIG paid. The DIG amount is an
-/// input (no live-price fetch). Built via `digstore_chain::anchor::build_mint_store_bundle`
-/// (byte-exact CHIP-0035 mint + DIG payment) — never hand-rolled.
+/// `chia_mintStore` — mint a NEW empty (root = 0) CHIP-0035 store. Params: `label?`,
+/// `description?`, `fee?` (mojos; 0 → auto-estimate). Returns the new
+/// `storeId`/`launcherId`, the broadcast status, and `digPaid: "0"`.
+///
+/// **Minting is FREE of $DIG (#111):** the mint launches the singleton + the XCH
+/// network fee ONLY — no DIG-CAT payment is attached. The per-capsule $DIG price is
+/// paid on [`advance_store`] (`chia_advanceStore`), a capsule. Built via
+/// `digstore_chain::anchor::build_mint_store_bundle` (byte-exact CHIP-0035 mint, no
+/// DIG) — never hand-rolled.
 async fn mint_store(
     mnemonic: &str,
     params: &serde_json::Value,
@@ -2291,7 +2297,6 @@ async fn mint_store(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let fee = json_u64(params, "fee").unwrap_or(0);
-    let dig_amount = store_dig_amount(params, digstore_chain::dig::INIT_DIG)?;
 
     let chain = Coinset::mainnet();
     let scanned = scan_wallet(&chain, mnemonic)
@@ -2303,7 +2308,6 @@ async fn mint_store(
         label,
         description,
         fee,
-        dig_amount,
     )
     .await
     .map_err(|e| wc_err(StatusCode::BAD_REQUEST, e.to_string()))?;
@@ -2313,7 +2317,8 @@ async fn mint_store(
     out["storeId"] = serde_json::json!(format!("0x{}", hex::encode(built.launcher_id)));
     out["launcherId"] = serde_json::json!(format!("0x{}", hex::encode(built.launcher_id)));
     out["coinId"] = serde_json::json!(format!("0x{}", hex::encode(built.coin_id)));
-    out["digPaid"] = serde_json::json!(dig_amount.to_string());
+    // Minting is free of $DIG — report 0 paid so callers/UX show the mint cost as no DIG.
+    out["digPaid"] = serde_json::json!("0");
     Ok(out)
 }
 
@@ -5226,19 +5231,19 @@ mod tests {
 
     #[test]
     fn store_dig_amount_defaults_and_rejects_zero() {
-        use digstore_chain::dig::{COMMIT_DIG, INIT_DIG};
-        // Omitted → the protocol default (deterministic; no live-price fetch).
+        use digstore_chain::dig::COMMIT_DIG;
+        // Omitted → the protocol default (deterministic; no live-price fetch). Only the
+        // COMMIT path resolves a DIG amount — minting is free of $DIG (#111).
         let none = serde_json::json!({});
-        assert_eq!(store_dig_amount(&none, INIT_DIG).unwrap(), INIT_DIG);
         assert_eq!(store_dig_amount(&none, COMMIT_DIG).unwrap(), COMMIT_DIG);
         // Explicit amount (number or decimal string) wins — the hub's USD-pegged value.
         let n = serde_json::json!({ "digAmount": 42_000 });
-        assert_eq!(store_dig_amount(&n, INIT_DIG).unwrap(), 42_000);
+        assert_eq!(store_dig_amount(&n, COMMIT_DIG).unwrap(), 42_000);
         let s = serde_json::json!({ "digAmount": "37500" });
-        assert_eq!(store_dig_amount(&s, INIT_DIG).unwrap(), 37_500);
+        assert_eq!(store_dig_amount(&s, COMMIT_DIG).unwrap(), 37_500);
         // Explicit 0 is rejected (a capsule must pay the protocol DIG fee).
         let z = serde_json::json!({ "digAmount": 0 });
-        assert!(store_dig_amount(&z, INIT_DIG).is_err());
+        assert!(store_dig_amount(&z, COMMIT_DIG).is_err());
     }
 
     #[test]

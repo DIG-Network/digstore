@@ -1,48 +1,48 @@
 //! DIG-cost preflight + up-front cost disclosure for `init` and `commit`.
 //!
-//! The per-capsule DIG amount is dynamic + USD-pegged (the hub computes it; the
-//! CLI accepts it via `--dig-amount`/`DIGSTORE_DIG_AMOUNT`/dig.toml `dig-amount`)
-//! with a 100 DIG protocol default. These tests prove the CLI (a) BLOCKS before any
-//! spend when the wallet is short on DIG (exit 12, leaving nothing on disk / no new
-//! generation), (b) discloses the DIG cost UP FRONT in human output, and (c) honors
-//! the configurable amount (flag/env). The mock anchor honors `DIGSTORE_ANCHOR_MOCK_DIG`
-//! for the short-DIG cases.
+//! Per #111, **minting a store (`init`) is FREE of $DIG** — it pays only the XCH
+//! network fee; the per-capsule $DIG price is charged on `commit` (a capsule). The
+//! per-capsule DIG amount is dynamic + USD-pegged (the hub computes it; the CLI accepts
+//! it via `--dig-amount`/`DIGSTORE_DIG_AMOUNT`/dig.toml `dig-amount`) with a 100 DIG
+//! protocol default. These tests prove (a) `init` does NOT charge $DIG (succeeds with
+//! zero DIG and discloses it is free of $DIG), (b) `commit` BLOCKS before any spend when
+//! short on DIG (exit 12, staging intact), (c) `commit` discloses the DIG cost UP FRONT,
+//! and (d) `commit` honors the configurable amount (flag/env). The mock anchor honors
+//! `DIGSTORE_ANCHOR_MOCK_DIG` for the short-DIG cases.
 
 mod common;
 use common::{dig, tmp_dig};
 use predicates::prelude::*;
 
-// --- init -----------------------------------------------------------------
+// --- init (minting is FREE of $DIG, #111) ---------------------------------
 
-/// init with zero DIG → exit 12, stderr mentions DIG, and NO store dir is
-/// created (the DIG preflight runs BEFORE any mint/scaffold, like the XCH one).
+/// init with ZERO DIG SUCCEEDS — minting a store is free of $DIG (#111). The mint
+/// charges only the XCH fee, so an empty DIG balance never blocks `init`.
 #[test]
-fn init_insufficient_dig_exits_12_and_creates_no_store() {
+fn init_with_zero_dig_succeeds_minting_is_free() {
     let dir = tmp_dig();
     dig(&dir)
         .env("DIGSTORE_ANCHOR_MOCK_DIG", "0")
         .arg("init")
         .assert()
-        .failure()
-        .code(12)
-        .stderr(predicate::str::contains("DIG"));
-    // Hard gate: nothing on disk before the (would-be) mint.
+        .success();
+    // The store WAS created — minting needed no DIG.
     assert!(
-        !common::store_dir(&dir).exists(),
-        "no store dir on insufficient DIG"
+        common::store_dir(&dir).exists(),
+        "store dir created on a DIG-free mint"
     );
 }
 
-/// init with default (seeded) mock DIG → succeeds AND the human cost line is
-/// shown up front: "100" + "DIG".
+/// init discloses up front that minting is FREE of $DIG (no "DIG" cost figure on
+/// the mint), pointing the $DIG charge at publish/commit instead.
 #[test]
-fn init_human_discloses_dig_cost() {
+fn init_human_discloses_mint_is_free_of_dig() {
     let dir = tmp_dig();
     dig(&dir)
         .arg("init")
         .assert()
         .success()
-        .stdout(predicate::str::contains("100").and(predicate::str::contains("DIG")));
+        .stdout(predicate::str::contains("free of $DIG"));
 }
 
 // --- commit ---------------------------------------------------------------

@@ -5,7 +5,7 @@ use crate::ops::anchor_state::{AnchorState, AnchorStatus};
 use crate::ops::{anchor_backend, anchor_ux, store_ops};
 use crate::runtime::block_on;
 use digstore_chain::anchor::ConfirmState;
-use digstore_chain::dig::{self, format_dig, format_xch};
+use digstore_chain::dig::format_xch;
 
 /// `digstore init` MINTS an empty store singleton on Chia mainnet; the on-chain
 /// launcher id becomes the store_id. This is a HARD GATE: no seed, no funds, or
@@ -70,11 +70,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     }
     let description = args.description.clone().filter(|s| !s.trim().is_empty());
 
-    // Resolve the per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml
-    // `dig-amount` > the INIT_DIG protocol default. Deterministic — no live price fetch
-    // (the hub computes the dynamic, USD-pegged amount and passes it in via the flag/env).
-    let dig_amount = crate::dig_toml::DigToml::read_with_env(&ctx.op_dir)?
-        .resolve_dig_amount(args.dig_amount, dig::INIT_DIG)?;
+    // Minting a store is FREE of $DIG (#111): the mint only launches the on-chain
+    // singleton + the XCH network fee. The per-capsule $DIG payment is charged on
+    // `commit`/`deploy` (a capsule), not here. So `init` resolves no DIG amount.
 
     // --- HARD GATE: seed → balance → mint, all BEFORE any local files. ---
 
@@ -82,28 +80,22 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     //      (env-gated mock or real coinset mainnet), warning loudly if mocked.
     let (keys, mnemonic, anchor, mocked, fee) = anchor_backend::prepare_anchor(ui)?;
 
-    // 3. Preflight balance for BOTH assets, with up-front cost disclosure. A
-    //    mint pays the resolved per-capsule DIG amount (the INIT_DIG protocol
-    //    default unless overridden) embedded in the on-chain bundle PLUS the
-    //    singleton amount (1 mojo) + the XCH fee. Block before any spend if the
-    //    wallet is short on EITHER asset; no files exist yet, so nothing rolls back.
+    // 3. Preflight XCH balance, with up-front cost disclosure. Minting is FREE of
+    //    $DIG (#111): a mint costs only the singleton amount (1 mojo) + the XCH fee —
+    //    no DIG is spent. Block before any spend if the wallet is short on XCH; no
+    //    files exist yet, so nothing rolls back.
     let sp = ui.spinner("Scanning your wallet…");
     let w = block_on(anchor.scan(&mnemonic))??;
     let have_xch = block_on(anchor.balance(&w))??;
-    let have_dig = block_on(anchor.dig_balance(&w))??;
     sp.finish();
 
     if !ui.json() {
         ui.line(format!(
-            "⛓  Minting a store on Chia mainnet costs {} DIG + up to {} XCH (fee).",
-            format_dig(dig_amount),
+            "⛓  Minting a store on Chia mainnet is free of $DIG — it costs only up to {} XCH (fee).",
             format_xch(fee)
         ));
-        ui.line(format!(
-            "   you have {} DIG and {} XCH.",
-            format_dig(have_dig),
-            format_xch(have_xch)
-        ));
+        ui.line(format!("   you have {} XCH.", format_xch(have_xch)));
+        ui.line("   the per-capsule $DIG price is paid when you publish (commit), not at mint.");
     }
 
     let need_xch = fee + 1;
@@ -115,21 +107,12 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
             asset: "XCH".into(),
         });
     }
-    if have_dig < dig_amount {
-        return Err(CliError::InsufficientFunds {
-            need: dig_amount,
-            have: have_dig,
-            address: digstore_chain::keys::owner_address(&keys),
-            asset: "DIG".into(),
-        });
-    }
 
-    // 4. Mint the empty store singleton. The launcher id becomes the store_id.
-    //    Pass the full scanned wallet so the mint gathers XCH + DIG from all addresses.
+    // 4. Mint the empty store singleton (free of $DIG). The launcher id becomes the
+    //    store_id. Pass the full scanned wallet so the mint gathers XCH from all addresses.
     let sp = ui.spinner("Building & signing the mint…");
-    let mint =
-        block_on(anchor.mint_empty_store(&w, label.clone(), description.clone(), fee, dig_amount))
-            .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
+    let mint = block_on(anchor.mint_empty_store(&w, label.clone(), description.clone(), fee))
+        .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
     sp.finish();
     let store_id = {
         let mut a = [0u8; 32];

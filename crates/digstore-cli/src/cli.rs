@@ -459,7 +459,7 @@ pub struct DoctorArgs {}
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Costs a uniform per-capsule price (paid in $DIG at the live rate) + an XCH fee, paid on-chain at mint.\n\nEXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
+    after_help = "Minting a store is free of $DIG — it costs only an XCH network fee, paid on-chain at mint. The per-capsule $DIG price is paid when you publish (commit), not at mint.\n\nEXAMPLES:\n  digstore init\n  digstore init site --dir dist\n  digstore init --private"
 )]
 pub struct InitArgs {
     /// Store name (default: "default").
@@ -476,13 +476,6 @@ pub struct InitArgs {
     /// Content root (the build-output directory this store captures).
     #[arg(long)]
     pub dir: Option<String>,
-    /// $DIG to pay for this mint, as a DIG amount (e.g. `100` or `87.5`; max 3 dp).
-    /// Pricing is dynamic + USD-pegged — the hub computes the live amount and you
-    /// pass it here; the CLI is deterministic and never fetches a price. Falls back
-    /// to a protocol default if unset. Precedence: this flag > `DIGSTORE_DIG_AMOUNT`
-    /// > dig.toml `dig-amount`.
-    #[arg(long = "dig-amount", value_name = "DIG", value_parser = parse_dig_amount)]
-    pub dig_amount: Option<u64>,
     /// Seconds to wait for on-chain confirmation (default 300; 0 = a single
     /// check, do not block). On a timeout the store is kept resumable; run
     /// `digstore anchor` to resume.
