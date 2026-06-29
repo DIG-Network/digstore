@@ -105,6 +105,22 @@ mod tests {
         let ph = treasury_inner_puzzle_hash();
         assert_eq!(ph.to_bytes().len(), 32);
     }
+
+    /// The DIG asset id + treasury inner puzzle hash are a cross-system shared contract
+    /// and MUST be byte-identical to chip35's `DIG_ASSET_ID` /
+    /// `DIG_TREASURY_INNER_PUZZLE_HASH` (the canonical spend builder, #111). A drift here
+    /// breaks payment atomicity / anchor-watcher gating, so pin the exact bytes.
+    #[test]
+    fn dig_constants_match_chip35_cross_system_contract() {
+        assert_eq!(
+            hex::encode(DIG_ASSET_ID),
+            "a406d3a9de984d03c9591c10d917593b434d5263cabe2b42f6b367df16832f81"
+        );
+        assert_eq!(
+            hex::encode(treasury_inner_puzzle_hash()),
+            "ec7c304708c7d59c078d5ae098d0dea004decf47fa1cafebb266c10ad6466ce8"
+        );
+    }
     #[test]
     fn format_dig_renders_three_decimals() {
         assert_eq!(format_dig(100_000), "100.000");
