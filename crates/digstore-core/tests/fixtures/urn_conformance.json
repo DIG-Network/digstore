@@ -1,0 +1,134 @@
+{
+  "_comment": "FROZEN normative URN conformance vectors (gap #128). Grammar: digstore_core::urn_grammar (URN_ABNF). Regenerate via `cargo test -p digstore-core --test urn_conformance -- --ignored regenerate`. retrieval_key_hex = SHA-256(canonical) lowercase hex.",
+  "canonical_chain": "chia",
+  "invalid": [
+    {
+      "input": "urn:other:chia:00",
+      "name": "wrong_scheme_other"
+    },
+    {
+      "input": "not-a-urn",
+      "name": "not_a_urn"
+    },
+    {
+      "input": "urn:dig:chia",
+      "name": "missing_store_id"
+    },
+    {
+      "input": "urn:dig::1111111111111111111111111111111111111111111111111111111111111111",
+      "name": "empty_chain"
+    },
+    {
+      "input": "urn:dig:chia:zzzz",
+      "name": "store_id_not_hex"
+    },
+    {
+      "input": "urn:dig:chia:1111",
+      "name": "store_id_too_short"
+    },
+    {
+      "input": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111:zz",
+      "name": "root_hash_not_hex"
+    },
+    {
+      "input": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111:2222222222222222222222222222222222222222222222222222222222222222:3333333333333333333333333333333333333333333333333333333333333333",
+      "name": "too_many_colon_segments"
+    },
+    {
+      "input": "dig:chia:1111111111111111111111111111111111111111111111111111111111111111",
+      "name": "missing_prefix_dig"
+    }
+  ],
+  "valid": [
+    {
+      "canonical": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111:2222222222222222222222222222222222222222222222222222222222222222/index.html",
+      "chain": "chia",
+      "input": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111:2222222222222222222222222222222222222222222222222222222222222222/index.html",
+      "name": "chia_full_root_and_resource",
+      "resource_key": "index.html",
+      "retrieval_key_hex": "a88a198620bd31bc68371024a945d86e7a1301bce1c13da4461929009ac84509",
+      "root_hash_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+      "store_id_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "canonical": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111",
+      "chain": "chia",
+      "input": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111",
+      "name": "chia_store_only_bare",
+      "resource_key": null,
+      "retrieval_key_hex": "d1c35e6b574b8ae71e8e3e1bb85f5af665bc682f359ea68c016f12841b1f8ebc",
+      "root_hash_hex": null,
+      "store_id_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "canonical": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111/path/to/file.txt",
+      "chain": "chia",
+      "input": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111/path/to/file.txt",
+      "name": "chia_store_and_resource_no_root",
+      "resource_key": "path/to/file.txt",
+      "retrieval_key_hex": "c9a8a1c64d15abf5941f2686096ac01aff236885257721753615a6e45794c1c2",
+      "root_hash_hex": null,
+      "store_id_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "canonical": "urn:dig:chia:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "chain": "chia",
+      "input": "urn:dig:chia:aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "name": "chia_root_no_resource",
+      "resource_key": null,
+      "retrieval_key_hex": "66c0a836947b882ef884303869475de3880304f41b7ed8d53e804329de27aaff",
+      "root_hash_hex": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "store_id_hex": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+    },
+    {
+      "canonical": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111/",
+      "chain": "chia",
+      "input": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111/",
+      "name": "chia_trailing_slash_empty_resource",
+      "resource_key": "",
+      "retrieval_key_hex": "c823ef34b49b832ccb9480bfdb372b79e4db30b393652c80159c01c8a80378c6",
+      "root_hash_hex": null,
+      "store_id_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "canonical": "urn:dig:chia:0000000000000000000000000000000000000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000/a/b/c.json",
+      "chain": "chia",
+      "input": "urn:dig:chia:0000000000000000000000000000000000000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000/a/b/c.json",
+      "name": "chia_nested_resource_path",
+      "resource_key": "a/b/c.json",
+      "retrieval_key_hex": "f45b84e9f6565619fe26a79dab5c07e7bafd05bf42e091b8a0ae598a6f92018c",
+      "root_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "store_id_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "canonical": "urn:dig:mainnet:1111111111111111111111111111111111111111111111111111111111111111/a",
+      "chain": "mainnet",
+      "input": "urn:dig:mainnet:1111111111111111111111111111111111111111111111111111111111111111/a",
+      "name": "mainnet_label_accepted",
+      "resource_key": "a",
+      "retrieval_key_hex": "f6f722f205556a18074303ca06412e009ef2d9560bc627a7cc4d9738b30f265e",
+      "root_hash_hex": null,
+      "store_id_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "canonical": "urn:dig:testnet:1111111111111111111111111111111111111111111111111111111111111111",
+      "chain": "testnet",
+      "input": "urn:dig:testnet:1111111111111111111111111111111111111111111111111111111111111111",
+      "name": "testnet_label_bare_store",
+      "resource_key": null,
+      "retrieval_key_hex": "b93e988ac08eae8196ff1bff0c1b50e54770e96c0207b8451d096ff3cb7d1287",
+      "root_hash_hex": null,
+      "store_id_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "canonical": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111/index.html?salt=deadbeef",
+      "chain": "chia",
+      "input": "urn:dig:chia:1111111111111111111111111111111111111111111111111111111111111111/index.html?salt=deadbeef",
+      "name": "query_suffix_is_part_of_resource_not_salt",
+      "resource_key": "index.html?salt=deadbeef",
+      "retrieval_key_hex": "719c09f09c793650fd225ca545670f4329b28b8038d527d0c61f001badcd4fa6",
+      "root_hash_hex": null,
+      "store_id_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ]
+}

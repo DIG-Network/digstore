@@ -16,6 +16,7 @@ pub mod manifest;
 pub mod merkle;
 pub mod tombstone;
 pub mod urn;
+pub mod urn_grammar;
 pub mod wire;
 
 pub use abi::{is_error, pack_ptr_len, unpack_ptr_len};

@@ -25,3 +25,10 @@ serde = { version = "1", default-features = false, features = ["derive", "alloc"
 # RNG) — keeping the crate wasm-clean for `dig-client-wasm`.
 aes-gcm-siv = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
 hkdf = { version = "0.12", default-features = false }
+
+# Test-only: load + (re)generate the frozen URN conformance vectors
+# (tests/fixtures/urn_conformance.json, gap #128). std-enabled so the vector loader
+# uses real std I/O + serde derive; not pulled into the wasm-clean library build.
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
