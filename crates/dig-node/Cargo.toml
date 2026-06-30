@@ -25,6 +25,10 @@ digstore-stage = { path = "../digstore-stage" }
 digstore-crypto = { path = "../digstore-crypto" }
 chia-protocol = "0.26"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+# Object-safe async trait for the injectable anchored-root resolver (the
+# mandatory read-path chain pin, #127): production walks coinset, tests inject a
+# deterministic resolver.
+async-trait = "0.1"
 axum = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
