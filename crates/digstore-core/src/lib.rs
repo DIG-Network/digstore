@@ -23,7 +23,7 @@ pub use abi::{is_error, pack_ptr_len, unpack_ptr_len};
 pub use bytes::{Bytes32, Bytes48, Bytes96};
 pub use capsule::Capsule;
 pub use codec::{Decode, DecodeError, Decoder, Encode, Encoder};
-pub use crypto::{decrypt_chunk, derive_decryption_key, encrypt_chunk};
+pub use crypto::{decrypt_chunk, derive_decryption_key, encrypt_chunk, CHIA_BLS_SCHEME};
 pub use error::{CoreError, ErrorCode};
 pub use hash::sha256;
 

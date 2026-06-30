@@ -20,6 +20,15 @@ use alloc::vec::Vec;
 use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
 
+/// The Chia BLS AugScheme ciphersuite tag — the SINGLE SOURCE OF TRUTH for the
+/// scheme string shared across every BLS layer (CONVENTIONS C8): `digstore-crypto`
+/// (native BLS sign/verify) and `digstore-guest` (the wasm verifier) re-export /
+/// compare against THIS constant so the ciphersuite can never skew between layers.
+/// (#131: previously `digstore-crypto` defined it locally with a NOTE that core
+/// should own it; core now exports it and crypto re-exports, closing the
+/// one-source-of-truth gap.)
+pub const CHIA_BLS_SCHEME: &str = "chia-aug-scheme-bls12381-g2-xmd-sha256-sswu-ro";
+
 /// Fixed HKDF salt domain string for stores (paper §11.1, §11.4).
 const HKDF_SALT_DOMAIN: &[u8] = b"digstore-hkdf-salt-v1";
 /// Fixed HKDF `info` context for the AES-256-GCM content key (paper §11.1).

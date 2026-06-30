@@ -69,11 +69,8 @@ pub fn decrypt_and_unwrap(
 pub const CRYPTO_VERSION: u32 = 1;
 
 /// Chia AugScheme tag shared with `digstore-guest` for cross-impl BLS parity
-/// (CONVENTIONS C8). Canonical value per the conventions / plan Task 0.
-///
-/// NOTE (deviation): the conventions name `digstore_core::CHIA_BLS_SCHEME` as the
-/// single source of truth, but `digstore-core` does not currently export that
-/// constant and this crate must not modify other crates. The constant is defined
-/// here with the canonical value; `digstore-guest` compares its fixtures against
-/// this same literal.
-pub const CHIA_BLS_SCHEME: &str = "chia-aug-scheme-bls12381-g2-xmd-sha256-sswu-ro";
+/// (CONVENTIONS C8). RE-EXPORTED from the single source of truth
+/// `digstore_core::CHIA_BLS_SCHEME` (#131) — the literal is no longer duplicated
+/// here, so the ciphersuite string can never skew between core, this crate, and
+/// the guest (they all reference the one core constant).
+pub use digstore_core::CHIA_BLS_SCHEME;
