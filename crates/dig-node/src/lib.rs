@@ -3253,4 +3253,88 @@ mod tests {
         assert_eq!(pinned["params"]["store_id"], json!("aa"));
         assert_eq!(pinned["params"]["retrieval_key"], json!("rk"));
     }
+
+    // -- #126 honest read-path: real inclusion proof + chain root, NO mock proof --
+    //
+    // The dig-node read path must never present a forgeable/mock proof AS verified.
+    // On `dig.getContent` the trust-bearing fields are REAL — the guest-computed
+    // merkle inclusion proof + the chain-anchored root (#127) — and there is no
+    // execution attestation on the wire to fake: `ContentResponse`/`build_result`
+    // carry no execution-proof field, and the node does not implement
+    // `dig.getProof` (it returns -32601 rather than a fabricated mock receipt). A
+    // real, verified execution attestation is gated on the RISC0 toolchain
+    // (SECURITY.md residual #3) and is honestly absent here, never faked.
+
+    #[test]
+    fn get_content_result_carries_real_inclusion_proof_and_no_execution_proof() {
+        use digstore_core::wire::ContentResponse;
+        // A minimal real ContentResponse: a single-leaf merkle proof rooted at a
+        // concrete root (the shape the guest serves). build_result renders it.
+        let root = Bytes32([0x42; 32]);
+        let resp = ContentResponse {
+            ciphertext: vec![1, 2, 3, 4],
+            merkle_proof: digstore_core::merkle::MerkleProof {
+                leaf: root,
+                path: Vec::new(),
+                root,
+            },
+            roothash: root,
+            chunk_lens: vec![4],
+        };
+        let result = build_result(&resp, 0);
+
+        // The REAL inclusion proof + chain-verifiable root are present.
+        assert!(
+            result.get("inclusion_proof").is_some(),
+            "real merkle inclusion proof is on the wire: {result}"
+        );
+        assert_eq!(
+            result["root"].as_str(),
+            Some(root.to_hex().as_str()),
+            "the served root is reported (chain-pinned by #127): {result}"
+        );
+        // NO execution-attestation field is fabricated — the node never reports a
+        // mock/absent execution proof AS a verified attestation (#126/#134).
+        for forbidden in [
+            "execution_proof",
+            "execution_proof_status",
+            "attestation",
+            "proof_status",
+            "receipt",
+            "trusted",
+        ] {
+            assert!(
+                result.get(forbidden).is_none(),
+                "dig.getContent must not carry a (mock) `{forbidden}` field: {result}"
+            );
+        }
+    }
+
+    #[test]
+    fn get_proof_is_not_served_as_a_verified_proof_by_the_node() {
+        // dig-node does not implement dig.getProof — it returns the catalogued
+        // -32601 (method not found) rather than fabricating a mock execution
+        // proof. (The standalone node has no upstream here, so the dispatch's own
+        // method-not-found is observed directly.)
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        let rt = pin_test_rt();
+        let (node, _td) = test_node(None);
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":9,"method":"dig.getProof","params":{
+                "store_id": Bytes32([1u8; 32]).to_hex(),
+                "retrieval_key": any_rk_hex(),
+            }}),
+        ));
+        assert_eq!(
+            resp["error"]["code"],
+            json!(-32601),
+            "dig.getProof must be method-not-found on the node, never a fabricated proof: {resp}"
+        );
+        assert!(
+            resp.get("result").is_none(),
+            "no proof result is fabricated: {resp}"
+        );
+    }
 }

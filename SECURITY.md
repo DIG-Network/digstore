@@ -164,6 +164,29 @@ not mistaken for closed.
    toolchain, and supply `CoinsetChainSource` + `SystemClock` + `Risc0Prover`**
    to `serve_blind_with` to produce real execution proofs. Until then the default
    serve path's proofs remain forgeable (mock backend).
+
+   **The dig-node read path reports no mock as verified (#126/#134).** On the
+   `dig-node` `dig.getContent` live read path the trust-bearing fields are REAL,
+   and there is NO execution attestation to fake:
+   - **inclusion proof** — REAL: the guest computes the merkle proof from the
+     module's own `MerkleNodes` (`build_real_proof`), independent of the prover
+     backend (the `MockProver` does NOT touch it);
+   - **chain-anchored root** — REAL: the node resolves the CHIP-0035 singleton's
+     current on-chain root and serves the matching generation or fails closed
+     (`ROOT_NOT_ANCHORED`/-32005, #127), so the root is chain-verified, not mocked;
+   - **clock / freshness** — INERT on this path: `dig.getContent` sends
+     `window: None` and serves with `require_attestation = false`, so the guest's
+     temporal gate (`within_window`) and the host-attestation gate never run — the
+     default `FixedClock` therefore cannot affect what is served;
+   - **execution proof** — ABSENT: `ContentResponse` carries no execution-proof
+     field, and `dig-node` does NOT implement `dig.getProof` (it returns the
+     catalogued `-32601` method-not-found rather than fabricating a mock receipt).
+   So the dig-node read path never presents a forgeable proof AS verified. A
+   verified execution attestation on a live read path remains gated solely on the
+   RISC0-toolchain boundary above; the hub/browser shields render that
+   mock/absent state honestly (#134). A regression test in `dig-node`
+   (`get_content_*` / `get_proof_is_not_served_as_a_verified_proof`) pins this
+   honest contract.
 4. **JWT signature verification — implemented (closes the former residual #4).**
    The guest JWT gate (`digstore-guest/src/content.rs`) now verifies the token's
    cryptographic signature, not just its claims. RS256 (`rsa` PKCS#1 v1.5 over
