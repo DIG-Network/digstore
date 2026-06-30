@@ -12,7 +12,27 @@ pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// to the same module size, revealing nothing about content size. 128 MiB —
 /// covers a max-cap store (`digstore_core::MAX_STORE_BYTES` = 128 MB = 122.07
 /// MiB) ciphertext + key table + merkle + header with ~6 MiB headroom.
+///
+/// CANONICAL capsule-size relationship (#130): `digstore_core::MAX_STORE_BYTES`
+/// is THE single canonical capsule-size number (the plaintext content cap, 128
+/// MB decimal); this uniform-blob budget is derived from it and MUST stay ≥ the
+/// worst-case blob a max-cap store produces. The invariant `FIXED_BLOB_LEN ≥
+/// MAX_STORE_BYTES` is pinned by the compile-time assertion below so the budget
+/// can never silently drift under the cap (which would hard-fail compilation of
+/// a legitimately-sized store).
 pub const FIXED_BLOB_LEN: usize = 128 * 1024 * 1024;
+
+/// Compile-time guard for the canonical capsule-size relationship (#130): the
+/// uniform-blob budget must cover a max-cap store, or a legitimately-sized store
+/// would exceed the budget and fail compilation (`pipeline.rs` rejects a blob
+/// over budget rather than truncating). If either constant is ever changed in a
+/// way that violates `FIXED_BLOB_LEN ≥ MAX_STORE_BYTES`, the crate fails to
+/// build — the drift is caught at compile time, not at a user's `commit`.
+const _: () = assert!(
+    FIXED_BLOB_LEN as u64 >= digstore_core::MAX_STORE_BYTES,
+    "FIXED_BLOB_LEN must be >= digstore_core::MAX_STORE_BYTES (the canonical \
+     capsule-size cap) so the uniform-blob budget always covers a max-cap store"
+);
 
 /// Environment variable that overrides [`FIXED_BLOB_LEN`] for the
 /// [`CompilerConfig::default`] uniform-blob budget. Production leaves it unset
@@ -62,6 +82,31 @@ impl Default for CompilerConfig {
             template_override: None,
             uniform_blob_len: default_uniform_blob_len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The canonical capsule-size relationship (#130): `MAX_STORE_BYTES` is THE
+    /// canonical number (the plaintext cap); the production uniform-blob budget
+    /// `FIXED_BLOB_LEN` is derived from it and must stay ≥ it so a max-cap store
+    /// always fits. This mirrors the compile-time `const _` assertion at runtime
+    /// (and pins the exact values) so the relationship is an executable, visible
+    /// fact, not just a comment.
+    #[test]
+    fn uniform_blob_budget_covers_the_canonical_capsule_size_cap() {
+        assert_eq!(
+            digstore_core::MAX_STORE_BYTES,
+            128_000_000,
+            "MAX_STORE_BYTES is the canonical capsule-size cap (128 MB decimal)"
+        );
+        assert_eq!(FIXED_BLOB_LEN, 128 * 1024 * 1024, "128 MiB padded budget");
+        assert!(
+            FIXED_BLOB_LEN as u64 >= digstore_core::MAX_STORE_BYTES,
+            "the uniform-blob budget must cover a max-cap store"
+        );
     }
 }
 

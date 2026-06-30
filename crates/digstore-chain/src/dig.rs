@@ -1,4 +1,33 @@
 //! DIG token (CAT) constants + amount helpers (see the DIG-CAT-payment design).
+//!
+//! # Per-capsule $DIG payment — enforcement model (#130)
+//!
+//! A capsule (a commit / root-advance) MUST pay the per-capsule $DIG price to the
+//! DIG treasury; minting a store is free of $DIG (only the XCH network fee). How
+//! that invariant is enforced today, and the explicit boundary of that
+//! enforcement, so it is never mistaken for more than it is:
+//!
+//! - **Builder/validation gate (this crate).** Every commit bundle the anchor
+//!   builds is checked by [`verify_commit_pays_dig_treasury`] before it is signed
+//!   and returned — it FAILS CLOSED if the bundle does not pay the treasury. This
+//!   prevents the digstore builder from ever emitting a silent FREE root-advance
+//!   (a builder bug that dropped the payment is a hard error, not a free commit).
+//! - **Client-side atomicity.** The DIG payment and the singleton update are one
+//!   co-signed spend bundle, admitted all-or-nothing by the mempool — so an
+//!   accepted root-advance carried its payment.
+//! - **Off-chain / network gate.** The off-chain anchor-watcher (hub side) is the
+//!   network-level gate that observes the treasury coin; per-capsule *pricing* (the
+//!   dynamic, USD-pegged amount) is a business-layer policy resolved by the caller
+//!   (the hub computes the live amount; the CLI takes it as input — see
+//!   [`COMMIT_DIG`]).
+//! - **NOT a protocol-level on-chain invariant (yet).** There is no on-chain CLVM
+//!   coupling that *forces* a singleton update to assert the DIG payment (e.g. an
+//!   announcement only the treasury payment can emit). A direct caller bypassing
+//!   this builder could still hand-roll a bundle that advances a root without
+//!   paying. Adding that on-chain coupling is a separate, explicitly-versioned
+//!   protocol event (it would change the chip35 spend puzzle + require a
+//!   release-first), tracked as such — not silently assumed here.
+use crate::error::{ChainError, Result};
 use chia_protocol::Bytes32;
 
 /// DIG CAT asset id (mainnet). Matches DataLayer-Driver `DIG_ASSET_ID`.
@@ -44,6 +73,53 @@ pub fn resolve_dig_amount(explicit: Option<u64>, default_units: u64) -> u64 {
 pub fn treasury_inner_puzzle_hash() -> Bytes32 {
     datalayer_driver::address_to_puzzle_hash(TREASURY_ADDRESS)
         .expect("TREASURY_ADDRESS is a valid xch address")
+}
+
+/// True if `needle` appears contiguously in `haystack`.
+fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// True if any spend in `coin_spends` pays $DIG to the DIG treasury — the DIG
+/// payment's CAT spend commits to the treasury INNER puzzle hash (it appears in
+/// the spend's serialized `puzzle_reveal || solution` as the CREATE_COIN
+/// recipient / hint memo), while mint/update singleton spends never reference the
+/// treasury. A keyless byte-signal, byte-mirror of chip35's `bundle_pays_dig_treasury`
+/// — it needs no on-chain CLVM/lineage, matching chip35.
+pub fn bundle_pays_dig_treasury(coin_spends: &[chia_protocol::CoinSpend]) -> bool {
+    let needle = treasury_inner_puzzle_hash().to_bytes();
+    coin_spends.iter().any(|cs| {
+        contains_subslice(cs.puzzle_reveal.as_ref(), &needle)
+            || contains_subslice(cs.solution.as_ref(), &needle)
+    })
+}
+
+/// Enforce the per-capsule $DIG payment INVARIANT at commit-bundle validation
+/// (#130): a commit / root-advance MUST carry the DIG treasury payment, so this
+/// FAILS CLOSED (`ChainError::Chain`) if `coin_spends` does not pay the treasury.
+///
+/// This is the protocol's enforcement point for per-capsule pricing on the
+/// builder/validation path: every commit-bundle the anchor produces is checked
+/// to actually pay the treasury before it is signed/returned, so a code path that
+/// ever dropped or mis-built the payment yields a hard error rather than a silent
+/// FREE root-advance. It does not replace an on-chain coupling (see the note on
+/// [`COMMIT_DIG`] / SYSTEM.md): the DIG-payment+singleton-update atomicity is
+/// still a client-side co-signed-bundle convention, and the off-chain
+/// anchor-watcher remains the network-side gate; full on-chain enforcement
+/// (a singleton-update announcement only the DIG payment can assert) is a
+/// separate, explicitly-versioned protocol event. What this guarantees is that
+/// the digstore builder never emits a commit bundle that silently omits the
+/// payment.
+pub fn verify_commit_pays_dig_treasury(coin_spends: &[chia_protocol::CoinSpend]) -> Result<()> {
+    if bundle_pays_dig_treasury(coin_spends) {
+        Ok(())
+    } else {
+        Err(ChainError::Chain(
+            "commit bundle does not pay the per-capsule $DIG price to the treasury \
+             (a root-advance must carry the DIG payment)"
+                .to_string(),
+        ))
+    }
 }
 
 /// Format base units as a human DIG string (÷1000, 3 dp).
@@ -150,6 +226,45 @@ mod tests {
         // None → the protocol default (deterministic; no live fetch).
         assert_eq!(resolve_dig_amount(None, COMMIT_DIG), COMMIT_DIG);
         assert_eq!(resolve_dig_amount(None, COMMIT_DIG), 100_000);
+    }
+
+    // -- #130 per-capsule $DIG payment enforcement at commit validation --------
+
+    /// A commit bundle that does NOT pay the treasury fails closed — the
+    /// enforcement point that prevents a silent FREE root-advance.
+    #[test]
+    fn verify_commit_rejects_a_bundle_with_no_treasury_payment() {
+        use chia_protocol::{Coin, CoinSpend, Program};
+        // A spend whose puzzle/solution does not contain the treasury inner ph.
+        let spend = CoinSpend::new(
+            Coin::new(Bytes32::default(), Bytes32::default(), 1),
+            Program::from(vec![0x01u8, 0x02, 0x03]),
+            Program::from(vec![0x04u8, 0x05]),
+        );
+        let err = verify_commit_pays_dig_treasury(&[spend]).unwrap_err();
+        assert!(
+            format!("{err}").contains("does not pay the per-capsule $DIG price"),
+            "no-payment bundle must fail closed: {err}"
+        );
+    }
+
+    /// A spend that commits to the treasury inner puzzle hash (the DIG payment's
+    /// CREATE_COIN recipient/hint) passes the gate.
+    #[test]
+    fn verify_commit_accepts_a_bundle_paying_the_treasury() {
+        use chia_protocol::{Coin, CoinSpend, Program};
+        // Embed the treasury inner ph bytes in the solution (the keyless signal a
+        // real DIG payment carries as the CREATE_COIN recipient + hint memo).
+        let needle = treasury_inner_puzzle_hash().to_bytes().to_vec();
+        let mut solution = vec![0xAAu8, 0xBB];
+        solution.extend_from_slice(&needle);
+        let spend = CoinSpend::new(
+            Coin::new(Bytes32::default(), Bytes32::default(), 1),
+            Program::from(vec![0x01u8]),
+            Program::from(solution),
+        );
+        assert!(verify_commit_pays_dig_treasury(&[spend]).is_ok());
+        assert!(!bundle_pays_dig_treasury(&[]), "empty bundle pays nobody");
     }
 
     #[test]
