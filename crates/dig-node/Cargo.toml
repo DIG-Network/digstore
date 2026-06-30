@@ -40,6 +40,12 @@ fs4 = { version = "1.1.0", features = ["sync"] }
 directories = "6.0.0"
 # OS CSPRNG for the per-stage content-authoring BLS key (#95 Pass C dig.stage).
 getrandom = "0.2"
+# Persistent relay connection (the node's constant reservation with relay.dig.net so it stays
+# reachable to NAT'd peers): WebSocket client speaking the RelayMessage wire (RLY-001..RLY-006).
+# rustls so the node stays OpenSSL-free; matches the workspace tokio-tungstenite 0.24.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -2184,6 +2184,7 @@ dependencies = [
  "directories",
  "filetime",
  "fs4",
+ "futures-util",
  "getrandom 0.2.17",
  "hex",
  "reqwest",
@@ -2191,6 +2192,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
+ "tracing",
 ]
 
 [[package]]
@@ -6137,8 +6140,12 @@ dependencies = [
  "futures-util",
  "log",
  "native-tls",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls",
  "tungstenite",
 ]
 
@@ -6419,6 +6426,8 @@ dependencies = [
  "log",
  "native-tls",
  "rand 0.8.6",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

@@ -46,6 +46,8 @@ use fs4::FileExt;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
+pub mod relay;
+
 /// JSON-RPC error code: the served/requested root is NOT the store's
 /// chain-anchored root (gap #127). A content read is gated on this: it serves
 /// against the CHIP-0035 singleton's current on-chain root or it FAILS CLOSED
@@ -87,6 +89,12 @@ pub struct Node {
     /// [`CoinsetResolver`] (the live singleton walk); tests inject a deterministic
     /// one so the fail-closed gate is unit-tested without a chain.
     anchored_root_resolver: Arc<dyn AnchoredRootResolver>,
+    /// Live status of the node's persistent relay connection (its reservation with
+    /// `relay.dig.net` so NAT'd peers can reach it). Shared with the background relay
+    /// task spawned by the standalone [`run`]; surfaced via `control.relayStatus`. In
+    /// the in-process FFI path (the browser) no relay task runs, so this stays
+    /// disconnected — the browser is a consumer, not a reachable peer.
+    relay_status: Arc<relay::RelayStatus>,
 }
 
 /// The CANONICAL (shared) cache dir — the one the DIG Browser's in-process
@@ -1500,6 +1508,18 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
             "cache_dir": dir.display().to_string(),
             "shared": shared}});
     }
+    // control.relayStatus — live status of the node's persistent relay connection (its reservation
+    // with relay.dig.net so NAT'd peers can reach it). Read-only; safe before/without a relay task
+    // (then `connected:false`). Surfaces endpoint + the node's relay peer_id (its identity pubkey).
+    if method == "control.relayStatus" {
+        let endpoint = relay::relay_url_from_env();
+        let peer_id = node
+            .identity_seed
+            .map(|s| identity::identity_from_seed(s).pubkey_hex)
+            .unwrap_or_else(|| "anonymous".to_string());
+        return json!({"jsonrpc":"2.0","id":id,
+            "result": node.relay_status.snapshot_json(&endpoint, &peer_id)});
+    }
     if method == "cache.setCapBytes" {
         let requested = req
             .get("params")
@@ -1801,16 +1821,54 @@ impl Node {
             cache_lock: Mutex::new(()),
             identity_seed,
             anchored_root_resolver: default_anchored_resolver(),
+            relay_status: relay::RelayStatus::new(),
         })
+    }
+
+    /// The shared relay-connection status (for the standalone `run` to hand to the relay task and
+    /// for `control.relayStatus`).
+    pub fn relay_status(&self) -> Arc<relay::RelayStatus> {
+        self.relay_status.clone()
     }
 }
 
 /// Run the DIG node as a standalone loopback server (the `dig-node` binary only —
 /// the browser does NOT use this; it calls [`handle_rpc`] in-process via the
 /// `dig-runtime` FFI). Binds 127.0.0.1:`DIG_NODE_PORT` (default 9778).
+///
+/// On startup it also spawns a background task that holds a CONSTANT connection (a reservation)
+/// with a relay (default `relay.dig.net`, override `DIG_RELAY_URL`, disable with
+/// `DIG_RELAY_URL=off`) so the node stays reachable to NAT'd peers — reconnecting with backoff if
+/// the relay drops. The relay task is in the standalone binary only; the in-process FFI path (a
+/// pure consumer) never opens one, so the §21/FFI contract is unchanged.
 pub async fn run() {
     let node = Node::from_env();
-    let app = Router::new().route("/", post(rpc)).with_state(node);
+
+    // Persistent relay reservation (NAT reachability). The node's relay peer_id is its persistent
+    // identity pubkey; if no identity exists it registers under a deterministic anonymous id (it
+    // still benefits from the reservation, just without a stable cross-restart id).
+    if relay::relay_enabled() {
+        let endpoint = relay::relay_url_from_env();
+        let peer_id = node
+            .identity_seed
+            .map(|s| identity::identity_from_seed(s).pubkey_hex)
+            .unwrap_or_else(|| "anonymous".to_string());
+        let status = node.relay_status.clone();
+        println!("dig-node maintaining relay reservation with {endpoint}");
+        tokio::spawn(relay::run_relay_connection(
+            endpoint,
+            peer_id,
+            relay::DEFAULT_NETWORK_ID.to_string(),
+            status,
+        ));
+    } else {
+        println!("dig-node: relay reservation disabled (DIG_RELAY_URL=off)");
+    }
+
+    let app = Router::new()
+        .route("/", post(rpc))
+        .route("/health", axum::routing::get(health))
+        .with_state(node);
 
     let port: u16 = std::env::var("DIG_NODE_PORT")
         .ok()
@@ -1822,6 +1880,15 @@ pub async fn run() {
         .unwrap_or_else(|e| panic!("dig-node: cannot bind {addr}: {e}"));
     println!("dig-node listening on http://{addr}");
     axum::serve(listener, app).await.expect("dig-node server");
+}
+
+/// `GET /health` — a tiny liveness + relay-status probe for the standalone node (so an operator or
+/// the installer can confirm the node is up and whether its relay reservation is held).
+async fn health(State(node): State<Arc<Node>>) -> Json<Value> {
+    Json(json!({
+        "status": "ok",
+        "relay_connected": node.relay_status.is_connected(),
+    }))
 }
 
 #[cfg(test)]
@@ -1983,6 +2050,7 @@ mod tests {
             cache_lock: Mutex::new(()),
             identity_seed,
             anchored_root_resolver,
+            relay_status: relay::RelayStatus::new(),
         };
         (node, td)
     }
@@ -2952,6 +3020,34 @@ mod tests {
         assert_eq!(got["jsonrpc"], json!("2.0"));
 
         std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    #[test]
+    fn control_relay_status_reports_disconnected_by_default() {
+        // The relay-status RPC is read-only and safe with NO relay task running (the in-process FFI
+        // path): it reports `connected:false` + the resolved endpoint + the node's relay peer_id.
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_RELAY_URL");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (node, _td) = test_node(None);
+        let got = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":7,"method":"control.relayStatus"}),
+        ));
+        let result = got["result"].as_object().expect("result object");
+        assert_eq!(result["connected"], json!(false));
+        assert_eq!(
+            result["endpoint"],
+            json!(relay::DEFAULT_RELAY_URL),
+            "defaults to relay.dig.net when DIG_RELAY_URL unset"
+        );
+        // No identity seed → anonymous relay peer_id.
+        assert_eq!(result["peer_id"], json!("anonymous"));
+        assert_eq!(got["id"], json!(7));
+        assert_eq!(got["jsonrpc"], json!("2.0"));
     }
 
     // -- #127 MANDATORY anchored-root pin on the read path ----------------------
