@@ -410,6 +410,49 @@ mod request_auth_tests {
         ));
     }
 
+    /// #131: pin the BLS role-tag invariant the doc comments promise — the FIVE
+    /// BLS role DSTs (push / node / attestation / tomb / req) are pairwise
+    /// DISTINCT, so a signature in one role can never be replayed as another. The
+    /// ONE documented, intentional byte-coincidence — `NODE_DST == NODE_TAG` (the
+    /// merkle node tag) — is asserted here as a KNOWN, non-colliding exception
+    /// (disjoint preimage shapes, never cross-verified), making the latent
+    /// coincidence an explicitly-tested invariant rather than a silent one.
+    #[test]
+    fn bls_role_dsts_are_pairwise_distinct_and_node_tag_coincidence_is_intentional() {
+        let role_dsts: [(&str, &[u8]); 5] = [
+            ("push", PUSH_DST),
+            ("node", NODE_DST),
+            ("attest", ATTEST_DST),
+            ("tomb", TOMB_DST),
+            ("req", REQ_DST),
+        ];
+        for (i, (na, a)) in role_dsts.iter().enumerate() {
+            for (nb, b) in role_dsts.iter().skip(i + 1) {
+                assert_ne!(a, b, "BLS role DSTs {na} and {nb} must be distinct");
+            }
+        }
+        // The single intentional coincidence: the BLS node-role DST shares bytes
+        // with the merkle NODE_TAG. This is the documented, safe exception (the two
+        // live in disjoint preimage shapes and are never cross-verified). Pinning
+        // it makes the coincidence a tested invariant — if either constant changes
+        // so they DIVERGE, this fires and forces a deliberate review of the
+        // by-comment safety argument.
+        assert_eq!(
+            NODE_DST,
+            digstore_core::merkle::NODE_TAG,
+            "NODE_DST intentionally coincides with the merkle NODE_TAG (disjoint \
+             preimage shapes); if this ever changes, re-review the safety note on NODE_DST"
+        );
+        // Every BLS role DST is distinct from the merkle LEAF_TAG (no coincidence there).
+        for (name, dst) in role_dsts {
+            assert_ne!(
+                dst,
+                digstore_core::merkle::LEAF_TAG,
+                "role DST {name} must not coincide with the merkle LEAF_TAG"
+            );
+        }
+    }
+
     #[test]
     fn request_signature_is_bound_to_method_store_time_and_nonce() {
         let (sk, pk) = keypair(7);

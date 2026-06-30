@@ -318,13 +318,35 @@ impl RemoteBackend for StoreBackend {
     fn accept_push(
         &self,
         store_id: &Bytes32,
-        _parent: &Bytes32,
+        parent: &Bytes32,
         new_root: &Bytes32,
         module_bytes: &[u8],
         sig: Option<&Bytes96>,
         mode: PushMode,
     ) -> Result<PushOutcome, RemoteError> {
         self.ensure_store(store_id)?;
+
+        // TRUST-BOUNDARY DEFENSE-IN-DEPTH (#131): re-assert fast-forward HERE, not
+        // only in the HTTP handler. `accept_push` is a public trait method callable
+        // directly (bypassing the handler's parent==head check), so re-check that
+        // the declared `parent` equals the CURRENT served head before persisting an
+        // Advance — otherwise a direct caller could append a non-fast-forward /
+        // unauthorized generation. The handler keeps its own check too (fail a bad
+        // push before any bytes upload); this is the backstop. Genesis convention
+        // (mirrors the handler): no served head yet ⇒ the first push's parent must
+        // be the all-zero root. Pending uploads are not yet head-advancing, so the
+        // check applies only to Advance.
+        if matches!(mode, PushMode::Advance) {
+            let head = match self.served_head() {
+                Ok(h) => h.root,
+                // No history yet ⇒ genesis; parent must be the zero root.
+                Err(RemoteError::UnknownRoot) => Bytes32::default(),
+                Err(e) => return Err(e),
+            };
+            if *parent != head {
+                return Err(RemoteError::NonFastForward);
+            }
+        }
 
         // Persist the pushed module file regardless of mode.
         std::fs::create_dir_all(self.paths.modules_dir())
