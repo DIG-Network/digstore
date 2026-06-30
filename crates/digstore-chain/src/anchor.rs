@@ -371,6 +371,10 @@ pub async fn build_advance_store_bundle(
         // build_mint_store_bundle) — admitted all-or-nothing, never split.
         let mut all = update.coin_spends;
         all.extend(pay);
+        // ENFORCE the per-capsule $DIG payment (#130): a commit/root-advance MUST
+        // carry the treasury payment. Fail CLOSED before signing so a builder bug
+        // can never emit a FREE root-advance.
+        crate::dig::verify_commit_pays_dig_treasury(&all)?;
         let signature = sign_coin_spends(&all, &w.signing_keys(), false)
             .map_err(|e| ChainError::Chain(format!("sign combined update+DIG bundle: {e}")))?;
         Ok(AdvanceStoreBundle {
@@ -440,6 +444,9 @@ pub async fn build_advance_store_writer_bundle(
         // (fee + DIG). ATOMICITY as above — never split or pushed separately.
         let mut all = update.coin_spends;
         all.extend(pay);
+        // ENFORCE the per-capsule $DIG payment (#130): fail CLOSED before signing
+        // if the writer-authorized commit bundle does not pay the treasury.
+        crate::dig::verify_commit_pays_dig_treasury(&all)?;
         let mut signers = w.signing_keys();
         signers.push(writer.synthetic_sk.clone());
         let signature = sign_coin_spends(&all, &signers, false)
@@ -701,22 +708,11 @@ mod tests {
     // reference the treasury. This needs no on-chain CLVM/lineage (matching chip35).
     // -----------------------------------------------------------------------
 
-    /// True if `coin_spends` pays $DIG to the DIG treasury — i.e. some spend's
-    /// serialized puzzle/solution contains the treasury inner puzzle hash's 32 bytes
-    /// (the DIG payment's CREATE_COIN recipient). Byte-mirror of chip35's
-    /// `bundle_pays_dig_treasury`.
-    fn bundle_pays_dig_treasury(coin_spends: &[chia_protocol::CoinSpend]) -> bool {
-        let needle = crate::dig::treasury_inner_puzzle_hash().to_bytes();
-        coin_spends.iter().any(|cs| {
-            contains_subslice(cs.puzzle_reveal.as_ref(), &needle)
-                || contains_subslice(cs.solution.as_ref(), &needle)
-        })
-    }
-
-    /// True if `haystack` contains the contiguous bytes `needle`.
-    fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
-        needle.len() <= haystack.len() && haystack.windows(needle.len()).any(|w| w == needle)
-    }
+    // The treasury-payment byte-signal helper is now the production
+    // `crate::dig::bundle_pays_dig_treasury` (#130) — used both here and by the
+    // commit-validation gate `verify_commit_pays_dig_treasury`. The test imports it
+    // rather than re-defining a local copy (DRY: one keyless signal).
+    use crate::dig::bundle_pays_dig_treasury;
 
     /// MINT must NOT pay $DIG (minting a store is free of $DIG — only the XCH fee +
     /// the 1-mojo singleton ride in the mint bundle), while a COMMIT's DIG payment
