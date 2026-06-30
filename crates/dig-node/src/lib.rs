@@ -46,6 +46,16 @@ use fs4::FileExt;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
+/// JSON-RPC error code: the served/requested root is NOT the store's
+/// chain-anchored root (gap #127). A content read is gated on this: it serves
+/// against the CHIP-0035 singleton's current on-chain root or it FAILS CLOSED
+/// with this code — a compromised upstream/host can never pick which generation
+/// is served, and a module that carries no on-chain anchor is rejected (not
+/// silently downgraded to a no-op). Catalogued in docs.dig.net error tables and
+/// uniform with the CLI clone/pull pin (which fails closed with the same
+/// "chain is the authority" semantics).
+const ROOT_NOT_ANCHORED: i64 = -32005;
+
 const RPC_FALLBACK: &str = "https://rpc.dig.net/";
 /// Per-window ciphertext cap (bytes) when paging the JSON-RPC response.
 const WINDOW: usize = 3 * 1024 * 1024;
@@ -72,6 +82,11 @@ pub struct Node {
     /// node falls back to the per-resource proxy). The 32-byte seed — not the
     /// reconstructed BLS key — is held so the signer closure stays `Send + Sync`.
     identity_seed: Option<[u8; 32]>,
+    /// Resolver for the store's CHIP-0035 chain-anchored root — the trusted-root
+    /// source for the MANDATORY read-path pin (#127). Production is
+    /// [`CoinsetResolver`] (the live singleton walk); tests inject a deterministic
+    /// one so the fail-closed gate is unit-tested without a chain.
+    anchored_root_resolver: Arc<dyn AnchoredRootResolver>,
 }
 
 /// The CANONICAL (shared) cache dir — the one the DIG Browser's in-process
@@ -1256,6 +1271,143 @@ fn resolution_coinset() -> Coinset {
     }
 }
 
+/// Resolve a store's CHIP-0035 chain-anchored TIP root. This is the trusted-root
+/// source for the MANDATORY read-path pin (#127): a content read serves against
+/// the on-chain current root or fails closed — it never trusts an upstream-/
+/// host-reported root.
+///
+/// Implemented as a trait so the read-path pin is unit-testable without a live
+/// chain: production uses [`CoinsetResolver`] (walks the singleton lineage on
+/// coinset.org); tests inject a deterministic resolver. `Ok(Some(root))` = the
+/// resolved tip; `Ok(None)` = the store is not minted / has no confirmed
+/// generation (treated as fail-closed by the caller); `Err` = the chain was
+/// unreachable (also fail-closed).
+#[async_trait::async_trait]
+pub trait AnchoredRootResolver: Send + Sync {
+    /// Resolve `store_id`'s current on-chain root, or `None` if the store has no
+    /// confirmed generation yet, or `Err` if the chain is unreachable.
+    async fn anchored_root(&self, store_id: &[u8; 32]) -> Result<Option<Bytes32>, String>;
+}
+
+/// Production resolver: walks the store's DataStore singleton lineage on
+/// coinset.org (`digstore_chain::singleton::sync_datastore`) to the unspent tip
+/// and returns its metadata root — exactly the source `dig.getAnchoredRoot` and
+/// `dig-resolver` already use, and the same authority the CLI clone/pull pin
+/// resolves against (`current_root`). NEVER consults the serving node.
+struct CoinsetResolver;
+
+#[async_trait::async_trait]
+impl AnchoredRootResolver for CoinsetResolver {
+    async fn anchored_root(&self, store_id: &[u8; 32]) -> Result<Option<Bytes32>, String> {
+        let launcher = chia_protocol::Bytes32::new(*store_id);
+        match sync_datastore(&resolution_coinset(), launcher).await {
+            Ok(store) => {
+                // Convert chia_protocol::Bytes32 → digstore_core::Bytes32 (the
+                // node's content-root type), mirroring the CLI clone/pull pin.
+                let mut a = [0u8; 32];
+                a.copy_from_slice(store.info.metadata.root_hash.as_ref());
+                Ok(Some(Bytes32(a)))
+            }
+            Err(e) => {
+                // A "not minted yet" / "launcher unspent" lineage error is a
+                // legitimate absence (no confirmed generation), distinct from an
+                // unreachable chain. Either way the read FAILS CLOSED at the
+                // caller; we only distinguish them for a clearer error message.
+                let msg = e.to_string();
+                if msg.contains("not minted") || msg.contains("unspent") {
+                    Ok(None)
+                } else {
+                    Err(msg)
+                }
+            }
+        }
+    }
+}
+
+/// The default anchored-root resolver (production coinset walk).
+fn default_anchored_resolver() -> Arc<dyn AnchoredRootResolver> {
+    Arc::new(CoinsetResolver)
+}
+
+/// Whether the mandatory read-path root pin is enforced. Default: ENFORCED
+/// (fail-closed). The ONLY opt-out is the explicit `DIG_NODE_PIN=off`
+/// environment variable for offline/local development — a deliberate, named
+/// escape hatch, never the default. Any other value (or unset) enforces the pin.
+///
+/// This mirrors the CLI's stance (the pin is on; offline tests opt out via the
+/// `DIGSTORE_ANCHOR_MOCK*` envs): a read either resolves against the
+/// chain-anchored root or refuses to serve.
+fn pin_enforced() -> bool {
+    !matches!(
+        std::env::var("DIG_NODE_PIN").ok().as_deref(),
+        Some("off") | Some("0") | Some("false")
+    )
+}
+
+/// Outcome of the read-path anchored-root pin for one `dig.getContent` call.
+enum PinDecision {
+    /// Serve against this concrete root (the chain-anchored tip). For an
+    /// explicit-root request this equals the requested root; for a rootless
+    /// request it is the resolved tip.
+    ServeAt(Bytes32),
+    /// Pinning is disabled (`DIG_NODE_PIN=off`); serve against the requested root
+    /// as-is. The browser/SDK client still verifies the proof against its own
+    /// trust root, so this only relaxes the NODE-side gate for local dev.
+    Unpinned,
+    /// Fail closed with this JSON-RPC error code + message (mismatch / chain
+    /// unreachable / no confirmed generation / rootless under enforcement).
+    Reject(i64, String),
+}
+
+/// Decide what root a `dig.getContent` call may serve against, enforcing the
+/// mandatory chain-anchored pin (#127). Pure over its inputs (the resolved
+/// `anchored` value), so the policy is unit-tested directly:
+///
+/// - pin disabled → [`PinDecision::Unpinned`].
+/// - chain unreachable (`Err`) → reject (fail closed; never serve a root the
+///   chain could not confirm).
+/// - no confirmed generation (`Ok(None)`) → reject.
+/// - explicit `requested` root present → it MUST equal the anchored root, else
+///   reject; on match, serve at the anchored root.
+/// - rootless request (`requested` is `None`) → serve at the resolved anchored
+///   root (the chain tip is the authority — NEVER an upstream "latest").
+fn decide_pin(
+    enforced: bool,
+    requested: Option<Bytes32>,
+    anchored: Result<Option<Bytes32>, String>,
+) -> PinDecision {
+    if !enforced {
+        return PinDecision::Unpinned;
+    }
+    let anchored = match anchored {
+        Ok(Some(root)) => root,
+        Ok(None) => {
+            return PinDecision::Reject(
+                ROOT_NOT_ANCHORED,
+                "store has no confirmed on-chain generation (chain is the authority)".into(),
+            )
+        }
+        Err(e) => {
+            return PinDecision::Reject(
+                ROOT_NOT_ANCHORED,
+                format!("could not read the store's on-chain root: {e} (chain is the authority)"),
+            )
+        }
+    };
+    match requested {
+        Some(req) if req != anchored => PinDecision::Reject(
+            ROOT_NOT_ANCHORED,
+            format!(
+                "served root {} does not match the store's on-chain root {} (chain is the authority)",
+                req.to_hex(),
+                anchored.to_hex()
+            ),
+        ),
+        // Explicit root matches the chain tip, or rootless → serve at the tip.
+        _ => PinDecision::ServeAt(anchored),
+    }
+}
+
 /// Parse a `params.store_id` field into a canonical 32-byte (64-hex) launcher id
 /// (`chia_protocol::Bytes32`, as `sync_datastore` expects). Returns `Err(())` for a
 /// missing, mis-sized, or non-hex value.
@@ -1432,12 +1584,62 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         .get("store_id")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let root_hex = params.get("root").and_then(|v| v.as_str()).unwrap_or("");
+    let requested_root_hex = params.get("root").and_then(|v| v.as_str()).unwrap_or("");
     let rk_hex = params
         .get("retrieval_key")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+    let err = |id: &Value, code: i64, msg: String| -> Value {
+        json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":msg}})
+    };
+
+    // -- MANDATORY anchored-root pin (#127) ------------------------------------
+    //
+    // Before serving ANY content (local module, §21 sync, cached window, or an
+    // upstream proxy), resolve the store's CHIP-0035 chain-anchored TIP root and
+    // require the served generation to BE that root, or FAIL CLOSED. The chain —
+    // not the request, the cached module, or the upstream — is the authority over
+    // which generation is served. A rootless request resolves to the chain tip; an
+    // explicit root must equal it. This is the same pin the CLI clone/pull enforce,
+    // now uniform across the node read path (a compromised upstream can no longer
+    // choose the served generation).
+    let store_id_arr = match parse_store_id_arg(&params) {
+        Ok(b) => b.into(),
+        Err(()) => {
+            return err(
+                &id,
+                -32602,
+                "params.store_id must be a 32-byte (64-hex) launcher id".into(),
+            )
+        }
+    };
+    // A concrete, valid requested root (non-empty, 64-hex). The `"latest"`
+    // sentinel and any malformed value are treated as ROOTLESS (resolve the tip).
+    let requested_root = Bytes32::from_hex(requested_root_hex).ok();
+    let pinned_root: Option<Bytes32> = if pin_enforced() {
+        let anchored = node
+            .anchored_root_resolver
+            .anchored_root(&store_id_arr)
+            .await;
+        match decide_pin(true, requested_root, anchored) {
+            PinDecision::ServeAt(root) => Some(root),
+            PinDecision::Reject(code, msg) => return err(&id, code, msg),
+            // `decide_pin(true, ..)` never returns Unpinned.
+            PinDecision::Unpinned => requested_root,
+        }
+    } else {
+        // Pin disabled (DIG_NODE_PIN=off, offline/local dev): serve against the
+        // requested root as-is; the client still verifies against its trust root.
+        requested_root
+    };
+
+    // The concrete root hash everything below serves against. With the pin on this
+    // is the chain-anchored tip; with it off it is the requested root (or empty).
+    let root_hex = pinned_root
+        .map(|r| r.to_hex())
+        .unwrap_or_else(|| requested_root_hex.to_string());
 
     // Tag the result with where it was served from so the browser can show a
     // "local" chip: "local" = from this device's cache (a compiled module or a
@@ -1449,24 +1651,46 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         json!({"jsonrpc":"2.0","id":id,"result":result})
     };
 
-    // 1. LOCAL-FIRST: serve from a cached compiled module (no network at all).
+    // 1. LOCAL-FIRST: serve from a cached compiled module (no network at all). The
+    //    served module's own root MUST equal the pinned chain-anchored root — a
+    //    cached module whose generation is not the anchored tip is rejected (it is
+    //    not served as if current).
     if let (Ok(rk), false) = (decode_rk(rk_hex), root_hex.is_empty()) {
-        if let Some(resp) = node.serve_local(store_hex, root_hex, &rk) {
+        if let Some(resp) = node.serve_local(store_hex, &root_hex, &rk) {
+            if let Some(pin) = pinned_root {
+                if resp.roothash != pin {
+                    return err(
+                        &id,
+                        ROOT_NOT_ANCHORED,
+                        format!(
+                            "served module root {} does not match the store's on-chain root {} (chain is the authority)",
+                            resp.roothash.to_hex(),
+                            pin.to_hex()
+                        ),
+                    );
+                }
+            }
             return local(&id, build_result(&resp, offset));
         }
         // 1b. AUTHENTICATED WHOLE-STORE SYNC (§21.9): on a module-cache miss, pull
         //     the whole `.dig` from rpc.dig.net's auth-gated §21 endpoint, cache
         //     it, then serve locally. Best-effort — a failed/disabled sync just
-        //     falls through to the per-resource proxy below.
-        if node.sync_module(store_hex, root_hex).await {
-            if let Some(resp) = node.serve_local(store_hex, root_hex, &rk) {
-                return local(&id, build_result(&resp, offset));
+        //     falls through to the per-resource proxy below. `sync_module` returns
+        //     true only when the SERVED root == the requested (= pinned) root, so a
+        //     synced module is keyed by the anchored root before we serve it.
+        if node.sync_module(store_hex, &root_hex).await {
+            if let Some(resp) = node.serve_local(store_hex, &root_hex, &rk) {
+                if pinned_root.map(|p| resp.roothash == p).unwrap_or(true) {
+                    return local(&id, build_result(&resp, offset));
+                }
             }
         }
     }
 
     // 2. RESPONSE CACHE: a window we previously proxied for this exact request.
-    let key = response_key(store_hex, root_hex, rk_hex, offset);
+    //    Keyed by the PINNED root, so a window cached for a stale/mismatched root
+    //    is never replayed for the anchored read.
+    let key = response_key(store_hex, &root_hex, rk_hex, offset);
     if let Some(result) = node.serve_cached_response(&key) {
         return local(&id, result);
     }
@@ -1474,8 +1698,37 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     // 3. MISS: proxy to rpc.dig.net, then cache the result window (LRU-capped)
     //    so the next load of this resource is served locally. (rpc.dig.net is the
     //    remote DIG network, not a local server — the in-process node IS local.)
-    match node.proxy(&req).await {
+    //
+    //    The upstream request is pinned to the anchored root (rewriting/forcing
+    //    `params.root`), and the upstream-returned root is re-checked against the
+    //    pin — so even on the proxy path the node never serves a generation the
+    //    chain did not confirm.
+    let upstream_req = pinned_root
+        .map(|pin| pin_request_root(&req, &pin.to_hex()))
+        .unwrap_or_else(|| req.clone());
+    match node.proxy(&upstream_req).await {
         Ok(mut v) => {
+            // Verify the upstream served the pinned root before trusting/caching it.
+            if let Some(pin) = pinned_root {
+                let served = v
+                    .get("result")
+                    .and_then(|r| r.get("root"))
+                    .and_then(|r| r.as_str())
+                    .and_then(|s| Bytes32::from_hex(s).ok());
+                if let Some(served) = served {
+                    if served != pin {
+                        return err(
+                            &id,
+                            ROOT_NOT_ANCHORED,
+                            format!(
+                                "upstream served root {} does not match the store's on-chain root {} (chain is the authority)",
+                                served.to_hex(),
+                                pin.to_hex()
+                            ),
+                        );
+                    }
+                }
+            }
             if let Some(result) = v.get("result") {
                 node.store_response(&key, result).await;
             }
@@ -1488,6 +1741,21 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         Err(e) => json!({"jsonrpc":"2.0","id":id,
             "error":{"code":-32000,"message":format!("upstream: {e}")}}),
     }
+}
+
+/// Return a clone of the JSON-RPC `req` with `params.root` forced to `root_hex`
+/// (the pinned chain-anchored root). Used so a proxied `dig.getContent` asks the
+/// upstream for the chain-anchored generation, never the caller's (possibly
+/// rootless or stale) root.
+fn pin_request_root(req: &Value, root_hex: &str) -> Value {
+    let mut out = req.clone();
+    if let Some(obj) = out.as_object_mut() {
+        let params = obj.entry("params").or_insert_with(|| json!({}));
+        if let Some(p) = params.as_object_mut() {
+            p.insert("root".into(), json!(root_hex));
+        }
+    }
+    out
 }
 
 fn decode_rk(hex_str: &str) -> Result<[u8; 32], ()> {
@@ -1532,6 +1800,7 @@ impl Node {
                 .unwrap_or_else(|_| RPC_FALLBACK.to_string()),
             cache_lock: Mutex::new(()),
             identity_seed,
+            anchored_root_resolver: default_anchored_resolver(),
         })
     }
 }
@@ -1647,16 +1916,73 @@ mod tests {
         assert!(!sync_eligible(&h, &"ab".repeat(31))); // too short
     }
 
+    /// A deterministic [`AnchoredRootResolver`] for tests: maps each store id hex
+    /// to its anchored-root resolution outcome so the read-path pin can be
+    /// exercised without a live chain. `Ok(Some(root))` = a confirmed tip;
+    /// `Ok(None)` = no confirmed generation; `Err(msg)` = chain unreachable.
+    struct MockResolver {
+        outcomes: std::collections::HashMap<String, Result<Option<Bytes32>, String>>,
+    }
+
+    impl MockResolver {
+        /// One store that resolves to `root`.
+        fn one(store_hex: &str, root: Bytes32) -> Arc<dyn AnchoredRootResolver> {
+            let mut outcomes = std::collections::HashMap::new();
+            outcomes.insert(store_hex.to_string(), Ok(Some(root)));
+            Arc::new(MockResolver { outcomes })
+        }
+        /// A resolver whose every lookup is `outcome` (e.g. chain-unreachable).
+        fn always(outcome: Result<Option<Bytes32>, String>) -> Arc<dyn AnchoredRootResolver> {
+            Arc::new(MockResolver {
+                outcomes: {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert("*".to_string(), outcome);
+                    m
+                },
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AnchoredRootResolver for MockResolver {
+        async fn anchored_root(&self, store_id: &[u8; 32]) -> Result<Option<Bytes32>, String> {
+            let hex = hex::encode(store_id);
+            self.outcomes
+                .get(&hex)
+                .or_else(|| self.outcomes.get("*"))
+                .cloned()
+                .unwrap_or(Ok(None))
+        }
+    }
+
     /// Build a `Node` with a throwaway cache dir and an optional identity seed. The
     /// returned `TempDir` must be kept alive for the duration of the test.
+    ///
+    /// The anchored-root resolver defaults to "no confirmed generation" for every
+    /// store, so any `dig.getContent` test that does not explicitly inject a tip
+    /// fails closed under the pin — make the pin policy explicit per test via
+    /// [`test_node_with_resolver`] or by disabling the pin (`DIG_NODE_PIN=off`).
     fn test_node(identity_seed: Option<[u8; 32]>) -> (Node, tempfile::TempDir) {
+        test_node_with_resolver(identity_seed, MockResolver::always(Ok(None)))
+    }
+
+    /// Like [`test_node`] but with an explicit anchored-root resolver (the pin's
+    /// trusted-root source) so the fail-closed read-path gate can be unit-tested.
+    fn test_node_with_resolver(
+        identity_seed: Option<[u8; 32]>,
+        anchored_root_resolver: Arc<dyn AnchoredRootResolver>,
+    ) -> (Node, tempfile::TempDir) {
         let td = tempfile::tempdir().unwrap();
         let node = Node {
             cache_dir: td.path().to_path_buf(),
             http: reqwest::Client::new(),
-            upstream: RPC_FALLBACK.to_string(),
+            // Default to an UNROUTABLE upstream so a proxy fallback fails fast and
+            // hermetically (no live rpc.dig.net). Tests needing a real upstream set
+            // `node.upstream` explicitly (e.g. fetch_and_cache_*).
+            upstream: "http://127.0.0.1:1/".to_string(),
             cache_lock: Mutex::new(()),
             identity_seed,
+            anchored_root_resolver,
         };
         (node, td)
     }
@@ -2626,5 +2952,305 @@ mod tests {
         assert_eq!(got["jsonrpc"], json!("2.0"));
 
         std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    // -- #127 MANDATORY anchored-root pin on the read path ----------------------
+    //
+    // Every `dig.getContent` resolves the store's CHIP-0035 chain-anchored TIP
+    // root and serves against IT, or fails closed with `ROOT_NOT_ANCHORED`
+    // (-32005). A compromised upstream/host can never choose which generation is
+    // served; a rootless URN resolves to the chain tip; an explicit root must
+    // equal the tip. These tests pin the policy (pure `decide_pin`) and the
+    // fail-closed read-path behavior (end-to-end through `handle_rpc`).
+
+    #[test]
+    fn decide_pin_serves_the_tip_for_a_rootless_request() {
+        // Rootless (no requested root) → serve at the resolved chain tip.
+        let tip = Bytes32([0xAA; 32]);
+        match decide_pin(true, None, Ok(Some(tip))) {
+            PinDecision::ServeAt(root) => assert_eq!(root, tip),
+            _ => panic!("rootless under a confirmed tip must ServeAt the tip"),
+        }
+    }
+
+    #[test]
+    fn decide_pin_serves_when_explicit_root_matches_the_tip() {
+        let tip = Bytes32([0xAA; 32]);
+        match decide_pin(true, Some(tip), Ok(Some(tip))) {
+            PinDecision::ServeAt(root) => assert_eq!(root, tip),
+            _ => panic!("explicit root == tip must ServeAt"),
+        }
+    }
+
+    #[test]
+    fn decide_pin_rejects_when_explicit_root_differs_from_the_tip() {
+        let tip = Bytes32([0xAA; 32]);
+        let other = Bytes32([0xBB; 32]);
+        match decide_pin(true, Some(other), Ok(Some(tip))) {
+            PinDecision::Reject(code, msg) => {
+                assert_eq!(code, ROOT_NOT_ANCHORED);
+                assert!(msg.contains("chain is the authority"), "{msg}");
+            }
+            _ => panic!("explicit root != tip must fail closed"),
+        }
+    }
+
+    #[test]
+    fn decide_pin_fails_closed_when_chain_unreachable() {
+        match decide_pin(true, None, Err("coinset down".into())) {
+            PinDecision::Reject(code, _) => assert_eq!(code, ROOT_NOT_ANCHORED),
+            _ => panic!("unreachable chain must fail closed, never serve"),
+        }
+    }
+
+    #[test]
+    fn decide_pin_fails_closed_when_no_confirmed_generation() {
+        match decide_pin(true, None, Ok(None)) {
+            PinDecision::Reject(code, _) => assert_eq!(code, ROOT_NOT_ANCHORED),
+            _ => panic!("no confirmed generation must fail closed"),
+        }
+    }
+
+    #[test]
+    fn decide_pin_is_unpinned_only_when_enforcement_is_off() {
+        let other = Bytes32([0xBB; 32]);
+        // Even a mismatch is allowed through when the pin is explicitly disabled.
+        match decide_pin(false, Some(other), Ok(Some(Bytes32([0xAA; 32])))) {
+            PinDecision::Unpinned => {}
+            _ => panic!("pin off → Unpinned regardless of mismatch"),
+        }
+    }
+
+    #[test]
+    fn pin_enforced_is_default_on_and_off_only_for_explicit_opt_out() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        assert!(pin_enforced(), "default (unset) → ENFORCED");
+        for off in ["off", "0", "false"] {
+            std::env::set_var("DIG_NODE_PIN", off);
+            assert!(!pin_enforced(), "DIG_NODE_PIN={off} → disabled");
+        }
+        std::env::set_var("DIG_NODE_PIN", "on");
+        assert!(pin_enforced(), "any non-opt-out value → ENFORCED");
+        std::env::remove_var("DIG_NODE_PIN");
+    }
+
+    /// A valid 32-byte retrieval key hex (so the request reaches the serve path,
+    /// not a -32602 param rejection) — content is never actually served in the
+    /// fail-closed tests because the pin rejects first.
+    fn any_rk_hex() -> String {
+        "cd".repeat(32)
+    }
+
+    /// A current-thread runtime for the env-mutating pin tests. These hold the
+    /// std `ENV_GUARD` (so the process-global `DIG_NODE_PIN` is stable for the
+    /// test) and must NOT hold it across an `.await` (clippy `await_holding_lock`),
+    /// so they are plain `#[test]` fns driving the async dispatch via `block_on` —
+    /// the same pattern the cache.* env tests use.
+    fn pin_test_rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn get_content_rejects_explicit_root_that_is_not_the_anchored_root() {
+        // The classic #127 attack: a caller (or a compromised resolver upstream)
+        // asks for a specific generation that is NOT the chain tip. The node MUST
+        // refuse rather than serve the attacker-chosen generation.
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        let rt = pin_test_rt();
+        let store = Bytes32([1u8; 32]);
+        let tip = Bytes32([0xAA; 32]);
+        let attacker_root = Bytes32([0xBB; 32]);
+        let (node, _td) = test_node_with_resolver(None, MockResolver::one(&store.to_hex(), tip));
+
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.getContent","params":{
+                "store_id": store.to_hex(),
+                "root": attacker_root.to_hex(),
+                "retrieval_key": any_rk_hex(),
+            }}),
+        ));
+
+        assert_eq!(
+            resp["error"]["code"], ROOT_NOT_ANCHORED,
+            "a non-anchored explicit root must fail closed: {resp}"
+        );
+        assert!(resp.get("result").is_none(), "no content served: {resp}");
+    }
+
+    #[test]
+    fn get_content_fails_closed_when_chain_is_unreachable() {
+        // The chain (the authority) cannot be reached → the node must NOT fall back
+        // to serving an unverified root; it fails closed.
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        let rt = pin_test_rt();
+        let store = Bytes32([2u8; 32]);
+        let (node, _td) =
+            test_node_with_resolver(None, MockResolver::always(Err("coinset 503".into())));
+
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":2,"method":"dig.getContent","params":{
+                "store_id": store.to_hex(),
+                "root": Bytes32([0xAA; 32]).to_hex(),
+                "retrieval_key": any_rk_hex(),
+            }}),
+        ));
+
+        assert_eq!(resp["error"]["code"], ROOT_NOT_ANCHORED, "{resp}");
+        assert!(resp.get("result").is_none());
+    }
+
+    #[test]
+    fn get_content_fails_closed_when_store_has_no_confirmed_generation() {
+        // A store with no confirmed on-chain generation has no anchored root to pin
+        // to → fail closed (never serve a forgeable/unanchored generation).
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        let rt = pin_test_rt();
+        let store = Bytes32([3u8; 32]);
+        let (node, _td) = test_node_with_resolver(None, MockResolver::always(Ok(None)));
+
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":3,"method":"dig.getContent","params":{
+                "store_id": store.to_hex(),
+                "root": Bytes32([0xAA; 32]).to_hex(),
+                "retrieval_key": any_rk_hex(),
+            }}),
+        ));
+
+        assert_eq!(resp["error"]["code"], ROOT_NOT_ANCHORED, "{resp}");
+    }
+
+    #[test]
+    fn get_content_rejects_a_bad_store_id_before_touching_the_chain() {
+        // Param validation precedes the chain read (a -32602, not a pin error).
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        let rt = pin_test_rt();
+        let (node, _td) = test_node(None);
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":4,"method":"dig.getContent","params":{
+                "store_id": "nope",
+                "root": Bytes32([0xAA; 32]).to_hex(),
+                "retrieval_key": any_rk_hex(),
+            }}),
+        ));
+        assert_eq!(resp["error"]["code"], json!(-32602), "{resp}");
+    }
+
+    /// Stage a real `.dig` module from `files` for `store`, returning its root and
+    /// the on-disk module bytes — used to seed the local cache for a serve test.
+    fn stage_real_module(
+        node: &Node,
+        store: &Bytes32,
+        files: &[(&str, &[u8])],
+    ) -> (Bytes32, Vec<u8>) {
+        let src = tempfile::tempdir().unwrap();
+        for (name, bytes) in files {
+            let p = src.path().join(name);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, bytes).unwrap();
+        }
+        let resp = node.stage(
+            &json!({"dir": src.path().display().to_string(), "store_id": store.to_hex()}),
+            json!(1),
+        );
+        let r = &resp["result"];
+        let root = Bytes32::from_hex(r["root"].as_str().expect("root")).unwrap();
+        let module = std::fs::read(r["module_path"].as_str().expect("module_path")).unwrap();
+        (root, module)
+    }
+
+    #[test]
+    fn get_content_does_not_serve_a_cached_stale_generation_as_current() {
+        // Defense in depth: a module for an OLD generation (root R) is in the local
+        // cache, but the chain tip has advanced to R'. A read pinned to R' must NOT
+        // serve the cached R module — the cache key is the anchored root, so the
+        // stale module is simply not found at R', and the read does not return it.
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        let rt = pin_test_rt();
+        // Upstream is unroutable (test_node default) → after the local miss the read
+        // falls through to a proxy attempt that errors out (no fabricated content).
+        let store = Bytes32([7u8; 32]);
+        let advanced_tip = Bytes32([0x99; 32]); // R' — what the chain says is current
+        let (node, _td) =
+            test_node_with_resolver(None, MockResolver::one(&store.to_hex(), advanced_tip));
+
+        // Seed a real cached module at its REAL (old) root R != R'.
+        let (old_root, module) =
+            stage_real_module(&node, &store, &[("index.html", b"<h1>old</h1>")]);
+        assert_ne!(old_root, advanced_tip, "the cached generation is stale");
+        let seeded = module_path(&node.cache_dir, &store.to_hex(), &old_root.to_hex());
+        std::fs::create_dir_all(seeded.parent().unwrap()).unwrap();
+        std::fs::write(&seeded, &module).unwrap();
+
+        // Request the (advanced) tip generation. The pin serves at R'; the stale R
+        // module is at a different cache key, so serve_local misses and the node
+        // never returns the old generation's content. With no upstream it errors —
+        // crucially NOT a success carrying the stale module.
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":5,"method":"dig.getContent","params":{
+                "store_id": store.to_hex(),
+                "root": advanced_tip.to_hex(),
+                "retrieval_key": any_rk_hex(),
+            }}),
+        ));
+        // It must not have served the stale cached module as the current generation.
+        let served_local = resp["result"]["source"].as_str() == Some("local");
+        assert!(
+            !served_local,
+            "a stale cached generation must never be served as the anchored tip: {resp}"
+        );
+    }
+
+    #[test]
+    fn get_content_unpinned_mode_serves_the_requested_root_as_before() {
+        // With the pin explicitly disabled (offline/local dev), the node serves the
+        // requested root as-is (legacy behavior) — the resolver is never consulted.
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("DIG_NODE_PIN", "off");
+        let rt = pin_test_rt();
+        let store = Bytes32([8u8; 32]);
+        // A resolver that would FAIL if consulted — proving the unpinned path skips it.
+        let (node, _td) =
+            test_node_with_resolver(None, MockResolver::always(Err("must not be called".into())));
+
+        // No module cached, unroutable upstream → the call reaches the proxy and
+        // errors, but crucially it is an UPSTREAM error (-32000), NOT a pin rejection.
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":6,"method":"dig.getContent","params":{
+                "store_id": store.to_hex(),
+                "root": Bytes32([0xAA; 32]).to_hex(),
+                "retrieval_key": any_rk_hex(),
+            }}),
+        ));
+        std::env::remove_var("DIG_NODE_PIN");
+        assert_ne!(
+            resp["error"]["code"], ROOT_NOT_ANCHORED,
+            "pin off → no pin rejection: {resp}"
+        );
+    }
+
+    #[test]
+    fn pin_request_root_forces_params_root() {
+        let req = json!({"jsonrpc":"2.0","id":1,"method":"dig.getContent",
+            "params":{"store_id":"aa","root":"old","retrieval_key":"rk"}});
+        let pinned = pin_request_root(&req, "newroot");
+        assert_eq!(pinned["params"]["root"], json!("newroot"));
+        // Other params are preserved.
+        assert_eq!(pinned["params"]["store_id"], json!("aa"));
+        assert_eq!(pinned["params"]["retrieval_key"], json!("rk"));
     }
 }
