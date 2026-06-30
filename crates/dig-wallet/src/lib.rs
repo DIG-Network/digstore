@@ -5485,4 +5485,67 @@ mod tests {
         let (code, _) = parse_coin_spend_hex(&serde_json::json!({}), "parentSpend").unwrap_err();
         assert_eq!(code, StatusCode::BAD_REQUEST);
     }
-}
+
+    #[test]
+    fn wallet_source_wire_token_round_trips_and_defaults_safely() {
+        // The wire token is stable across versions; an unknown/corrupt token must
+        // fall back to the safe default (Native) so a forward-incompatible value
+        // never strands the wallet.
+        assert_eq!(WalletSource::Native.as_str(), "native");
+        assert_eq!(WalletSource::Sage.as_str(), "sage");
+        assert_eq!(WalletSource::from_str("native"), WalletSource::Native);
+        assert_eq!(WalletSource::from_str("sage"), WalletSource::Sage);
+        assert_eq!(WalletSource::from_str("garbage"), WalletSource::Native);
+        assert_eq!(WalletSource::from_str(""), WalletSource::Native);
+        // Round-trip: as_str → from_str is the identity.
+        for src in [WalletSource::Native, WalletSource::Sage] {
+            assert_eq!(WalletSource::from_str(src.as_str()), src);
+        }
+        // The enum's Default is Native (the zero-behaviour-change source).
+        assert_eq!(WalletSource::default(), WalletSource::Native);
+    }
+
+    #[test]
+    fn parse_seed32_accepts_hex_with_or_without_0x_and_rejects_bad_input() {
+        let raw = "ab".repeat(32); // 64 hex chars = 32 bytes
+        // Bare hex.
+        let a = parse_seed32(&raw).unwrap();
+        assert_eq!(a, [0xABu8; 32]);
+        // 0x-prefixed + surrounding whitespace (trimmed).
+        let b = parse_seed32(&format!("  0x{raw}  ")).unwrap();
+        assert_eq!(b, [0xABu8; 32]);
+        // Non-hex → 400.
+        let (code, msg) = parse_seed32("zz").unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        assert!(msg.contains("hex"));
+        // Wrong length (valid hex, 31 bytes) → 400 with the length message.
+        let (code, msg) = parse_seed32(&"ab".repeat(31)).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        assert!(msg.contains("32 bytes"));
+    }
+
+    #[test]
+    fn parse_public_key_hex_rejects_bad_hex_wrong_len_and_invalid_g1() {
+        // Non-hex → 400 "must be hex".
+        let (code, msg) = parse_public_key_hex("nothex").unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        assert!(msg.contains("hex"));
+        // Valid hex but not 48 bytes → 400 "48 bytes".
+        let (code, msg) = parse_public_key_hex(&"00".repeat(10)).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        assert!(msg.contains("48 bytes"));
+        // 48 bytes of zeros is not a valid BLS G1 point → 400 "invalid publicKey".
+        let (code, msg) = parse_public_key_hex(&format!("0x{}", "00".repeat(48))).unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        assert!(msg.contains("invalid publicKey"));
+    }
+
+    #[test]
+    fn parse_public_key_hex_round_trips_a_real_bls_g1_point() {
+        // A genuine G1 public key must parse back to the same bytes (the success
+        // path of parse_public_key_hex).
+        let sk = digstore_crypto::bls::SecretKey::from_seed(&[3u8; 32]);
+        let pk = sk.public_key().to_bytes();
+        let parsed = parse_public_key_hex(&pk.to_hex()).unwrap();
+        assert_eq!(parsed.to_bytes(), pk.0);
+    }

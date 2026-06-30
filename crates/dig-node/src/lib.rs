@@ -1909,6 +1909,89 @@ mod tests {
     }
 
     #[test]
+    fn decode_rk_accepts_64_hex_and_rejects_everything_else() {
+        // Happy path: 64 hex chars → 32 bytes.
+        let ok = decode_rk(&"ab".repeat(32)).unwrap();
+        assert_eq!(ok, [0xABu8; 32]);
+        // Wrong length (valid hex, 31 bytes) → Err.
+        assert!(decode_rk(&"ab".repeat(31)).is_err());
+        // Non-hex → Err.
+        assert!(decode_rk("nothex").is_err());
+        // Empty → Err (len 0 != 32).
+        assert!(decode_rk("").is_err());
+    }
+
+    #[test]
+    fn module_path_is_under_modules_store_root() {
+        let p = module_path(Path::new("/cache"), "store01", "root02");
+        // Path uses the platform separator; assert via components, not a literal.
+        let comps: Vec<String> = p
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        assert!(comps.contains(&"modules".to_string()));
+        assert!(comps.contains(&"store01".to_string()));
+        assert_eq!(p.file_name().unwrap().to_string_lossy(), "root02.module");
+    }
+
+    #[test]
+    fn walk_dir_files_reads_recursively_with_forward_slashed_sorted_keys() {
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path();
+        std::fs::create_dir_all(root.join("sub/deep")).unwrap();
+        std::fs::write(root.join("b.txt"), b"B").unwrap();
+        std::fs::write(root.join("a.txt"), b"A").unwrap();
+        std::fs::write(root.join("sub/c.txt"), b"C").unwrap();
+        std::fs::write(root.join("sub/deep/d.txt"), b"D").unwrap();
+
+        let files = walk_dir_files(root).unwrap();
+        let keys: Vec<&str> = files.iter().map(|(k, _)| k.as_str()).collect();
+        // Sorted ascending by key; nested keys are forward-slashed (URN-safe).
+        assert_eq!(keys, vec!["a.txt", "b.txt", "sub/c.txt", "sub/deep/d.txt"]);
+        // Contents are read verbatim.
+        let d = files.iter().find(|(k, _)| k == "sub/deep/d.txt").unwrap();
+        assert_eq!(d.1, b"D");
+    }
+
+    #[test]
+    fn walk_dir_files_on_empty_dir_is_empty() {
+        let td = tempfile::tempdir().unwrap();
+        assert!(walk_dir_files(td.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn dir_is_writable_true_for_a_real_dir() {
+        let td = tempfile::tempdir().unwrap();
+        assert!(dir_is_writable(td.path()));
+        // It creates the dir if missing, then probes a write.
+        let nested = td.path().join("created/by/probe");
+        assert!(dir_is_writable(&nested));
+        assert!(nested.is_dir());
+    }
+
+    #[test]
+    fn parse_launcher_ids_parses_array_and_rejects_bad_shapes() {
+        // Happy path: an array of 64-hex strings (0x-prefixed accepted).
+        let params = json!({ "launcher_ids": [
+            "ab".repeat(32),
+            format!("0x{}", "cd".repeat(32)),
+        ]});
+        let ids = Node::parse_launcher_ids(&params).unwrap();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], chia_protocol::Bytes32::new([0xABu8; 32]));
+        assert_eq!(ids[1], chia_protocol::Bytes32::new([0xCDu8; 32]));
+        // Missing array → Err.
+        assert!(Node::parse_launcher_ids(&json!({})).is_err());
+        // Non-string element → Err.
+        assert!(Node::parse_launcher_ids(&json!({ "launcher_ids": [5] })).is_err());
+        // Non-hex element → Err.
+        assert!(Node::parse_launcher_ids(&json!({ "launcher_ids": ["zz"] })).is_err());
+        // Wrong length (valid hex) → Err.
+        let short = "ab".repeat(20);
+        assert!(Node::parse_launcher_ids(&json!({ "launcher_ids": [short] })).is_err());
+    }
+
+    #[test]
     fn wc_project_id_precedence_persisted_over_env_over_none() {
         // Persisted value wins over the env default.
         assert_eq!(

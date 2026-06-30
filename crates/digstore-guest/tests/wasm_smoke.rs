@@ -17,18 +17,30 @@ fn workspace_root() -> PathBuf {
 
 fn build_wasm() -> Vec<u8> {
     let root = workspace_root();
-    let status = Command::new("cargo")
-        .current_dir(&root)
-        .args([
-            "build",
-            "-p",
-            "digstore-guest",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--release",
-        ])
-        .status()
-        .expect("cargo build wasm32");
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(&root).args([
+        "build",
+        "-p",
+        "digstore-guest",
+        "--target",
+        "wasm32-unknown-unknown",
+        "--release",
+    ]);
+    // The wasm32 guest build must NOT inherit the parent process's RUSTFLAGS.
+    // Under `cargo llvm-cov` the harness exports `-C instrument-coverage` (via
+    // `RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS`); that flag is unsupported on
+    // `wasm32-unknown-unknown` and makes this child build fail to compile. The
+    // guest is a freestanding wasm artifact that is never coverage-instrumented,
+    // so strip those vars for the child — leaving the host coverage run intact.
+    cmd.env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("RUSTDOCFLAGS");
+    // Pin the child build's target dir to `<root>/target` so the artifact lands
+    // exactly where we read it below, regardless of any inherited
+    // `CARGO_TARGET_DIR` (e.g. the `cargo llvm-cov` target dir, which would
+    // otherwise redirect the output away from this read path).
+    cmd.env("CARGO_TARGET_DIR", root.join("target"));
+    let status = cmd.status().expect("cargo build wasm32");
     assert!(status.success(), "wasm build must succeed");
     let path = root.join("target/wasm32-unknown-unknown/release/digstore_guest.wasm");
     std::fs::read(&path).unwrap_or_else(|e| panic!("read built wasm module {path:?}: {e}"))

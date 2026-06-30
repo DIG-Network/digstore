@@ -745,4 +745,233 @@ mod tests {
         .root;
         assert_eq!(r1, r2);
     }
+
+    #[test]
+    fn pre_encrypted_resource_is_stored_as_one_chunk_and_size_excludes_gcm_tag() {
+        // PRE-ENCRYPTED path: the bytes are treated as already-sealed ciphertext,
+        // stored as a single chunk, and the declared plaintext size subtracts the
+        // 16-byte GCM-SIV tag. This exercises the `pre_encrypted == true` branch of
+        // `build_prepared` (the other tests only cover the plaintext path).
+        let store_id = Bytes32([3u8; 32]);
+        let ciphertext = vec![0xABu8; 80]; // 64 plaintext + 16-byte tag, conceptually
+        let files = vec![("app.js".to_string(), ciphertext.clone())];
+        let prepared = build_prepared(
+            &files,
+            store_id,
+            &Visibility::Public,
+            MAX_STORE_BYTES,
+            true, // pre_encrypted
+            0,
+            0,
+        )
+        .unwrap();
+        // One resource → one chunk in the pool (no chunking when pre-encrypted).
+        assert_eq!(prepared.key_records.len(), 1);
+        let (rk, indices, size) = &prepared.key_records[0];
+        assert_eq!(rk, "app.js");
+        assert_eq!(indices.len(), 1, "pre-encrypted resource is a single chunk");
+        assert_eq!(*size, (80 - 16) as u64, "declared size strips the GCM tag");
+    }
+
+    #[test]
+    fn empty_plaintext_resource_still_produces_a_chunk_and_a_leaf() {
+        // A zero-byte file: `chunk_slice` yields no chunks, so the engine inserts a
+        // single empty chunk (the `chunks.is_empty()` guard). The capsule must still
+        // compile with one resource leaf.
+        let td = tempdir().unwrap();
+        let store_id = Bytes32([5u8; 32]);
+        let files = vec![("empty.txt".to_string(), Vec::new())];
+        let cap = stage_and_compile(
+            &files,
+            store_id,
+            &Visibility::Public,
+            MAX_STORE_BYTES,
+            false,
+            0,
+            0,
+            &finalize_opts(td.path()),
+        )
+        .unwrap();
+        assert_eq!(cap.files(), 1);
+        assert!(cap.module_path.exists());
+    }
+
+    #[test]
+    fn private_visibility_changes_the_root_vs_public() {
+        // The per-URN AES key folds in the secret salt for a private store, so the
+        // ciphertext leaves (and thus the root) differ from a public store of the
+        // same files. Exercises the `Visibility::Private` salt branch.
+        let td_pub = tempdir().unwrap();
+        let td_priv = tempdir().unwrap();
+        let store_id = Bytes32([6u8; 32]);
+        let files = vec![("secret.txt".to_string(), b"classified".to_vec())];
+        let public = stage_and_compile(
+            &files,
+            store_id,
+            &Visibility::Public,
+            MAX_STORE_BYTES,
+            false,
+            0,
+            0,
+            &finalize_opts(td_pub.path()),
+        )
+        .unwrap()
+        .root;
+        let private = stage_and_compile(
+            &files,
+            store_id,
+            &Visibility::Private(SecretSalt([42u8; 32])),
+            MAX_STORE_BYTES,
+            false,
+            0,
+            0,
+            &finalize_opts(td_priv.path()),
+        )
+        .unwrap()
+        .root;
+        assert_ne!(
+            public, private,
+            "private salt must change the ciphertext leaves (and root)"
+        );
+    }
+
+    #[test]
+    fn ephemeral_config_defaults_to_the_workspace_cap() {
+        // `ephemeral_config` is a small constructor helper; assert it wires the
+        // store id, data dir, visibility, and the default cap.
+        let td = tempdir().unwrap();
+        let store_id = Bytes32([7u8; 32]);
+        let cfg = ephemeral_config(store_id, Visibility::Public, td.path());
+        assert_eq!(cfg.store_id, store_id);
+        assert_eq!(cfg.data_dir, td.path().display().to_string());
+        assert_eq!(cfg.max_size, MAX_STORE_BYTES);
+        assert!(matches!(cfg.visibility, Visibility::Public));
+        assert!(cfg.label.is_none());
+    }
+
+    #[test]
+    fn canonical_resource_urn_drops_the_root_and_keys_on_store_plus_resource() {
+        // The retrieval/AES URN is root-INDEPENDENT (the client reconstructs it
+        // with the root dropped). Guard that invariant + the chain/store/key wiring.
+        let store_id = Bytes32([8u8; 32]);
+        let urn = canonical_resource_urn(store_id, "index.html");
+        assert_eq!(urn.chain, CHAIN);
+        assert_eq!(urn.store_id, store_id);
+        assert!(urn.root_hash.is_none(), "URN must be root-independent");
+        assert_eq!(urn.resource_key.as_deref(), Some("index.html"));
+    }
+
+    #[test]
+    fn empty_manifest_and_no_auth_are_the_documented_neutral_defaults() {
+        let m = empty_manifest();
+        assert_eq!(m.schema_version, 1);
+        assert!(m.name.is_empty());
+        assert!(m.version.is_none());
+        assert!(m.authors.is_empty());
+        let a = no_auth();
+        assert!(!a.requires_session);
+        assert!(!a.requires_jwt);
+        assert!(a.jwks_url.is_none());
+        assert!(a.accepted_algorithms.is_empty());
+    }
+
+    // ---- manifest_from_json: the publisher-metadata parser (previously untested) --
+
+    #[test]
+    fn manifest_from_json_parses_all_fields() {
+        let v = serde_json::json!({
+            "schema_version": 2,
+            "name": "My App",
+            "version": "1.2.3",
+            "description": "a test app",
+            "authors": [
+                { "name": "Alice", "handle": "@alice", "contact": "alice@example.com" },
+                { "name": "Bob" }
+            ],
+            "license": "GPL-2.0",
+            "homepage": "https://example.com",
+            "repository": "https://github.com/x/y",
+            "keywords": ["dig", "web"],
+            "categories": ["tools"],
+            "icon": "icon.png",
+            "content_type": "text/html",
+            "links": { "docs": "https://docs.example.com" },
+            "custom": { "x": 1, "nested": { "k": "v" } }
+        });
+        let m = manifest_from_json(&v);
+        assert_eq!(m.schema_version, 2);
+        assert_eq!(m.name, "My App");
+        assert_eq!(m.version.as_deref(), Some("1.2.3"));
+        assert_eq!(m.description.as_deref(), Some("a test app"));
+        assert_eq!(m.authors.len(), 2);
+        assert_eq!(m.authors[0].name, "Alice");
+        assert_eq!(m.authors[0].handle.as_deref(), Some("@alice"));
+        assert_eq!(m.authors[0].contact.as_deref(), Some("alice@example.com"));
+        // Bob has no handle/contact → both None.
+        assert_eq!(m.authors[1].name, "Bob");
+        assert!(m.authors[1].handle.is_none());
+        assert!(m.authors[1].contact.is_none());
+        assert_eq!(m.license.as_deref(), Some("GPL-2.0"));
+        assert_eq!(m.homepage.as_deref(), Some("https://example.com"));
+        assert_eq!(m.repository.as_deref(), Some("https://github.com/x/y"));
+        assert_eq!(m.keywords, vec!["dig", "web"]);
+        assert_eq!(m.categories, vec!["tools"]);
+        assert_eq!(m.icon.as_deref(), Some("icon.png"));
+        assert_eq!(m.content_type.as_deref(), Some("text/html"));
+        assert_eq!(m.links.get("docs").map(String::as_str), Some("https://docs.example.com"));
+        // custom is preserved verbatim (including nested values).
+        assert_eq!(m.custom.get("x"), Some(&serde_json::json!(1)));
+        assert_eq!(m.custom.get("nested"), Some(&serde_json::json!({ "k": "v" })));
+    }
+
+    #[test]
+    fn manifest_from_json_collapses_empty_and_missing_to_neutral() {
+        // schema_version defaults to 1; empty strings collapse to None; absent
+        // arrays/objects collapse to empty. This is the tolerant-parse contract.
+        let v = serde_json::json!({
+            "name": "",
+            "version": "",        // empty → None (opt())
+            "description": "",
+            "keywords": "not-an-array", // wrong type → empty
+        });
+        let m = manifest_from_json(&v);
+        assert_eq!(m.schema_version, 1, "default when absent");
+        assert_eq!(m.name, "", "name uses unwrap_or_default (NOT opt)");
+        assert!(m.version.is_none(), "empty string collapses to None");
+        assert!(m.description.is_none());
+        assert!(m.authors.is_empty());
+        assert!(m.keywords.is_empty(), "non-array keywords → empty");
+        assert!(m.categories.is_empty());
+        assert!(m.links.is_empty());
+        assert!(m.custom.is_empty());
+        assert!(m.license.is_none());
+    }
+
+    #[test]
+    fn manifest_from_json_skips_authors_without_a_name() {
+        // An author entry MUST have a name; entries lacking one are dropped (the
+        // `?` early-return inside the filter_map).
+        let v = serde_json::json!({
+            "name": "x",
+            "authors": [
+                { "handle": "@nameless" },        // no name → dropped
+                { "name": "Carol", "handle": 5 }, // non-string handle → handle None
+            ]
+        });
+        let m = manifest_from_json(&v);
+        assert_eq!(m.authors.len(), 1);
+        assert_eq!(m.authors[0].name, "Carol");
+        assert!(m.authors[0].handle.is_none());
+    }
+
+    #[test]
+    fn manifest_from_json_links_ignores_non_string_values() {
+        let v = serde_json::json!({
+            "name": "x",
+            "links": { "a": "https://a", "b": 123, "c": null }
+        });
+        let m = manifest_from_json(&v);
+        assert_eq!(m.links.len(), 1, "only string-valued links are kept");
+        assert_eq!(m.links.get("a").map(String::as_str), Some("https://a"));
+    }
 }
