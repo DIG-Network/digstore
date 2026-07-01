@@ -71,6 +71,19 @@ dig-constants = { version = "0.2", git = "https://github.com/DIG-Network/dig-con
 # / `Contact` / `DhtTransport` share the exact types `dig_nat::connect` returns. A `?rev=` form would
 # fork dig-nat into a distinct, incompatible source. Resolved to the tracked rev via the lockfile.
 dig-dht = { git = "https://github.com/DIG-Network/dig-dht" }
+# -- Multi-source content fetch (#164) + redirect-on-miss (#165) --------------------------------------
+# The node-side download orchestrator: locate holders via dig-dht `find_providers`, confirm with
+# `dig.getAvailability`, fan byte ranges across MULTIPLE providers simultaneously (`dig.fetchRange`
+# over dig-nat), verify each range + the whole resource against the chain-anchored root, and
+# reassemble — with pause/resume + `.download.tmp` GC. dig-node wires the real seams per the crate's
+# implementers' note (see `download.rs`): DhtProviderLocator over our DhtService, NatRangeTransport
+# over our mTLS identity, MerkleVerifier bound to the digstore proof format, FileSink/FileStateStore
+# under the node's cache dir.
+#
+# Sourcing: bare git form (no `rev`), matching dig-dht/dig-nat above, so cargo unifies dig-download's
+# own dig-dht + dig-nat dependencies with ours — ONE crate instance each across the graph (its
+# re-exported `ContentId`/`ProviderRecord` ARE our dig-dht types). Resolved via the lockfile.
+dig-download = { git = "https://github.com/DIG-Network/dig-download" }
 # Deterministic self-signed node certificate derived from the node's persistent identity seed, so the
 # node's mTLS peer_id is stable across restarts. rustls-only (no OpenSSL), matching dig-nat.
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
