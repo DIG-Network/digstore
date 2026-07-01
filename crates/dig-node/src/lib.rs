@@ -46,6 +46,7 @@ use fs4::FileExt;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
+pub mod dht;
 pub mod peer;
 
 /// JSON-RPC error code: the served/requested root is NOT the store's

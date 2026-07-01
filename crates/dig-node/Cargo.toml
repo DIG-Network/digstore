@@ -24,7 +24,7 @@ digstore-chain = { path = "../digstore-chain" }
 digstore-stage = { path = "../digstore-stage" }
 digstore-crypto = { path = "../digstore-crypto" }
 chia-protocol = "0.26"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "net", "io-util", "time", "signal"] }
 # Object-safe async trait for the injectable anchored-root resolver (the
 # mandatory read-path chain pin, #127): production walks coinset, tests inject a
 # deterministic resolver.
@@ -60,6 +60,17 @@ dig-gossip = { git = "https://github.com/DIG-Network/dig-gossip", rev = "ad20521
 # The canonical DIG network id (genesis challenge) for the gossip handshake / introducer scope. No
 # `rev` so cargo unifies to the SAME dig-constants source dig-nat/dig-gossip already resolve (one copy).
 dig-constants = { version = "0.2", git = "https://github.com/DIG-Network/dig-constants" }
+# -- L7 content-location DHT (PHASE-B, #163) ---------------------------------------------------------
+# The Kademlia DHT that maps DIG content (store / capsule / root / resource) to the peer_ids holding
+# it. The node LOCATES content it lacks via `find_providers`, and keeps its OWN held-inventory provider
+# records CURRENT in the DHT (`announce_provider` / `withdraw_provider` / `republish`). It rides the
+# SAME dig-nat mTLS transport as the rest of the peer network via a `DhtTransport` adapter (`dht.rs`).
+#
+# Sourcing: bare git form (no `rev`) so cargo unifies dig-dht's `dig-nat` dependency (also bare-git)
+# with dig-node's + dig-gossip's — ONE dig-nat crate instance across the graph, so dig-dht's `PeerId`
+# / `Contact` / `DhtTransport` share the exact types `dig_nat::connect` returns. A `?rev=` form would
+# fork dig-nat into a distinct, incompatible source. Resolved to the tracked rev via the lockfile.
+dig-dht = { git = "https://github.com/DIG-Network/dig-dht" }
 # Deterministic self-signed node certificate derived from the node's persistent identity seed, so the
 # node's mTLS peer_id is stable across restarts. rustls-only (no OpenSSL), matching dig-nat.
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
