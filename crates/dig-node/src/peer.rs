@@ -472,21 +472,59 @@ pub async fn serve_peer_session_from(
     session: &mut dig_nat::mux::PeerSession,
     responder: Arc<dyn PeerRpcResponder>,
 ) {
+    serve_peer_session_from_with(caller, session, responder, None).await
+}
+
+/// Like [`serve_peer_session_from`] but also running the node↔node **PEX** exchange (#166) over this
+/// session when `pex` is `Some`: before accepting inbound streams, the node opens ONE outgoing PEX
+/// stream and drives its sending direction (handshake→snapshot→periodic deltas) on it; each accepted
+/// stream whose first frame is a `pex_*` message is served as the peer's incoming PEX direction
+/// ([`crate::pex::serve_inbound_stream`]) instead of the RPC dispatch. On teardown the PEX link state
+/// is discarded ([`crate::pex::PexEngineHandle::link_down`]). PEX runs only when the session has an
+/// authenticated `caller` (its mTLS `peer_id` is the link identity — never a wire field, SPEC §10.1).
+pub async fn serve_peer_session_from_with(
+    caller: Option<dig_dht::Contact>,
+    session: &mut dig_nat::mux::PeerSession,
+    responder: Arc<dyn PeerRpcResponder>,
+    pex: Option<Arc<crate::pex::PexServing>>,
+) {
+    // PEX sending direction: open our own PEX logical stream on this session and drive it. The link
+    // identity is the mTLS-verified caller peer_id (never the wire body).
+    let pex_peer_id = pex
+        .as_ref()
+        .and_then(|_| caller.as_ref().map(|c| c.peer_id.clone()));
+    if let (Some(pex), Some(peer_id)) = (pex.as_ref(), pex_peer_id.clone()) {
+        match session.open_stream().await {
+            Ok(stream) => {
+                let engine = pex.engine.clone();
+                tokio::spawn(crate::pex::run_send_direction(engine, peer_id, stream));
+            }
+            Err(e) => tracing::debug!(error = %e, "pex: could not open outgoing stream"),
+        }
+    }
+
     while let Some(stream) = session.accept_stream().await {
         let responder = responder.clone();
         let caller = caller.clone();
+        let pex = pex.clone();
         tokio::spawn(async move {
-            if let Err(e) = serve_one_stream_from(caller, stream, responder).await {
+            if let Err(e) = serve_one_stream_from_with(caller, stream, responder, pex).await {
                 tracing::debug!(error = %e, "peer stream ended with an error");
             }
         });
+    }
+
+    // The session closed: discard this link's PEX state so a reconnect starts fresh (SPEC §5.5).
+    if let (Some(pex), Some(peer_id)) = (pex, pex_peer_id) {
+        pex.engine.link_down(&peer_id).await;
     }
 }
 
 /// Handle exactly one inbound peer stream: read the request frame, dispatch by shape, write the
 /// answer. Generic over the stream so it is driven directly by a loopback duplex in tests.
-/// Test-only thin wrapper: serve one stream with no authenticated caller (the DHT-caller-less path).
-/// Production always goes through [`serve_one_stream_from`] with the session's mTLS caller.
+/// Test-only thin wrapper: serve one stream with no authenticated caller and no PEX (the
+/// DHT-caller-less path). Production always goes through [`serve_one_stream_from_with`] with the
+/// session's mTLS caller.
 #[cfg(test)]
 pub(crate) async fn serve_one_stream<S>(
     stream: S,
@@ -495,7 +533,7 @@ pub(crate) async fn serve_one_stream<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
 {
-    serve_one_stream_from(None, stream, responder).await
+    serve_one_stream_from_with(None, stream, responder, None).await
 }
 
 /// Handle one inbound peer stream, carrying the session's authenticated `caller` so a DHT frame is
@@ -503,11 +541,15 @@ where
 /// DHT methods) is checked FIRST — it is disjoint from the JSON-RPC/range/availability shapes — and
 /// routed to [`PeerRpcResponder::handle_dht`], which writes the framed `dig_dht::DhtResponse` back
 /// (dig-dht's own framing, byte-identical to [`write_framed`]). Everything else dispatches by shape as
-/// before. Generic over the stream so a loopback duplex drives it in tests.
-pub(crate) async fn serve_one_stream_from<S>(
+/// before. When `pex` is `Some` and the first frame is a `pex_*` message (a PEX stream self-identifies
+/// by its first frame, SPEC §10.1), the stream is served as the peer's incoming PEX direction
+/// ([`crate::pex::serve_inbound_stream`]) — which keeps reading subsequent PEX frames off it — instead
+/// of the one-shot RPC dispatch. Generic over the stream so a loopback duplex drives it in tests.
+pub(crate) async fn serve_one_stream_from_with<S>(
     caller: Option<dig_dht::Contact>,
     mut stream: S,
     responder: Arc<dyn PeerRpcResponder>,
+    pex: Option<Arc<crate::pex::PexServing>>,
 ) -> std::io::Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
@@ -521,6 +563,25 @@ where
         let bytes = responder.handle_dht(caller, req).await;
         stream.write_all(&bytes).await?;
         return stream.flush().await;
+    }
+    // A PEX stream self-identifies by a `pex_*` first frame (disjoint from the DHT + JSON-RPC/range/
+    // availability shapes). Hand the whole stream to the PEX serving loop, which continues reading
+    // this peer's incoming PEX direction (handshake→snapshot→deltas) off it.
+    if let (Some(pex), true) = (pex.as_ref(), crate::pex::is_pex_first_frame(&req)) {
+        if let Some(peer_id) = caller.as_ref().map(|c| c.peer_id.clone()) {
+            // Reconstruct the typed first frame we already consumed; a malformed pex_* body is a
+            // message-level violation the engine records via the serving loop's decode path.
+            let first = serde_json::from_value::<dig_pex::PexMessage>(req).ok();
+            crate::pex::serve_inbound_stream(
+                pex.engine.clone(),
+                pex.pool.clone(),
+                peer_id,
+                first,
+                stream,
+            )
+            .await;
+        }
+        return Ok(());
     }
     match classify_request(&req) {
         PeerRequestKind::JsonRpc => {
@@ -892,6 +953,23 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
         .await
         .map_err(|e| format!("bind peer-RPC listener {addr}: {e}"))?;
     println!("dig-node peer network: mTLS peer-RPC listening on {addr}");
+    // 6. Bring up the node↔node PEX peer-sharing layer (#166): one node-wide engine advertising this
+    //    node's first-hand connected pool, a pool feeder mirroring pool churn into its advertise set,
+    //    the ~1/s tick loop, and the production pool sink (candidates → dial+verify+adopt over dig-nat,
+    //    violations → disconnect). Threaded onto the mTLS listener so each accepted peer connection
+    //    runs both PEX directions. Additive + best-effort — the pool + DHT + §21 read path are
+    //    unaffected if PEX is idle. (The in-process FFI path opens no listener, so it runs no PEX.)
+    let pex_engine = crate::pex::PexEngineHandle::new(
+        dig_pex::PexConfig::new(peer_id_hex.clone(), network_id_str.clone())
+            .with_flags(vec![crate::pex::node_pex_flag().to_string()]),
+    );
+    crate::pex::spawn_pool_feeder(pex_engine.clone(), handle.clone(), network_id_str.clone());
+    crate::pex::spawn_tick_loop(pex_engine.clone());
+    let pex = crate::pex::PexServing::new(
+        pex_engine,
+        Arc::new(crate::pex::GossipPexPool::new(handle.clone())),
+    );
+
     // The served responder carries the LIVE pool handle so `dig.getPeers` reflects connected peers,
     // and the DHT so inbound DHT RPCs are answered.
     let mut node_responder = NodeResponder::with_pool(node, handle);
@@ -899,7 +977,7 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
         node_responder = node_responder.with_dht(dht);
     }
     let responder: Arc<dyn PeerRpcResponder> = Arc::new(node_responder);
-    serve_peer_rpc_listener(listener, identity, responder).await
+    serve_peer_rpc_listener_with(listener, identity, responder, Some(pex)).await
 }
 
 /// Bring up the content-location DHT (#163) for a running node: build a [`crate::dht::NatDhtTransport`]
@@ -987,6 +1065,20 @@ pub async fn serve_peer_rpc_listener(
     identity: dig_nat::LocalIdentity,
     responder: Arc<dyn PeerRpcResponder>,
 ) -> Result<(), String> {
+    serve_peer_rpc_listener_with(listener, identity, responder, None).await
+}
+
+/// Like [`serve_peer_rpc_listener`] but additionally running the node↔node **PEX** peer-sharing layer
+/// (#166) over each accepted mTLS connection when `pex` is `Some`: the node opens its outgoing PEX
+/// stream (handshake→snapshot→deltas) and serves the peer's incoming PEX stream, feeding discovered
+/// peers into the pool as dial candidates. `None` disables PEX (the FFI/base path + existing callers),
+/// leaving the serve path byte-identical to before.
+pub async fn serve_peer_rpc_listener_with(
+    listener: tokio::net::TcpListener,
+    identity: dig_nat::LocalIdentity,
+    responder: Arc<dyn PeerRpcResponder>,
+    pex: Option<Arc<crate::pex::PexServing>>,
+) -> Result<(), String> {
     let server_config = Arc::new(build_server_tls_config(&identity)?);
     let acceptor = tokio_rustls::TlsAcceptor::from(server_config);
 
@@ -1000,6 +1092,7 @@ pub async fn serve_peer_rpc_listener(
         };
         let acceptor = acceptor.clone();
         let responder = responder.clone();
+        let pex = pex.clone();
         tokio::spawn(async move {
             // mTLS handshake (client cert required by build_server_tls_config; a peer with no cert or
             // a failed handshake is dropped here — no unauthenticated peer traffic reaches the RPC).
@@ -1013,7 +1106,7 @@ pub async fn serve_peer_rpc_listener(
                     // should already have rejected.
                     let caller = caller_from_tls(&tls, peer_addr);
                     let mut session = dig_nat::mux::PeerSession::server(tls);
-                    serve_peer_session_from(caller, &mut session, responder).await;
+                    serve_peer_session_from_with(caller, &mut session, responder, pex).await;
                 }
                 Err(e) => tracing::debug!(error = %e, "peer mTLS handshake failed; dropped"),
             }

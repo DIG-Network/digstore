@@ -2426,6 +2426,7 @@ dependencies = [
  "dig-dht",
  "dig-gossip",
  "dig-nat",
+ "dig-pex",
  "digstore-chain",
  "digstore-core",
  "digstore-crypto",
@@ -2451,6 +2452,17 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "dig-pex"
+version = "0.1.0"
+source = "git+https://github.com/DIG-Network/dig-pex#bc10434399a320758e68998afbd6451d1191de0f"
+dependencies = [
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

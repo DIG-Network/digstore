@@ -71,6 +71,18 @@ dig-constants = { version = "0.2", git = "https://github.com/DIG-Network/dig-con
 # / `Contact` / `DhtTransport` share the exact types `dig_nat::connect` returns. A `?rev=` form would
 # fork dig-nat into a distinct, incompatible source. Resolved to the tracked rev via the lockfile.
 dig-dht = { git = "https://github.com/DIG-Network/dig-dht" }
+# -- L7 Peer Exchange (PEX, #166) --------------------------------------------------------------------
+# The node<->node peer-sharing protocol: over each established mTLS peer connection, a dedicated PEX
+# logical stream exchanges delta-based first-hand known-peer sets (handshake -> snapshot -> deltas),
+# feeding discovered peers into the pool as dial candidates (hints, verified by dialing) and formalizing
+# what the ad-hoc `dig.getPeers` polling did. dig-pex ships a transport-agnostic sans-IO `PexEngine`
+# this crate embeds; `pex.rs` is the dig-nat mux I/O adapter (SPEC §10.1, Appendix A).
+#
+# Sourcing: bare git form (no `rev`, like dig-nat/dig-dht) so cargo unifies any shared transitive deps
+# to ONE copy across the graph; resolved to the tracked rev via the lockfile. dig-pex keeps a minimal
+# dependency surface (serde/serde_json/tokio/rand — it mirrors the address shape rather than importing
+# the transport crates), so there is no cross-crate type-unification concern here.
+dig-pex = { git = "https://github.com/DIG-Network/dig-pex" }
 # Deterministic self-signed node certificate derived from the node's persistent identity seed, so the
 # node's mTLS peer_id is stable across restarts. rustls-only (no OpenSSL), matching dig-nat.
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
