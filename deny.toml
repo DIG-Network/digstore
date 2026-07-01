@@ -65,6 +65,7 @@ allow-git = [
     "https://github.com/DIG-Network/dig-nat",
     "https://github.com/DIG-Network/dig-gossip",
     "https://github.com/DIG-Network/dig-constants",
+    "https://github.com/DIG-Network/dig-dht",
 ]
 
 # Not currently gated in CI (see header). Kept for when license compliance is

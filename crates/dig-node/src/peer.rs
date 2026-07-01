@@ -428,6 +428,24 @@ pub trait PeerRpcResponder: Send + Sync {
         req: Value,
         out: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     ) -> std::io::Result<()>;
+
+    /// Answer an inbound DHT-RPC frame (#163): decode `frame` as a `dig_dht::DhtRequest`, dispatch it
+    /// against the node's DHT service folding in the authenticated `caller` (so the routing table
+    /// populates bidirectionally), and return the framed `dig_dht::DhtResponse` bytes to write back.
+    ///
+    /// `caller` is the DHT [`dig_dht::Contact`] built from the mTLS-verified peer_id + remote addr
+    /// (never the wire body). The default is a "DHT not running" error frame, so a responder without a
+    /// DHT (the base/FFI path, test stubs) needs no override; [`NodeResponder`] overrides it when the
+    /// standalone peer network brought up a DHT.
+    async fn handle_dht(&self, caller: Option<dig_dht::Contact>, frame: Value) -> Vec<u8> {
+        let _ = caller;
+        let _ = frame;
+        dig_dht::DhtResponse::Error {
+            code: 1,
+            message: "DHT not running on this node".to_string(),
+        }
+        .encode()
+    }
 }
 
 /// Serve peer requests over one established, mTLS-authenticated [`dig_nat::mux::PeerSession`] (the
@@ -441,10 +459,24 @@ pub async fn serve_peer_session(
     mut session: dig_nat::mux::PeerSession,
     responder: Arc<dyn PeerRpcResponder>,
 ) {
+    // No authenticated caller threaded here (the mTLS-verified caller is supplied by the listener via
+    // `serve_peer_session_from`); a caller-less session still serves the JSON-RPC/range/availability
+    // paths — only DHT routing-table population needs the caller.
+    serve_peer_session_from(None, &mut session, responder).await
+}
+
+/// Like [`serve_peer_session`] but carrying the session's authenticated `caller` [`dig_dht::Contact`]
+/// (from the mTLS handshake) so DHT frames on this session are dispatched with the verified caller.
+pub async fn serve_peer_session_from(
+    caller: Option<dig_dht::Contact>,
+    session: &mut dig_nat::mux::PeerSession,
+    responder: Arc<dyn PeerRpcResponder>,
+) {
     while let Some(stream) = session.accept_stream().await {
         let responder = responder.clone();
+        let caller = caller.clone();
         tokio::spawn(async move {
-            if let Err(e) = serve_one_stream(stream, responder).await {
+            if let Err(e) = serve_one_stream_from(caller, stream, responder).await {
                 tracing::debug!(error = %e, "peer stream ended with an error");
             }
         });
@@ -453,7 +485,27 @@ pub async fn serve_peer_session(
 
 /// Handle exactly one inbound peer stream: read the request frame, dispatch by shape, write the
 /// answer. Generic over the stream so it is driven directly by a loopback duplex in tests.
+/// Test-only thin wrapper: serve one stream with no authenticated caller (the DHT-caller-less path).
+/// Production always goes through [`serve_one_stream_from`] with the session's mTLS caller.
+#[cfg(test)]
 pub(crate) async fn serve_one_stream<S>(
+    stream: S,
+    responder: Arc<dyn PeerRpcResponder>,
+) -> std::io::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
+{
+    serve_one_stream_from(None, stream, responder).await
+}
+
+/// Handle one inbound peer stream, carrying the session's authenticated `caller` so a DHT frame is
+/// dispatched with the verified caller identity (#163). A DHT frame (its `type` is one of the four
+/// DHT methods) is checked FIRST — it is disjoint from the JSON-RPC/range/availability shapes — and
+/// routed to [`PeerRpcResponder::handle_dht`], which writes the framed `dig_dht::DhtResponse` back
+/// (dig-dht's own framing, byte-identical to [`write_framed`]). Everything else dispatches by shape as
+/// before. Generic over the stream so a loopback duplex drives it in tests.
+pub(crate) async fn serve_one_stream_from<S>(
+    caller: Option<dig_dht::Contact>,
     mut stream: S,
     responder: Arc<dyn PeerRpcResponder>,
 ) -> std::io::Result<()>
@@ -463,6 +515,13 @@ where
     let Some(req) = read_framed(&mut stream).await? else {
         return Ok(()); // clean close before any request
     };
+    // DHT frames are checked BEFORE the shape classifier: they carry `type` (never method/length/
+    // items), so a DHT request never collides with the JSON-RPC/range/availability shapes.
+    if crate::dht::is_dht_request(&req) {
+        let bytes = responder.handle_dht(caller, req).await;
+        stream.write_all(&bytes).await?;
+        return stream.flush().await;
+    }
     match classify_request(&req) {
         PeerRequestKind::JsonRpc => {
             let resp = responder.handle_json_rpc(req).await;
@@ -494,6 +553,9 @@ pub(crate) struct NodeResponder {
     node: Arc<crate::Node>,
     /// The live pool handle (standalone peer network only) — `None` in the base/FFI path.
     handle: Option<dig_gossip::GossipHandle>,
+    /// The live content-location DHT (#163), when the standalone peer network brought one up.
+    /// `None` disables inbound DHT serving (the default trait method returns a "not running" frame).
+    dht: Option<Arc<crate::dht::DhtHandle>>,
 }
 
 impl NodeResponder {
@@ -502,7 +564,15 @@ impl NodeResponder {
         NodeResponder {
             node,
             handle: Some(handle),
+            dht: None,
         }
+    }
+
+    /// Attach the live DHT so this responder answers inbound DHT RPCs (#163). Builder-style so the
+    /// standalone bring-up wires the pool first, then the DHT once it is bootstrapped.
+    pub(crate) fn with_dht(mut self, dht: Arc<crate::dht::DhtHandle>) -> Self {
+        self.dht = Some(dht);
+        self
     }
 
     /// The live pool's peers as L7 `PeerRecord`s (peer_id + candidate addresses), or an empty list
@@ -603,6 +673,19 @@ impl PeerRpcResponder for NodeResponder {
                     return write_framed(out, &errf).await;
                 }
             }
+        }
+    }
+
+    async fn handle_dht(&self, caller: Option<dig_dht::Contact>, frame: Value) -> Vec<u8> {
+        match &self.dht {
+            // Dispatch into the live DHT, folding in the authenticated caller (routing-table fill).
+            Some(dht) => crate::dht::handle_dht_frame(dht.service(), caller, &frame).await,
+            // No DHT on this node → the default "not running" frame.
+            None => dig_dht::DhtResponse::Error {
+                code: 1,
+                message: "DHT not running on this node".to_string(),
+            }
+            .encode(),
         }
     }
 }
@@ -771,18 +854,126 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
         });
     }
 
-    // 4. Serve the L7 peer RPC over mTLS to other nodes: a dedicated mTLS listener using the SAME
+    // 4. Bring up the content-location DHT (#163) over the SAME mTLS identity: it LOCATES which peers
+    //    hold content this node wants, and keeps this node's OWN held-inventory provider records
+    //    CURRENT so other nodes can find it. Best-effort — a DHT bring-up failure logs + leaves the
+    //    node serving without the DHT (the pool + §21 read path still work).
+    let dht = match bring_up_dht(&node, &identity, &network_id_str, &handle).await {
+        Ok(dht) => Some(dht),
+        Err(e) => {
+            tracing::warn!(error = %e, "dig-node DHT bring-up failed; continuing without the DHT");
+            status.set_error(format!("dht: {e}"));
+            None
+        }
+    };
+
+    // Graceful shutdown: on ctrl-c, best-effort withdraw this node's provider records so peers stop
+    // being told to dial a node that is going away (TTL expiry is the backstop if this does not reach
+    // every replica). Spawned so it does not block the listener; a no-op when the DHT is not up.
+    if let Some(dht) = dht.clone() {
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                let withdrawn = dht.withdraw_all().await;
+                tracing::info!(
+                    withdrawn,
+                    "dig-node DHT: withdrew provider records on shutdown"
+                );
+            }
+        });
+    }
+
+    // 5. Serve the L7 peer RPC over mTLS to other nodes: a dedicated mTLS listener using the SAME
     //    identity, requiring a client cert (peer_id enforced), each accepted connection muxed +
-    //    served via `serve_peer_session`.
+    //    served via `serve_peer_session`. Inbound DHT RPCs on those sessions are answered by the DHT
+    //    (folding in the mTLS-verified caller) when it is up.
     let port = peer_port_from_env();
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| format!("bind peer-RPC listener {addr}: {e}"))?;
     println!("dig-node peer network: mTLS peer-RPC listening on {addr}");
-    // The served responder carries the LIVE pool handle so `dig.getPeers` reflects connected peers.
-    let responder: Arc<dyn PeerRpcResponder> = Arc::new(NodeResponder::with_pool(node, handle));
+    // The served responder carries the LIVE pool handle so `dig.getPeers` reflects connected peers,
+    // and the DHT so inbound DHT RPCs are answered.
+    let mut node_responder = NodeResponder::with_pool(node, handle);
+    if let Some(dht) = dht {
+        node_responder = node_responder.with_dht(dht);
+    }
+    let responder: Arc<dyn PeerRpcResponder> = Arc::new(node_responder);
     serve_peer_rpc_listener(listener, identity, responder).await
+}
+
+/// Bring up the content-location DHT (#163) for a running node: build a [`crate::dht::NatDhtTransport`]
+/// over the node's mTLS identity, create the [`dig_dht::DhtService`], BOOTSTRAP it from the dig-gossip
+/// connected pool (which also carries relay-introducer-discovered peers), ANNOUNCE the node's current
+/// inventory (so peers can immediately find what it holds), and spawn the maintenance loop
+/// (`republish`/`refresh_buckets`/`gc`) so provider records never lapse while online. Returns the
+/// [`crate::dht::DhtHandle`] the responder + inventory-change path use.
+async fn bring_up_dht(
+    node: &Arc<crate::Node>,
+    identity: &dig_nat::LocalIdentity,
+    network_id: &str,
+    pool: &dig_gossip::GossipHandle,
+) -> Result<Arc<crate::dht::DhtHandle>, String> {
+    use dig_dht::{CandidateAddr, DhtConfig, DhtService};
+
+    let config = DhtConfig::default();
+    // The transport dials peers as THIS node (client cert = our identity), scoping relay lookups to
+    // our network id, bounding each RPC by the config's per-RPC timeout.
+    let transport = Arc::new(crate::dht::NatDhtTransport::new(
+        identity.clone(),
+        network_id.to_string(),
+        config.rpc_timeout,
+    ));
+    // Our own advertised addresses: the P2P listen port. We advertise it as a direct candidate; a
+    // NAT'd node is still reachable via the relay tiers dig-nat composes (finders sort candidates).
+    let port = peer_port_from_env();
+    let local_addresses = vec![CandidateAddr::direct("0.0.0.0", port)];
+    let service = Arc::new(DhtService::new(
+        identity.peer_id,
+        local_addresses,
+        config.clone(),
+        transport,
+    ));
+
+    // Bootstrap from the connected pool (+ relay-introducer peers discovered into it).
+    let pool_peers: Vec<([u8; 32], std::net::SocketAddr)> = pool
+        .connected_pool_peers()
+        .into_iter()
+        .map(|(peer_id, addr, _outbound)| {
+            // dig-gossip's PeerId is a chia Bytes32; take its raw 32 bytes for the dig-nat PeerId.
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(peer_id.as_ref());
+            (bytes, addr)
+        })
+        .collect();
+    let bootstrap = crate::dht::bootstrap_peers_from_pool(&pool_peers);
+    if let Err(e) = service.bootstrap(&bootstrap).await {
+        // A failed bootstrap (no peers yet) is not fatal: local provider records still stand and the
+        // maintenance loop re-attempts the PUT as the pool fills. Log + carry on.
+        tracing::debug!(error = %e, "DHT bootstrap found no peers yet; records republish once the pool fills");
+    }
+
+    // Announce the node's CURRENT inventory so peers can immediately find the content it holds.
+    let cached = node.cache_list_cached().await;
+    let announced = crate::dht::announce_inventory(&service, &cached).await;
+    let initial_ids = crate::dht::inventory_content_ids(&cached);
+    println!(
+        "dig-node peer network: DHT up — announced {announced} content id(s) for local inventory"
+    );
+
+    let dht = crate::dht::DhtHandle::new(service, initial_ids);
+
+    // Spawn the maintenance loop: republish (records never lapse) + refresh buckets + gc, well inside
+    // the provider TTL.
+    {
+        let dht = dht.clone();
+        let interval = config.republish_interval;
+        tokio::spawn(async move {
+            crate::dht::run_maintenance(dht, interval).await;
+        });
+    }
+
+    Ok(dht)
 }
 
 /// Run the mTLS peer-RPC accept loop over a pre-bound `listener`: accept inbound TLS connections
@@ -800,7 +991,7 @@ pub async fn serve_peer_rpc_listener(
     let acceptor = tokio_rustls::TlsAcceptor::from(server_config);
 
     loop {
-        let (tcp, _peer_addr) = match listener.accept().await {
+        let (tcp, peer_addr) = match listener.accept().await {
             Ok(pair) => pair,
             Err(e) => {
                 tracing::warn!(error = %e, "peer-RPC accept failed");
@@ -814,13 +1005,34 @@ pub async fn serve_peer_rpc_listener(
             // a failed handshake is dropped here — no unauthenticated peer traffic reaches the RPC).
             match acceptor.accept(tcp).await {
                 Ok(tls) => {
-                    let session = dig_nat::mux::PeerSession::server(tls);
-                    serve_peer_session(session, responder).await;
+                    // Derive the AUTHENTICATED caller identity from the client's leaf certificate
+                    // (peer_id = SHA-256(SPKI DER)) + the socket it connected from, so inbound DHT
+                    // RPCs on this session populate the routing table bidirectionally (#163). The
+                    // peer_id comes from the certificate the mTLS layer just verified — never the wire
+                    // body. `None` if (defensively) no client cert is present, which the verifier
+                    // should already have rejected.
+                    let caller = caller_from_tls(&tls, peer_addr);
+                    let mut session = dig_nat::mux::PeerSession::server(tls);
+                    serve_peer_session_from(caller, &mut session, responder).await;
                 }
                 Err(e) => tracing::debug!(error = %e, "peer mTLS handshake failed; dropped"),
             }
         });
     }
+}
+
+/// Build the authenticated caller [`dig_dht::Contact`] from an accepted mTLS server connection: read
+/// the client's leaf certificate, derive its `peer_id = SHA-256(SPKI DER)` (the SAME derivation
+/// dig-nat enforces), and pair it with the remote socket address. Returns `None` if no client cert is
+/// present or it does not parse (the client-cert verifier should already have rejected such a peer).
+fn caller_from_tls(
+    tls: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+    remote_addr: std::net::SocketAddr,
+) -> Option<dig_dht::Contact> {
+    let (_io, conn) = tls.get_ref();
+    let leaf = conn.peer_certificates()?.first()?;
+    let peer_id = dig_nat::peer_id_from_leaf_cert_der(leaf.as_ref())?;
+    Some(crate::dht::caller_contact(&peer_id, remote_addr))
 }
 
 /// Build the rustls ServerConfig for the mTLS peer-RPC listener: present the node's leaf cert + key
