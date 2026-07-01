@@ -56,16 +56,18 @@ wildcards = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# The L7 peer-network crates (dig-nat, dig-gossip) + their shared network-id source (dig-constants)
-# are resolved from the DIG-Network git repos until they are published to crates.io (the ecosystem's
-# established pattern; the release-first rule swaps these for crates.io versions before publishing).
-# The [patch.crates-io] entries in Cargo.toml also resolve chia-protocol/chia-sdk-client from the
-# dig-gossip repo (its vendored additive forks), so that repo appears here as a git source too.
+# The L7 peer-network crates (dig-nat, dig-gossip, dig-dht, dig-pex) + their shared network-id source
+# (dig-constants) are resolved from the DIG-Network git repos until they are published to crates.io
+# (the ecosystem's established pattern; the release-first rule swaps these for crates.io versions
+# before publishing). The [patch.crates-io] entries in Cargo.toml also resolve
+# chia-protocol/chia-sdk-client from the dig-gossip repo (its vendored additive forks), so that repo
+# appears here as a git source too.
 allow-git = [
     "https://github.com/DIG-Network/dig-nat",
     "https://github.com/DIG-Network/dig-gossip",
     "https://github.com/DIG-Network/dig-constants",
     "https://github.com/DIG-Network/dig-dht",
+    "https://github.com/DIG-Network/dig-pex",
 ]
 
 # Not currently gated in CI (see header). Kept for when license compliance is
