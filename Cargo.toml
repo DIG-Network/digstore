@@ -21,3 +21,21 @@ hex = "0.4"
 overflow-checks = true
 debug-assertions = false
 panic = "unwind"
+
+# -- dig-gossip vendored-fork patches (L7 peer network, PHASE-2b #162) --------------------------------
+#
+# dig-gossip (the connected peer pool the dig-node crate consumes) is built against ADDITIVE forks of
+# `chia-protocol` + `chia-sdk-client` it vendors under `dig-gossip/vendor/`: the DIG introducer opcodes
+# `RegisterPeer=218`/`RegisterAck=219` on `ProtocolMessageTypes`, plus the `Peer::send_protocol_message`
+# full-duplex RPC + `RateLimits.dig_wire` (DSC-005 / CON-009). Those forks are the SAME upstream
+# versions (`chia-protocol` 0.26, `chia-sdk-client` 0.28) with additive DIG extensions, so patching the
+# whole workspace to them is safe for the other digstore crates (they simply gain unused enum variants).
+#
+# dig-gossip's own `[patch.crates-io]` does NOT apply transitively when it is a git DEPENDENCY (cargo
+# applies patches only from the ROOT manifest being built), so the digstore workspace re-declares them,
+# resolving the vendored packages from the SAME pinned dig-gossip git rev (no local path — CI-safe when
+# digstore is checked out standalone). `native-tls` is NOT patched: dig-gossip is pulled with
+# `default-features = false, features = ["rustls", "relay"]`, so the OpenSSL/native-tls path is off.
+[patch.crates-io]
+chia-protocol = { git = "https://github.com/DIG-Network/dig-gossip", rev = "ad20521335149dfa8687bf893620a87ba04fb30a" }
+chia-sdk-client = { git = "https://github.com/DIG-Network/dig-gossip", rev = "ad20521335149dfa8687bf893620a87ba04fb30a" }

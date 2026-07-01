@@ -24,7 +24,7 @@ digstore-chain = { path = "../digstore-chain" }
 digstore-stage = { path = "../digstore-stage" }
 digstore-crypto = { path = "../digstore-crypto" }
 chia-protocol = "0.26"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }
 # Object-safe async trait for the injectable anchored-root resolver (the
 # mandatory read-path chain pin, #127): production walks coinset, tests inject a
 # deterministic resolver.
@@ -40,12 +40,48 @@ fs4 = { version = "1.1.0", features = ["sync"] }
 directories = "6.0.0"
 # OS CSPRNG for the per-stage content-authoring BLS key (#95 Pass C dig.stage).
 getrandom = "0.2"
-# Persistent relay connection (the node's constant reservation with relay.dig.net so it stays
-# reachable to NAT'd peers): WebSocket client speaking the RelayMessage wire (RLY-001..RLY-006).
-# rustls so the node stays OpenSSL-free; matches the workspace tokio-tungstenite 0.24.
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+# -- L7 DIG Node peer network (PHASE-2b, #162) -------------------------------------------------------
+# The NAT-traversal + connected-peer-pool layer. The bespoke in-node relay client (formerly relay.rs)
+# is RETIRED: the relay connection now lives inside dig-nat (the `connect()` ladder's last-resort tier
+# + the persistent reservation) and dig-gossip (the introducer-backed connected peer pool). dig-node
+# consumes both to auto-discover peers via relay.dig.net, maintain a pool, and serve/issue the L7 peer
+# RPC over mTLS (peer_id = SHA256(TLS SPKI DER)).
+#
+# Sourcing: git-pinned to the exact revs the ecosystem tracks (dig-nat f200cbf, dig-gossip ad20521),
+# mirroring how the superproject + dig-gossip resolve dig-nat from git until it is on crates.io. The
+# release-first rule sequences the crates.io publish/tag swap; here we build against the real revs.
+# NB: dig-nat uses the BARE git form (no `rev`) to match dig-gossip's own `dig-nat = { git = "…dig-nat" }`
+# spec EXACTLY, so cargo unifies to ONE dig-nat copy. A `?rev=` form is a DISTINCT source to cargo even
+# at the same commit, which would fork dig-nat into two incompatible crate instances (the handle's
+# `connect_via_nat`/`query_availability` types would not match ours). Both still resolve to f200cbf via
+# the lockfile. dig-gossip is pinned by rev (its own manifest has no self-reference to worry about).
+dig-nat = { git = "https://github.com/DIG-Network/dig-nat" }
+dig-gossip = { git = "https://github.com/DIG-Network/dig-gossip", rev = "ad20521335149dfa8687bf893620a87ba04fb30a", default-features = false, features = ["rustls", "relay"] }
+# The canonical DIG network id (genesis challenge) for the gossip handshake / introducer scope. No
+# `rev` so cargo unifies to the SAME dig-constants source dig-nat/dig-gossip already resolve (one copy).
+dig-constants = { version = "0.2", git = "https://github.com/DIG-Network/dig-constants" }
+# Deterministic self-signed node certificate derived from the node's persistent identity seed, so the
+# node's mTLS peer_id is stable across restarts. rustls-only (no OpenSSL), matching dig-nat.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+# The PKCS#8 key-DER wrapper rcgen consumes (`KeyPair::from_pkcs8_der_and_sign_algo`) + the mTLS types.
+rustls-pki-types = "1"
+# The mTLS peer-RPC LISTENER (server side): present the node cert + REQUIRE a client cert (peer_id
+# enforced). rustls/tokio-rustls with ring only (no OpenSSL/aws-lc for OUR usage), matching dig-nat.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+# Bridge the tokio mTLS byte stream to yamux (dig-nat's PeerStream is a futures-compat stream).
+tokio-util = { version = "0.7", features = ["compat"] }
+# RangeFrame ciphertext payloads over the peer stream.
+serde_bytes = "0.11"
+# The peer transport still frames JSON over the mux + speaks async stream traits.
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+# In-process loopback mTLS peer drives the peer-network tests with NO real network. (rustls/tokio-rustls/
+# rcgen/rustls-pki-types are already normal deps above; the test uses them for a loopback mTLS client.)
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "net", "io-util", "time", "test-util"] }
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+# The peer_network.rs integration test implements PeerRpcResponder (an async trait).
+async-trait = "0.1"
