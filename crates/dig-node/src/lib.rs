@@ -48,6 +48,7 @@ use tokio::sync::Mutex;
 
 pub mod dht;
 pub mod peer;
+pub mod pex;
 
 /// JSON-RPC error code: the served/requested root is NOT the store's
 /// chain-anchored root (gap #127). A content read is gated on this: it serves
