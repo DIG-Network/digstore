@@ -46,7 +46,7 @@ use fs4::FileExt;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-pub mod relay;
+pub mod peer;
 
 /// JSON-RPC error code: the served/requested root is NOT the store's
 /// chain-anchored root (gap #127). A content read is gated on this: it serves
@@ -89,12 +89,13 @@ pub struct Node {
     /// [`CoinsetResolver`] (the live singleton walk); tests inject a deterministic
     /// one so the fail-closed gate is unit-tested without a chain.
     anchored_root_resolver: Arc<dyn AnchoredRootResolver>,
-    /// Live status of the node's persistent relay connection (its reservation with
-    /// `relay.dig.net` so NAT'd peers can reach it). Shared with the background relay
-    /// task spawned by the standalone [`run`]; surfaced via `control.relayStatus`. In
-    /// the in-process FFI path (the browser) no relay task runs, so this stays
-    /// disconnected — the browser is a consumer, not a reachable peer.
-    relay_status: Arc<relay::RelayStatus>,
+    /// Live, pool-oriented status of the node's L7 peer network (the connected peer pool + the
+    /// mTLS peer-RPC server). Shared with the background peer-network task spawned by the standalone
+    /// [`run`]; surfaced via `control.peerStatus`. In the in-process FFI path (the browser) no peer
+    /// network runs, so this stays "not running" — the browser is a consumer, not a reachable peer.
+    /// (Replaces the retired bespoke relay-connection status; relay reachability now lives in
+    /// dig-nat/dig-gossip and is reported here as the pool's relay-reservation flag.)
+    peer_status: Arc<peer::PeerStatus>,
 }
 
 /// The CANONICAL (shared) cache dir — the one the DIG Browser's in-process
@@ -1248,6 +1249,165 @@ impl Node {
             )),
         }
     }
+
+    // -- L7 peer RPC (PHASE-2b, #162) — serving the node's LOCAL inventory ------
+    //
+    // The node serves the SAME content over the peer network that it serves over §21 / the HTTP read
+    // path: the capsules cached on disk. These build the L7 answers (`dig.getAvailability`,
+    // `dig.listInventory`, `dig.fetchRange`, `dig.getNetworkInfo`) from `cache_list_cached()` +
+    // `serve_local`. They are pure reads of local state (no chain, no upstream), so a peer only ever
+    // learns what this node already holds. Every byte a peer fetches carries its own merkle proof
+    // (verified by the caller against the chain-anchored root), so the node is never the trust anchor.
+
+    /// The node's own `peer_id` (64-hex) derived from its persistent §21 identity seed, or `None` if
+    /// no identity is configured. This is the mTLS SPKI-hash identity the node presents on the peer
+    /// network (see [`peer::identity_from_seed`]).
+    pub fn peer_id_hex(&self) -> Option<String> {
+        let seed = self.identity_seed?;
+        peer::identity_from_seed(&seed)
+            .ok()
+            .map(|id| id.peer_id.to_hex())
+    }
+
+    /// `dig.getAvailability` — answer one queried item against the local inventory, enriching the
+    /// pure presence answer (`peer::availability_presence`) with the per-resource `total_length` +
+    /// `chunk_count` when the item is at resource granularity (`store_id` + `root` + `retrieval_key`)
+    /// and the resource is actually served locally. Returns one `AvailabilityAnswer` value.
+    async fn availability_answer(&self, item: &Value) -> Value {
+        let store = item.get("store_id").and_then(Value::as_str).unwrap_or("");
+        let root = item.get("root").and_then(Value::as_str);
+        let rk = item.get("retrieval_key").and_then(Value::as_str);
+        let cached = self.cache_list_cached().await;
+        let mut answer = peer::availability_presence(&cached, store, root, rk);
+
+        // Resource granularity: if we hold this capsule AND can serve the resource, report its
+        // ciphertext length + chunk count so the caller can plan ranges without a probe fetch.
+        if let (Some(root_hex), Some(rk_hex)) = (root, rk) {
+            if answer["available"].as_bool() == Some(true) {
+                if let Ok(rk_bytes) = decode_rk(rk_hex) {
+                    if let Some(resp) = self.serve_local(store, root_hex, &rk_bytes) {
+                        if let Some(obj) = answer.as_object_mut() {
+                            obj.insert("total_length".into(), json!(resp.ciphertext.len()));
+                            obj.insert("chunk_count".into(), json!(chunk_count_for(&resp)));
+                            obj.insert("complete".into(), json!(true));
+                        }
+                    }
+                }
+            }
+        }
+        answer
+    }
+
+    /// `dig.getAvailability` — batch answer for `items` (positionally aligned). Wraps
+    /// [`Node::availability_answer`] per item into the `{ "items": [...] }` result shape.
+    pub async fn availability_batch(&self, items: &[Value]) -> Value {
+        let mut answers = Vec::with_capacity(items.len());
+        for item in items {
+            answers.push(self.availability_answer(item).await);
+        }
+        json!({ "items": answers })
+    }
+
+    /// `dig.fetchRange` — build ONE range frame (the node window is a single frame; the caller streams
+    /// further windows by advancing `offset`). Serves the resource's ciphertext from a locally cached
+    /// module and slices `[offset, offset+length)` (clamped to the node window). The FIRST frame
+    /// (`offset == 0`) carries the verification metadata (`total_length`, `chunk_lens`, `chunk_index`,
+    /// `inclusion_proof`, `root`) so the range is independently verifiable against the chain-anchored
+    /// root. Returns `Err((code, message))` with the catalogued `-32004`/`-32007` on a miss / bad
+    /// range. (Capsule fetches — `capsule: true` — are not yet served here; that lands with the whole
+    /// `.dig` streaming path and returns `-32004` for now, a clean seam.)
+    pub async fn fetch_range_frame(
+        &self,
+        store_hex: &str,
+        root_hex: &str,
+        rk_hex: &str,
+        offset: usize,
+        length: usize,
+    ) -> Result<Value, (i64, String)> {
+        let rk = decode_rk(rk_hex).map_err(|_| {
+            (
+                -32602,
+                "retrieval_key must be 32 bytes (64-hex)".to_string(),
+            )
+        })?;
+        let resp = self.serve_local(store_hex, root_hex, &rk).ok_or((
+            -32004,
+            "resource not held at the requested root".to_string(),
+        ))?;
+
+        let total = resp.ciphertext.len();
+        // offset past the end is unsatisfiable (spec -32007). offset == total is the empty terminal.
+        if offset > total {
+            return Err((
+                -32007,
+                format!("offset {offset} beyond resource length {total}"),
+            ));
+        }
+        let start = offset.min(total);
+        let end = (start + length.min(peer::RANGE_WINDOW)).min(total);
+        let window = resp.ciphertext[start..end].to_vec();
+        let complete = end >= total;
+
+        let mut frame = json!({
+            "offset": start,
+            "length": window.len(),
+            "bytes": base64::engine::general_purpose::STANDARD.encode(&window),
+            "complete": complete,
+        });
+        // First frame carries the per-range verification metadata (spec §9).
+        if start == 0 {
+            if let Some(obj) = frame.as_object_mut() {
+                obj.insert("total_length".into(), json!(total));
+                obj.insert("chunk_lens".into(), json!(resp.chunk_lens));
+                obj.insert("chunk_index".into(), json!(0));
+                obj.insert(
+                    "inclusion_proof".into(),
+                    json!(base64::engine::general_purpose::STANDARD
+                        .encode(resp.merkle_proof.to_bytes())),
+                );
+                obj.insert("root".into(), json!(resp.roothash.to_hex()));
+            }
+        }
+        Ok(frame)
+    }
+
+    /// `dig.getNetworkInfo` — this node's own network posture: its `peer_id`, network id, listen
+    /// address, candidate addresses, reachability, and relay-reservation state. Reads the shared
+    /// [`peer::PeerStatus`] so it reflects the live pool/relay state (or "not running" in the FFI
+    /// path). Never touches the chain or an upstream.
+    pub fn network_info(&self) -> Value {
+        let peer_id = self.peer_id_hex();
+        let network_id = peer::network_id_from_env();
+        let endpoint = peer::relay_url_from_env();
+        let port = peer::peer_port_from_env();
+        let listen = format!("0.0.0.0:{port}");
+        let snap = self.peer_status.snapshot_json(&endpoint, &network_id);
+        let reserved = snap["relay"]["reserved"].as_bool().unwrap_or(false);
+        // Conservative, honest reachability: while a relay reservation is held we report "relayed"
+        // (a NAT'd node reached via the relay). A confirmed direct inbound mapping (UPnP/NAT-PMP/PCP)
+        // is not yet surfaced by the pool, so "direct" is reported only when no relay is in use rather
+        // than claimed without evidence. (A future mapping-probe upgrades this to "direct".)
+        let reachability = if reserved { "relayed" } else { "direct" };
+        json!({
+            "peer_id": peer_id,
+            "network_id": network_id,
+            "listen_addr": listen,
+            "reflexive_addr": Value::Null,
+            "candidate_addresses": [],
+            "reachability": reachability,
+            "relay": snap["relay"],
+        })
+    }
+}
+
+/// The number of chunks a served [`ContentResponse`] carries: the length of `chunk_lens`, or `1` for
+/// a single-chunk resource (which omits `chunk_lens`). Pure over the response.
+fn chunk_count_for(resp: &ContentResponse) -> usize {
+    if resp.chunk_lens.is_empty() {
+        1
+    } else {
+        resp.chunk_lens.len()
+    }
 }
 
 /// One cached capsule, as returned by [`Node::cache_list_cached`]. Identity is the
@@ -1452,6 +1612,13 @@ pub async fn handle_rpc_json(node: &Node, req_json: &str) -> String {
     handle_rpc(node, req).await.to_string()
 }
 
+/// Build a JSON-RPC 2.0 error response envelope. A free function (not the local `err` closure inside
+/// [`handle_rpc`]'s getContent section) so the early peer-RPC handlers can report catalogued errors
+/// before that closure is in scope.
+fn rpc_err(id: &Value, code: i64, message: &str) -> Value {
+    json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
+}
+
 /// Core JSON-RPC dispatch — the actual DIG node. Takes the request Value and
 /// returns the response Value. This is the single source of truth shared by the
 /// axum route (standalone bin) AND the in-process FFI (`dig-runtime`), so the
@@ -1490,6 +1657,129 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         let params = req.get("params").cloned().unwrap_or(json!({}));
         return Node::list_collection_items(&params, id).await;
     }
+    // -- L7 peer RPC (PHASE-2b, #162) — the node-profile peer-network methods -----------------------
+    //
+    // Additive JSON-RPC methods that expose the peer network over the node's RPC surface, so an agent
+    // (or the peer transport's JSON-RPC stream path) drives discovery + availability + range fetch
+    // without speaking the binary peer protocol. They are served here (over §21/FFI AND over an
+    // inbound mTLS peer stream, which routes JSON-RPC frames through this same dispatch). See
+    // docs.dig.net → L7 · DIG Node peer network + openrpc-node.json.
+    if method == "dig.getNetworkInfo" {
+        // This node's own posture (identity, reachability, candidate addrs, relay reservation).
+        return json!({"jsonrpc":"2.0","id":id,"result": node.network_info()});
+    }
+    if method == "dig.getPeers" {
+        // The peers this node currently knows (peer-exchange over RPC). The connected-pool source is
+        // owned by the live GossipService in the standalone run(); the node struct here does not hold
+        // the gossip handle (it stays FFI-safe), so this base dispatch returns the node's own view:
+        // an empty peer list when no pool is wired. The standalone peer-network task answers inbound
+        // `dig.getPeers` from the live pool via its own responder override (see peer::PoolResponder).
+        return json!({"jsonrpc":"2.0","id":id,"result": {"peers": []}});
+    }
+    if method == "dig.announce" {
+        // Accept an announcement (peer_id + candidate addresses). The base node has no pool to fold it
+        // into, so it acknowledges without growing a peer view; the live peer-network task overrides
+        // this to register the announced peer with the pool/introducer. Validates the required params.
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        let peer_id_ok = params
+            .get("peer_id")
+            .and_then(Value::as_str)
+            .map(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            .unwrap_or(false);
+        let has_addrs = params
+            .get("addresses")
+            .map(Value::is_array)
+            .unwrap_or(false);
+        if !peer_id_ok || !has_addrs {
+            return rpc_err(
+                &id,
+                -32602,
+                "dig.announce requires peer_id (64-hex) + addresses (array)",
+            );
+        }
+        return json!({"jsonrpc":"2.0","id":id,"result": {"accepted": true, "known_peers": 0}});
+    }
+    if method == "dig.getAvailability" {
+        // Batch-answer whether this node holds the queried stores/roots/capsules (from local
+        // inventory), so a downloader confirms holders + plans ranges before any fetch.
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        let items = match params.get("items").and_then(Value::as_array) {
+            Some(items) => items.clone(),
+            None => {
+                return rpc_err(
+                    &id,
+                    -32602,
+                    "dig.getAvailability requires params.items (array)",
+                )
+            }
+        };
+        return json!({"jsonrpc":"2.0","id":id,"result": node.availability_batch(&items).await});
+    }
+    if method == "dig.listInventory" {
+        // Enumerate what this node serves: its stores, or the roots it holds for a given store.
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        let store_id = params.get("store_id").and_then(Value::as_str);
+        if let Some(s) = store_id {
+            if !(s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())) {
+                return rpc_err(&id, -32602, "store_id must be 64-hex");
+            }
+        }
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|n| n as usize);
+        let cached = node.cache_list_cached().await;
+        return json!({"jsonrpc":"2.0","id":id,
+            "result": peer::list_inventory(&cached, store_id, limit)});
+    }
+    if method == "dig.fetchRange" {
+        // A single range frame of a resource this node holds (the JSON-RPC face of the streamed
+        // peer-transport range fetch; the caller advances `offset` for further windows). The frame
+        // carries the per-range verification metadata on the first window.
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        let store_hex = params.get("store_id").and_then(Value::as_str).unwrap_or("");
+        let root_hex = params.get("root").and_then(Value::as_str).unwrap_or("");
+        let rk_hex = params
+            .get("retrieval_key")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let capsule = params
+            .get("capsule")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let offset = params.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let length = params.get("length").and_then(Value::as_u64).unwrap_or(0) as usize;
+        if store_hex.len() != 64 || length == 0 {
+            return rpc_err(
+                &id,
+                -32602,
+                "dig.fetchRange requires store_id (64-hex) + length (>0)",
+            );
+        }
+        if capsule {
+            // Whole-capsule streaming is a clean follow-up seam (the .dig streaming path); resource
+            // range fetch is served now. Report the catalogued unavailable code for capsule mode.
+            return rpc_err(
+                &id,
+                -32004,
+                "capsule range fetch not served by this node yet (use resource retrieval_key)",
+            );
+        }
+        if rk_hex.len() != 64 || root_hex.len() != 64 {
+            return rpc_err(
+                &id,
+                -32602,
+                "resource fetchRange requires retrieval_key + root (64-hex each)",
+            );
+        }
+        return match node
+            .fetch_range_frame(store_hex, root_hex, rk_hex, offset, length)
+            .await
+        {
+            Ok(frame) => json!({"jsonrpc":"2.0","id":id,"result": frame}),
+            Err((code, message)) => rpc_err(&id, code, &message),
+        };
+    }
     // cache.* — the local-cache config for the chrome://settings DIG section.
     // The browser's Mojo handler reaches these via the in-process CallDigRpc FFI;
     // dig-node owns the cache, so it is the single source of truth (same fns the
@@ -1508,17 +1798,15 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
             "cache_dir": dir.display().to_string(),
             "shared": shared}});
     }
-    // control.relayStatus — live status of the node's persistent relay connection (its reservation
-    // with relay.dig.net so NAT'd peers can reach it). Read-only; safe before/without a relay task
-    // (then `connected:false`). Surfaces endpoint + the node's relay peer_id (its identity pubkey).
-    if method == "control.relayStatus" {
-        let endpoint = relay::relay_url_from_env();
-        let peer_id = node
-            .identity_seed
-            .map(|s| identity::identity_from_seed(s).pubkey_hex)
-            .unwrap_or_else(|| "anonymous".to_string());
+    // control.peerStatus — live, pool-oriented status of the node's L7 peer network (the connected
+    // peer pool + the relay reservation for NAT reachability). Read-only; safe before/without a peer
+    // network running (then `running:false`). Replaces the retired `control.relayStatus`: relay
+    // reachability now lives in dig-nat/dig-gossip and is reported here as the pool's relay flag.
+    if method == "control.peerStatus" {
+        let endpoint = peer::relay_url_from_env();
+        let network_id = peer::network_id_from_env();
         return json!({"jsonrpc":"2.0","id":id,
-            "result": node.relay_status.snapshot_json(&endpoint, &peer_id)});
+            "result": node.peer_status.snapshot_json(&endpoint, &network_id)});
     }
     if method == "cache.setCapBytes" {
         let requested = req
@@ -1821,14 +2109,27 @@ impl Node {
             cache_lock: Mutex::new(()),
             identity_seed,
             anchored_root_resolver: default_anchored_resolver(),
-            relay_status: relay::RelayStatus::new(),
+            peer_status: peer::PeerStatus::new(),
         })
     }
 
-    /// The shared relay-connection status (for the standalone `run` to hand to the relay task and
-    /// for `control.relayStatus`).
-    pub fn relay_status(&self) -> Arc<relay::RelayStatus> {
-        self.relay_status.clone()
+    /// The shared peer-network status (for the standalone `run` to hand to the peer-network task and
+    /// for `control.peerStatus`).
+    pub fn peer_status(&self) -> Arc<peer::PeerStatus> {
+        self.peer_status.clone()
+    }
+
+    /// The node's persistent identity seed, if configured — the source of the STABLE mTLS `peer_id`
+    /// for the L7 peer network (see [`peer::identity_from_seed`]). `None` disables the peer network
+    /// (the node still serves the HTTP read path).
+    pub fn identity_seed_for_peer(&self) -> Option<[u8; 32]> {
+        self.identity_seed
+    }
+
+    /// The directory the L7 peer network keeps its TLS cert/key + peer address book under (a
+    /// `peer-net/` subdir of the cache dir, so it shares the node's data root + writability handling).
+    pub fn peer_cert_dir(&self) -> PathBuf {
+        self.cache_dir.join("peer-net")
     }
 }
 
@@ -1836,33 +2137,23 @@ impl Node {
 /// the browser does NOT use this; it calls [`handle_rpc`] in-process via the
 /// `dig-runtime` FFI). Binds 127.0.0.1:`DIG_NODE_PORT` (default 9778).
 ///
-/// On startup it also spawns a background task that holds a CONSTANT connection (a reservation)
-/// with a relay (default `relay.dig.net`, override `DIG_RELAY_URL`, disable with
-/// `DIG_RELAY_URL=off`) so the node stays reachable to NAT'd peers — reconnecting with backoff if
-/// the relay drops. The relay task is in the standalone binary only; the in-process FFI path (a
-/// pure consumer) never opens one, so the §21/FFI contract is unchanged.
+/// On startup it also brings up the **L7 peer network** (PHASE-2b, #162): dig-gossip's connected peer
+/// pool (introducer-backed auto-discovery via `relay.dig.net`) + the mTLS peer-RPC server, so nodes
+/// across machines discover + connect over the relay, maintain a peer pool, and serve/issue the L7
+/// peer RPC. Disable with `DIG_PEER_NETWORK=off` (or the relay alone with `DIG_RELAY_URL=off`). The
+/// peer network runs in the standalone binary ONLY; the in-process FFI path (a pure consumer) never
+/// opens one, so the byte-exact §21/FFI contract is unchanged.
 pub async fn run() {
     let node = Node::from_env();
 
-    // Persistent relay reservation (NAT reachability). The node's relay peer_id is its persistent
-    // identity pubkey; if no identity exists it registers under a deterministic anonymous id (it
-    // still benefits from the reservation, just without a stable cross-restart id).
-    if relay::relay_enabled() {
-        let endpoint = relay::relay_url_from_env();
-        let peer_id = node
-            .identity_seed
-            .map(|s| identity::identity_from_seed(s).pubkey_hex)
-            .unwrap_or_else(|| "anonymous".to_string());
-        let status = node.relay_status.clone();
-        println!("dig-node maintaining relay reservation with {endpoint}");
-        tokio::spawn(relay::run_relay_connection(
-            endpoint,
-            peer_id,
-            relay::DEFAULT_NETWORK_ID.to_string(),
-            status,
-        ));
+    // Bring up the L7 peer network (pool + discovery + mTLS peer-RPC server) unless opted out. This
+    // replaces the retired bespoke relay client: the relay reservation now lives inside
+    // dig-nat/dig-gossip and is surfaced through the pool status. Best-effort — a failed bring-up
+    // logs + leaves `control.peerStatus` reporting not-running; the HTTP read path below still serves.
+    if peer::peer_network_enabled() {
+        peer::spawn_peer_network(node.clone());
     } else {
-        println!("dig-node: relay reservation disabled (DIG_RELAY_URL=off)");
+        println!("dig-node: L7 peer network disabled (DIG_PEER_NETWORK=off)");
     }
 
     let app = Router::new()
@@ -1882,12 +2173,12 @@ pub async fn run() {
     axum::serve(listener, app).await.expect("dig-node server");
 }
 
-/// `GET /health` — a tiny liveness + relay-status probe for the standalone node (so an operator or
-/// the installer can confirm the node is up and whether its relay reservation is held).
+/// `GET /health` — a tiny liveness + peer-network probe for the standalone node (so an operator or
+/// the installer can confirm the node is up and whether its L7 peer network is running).
 async fn health(State(node): State<Arc<Node>>) -> Json<Value> {
     Json(json!({
         "status": "ok",
-        "relay_connected": node.relay_status.is_connected(),
+        "peer_network_running": node.peer_status.is_running(),
     }))
 }
 
@@ -2050,7 +2341,7 @@ mod tests {
             cache_lock: Mutex::new(()),
             identity_seed,
             anchored_root_resolver,
-            relay_status: relay::RelayStatus::new(),
+            peer_status: peer::PeerStatus::new(),
         };
         (node, td)
     }
@@ -3023,11 +3314,12 @@ mod tests {
     }
 
     #[test]
-    fn control_relay_status_reports_disconnected_by_default() {
-        // The relay-status RPC is read-only and safe with NO relay task running (the in-process FFI
-        // path): it reports `connected:false` + the resolved endpoint + the node's relay peer_id.
+    fn control_peer_status_reports_not_running_by_default() {
+        // The peer-status RPC is read-only and safe with NO peer network running (the in-process FFI
+        // path): it reports `running:false` + the resolved relay endpoint + network id.
         let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         std::env::remove_var("DIG_RELAY_URL");
+        std::env::remove_var("DIG_NETWORK_ID");
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -3035,17 +3327,17 @@ mod tests {
         let (node, _td) = test_node(None);
         let got = rt.block_on(handle_rpc(
             &node,
-            json!({"jsonrpc":"2.0","id":7,"method":"control.relayStatus"}),
+            json!({"jsonrpc":"2.0","id":7,"method":"control.peerStatus"}),
         ));
         let result = got["result"].as_object().expect("result object");
-        assert_eq!(result["connected"], json!(false));
+        assert_eq!(result["running"], json!(false));
         assert_eq!(
-            result["endpoint"],
-            json!(relay::DEFAULT_RELAY_URL),
+            result["relay"]["url"],
+            json!(peer::DEFAULT_RELAY_URL),
             "defaults to relay.dig.net when DIG_RELAY_URL unset"
         );
-        // No identity seed → anonymous relay peer_id.
-        assert_eq!(result["peer_id"], json!("anonymous"));
+        assert_eq!(result["network_id"], json!(peer::DEFAULT_NETWORK_ID));
+        assert_eq!(result["connected_peers"], json!(0));
         assert_eq!(got["id"], json!(7));
         assert_eq!(got["jsonrpc"], json!("2.0"));
     }
