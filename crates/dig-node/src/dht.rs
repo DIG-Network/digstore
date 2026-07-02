@@ -100,22 +100,29 @@ impl NatDhtTransport {
         }
     }
 
-    /// Build the dig-nat [`PeerTarget`](dig_nat::PeerTarget) for `peer`: its verified `peer_id` plus a
-    /// directly-dialable address if the contact advertises one (most-direct-first). A relay-only
-    /// contact (no dialable candidate) becomes a `relay_only` target — dig-nat reaches it via the
-    /// relay-coordinated tiers. `None` if the contact's `peer_id` hex is malformed (unreachable).
+    /// Build the dig-nat [`PeerTarget`](dig_nat::PeerTarget) for `peer`: its verified `peer_id` plus
+    /// its FULL list of directly-dialable candidate addresses (via [`candidate_socket_addrs`]). The
+    /// candidates are passed to [`PeerTarget::with_addrs`](dig_nat::PeerTarget::with_addrs), which
+    /// stores them **IPv6-first** (ecosystem HARD RULE), so dig-nat's happy-eyeballs dialer tries the
+    /// peer's IPv6 candidate(s) first and falls back to IPv4. A contact with NO dialable candidate
+    /// becomes a `relay_only` target — dig-nat reaches it via the relay-coordinated tiers. `None` only
+    /// if the contact's `peer_id` hex is malformed (unreachable).
     fn target_for(&self, peer: &Contact) -> Option<dig_nat::PeerTarget> {
         let peer_id = peer.peer_id()?;
-        match peer.best_address().and_then(candidate_to_socket_addr) {
-            Some(addr) => Some(dig_nat::PeerTarget::with_addr(
-                peer_id,
-                addr,
-                self.network_id.clone(),
-            )),
-            None => Some(dig_nat::PeerTarget::relay_only(
+        let addrs = candidate_socket_addrs(peer);
+        if addrs.is_empty() {
+            Some(dig_nat::PeerTarget::relay_only(
                 peer_id,
                 self.network_id.clone(),
-            )),
+            ))
+        } else {
+            // `with_addrs` sorts the candidates IPv6-first for us; we pass the full list so the
+            // fallback ladder has every family to try, not just one collapsed address.
+            Some(dig_nat::PeerTarget::with_addrs(
+                peer_id,
+                addrs,
+                self.network_id.clone(),
+            ))
         }
     }
 
@@ -200,6 +207,18 @@ fn candidate_to_socket_addr(c: &CandidateAddr) -> Option<std::net::SocketAddr> {
     }
     let ip: std::net::IpAddr = c.host.parse().ok()?;
     Some(std::net::SocketAddr::new(ip, c.port))
+}
+
+/// All of a [`Contact`]'s directly-dialable candidate addresses, as [`SocketAddr`](std::net::SocketAddr)s,
+/// preserving the contact's order (relay-only markers + non-IP hostnames dropped — see
+/// [`candidate_to_socket_addr`]). Passed to `PeerTarget::with_addrs`, which re-orders them IPv6-first,
+/// so the dig-nat dialer can try every candidate (IPv6 first, then the IPv4 fallback) rather than a
+/// single collapsed address. Pure so the mapping is unit-tested without a socket or an identity.
+fn candidate_socket_addrs(peer: &Contact) -> Vec<std::net::SocketAddr> {
+    peer.addresses
+        .iter()
+        .filter_map(candidate_to_socket_addr)
+        .collect()
 }
 
 // -- Inbound DHT-RPC classification + caller identity ------------------------------------------------
@@ -646,6 +665,87 @@ mod tests {
         // A hostname (not an IP literal) is not dialable via this pure mapping.
         let host = CandidateAddr::direct("peer.example", 9444);
         assert_eq!(candidate_to_socket_addr(&host), None);
+    }
+
+    // -- candidate_socket_addrs / target_for candidate list (IPv6-first) -----------------------
+
+    #[test]
+    fn candidate_socket_addrs_keeps_every_dialable_candidate() {
+        // A contact advertising BOTH families (+ a relay marker + a bare hostname): the pure mapping
+        // keeps only the two dialable IP candidates, preserving the contact's order (the IPv6-first
+        // re-ordering is `PeerTarget::with_addrs`'s job, verified separately below).
+        let contact = Contact::new(
+            &PeerId::from_bytes([3u8; 32]),
+            vec![
+                CandidateAddr::direct("203.0.113.7", 9444),  // IPv4
+                CandidateAddr::direct("2001:db8::7", 9444),  // IPv6
+                CandidateAddr::relay_marker(),               // dropped (not dialable)
+                CandidateAddr::direct("peer.example", 9444), // dropped (not an IP literal)
+            ],
+        );
+        let addrs = candidate_socket_addrs(&contact);
+        assert_eq!(
+            addrs,
+            vec![
+                "203.0.113.7:9444".parse().unwrap(),
+                "[2001:db8::7]:9444".parse().unwrap(),
+            ],
+            "both dialable candidates kept, order preserved; relay-marker + hostname dropped"
+        );
+    }
+
+    #[test]
+    fn candidate_socket_addrs_relay_only_contact_is_empty() {
+        let contact = Contact::new(
+            &PeerId::from_bytes([4u8; 32]),
+            vec![CandidateAddr::relay_marker()],
+        );
+        assert!(
+            candidate_socket_addrs(&contact).is_empty(),
+            "a relay-only contact yields no direct candidates"
+        );
+    }
+
+    /// The whole point of Part B: a peer advertising BOTH an IPv6 and an IPv4 candidate must yield a
+    /// `PeerTarget` whose candidate list is IPv6-FIRST, so dig-nat's happy-eyeballs dialer prefers
+    /// IPv6 and falls back to IPv4. Built through the real `NatDhtTransport::target_for` path.
+    #[test]
+    fn target_for_yields_ipv6_first_candidate_list() {
+        let identity = crate::peer::identity_from_seed(&[7u8; 32]).expect("deterministic identity");
+        let transport = NatDhtTransport::new(identity, "DIG_MAINNET", Duration::from_secs(1));
+        // Advertised IPv4-BEFORE-IPv6 on the wire — target_for must still put IPv6 first.
+        let contact = Contact::new(
+            &PeerId::from_bytes([8u8; 32]),
+            vec![
+                CandidateAddr::direct("198.51.100.4", 9444), // IPv4 first on the wire
+                CandidateAddr::direct("2001:db8::4", 9444),  // IPv6 second on the wire
+            ],
+        );
+        let target = transport.target_for(&contact).expect("a reachable target");
+        let ordered = target.direct_addrs();
+        assert_eq!(ordered.len(), 2, "both families carried into the target");
+        assert!(ordered[0].is_ipv6(), "IPv6 candidate is dialed first");
+        assert!(ordered[1].is_ipv4(), "IPv4 is the fallback (second)");
+        // The single-address accessor returns the IPv6-preferred candidate.
+        assert!(
+            target.direct_addr().expect("a best address").is_ipv6(),
+            "direct_addr() is the IPv6-preferred candidate"
+        );
+    }
+
+    #[test]
+    fn target_for_relay_only_contact_has_no_direct_addrs() {
+        let identity = crate::peer::identity_from_seed(&[9u8; 32]).expect("deterministic identity");
+        let transport = NatDhtTransport::new(identity, "DIG_MAINNET", Duration::from_secs(1));
+        let contact = Contact::new(
+            &PeerId::from_bytes([10u8; 32]),
+            vec![CandidateAddr::relay_marker()],
+        );
+        let target = transport.target_for(&contact).expect("a relay-only target");
+        assert!(
+            target.direct_addr().is_none(),
+            "a relay-only contact becomes a relay_only target (no direct candidate)"
+        );
     }
 
     // -- bootstrap_peers_from_pool -------------------------------------------------------------
