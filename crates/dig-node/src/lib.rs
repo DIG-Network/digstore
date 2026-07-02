@@ -240,6 +240,16 @@ pub struct Node {
     /// (the browser is a consumer with no DHT), where an inventory-change refresh is a no-op. Kept off
     /// the `Node` struct's DHT-handle dependency (the node stays FFI-safe) by taking a boxed async hook.
     inventory_refresher: OnceLock<InventoryRefresher>,
+    /// Capsules whose background backfill (§5.6) is currently in flight, keyed `store_hex:root_hex`,
+    /// so a burst of resource reads for the same not-yet-held store spawns ONE whole-`.dig` pull, not
+    /// one per read. An entry is inserted before the pull spawns and removed when it finishes.
+    backfilling: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// A WEAK self-reference, installed by the standalone peer-network bring-up (which holds the
+    /// `Arc<Node>`), so a `&self` read handler can spawn a detached background task that needs an owned
+    /// `Arc<Node>` — the capsule backfill (§5.6). `Weak` (not `Arc`) so the node's refcount is
+    /// unaffected (no self-keep-alive cycle). NEVER set on the FFI path, so a backfill there upgrades
+    /// to `None` and is a no-op (the browser consumer has no peer network to pull a capsule from).
+    self_ref: OnceLock<std::sync::Weak<Node>>,
 }
 
 /// A boxed async hook that reconciles the node's DHT provider records with its current cache
@@ -263,6 +273,19 @@ impl Node {
         if let Some(refresh) = self.inventory_refresher.get() {
             refresh().await;
         }
+    }
+
+    /// Install the WEAK self-reference (the standalone peer-network bring-up calls this once with the
+    /// `Arc<Node>` it holds). Enables `&self` read handlers to spawn owned-`Arc` background tasks — the
+    /// capsule backfill (§5.6). Idempotent; never set on the FFI path.
+    pub(crate) fn set_self_ref(&self, weak: std::sync::Weak<Node>) {
+        let _ = self.self_ref.set(weak);
+    }
+
+    /// Upgrade the weak self-reference to an owned `Arc<Node>`, if the standalone bring-up installed
+    /// one and the node is still alive. `None` on the FFI path / before bring-up / during teardown.
+    pub(crate) fn arc_self(&self) -> Option<Arc<Node>> {
+        self.self_ref.get().and_then(std::sync::Weak::upgrade)
     }
 }
 
@@ -685,7 +708,7 @@ fn module_path(dir: &Path, store_hex: &str, root_hex: &str) -> PathBuf {
 /// Whether the module for `(store_id, root)` is held locally under `dir` — the "is this generation
 /// missing?" check the chain-watch gap-fill loop keys on (SPEC §5.1 step 1). Thin over
 /// [`module_path`] so the loop's held-check seam ([`chainwatch::HeldCheck`]) has one source of truth.
-fn module_exists(dir: &Path, store_hex: &str, root_hex: &str) -> bool {
+pub(crate) fn module_exists(dir: &Path, store_hex: &str, root_hex: &str) -> bool {
     module_path(dir, store_hex, root_hex).exists()
 }
 
@@ -2278,6 +2301,9 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
                             .range_miss_envelope(&id, &content, depth, offset, length)
                             .await
                         {
+                            // Served from another node — background-backfill the whole capsule so the
+                            // next read is local (SPEC §5.6). Deduped + detached; no delay here.
+                            node.maybe_backfill_capsule(store_hex, root_hex);
                             return envelope;
                         }
                     }
@@ -2577,6 +2603,11 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
             .content_miss_envelope(&id, &content, depth, offset, pin_hex.as_deref())
             .await
         {
+            // This resource is being served FROM ANOTHER NODE (a redirect/fetch-through). In the
+            // background, ALSO pull the whole `.dig` capsule for this generation so the NEXT read of
+            // the store is served locally (SPEC §5.6, `DIG_NODE_BACKFILL_ON_MISS`, default on). This
+            // does not delay the current response — it spawns a deduped detached pull and returns.
+            node.maybe_backfill_capsule(store_hex, &root_hex);
             return envelope;
         }
     }
@@ -2691,6 +2722,8 @@ impl Node {
             p2p_content: OnceLock::new(),
             content_cache: std::sync::Mutex::new(ContentCache::default()),
             inventory_refresher: OnceLock::new(),
+            backfilling: std::sync::Mutex::new(std::collections::HashSet::new()),
+            self_ref: OnceLock::new(),
         })
     }
 
@@ -2799,6 +2832,8 @@ pub(crate) mod test_support {
             p2p_content: OnceLock::new(),
             content_cache: std::sync::Mutex::new(ContentCache::default()),
             inventory_refresher: OnceLock::new(),
+            backfilling: std::sync::Mutex::new(std::collections::HashSet::new()),
+            self_ref: OnceLock::new(),
         };
         (Arc::new(node), td)
     }
@@ -2967,6 +3002,8 @@ mod tests {
             p2p_content: OnceLock::new(),
             content_cache: std::sync::Mutex::new(ContentCache::default()),
             inventory_refresher: OnceLock::new(),
+            backfilling: std::sync::Mutex::new(std::collections::HashSet::new()),
+            self_ref: OnceLock::new(),
         };
         (node, td)
     }
@@ -3036,6 +3073,8 @@ mod tests {
             p2p_content: OnceLock::new(),
             content_cache: std::sync::Mutex::new(ContentCache::default()),
             inventory_refresher: OnceLock::new(),
+            backfilling: std::sync::Mutex::new(std::collections::HashSet::new()),
+            self_ref: OnceLock::new(),
         };
 
         // Missing before the pull.
@@ -3076,6 +3115,8 @@ mod tests {
             p2p_content: OnceLock::new(),
             content_cache: std::sync::Mutex::new(ContentCache::default()),
             inventory_refresher: OnceLock::new(),
+            backfilling: std::sync::Mutex::new(std::collections::HashSet::new()),
+            self_ref: OnceLock::new(),
         });
 
         // Build the loop's deps from the PRODUCTION seams, with a fixed one-store subscription set.
