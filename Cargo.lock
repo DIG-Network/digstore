@@ -2359,6 +2359,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dig-download"
+version = "0.1.0"
+source = "git+https://github.com/DIG-Network/dig-download#0dd0711bd20006f43c9af041a828c28a48cb1e0e"
+dependencies = [
+ "async-trait",
+ "dig-dht",
+ "dig-nat",
+ "futures",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "dig-gossip"
 version = "0.1.0"
 source = "git+https://github.com/DIG-Network/dig-gossip?rev=ad20521335149dfa8687bf893620a87ba04fb30a#ad20521335149dfa8687bf893620a87ba04fb30a"
@@ -2424,6 +2441,7 @@ dependencies = [
  "chia-protocol",
  "dig-constants",
  "dig-dht",
+ "dig-download",
  "dig-gossip",
  "dig-nat",
  "dig-pex",
