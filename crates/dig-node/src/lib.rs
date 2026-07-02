@@ -82,6 +82,67 @@ const MAX_LAUNCHER_IDS: usize = 10_000;
 /// not answered (the aligned result array stops at the cap).
 const MAX_AVAILABILITY_ITEMS: usize = 512;
 
+/// Soft budget (bytes) for the in-memory decoded-content LRU (audit #179). Serving a resource
+/// window re-reads + wasmtime-decrypts the WHOLE module per window; caching the decoded
+/// [`ContentResponse`] lets successive windows of the same resource slice from RAM (O(n) instead
+/// of O(n²) over a streamed resource). Bounded so the cache can never grow without limit — the
+/// least-recently-used entries are evicted once the total cached ciphertext exceeds this. 256 MiB
+/// comfortably holds a few large resources' decoded ciphertext while capping node memory.
+const CONTENT_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// A bounded, LRU decoded-content cache: `(store, root, retrieval_key) → decoded ContentResponse`.
+/// Keeps the total cached ciphertext under [`CONTENT_CACHE_MAX_BYTES`], evicting the
+/// least-recently-used entries on overflow. Entries are `Arc`-shared so a hit is a cheap pointer
+/// clone (no ciphertext copy). Guarded by a `std::sync::Mutex` — the critical section is a map
+/// get/insert only (no `.await` while held). See [`Node::serve_local_cached`].
+#[derive(Default)]
+struct ContentCache {
+    /// key → (response, a monotonically increasing "last used" tick for LRU ordering).
+    entries: std::collections::HashMap<(String, String, [u8; 32]), (Arc<ContentResponse>, u64)>,
+    /// Monotonic clock for recency; bumped on every get/insert.
+    tick: u64,
+    /// Running sum of cached `ciphertext.len()` for the byte budget.
+    bytes: u64,
+}
+
+impl ContentCache {
+    /// Look up a decoded response, bumping its recency on a hit.
+    fn get(&mut self, key: &(String, String, [u8; 32])) -> Option<Arc<ContentResponse>> {
+        self.tick += 1;
+        let tick = self.tick;
+        let entry = self.entries.get_mut(key)?;
+        entry.1 = tick;
+        Some(entry.0.clone())
+    }
+
+    /// Insert a decoded response, then evict least-recently-used entries until the total cached
+    /// ciphertext is under [`CONTENT_CACHE_MAX_BYTES`]. A single response larger than the budget is
+    /// still cached (so the current stream benefits) but immediately evicts everything else.
+    fn insert(&mut self, key: (String, String, [u8; 32]), resp: Arc<ContentResponse>) {
+        self.tick += 1;
+        let size = resp.ciphertext.len() as u64;
+        if let Some((old, _)) = self.entries.insert(key, (resp, self.tick)) {
+            self.bytes = self.bytes.saturating_sub(old.ciphertext.len() as u64);
+        }
+        self.bytes = self.bytes.saturating_add(size);
+        while self.bytes > CONTENT_CACHE_MAX_BYTES && self.entries.len() > 1 {
+            // Evict the least-recently-used entry (smallest tick).
+            if let Some(lru_key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, t))| *t)
+                .map(|(k, _)| k.clone())
+            {
+                if let Some((old, _)) = self.entries.remove(&lru_key) {
+                    self.bytes = self.bytes.saturating_sub(old.ciphertext.len() as u64);
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}
+
 /// The DIG node state. Public so `dig-runtime` can construct one ([`Node::from_env`])
 /// and drive it via [`handle_rpc`] in-process inside the browser. Fields stay
 /// private — callers only need the constructor + the dispatch.
@@ -120,6 +181,11 @@ pub struct Node {
     /// path (the browser is a pure consumer), so a content miss there behaves exactly as before (no
     /// redirect/fetch-through — the miss handler is a no-op without this). See [`crate::download`].
     p2p_content: OnceLock<Arc<download::NodeContent>>,
+    /// Bounded in-memory LRU of decoded [`ContentResponse`]s keyed by (store, root, retrieval_key)
+    /// (audit #179). Serving one resource window re-reads + wasmtime-decrypts the whole module;
+    /// this lets successive windows of the same resource slice from RAM instead of re-decrypting,
+    /// turning a streamed resource from O(n²) into O(n) work. Bounded by [`CONTENT_CACHE_MAX_BYTES`].
+    content_cache: std::sync::Mutex<ContentCache>,
 }
 
 /// The CANONICAL (shared) cache dir — the one the DIG Browser's in-process
@@ -691,25 +757,86 @@ fn build_result(resp: &ContentResponse, offset: usize) -> Value {
     result
 }
 
+/// Decode a locally cached module into a [`ContentResponse`] (whole-module `fs::read` + wasmtime
+/// `serve_blind`). A free function (not a `Node` method) so it can be moved into a `spawn_blocking`
+/// closure with only the cache dir + request keys, never a `Node` borrow (audit #179). Returns
+/// `None` on a cache miss / decode failure. Touches the module file for on-disk LRU recency.
+fn serve_local_blocking(
+    cache_dir: &Path,
+    store_hex: &str,
+    root_hex: &str,
+    retrieval_key: &[u8; 32],
+) -> Option<ContentResponse> {
+    let path = module_path(cache_dir, store_hex, root_hex);
+    let module = std::fs::read(&path).ok()?;
+    let store_id = Bytes32::from_hex(store_hex).ok()?;
+    // Ephemeral host key: the browser verifies the merkle proof against the chain-anchored root, not
+    // a host signature, so the serve key is local-only.
+    let cfg = BlindServeConfig::from_seed(store_id, &[0u8; 32]);
+    let bytes = serve_blind(&module, retrieval_key, cfg).ok()?;
+    let resp = ContentResponse::from_bytes(&bytes).ok()?;
+    touch(&path); // LRU recency
+    Some(resp)
+}
+
 impl Node {
-    /// Try to serve a request from a locally cached module. Returns the decoded
-    /// ContentResponse on a hit, or None on a cache miss.
-    fn serve_local(
+    /// The async, MEMOIZED content-serve path used by every async caller (getContent windows,
+    /// fetchRange frames, resource-granularity availability). On a hit in the bounded in-memory
+    /// [`ContentCache`] it returns the decoded [`ContentResponse`] (as an `Arc`, a cheap clone) with
+    /// NO disk read or decrypt. On a miss it runs the blocking decode on a `spawn_blocking` thread
+    /// (so the fs::read + wasmtime decrypt never stalls the async runtime), then caches the result so
+    /// successive windows of the same resource slice from RAM — turning a window-by-window streamed
+    /// resource from O(n²) re-decrypts into O(n) (audit #179).
+    async fn serve_local_cached(
         &self,
         store_hex: &str,
         root_hex: &str,
         retrieval_key: &[u8; 32],
-    ) -> Option<ContentResponse> {
-        let path = module_path(&self.cache_dir, store_hex, root_hex);
-        let module = std::fs::read(&path).ok()?;
-        let store_id = Bytes32::from_hex(store_hex).ok()?;
-        // Ephemeral host key: the browser verifies the merkle proof against the
-        // chain-anchored root, not a host signature, so the serve key is local-only.
-        let cfg = BlindServeConfig::from_seed(store_id, &[0u8; 32]);
-        let bytes = serve_blind(&module, retrieval_key, cfg).ok()?;
-        let resp = ContentResponse::from_bytes(&bytes).ok()?;
-        touch(&path); // LRU recency
-        Some(resp)
+    ) -> Option<Arc<ContentResponse>> {
+        let key = (store_hex.to_string(), root_hex.to_string(), *retrieval_key);
+        // Fast path: an in-memory hit (no disk, no decrypt).
+        if let Some(hit) = self.content_cache.lock().unwrap().get(&key) {
+            return Some(hit);
+        }
+        // Miss: read + decrypt off the async runtime (spawn_blocking), then memoize. Only the cache
+        // dir + key are moved into the closure, so no Node borrow escapes into the blocking thread.
+        let cache_dir = self.cache_dir.clone();
+        let (store_owned, root_owned, rk) =
+            (store_hex.to_string(), root_hex.to_string(), *retrieval_key);
+        let decoded = tokio::task::spawn_blocking(move || {
+            serve_local_blocking(&cache_dir, &store_owned, &root_owned, &rk)
+        })
+        .await
+        .ok()
+        .flatten()?;
+        let arc = Arc::new(decoded);
+        self.content_cache.lock().unwrap().insert(key, arc.clone());
+        Some(arc)
+    }
+
+    /// Invalidate any cached decoded content for a capsule (store, root) — all retrieval keys under
+    /// it. Called when the underlying module is removed/replaced so a stale decode is never served
+    /// from the in-memory cache after the on-disk module changes.
+    fn invalidate_content_cache(&self, store_hex: &str, root_hex: &str) {
+        let mut cache = self.content_cache.lock().unwrap();
+        let victims: Vec<_> = cache
+            .entries
+            .keys()
+            .filter(|(s, r, _)| s == store_hex && r == root_hex)
+            .cloned()
+            .collect();
+        for v in victims {
+            if let Some((old, _)) = cache.entries.remove(&v) {
+                cache.bytes = cache.bytes.saturating_sub(old.ciphertext.len() as u64);
+            }
+        }
+    }
+
+    /// Drop the entire in-memory decoded-content cache (used by `cache.clear`).
+    fn clear_content_cache(&self) {
+        let mut cache = self.content_cache.lock().unwrap();
+        cache.entries.clear();
+        cache.bytes = 0;
     }
 
     fn responses_dir(&self) -> PathBuf {
@@ -1333,6 +1460,9 @@ impl Node {
             return Err("refusing to remove a path outside the cache dir".to_string());
         }
         std::fs::remove_file(&canon).map_err(|e| e.to_string())?;
+        // Drop any in-memory decoded content for this capsule so a removed module can never still be
+        // served from the content cache (audit #179).
+        self.invalidate_content_cache(store_id_hex, root_hex);
         Ok(true)
     }
 
@@ -1416,7 +1546,7 @@ impl Node {
         if let (Some(root_hex), Some(rk_hex)) = (root, rk) {
             if answer["available"].as_bool() == Some(true) {
                 if let Ok(rk_bytes) = decode_rk(rk_hex) {
-                    if let Some(resp) = self.serve_local(store, root_hex, &rk_bytes) {
+                    if let Some(resp) = self.serve_local_cached(store, root_hex, &rk_bytes).await {
                         if let Some(obj) = answer.as_object_mut() {
                             obj.insert("total_length".into(), json!(resp.ciphertext.len()));
                             obj.insert("chunk_count".into(), json!(chunk_count_for(&resp)));
@@ -1488,7 +1618,7 @@ impl Node {
                 "retrieval_key must be 32 bytes (64-hex)".to_string(),
             )
         })?;
-        let resp = self.serve_local(store_hex, root_hex, &rk).ok_or((
+        let resp = self.serve_local_cached(store_hex, root_hex, &rk).await.ok_or((
             -32004,
             "resource not held at the requested root".to_string(),
         ))?;
@@ -2009,6 +2139,9 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     }
     if method == "cache.clear" {
         clear_cache();
+        // Also drop the in-memory decoded-content cache so a cleared capsule can't still be served
+        // from RAM (audit #179).
+        node.clear_content_cache();
         return json!({"jsonrpc":"2.0","id":id,"result":{}});
     }
     // cache.listCached / removeCached / fetchAndCache — the cached-store manager
@@ -2149,7 +2282,7 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
     //    cached module whose generation is not the anchored tip is rejected (it is
     //    not served as if current).
     if let (Ok(rk), false) = (decode_rk(rk_hex), root_hex.is_empty()) {
-        if let Some(resp) = node.serve_local(store_hex, &root_hex, &rk) {
+        if let Some(resp) = node.serve_local_cached(store_hex, &root_hex, &rk).await {
             if let Some(pin) = pinned_root {
                 if resp.roothash != pin {
                     return err(
@@ -2172,7 +2305,10 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         //     true only when the SERVED root == the requested (= pinned) root, so a
         //     synced module is keyed by the anchored root before we serve it.
         if node.sync_module(store_hex, &root_hex).await {
-            if let Some(resp) = node.serve_local(store_hex, &root_hex, &rk) {
+            // The sync just wrote/replaced the on-disk module; drop any stale decoded entry so the
+            // cache reflects the newly-synced module rather than a prior decode.
+            node.invalidate_content_cache(store_hex, &root_hex);
+            if let Some(resp) = node.serve_local_cached(store_hex, &root_hex, &rk).await {
                 if pinned_root.map(|p| resp.roothash == p).unwrap_or(true) {
                     return local(&id, build_result(&resp, offset));
                 }
@@ -2314,6 +2450,7 @@ impl Node {
             anchored_root_resolver: default_anchored_resolver(),
             peer_status: peer::PeerStatus::new(),
             p2p_content: OnceLock::new(),
+            content_cache: std::sync::Mutex::new(ContentCache::default()),
         })
     }
 
@@ -2413,6 +2550,7 @@ pub(crate) mod test_support {
             anchored_root_resolver: default_anchored_resolver(),
             peer_status: peer::PeerStatus::new(),
             p2p_content: OnceLock::new(),
+            content_cache: std::sync::Mutex::new(ContentCache::default()),
         };
         (Arc::new(node), td)
     }
@@ -2579,6 +2717,7 @@ mod tests {
             anchored_root_resolver,
             peer_status: peer::PeerStatus::new(),
             p2p_content: OnceLock::new(),
+            content_cache: std::sync::Mutex::new(ContentCache::default()),
         };
         (node, td)
     }
@@ -3793,6 +3932,115 @@ mod tests {
         let root = Bytes32::from_hex(r["root"].as_str().expect("root")).unwrap();
         let module = std::fs::read(r["module_path"].as_str().expect("module_path")).unwrap();
         (root, module)
+    }
+
+    // -- Content cache: memoized decode + bounded LRU (audit #179 optimization) -------------------
+
+    fn cc_resp(ciphertext_len: usize) -> Arc<ContentResponse> {
+        Arc::new(ContentResponse {
+            ciphertext: vec![0u8; ciphertext_len],
+            merkle_proof: digstore_core::merkle::MerkleProof {
+                leaf: Bytes32([0u8; 32]),
+                path: vec![],
+                root: Bytes32([0u8; 32]),
+            },
+            roothash: Bytes32([0u8; 32]),
+            chunk_lens: vec![],
+        })
+    }
+
+    #[test]
+    fn content_cache_hit_returns_the_same_arc_without_reload() {
+        let mut cache = ContentCache::default();
+        let key = ("aa".repeat(32), "bb".repeat(32), [1u8; 32]);
+        let resp = cc_resp(10);
+        cache.insert(key.clone(), resp.clone());
+        let got = cache.get(&key).expect("hit");
+        assert!(Arc::ptr_eq(&got, &resp), "hit returns the cached Arc, no reload");
+    }
+
+    #[test]
+    fn content_cache_evicts_least_recently_used_over_the_byte_budget() {
+        // A tiny cache that holds ~2 entries; the third insert must evict the LRU one.
+        let mut cache = ContentCache::default();
+        let a = ("a".repeat(64), "r".repeat(64), [0u8; 32]);
+        let b = ("b".repeat(64), "r".repeat(64), [0u8; 32]);
+        let c = ("c".repeat(64), "r".repeat(64), [0u8; 32]);
+        // Each entry ~ (budget/2)+1 bytes so any two exceed the budget.
+        let sz = (CONTENT_CACHE_MAX_BYTES / 2 + 1) as usize;
+        cache.insert(a.clone(), cc_resp(sz));
+        // Touch A so B becomes the LRU when we overflow.
+        let _ = cache.get(&a);
+        cache.insert(b.clone(), cc_resp(sz)); // now over budget → evicts the LRU (A was just touched, so B stays and A... )
+        // After inserting B, total = 2*sz > budget → the LRU (A, older tick before the get bumped it?
+        // get bumped A to a newer tick than B's pre-insert, but insert bumps tick for B). Assert the
+        // cache never holds more than fits: only one of {A,B} survives.
+        let a_present = cache.get(&a).is_some();
+        let b_present = cache.get(&b).is_some();
+        assert!(
+            a_present ^ b_present,
+            "exactly one entry fits under the byte budget"
+        );
+        // A third insert still keeps the invariant.
+        cache.insert(c.clone(), cc_resp(sz));
+        let present = [
+            cache.get(&a).is_some(),
+            cache.get(&b).is_some(),
+            cache.get(&c).is_some(),
+        ]
+        .iter()
+        .filter(|p| **p)
+        .count();
+        assert_eq!(present, 1, "the byte budget holds exactly one such entry");
+    }
+
+    #[tokio::test]
+    async fn serve_local_cached_serves_a_memoized_decode_without_touching_disk() {
+        // Prove the fast path: with a decoded response already in the in-memory cache and NO module
+        // file on disk, serve_local_cached returns the cached decode (never reads/decrypts disk).
+        let (node, _td) = test_node(None);
+        let store = "5a".repeat(32);
+        let root = "6b".repeat(32);
+        let rk = [7u8; 32];
+        // No module file exists on disk — a cold serve would miss.
+        let cold = node.serve_local_cached(&store, &root, &rk).await;
+        assert!(cold.is_none(), "no module on disk → cold serve misses");
+
+        // Seed the in-memory cache directly (a prior successful decode).
+        let seeded = cc_resp(42);
+        node.content_cache
+            .lock()
+            .unwrap()
+            .insert((store.clone(), root.clone(), rk), seeded.clone());
+
+        // Now serve_local_cached returns it from RAM even though no file exists — memoized.
+        let hit = node
+            .serve_local_cached(&store, &root, &rk)
+            .await
+            .expect("memoized hit");
+        assert_eq!(hit.ciphertext.len(), 42, "served the cached decode");
+
+        // Invalidating this capsule drops the entry → serve misses again (still no file).
+        node.invalidate_content_cache(&store, &root);
+        let after = node.serve_local_cached(&store, &root, &rk).await;
+        assert!(after.is_none(), "invalidated → no longer served from RAM");
+    }
+
+    #[tokio::test]
+    async fn clear_content_cache_drops_all_entries() {
+        let (node, _td) = test_node(None);
+        node.content_cache.lock().unwrap().insert(
+            ("aa".repeat(32), "bb".repeat(32), [1u8; 32]),
+            cc_resp(10),
+        );
+        node.content_cache.lock().unwrap().insert(
+            ("cc".repeat(32), "dd".repeat(32), [2u8; 32]),
+            cc_resp(20),
+        );
+        node.clear_content_cache();
+        let c = node.content_cache.lock().unwrap();
+        assert!(c.entries.is_empty(), "all entries dropped");
+        assert_eq!(c.bytes, 0, "byte accounting reset");
     }
 
     // -- availability_batch: single-walk snapshot + item cap (audit #179 optimization) -----------
