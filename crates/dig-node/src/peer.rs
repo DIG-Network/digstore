@@ -619,6 +619,39 @@ where
     }
 }
 
+/// The methods reachable over the **mTLS peer surface** (other DIG nodes) — the L7
+/// read / discovery / announce subset (SPEC §2.3.1/§2.3.3, §7.4). This is an ALLOWLIST,
+/// not a denylist: any method not named here is loopback/in-process only.
+///
+/// The peer mTLS verifier accepts any well-formed self-signed leaf ("authenticated" means
+/// only "derived some peer_id", never "authorized"), so the node MUST NOT forward
+/// management/mutation methods (`cache.*`, `control.*`, `dig.stage`) to a remote peer —
+/// those stay reachable only from the loopback admin / in-process FFI dispatch
+/// ([`crate::handle_rpc`]). See audit #179 (CRITICAL auth-bypass).
+///
+/// Adding a new method here is a deliberate security decision: it exposes that method to any
+/// remote peer. New read/discovery methods that are safe for untrusted peers go in the list;
+/// anything that mutates node state or reads local resources stays OUT.
+pub(crate) fn is_peer_reachable_method(method: &str) -> bool {
+    matches!(
+        method,
+        // Content read (public-read tier) — self-verified client-side.
+        "dig.getContent"
+            // Peer discovery + posture + announce.
+            | "dig.getNetworkInfo"
+            | "dig.getPeers"
+            | "dig.announce"
+            // Availability + inventory + range fetch (the multi-source download surface).
+            | "dig.getAvailability"
+            | "dig.listInventory"
+            | "dig.fetchRange"
+            // Chain-anchored read helpers (public, owner-independent).
+            | "dig.getAnchoredRoot"
+            | "dig.getCollection"
+            | "dig.listCollectionItems"
+    )
+}
+
 // -- The node's PeerRpcResponder — routes peer requests into the node's dispatch + inventory ----------
 
 /// The node's implementation of [`PeerRpcResponder`]: JSON-RPC frames go through the SAME
@@ -642,6 +675,19 @@ impl NodeResponder {
         NodeResponder {
             node,
             handle: Some(handle),
+            dht: None,
+        }
+    }
+
+    /// A responder with NO live pool (the base peer surface): `dig.getPeers` returns this node's
+    /// own empty pool view. Used where no `GossipHandle` is available (tests; a peer-RPC server
+    /// brought up before the pool). The method allowlist (`is_peer_reachable_method`) applies
+    /// identically regardless of whether a pool is wired.
+    #[cfg(test)]
+    pub(crate) fn without_pool(node: Arc<crate::Node>) -> Self {
+        NodeResponder {
+            node,
+            handle: None,
             dht: None,
         }
     }
@@ -687,6 +733,16 @@ impl PeerRpcResponder for NodeResponder {
     async fn handle_json_rpc(&self, req: Value) -> Value {
         let method = req.get("method").and_then(Value::as_str).unwrap_or("");
         let id = req.get("id").cloned().unwrap_or(json!(1));
+        // PEER-SURFACE ALLOWLIST (audit #179 CRITICAL). The mTLS verifier accepts any self-signed
+        // leaf, so an "authenticated" peer is merely "some peer_id", NOT an authorized admin. Route
+        // ONLY the intended L7 read/discovery/announce methods to the shared dispatch; return -32601
+        // (method not found) for management/mutation methods (`cache.*`, `control.*`, `dig.stage`),
+        // which stay reachable only from the loopback admin / in-process FFI path (crate::handle_rpc).
+        // This gate runs BEFORE any dispatch so a mutation method never reaches handle_rpc.
+        if !is_peer_reachable_method(method) {
+            return json!({"jsonrpc":"2.0","id":id,
+                "error":{"code":-32601,"message":"method not found"}});
+        }
         // dig.getPeers is answered from the LIVE pool here (the base handle_rpc can't — it has no pool
         // handle). Everything else routes through the shared dispatch so the peer surface == the agent
         // surface (getAvailability / listInventory / fetchRange / getNetworkInfo / announce).
@@ -1740,5 +1796,94 @@ mod tests {
             .expect("an error response");
         assert_eq!(resp["error"]["code"], json!(-32600));
         srv.await.unwrap().unwrap();
+    }
+
+    // -- Peer-surface method allowlist (SPEC §2.3/§7.4; audit #179 CRITICAL) -----------------------
+
+    #[test]
+    fn peer_surface_allows_only_the_intended_l7_read_and_announce_methods() {
+        // The audit-CONFIRMED contract: the mTLS peer surface exposes ONLY the L7
+        // read/discovery/announce subset. An anonymous peer (the verifier accepts any
+        // self-signed cert) MUST NOT reach management/mutation methods.
+        for m in [
+            "dig.getContent",
+            "dig.getAvailability",
+            "dig.listInventory",
+            "dig.fetchRange",
+            "dig.getNetworkInfo",
+            "dig.getPeers",
+            "dig.announce",
+            "dig.getAnchoredRoot",
+            "dig.getCollection",
+            "dig.listCollectionItems",
+        ] {
+            assert!(
+                is_peer_reachable_method(m),
+                "{m} is an intended L7 read/announce method and MUST be peer-reachable"
+            );
+        }
+    }
+
+    #[test]
+    fn peer_surface_rejects_management_and_mutation_methods() {
+        // Every cache.* / control.* mutation + dig.stage is loopback/in-process ONLY.
+        for m in [
+            "cache.clear",
+            "cache.setCapBytes",
+            "cache.removeCached",
+            "cache.fetchAndCache",
+            "cache.listCached",
+            "cache.getConfig",
+            "control.peerStatus",
+            "dig.stage",
+            "totally.unknown",
+            "",
+        ] {
+            assert!(
+                !is_peer_reachable_method(m),
+                "{m} is management/mutation/unknown and MUST NOT be reachable over the peer surface"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn node_responder_returns_method_not_found_for_management_methods() {
+        // End-to-end over the responder: a peer JSON-RPC frame naming a management/mutation
+        // method is answered with -32601 (method not found) WITHOUT ever reaching the
+        // node's `handle_rpc` dispatch (which would run the mutation). getPeers still works.
+        let (node, _td) = crate::test_support::test_node_for_peer_surface();
+        let responder = NodeResponder::without_pool(node);
+        for m in [
+            "cache.clear",
+            "cache.setCapBytes",
+            "cache.removeCached",
+            "cache.fetchAndCache",
+            "dig.stage",
+        ] {
+            let req = json!({"jsonrpc":"2.0","id":1,"method":m,"params":{}});
+            let resp = responder.handle_json_rpc(req).await;
+            assert_eq!(
+                resp["error"]["code"],
+                json!(-32601),
+                "{m} must be rejected -32601 on the peer surface"
+            );
+            assert!(
+                resp.get("result").is_none(),
+                "{m} must not return a result on the peer surface"
+            );
+        }
+        // A legitimate peer read method is still dispatched (no -32601).
+        let ok = responder
+            .handle_json_rpc(json!({"jsonrpc":"2.0","id":1,"method":"dig.getNetworkInfo"}))
+            .await;
+        assert!(
+            ok.get("result").is_some(),
+            "dig.getNetworkInfo must still be served on the peer surface"
+        );
+        // getPeers is answered from the (empty) pool view, not -32601.
+        let peers = responder
+            .handle_json_rpc(json!({"jsonrpc":"2.0","id":1,"method":"dig.getPeers"}))
+            .await;
+        assert!(peers["result"]["peers"].is_array());
     }
 }
