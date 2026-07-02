@@ -44,6 +44,13 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: ServeArgs) -> Result<(), 
     if args.anonymous {
         server = server.allow_anonymous();
     }
+    // Publish this node's §21.9 identity pubkey at GET /.well-known/dig-rpc so a store
+    // owner can discover which pubkey to authorize as a writer (#172). Uses the SAME
+    // persistent identity key the node signs §21 requests with. Best-effort: if the
+    // identity key can't be loaded, the well-known endpoint reports an empty pubkey.
+    if let Ok(pubkey_hex) = digstore_remote::identity::identity_pubkey_hex() {
+        server = server.with_identity_pubkey(pubkey_hex);
+    }
 
     let auth = if args.anonymous {
         "anonymous (public read mirror)"

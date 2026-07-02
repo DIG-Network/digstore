@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use chia_protocol::Bytes32;
 use digstore_chain::anchor::{
-    ChainAnchor, CoinsetAnchor, ConfirmState, MintOutcome, UpdateOutcome,
+    ChainAnchor, CoinsetAnchor, ConfirmState, MintOutcome, UpdateOutcome, WriterDelegationOutcome,
 };
 use digstore_chain::error::ChainError;
 use digstore_chain::keys::WalletKeys;
@@ -30,6 +30,10 @@ pub struct MockAnchor {
     pub fail_mint: Option<String>,
     /// `Some(msg)` makes `update_root` fail with a chain error carrying `msg`.
     pub fail_update: Option<String>,
+    /// When true, `set_writer_authorization` reports the delegation is ALREADY in the
+    /// desired state (idempotent no-op — `changed = false`, no tx). Simulates a
+    /// re-authorize / re-deauthorize without on-chain sync.
+    pub writer_already_in_desired_state: bool,
 }
 
 impl Default for MockAnchor {
@@ -40,6 +44,7 @@ impl Default for MockAnchor {
             confirm_pending: false,
             fail_mint: None,
             fail_update: None,
+            writer_already_in_desired_state: false,
         }
     }
 }
@@ -72,12 +77,16 @@ impl MockAnchor {
             .map(|v| v == "1")
             .unwrap_or(false);
         let fail_mint = std::env::var("DIGSTORE_ANCHOR_MOCK_FAIL_MINT").ok();
+        let writer_already_in_desired_state = std::env::var("DIGSTORE_ANCHOR_MOCK_WRITER_NOOP")
+            .map(|v| v == "1")
+            .unwrap_or(false);
         MockAnchor {
             balance_mojos,
             dig_base_units,
             confirm_pending,
             fail_mint,
             fail_update: None,
+            writer_already_in_desired_state,
         }
     }
 }
@@ -196,6 +205,29 @@ impl ChainAnchor for MockAnchor {
         Ok(UpdateOutcome {
             new_coin_id: random_bytes32(),
             tx_id: random_bytes32(),
+        })
+    }
+
+    async fn set_writer_authorization(
+        &self,
+        _launcher_id: Bytes32,
+        _writer_pubkey: digstore_chain::singleton::PublicKey,
+        _add: bool,
+        _w: &ScannedWallet,
+        _fee: u64,
+    ) -> ChainResult<WriterDelegationOutcome> {
+        if self.writer_already_in_desired_state {
+            // Idempotent no-op — the delegation is already as requested.
+            return Ok(WriterDelegationOutcome {
+                new_coin_id: None,
+                tx_id: None,
+                changed: false,
+            });
+        }
+        Ok(WriterDelegationOutcome {
+            new_coin_id: Some(random_bytes32()),
+            tx_id: Some(random_bytes32()),
+            changed: true,
         })
     }
 

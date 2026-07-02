@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+/// The DIG §21 remote-protocol wire version this crate implements, reported in the
+/// `protocol` field of the [`RpcWellKnown`] discovery document.
+pub const DIG_RPC_PROTOCOL_VERSION: &str = "1";
+
 /// `GET /stores/{id}` — store descriptor (§21.2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoreDescriptor {
@@ -137,6 +141,37 @@ pub struct DeltaNegotiateRequest {
     pub have: Vec<String>,
 }
 
+/// `GET /.well-known/dig-rpc` — the RPC's identity discovery document.
+///
+/// An unauthenticated, unguarded well-known endpoint every DIG RPC (a `digstore
+/// serve` node, a local dig-node, `rpc.dig.net`) exposes so a client can discover
+/// the RPC's own §21.9 IDENTITY PUBLIC KEY — the pubkey the RPC signs its own §21
+/// requests with when it acts as a client of an upstream store (its "origin
+/// identity"). A store owner authorizes THIS pubkey as a writer delegate so the RPC
+/// can advance the store's root on the owner's behalf (`digstore remote authorize`).
+///
+/// The document is public metadata (a pubkey is not a secret), so it is served
+/// without §21.9 auth — a client must be able to fetch it BEFORE it can authenticate
+/// (bootstrapping). It is byte-stable JSON so an agent can parse it deterministically.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RpcWellKnown {
+    /// The RPC's identity BLS G1 public key, 48-byte (96-char) hex. This is the
+    /// `<user>` a store owner authorizes as a writer delegate for their store, and
+    /// the identity the RPC stamps in `X-Dig-Identity` when it signs §21 requests
+    /// upstream. A client MUST treat a non-96-hex / non-BLS value as "no discoverable
+    /// pubkey" and refuse to build an authorization spend for it.
+    pub pubkey: String,
+    /// The DIG §21 protocol version this RPC implements (the remote-protocol wire
+    /// version, e.g. `"1"`). Advisory; a client may branch behavior on it.
+    #[serde(default)]
+    pub protocol: String,
+    /// A free-form software identifier (e.g. `"digstore/0.9.0"` or `"rpc.dig.net"`).
+    /// Advisory + diagnostic; NOT security-relevant. `#[serde(default)]` keeps an
+    /// older document (which may omit it) decodable.
+    #[serde(default)]
+    pub software: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +213,34 @@ mod tests {
         assert!(s.contains("\"range\":null"));
         let back: ContentRequest = serde_json::from_str(&s).unwrap();
         assert_eq!(no_range, back);
+    }
+
+    /// **Proves:** the well-known document round-trips and its `pubkey` field is
+    /// carried verbatim. **Catches:** a serde rename/shape drift that would break
+    /// cross-impl discovery (rpc.dig.net ⇄ digstore ⇄ dig-node must all read it).
+    #[test]
+    fn rpc_well_known_round_trips() {
+        let w = RpcWellKnown {
+            pubkey: "ab".repeat(48),
+            protocol: "1".into(),
+            software: "digstore/test".into(),
+        };
+        let s = serde_json::to_string(&w).unwrap();
+        assert!(s.contains("\"pubkey\":\"ababab"));
+        let back: RpcWellKnown = serde_json::from_str(&s).unwrap();
+        assert_eq!(w, back);
+    }
+
+    /// **Proves:** an older/minimal well-known document (only `pubkey`) decodes,
+    /// with `protocol`/`software` defaulting to empty. **Catches:** a required-field
+    /// decoder that would reject a lean rpc.dig.net document.
+    #[test]
+    fn rpc_well_known_minimal_decodes() {
+        let json = r#"{"pubkey":"aa"}"#;
+        let w: RpcWellKnown = serde_json::from_str(json).unwrap();
+        assert_eq!(w.pubkey, "aa");
+        assert!(w.protocol.is_empty());
+        assert!(w.software.is_empty());
     }
 
     #[test]

@@ -96,6 +96,54 @@ gateway) MUST serve `GET /health` unauthenticated and MUST NOT gate it behind §
 auth or mTLS — a probe cannot know in advance whether the target is even the right kind of server,
 let alone hold a valid signed request for it.
 
+### 1.6 The `/.well-known/dig-rpc` discovery route
+
+`RemoteServer::router()` serves `GET /.well-known/dig-rpc` unauthenticated (outside `/stores/:id`,
+so it is not subject to the §21.9 per-request auth middleware even when the server otherwise requires
+auth) returning `200` with the JSON document (`wire::RpcWellKnown`):
+
+```json
+{ "pubkey": "<48-byte BLS G1, 96-hex>", "protocol": "1", "software": "digstore/<ver>" }
+```
+
+- **`pubkey`** — the RPC's own §21.9 IDENTITY public key: the key it stamps in `X-Dig-Identity` when
+  it signs §21 requests to an upstream store, AND the key a store owner authorizes as a WRITER
+  delegate so the RPC can advance the store's root on the owner's behalf. A conforming server sets it
+  from its persistent identity key (`identity::identity_pubkey_hex()`); with no identity key it MUST
+  report an EMPTY `pubkey` (a discoverable "no identity" signal), never omit the document or error.
+- **`protocol`** — the §21 wire version (`DIG_RPC_PROTOCOL_VERSION`, currently `"1"`); advisory.
+- **`software`** — a free-form software id; advisory + diagnostic, NOT security-relevant.
+
+The document is PUBLIC metadata (a pubkey is not a secret) and MUST be served without §21.9 auth or
+mTLS: a client MUST be able to fetch it BEFORE it can authenticate (writer-authorization
+bootstrapping). Older documents that omit `protocol`/`software` MUST remain decodable (`#[serde(default)]`).
+
+**Client discovery.** `DigClient::discover_well_known()` GETs the document unauthenticated;
+`discover_pubkey()` returns the pubkey as `Option<String>` — `None` when the RPC advertises no
+identity (empty pubkey) or the value is not a valid 96-hex BLS G1 key. A 404 (endpoint absent) or a
+transport error surfaces as `Err`; the caller treats "no discovery" as "this RPC cannot be
+auto-authorized" and falls back to an explicit `--pubkey`.
+
+### 1.7 Writer authorization (origin → store writer, #172)
+
+A store owner authorizes an RPC's discovered identity pubkey as an on-chain WRITER for a store so the
+RPC can advance the store's root on the owner's behalf. This is the CHIP-0035 writer-delegate model:
+
+- The delegate is `digstore_chain::singleton::writer_delegated_puzzle(pubkey)` — a
+  `DelegatedPuzzle::Writer` whose inner-puzzle TreeHash is derived from the well-known `pubkey`. The
+  well-known `pubkey` is therefore EXACTLY the `PublicKey` the owner authorizes; a conforming RPC
+  MUST sign its writer-authorized singleton spends with the key matching that delegate.
+- Authorizing/deauthorizing is an OWNER-signed `updateStoreOwnership` (ownership unchanged) that
+  ADDS/REMOVES that one writer delegate, re-sending every other delegate verbatim (the delegated set
+  is replaced wholesale). The pure transforms are
+  `singleton::delegated_set_with_writer_{added,removed}` (idempotent — `None` when already in the
+  desired state); `anchor::build_authorize_writer_bundle` builds+signs it; the CLI drives it via
+  `ChainAnchor::set_writer_authorization` (no `$DIG` payment — a delegation change is not a capsule
+  commit).
+- The CLI surfaces this as `digstore remote authorize [<name>] [--pubkey <hex>]` /
+  `digstore remote deauthorize …`, and `digstore push` offers it on demand when the origin is not yet
+  a writer (`--yes` auto-approves, `--no-auth` skips; a machine `--json` push never prompts).
+
 ### 1.5 Public API (`src/resolver.rs`)
 
 | Item | Role |

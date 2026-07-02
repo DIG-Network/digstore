@@ -593,6 +593,71 @@ pub fn oracle_delegated_puzzle(oracle_puzzle_hash: Bytes32, oracle_fee: u64) -> 
     dl_oracle_dp(oracle_puzzle_hash, oracle_fee)
 }
 
+// ===========================================================================
+// Writer-delegation set management (#172) — authorize/deauthorize an ORIGIN as a
+// writer for a store.
+//
+// The §21.9 identity of an RPC (its well-known `pubkey`) is a plain BLS G1
+// PublicKey. To let that RPC advance a store's root on the owner's behalf, the
+// owner adds `writer_delegated_puzzle(pubkey)` to the store's delegated set (an
+// owner-authorized `updateStoreOwnership`, ownership unchanged). Because the
+// delegated set REPLACES the prior set on every ownership update, add/remove is a
+// PURE list transform over the current on-chain set, re-sending every delegate to
+// keep — so a writer add never drops an existing admin/writer/oracle, and a remove
+// touches only the one writer. These helpers are the single source of truth for
+// that transform (the CLI `remote authorize`/`deauthorize` + the push auto-prompt).
+// ===========================================================================
+
+/// Whether `pubkey` is ALREADY an authorized writer of `store` — i.e. the store's
+/// current delegated set contains `writer_delegated_puzzle(pubkey)`. `DelegatedPuzzle`
+/// derives `Eq`, so this is an exact match on the writer's inner-puzzle TreeHash.
+/// The check the CLI runs before prompting/building an authorization spend (so a
+/// re-authorize is a cheap no-op).
+pub fn is_authorized_writer(store: &DataStore, pubkey: PublicKey) -> bool {
+    let want = writer_delegated_puzzle(pubkey);
+    store.info.delegated_puzzles.contains(&want)
+}
+
+/// The delegated set for `store` with `pubkey` ADDED as a writer, idempotently: the
+/// current set unchanged plus `writer_delegated_puzzle(pubkey)` if not already
+/// present. Feed the result to [`build_update_ownership_unsigned`] (ownership
+/// unchanged) to authorize the origin. Returns `None` when `pubkey` is already a
+/// writer (nothing to do — the caller skips the spend).
+pub fn delegated_set_with_writer_added(
+    store: &DataStore,
+    pubkey: PublicKey,
+) -> Option<Vec<DelegatedPuzzle>> {
+    if is_authorized_writer(store, pubkey) {
+        return None;
+    }
+    let mut set = store.info.delegated_puzzles.clone();
+    set.push(writer_delegated_puzzle(pubkey));
+    Some(set)
+}
+
+/// The delegated set for `store` with `pubkey` REMOVED as a writer: the current set
+/// minus `writer_delegated_puzzle(pubkey)`. Only the matching WRITER delegate is
+/// dropped — admins, oracles, and other writers are preserved (re-sent verbatim), so
+/// deauthorizing one origin never revokes another. Returns `None` when `pubkey` was
+/// not an authorized writer (nothing to do).
+pub fn delegated_set_with_writer_removed(
+    store: &DataStore,
+    pubkey: PublicKey,
+) -> Option<Vec<DelegatedPuzzle>> {
+    if !is_authorized_writer(store, pubkey) {
+        return None;
+    }
+    let drop = writer_delegated_puzzle(pubkey);
+    let set: Vec<DelegatedPuzzle> = store
+        .info
+        .delegated_puzzles
+        .iter()
+        .filter(|dp| **dp != drop)
+        .copied()
+        .collect();
+    Some(set)
+}
+
 /// Builds the UNSIGNED root update of `store` to `new_root` authorized by a WRITER
 /// DELEGATE key (a revocable CI deploy key) rather than the owner master seed
 /// (#17). The store MUST already carry this writer's [`writer_delegated_puzzle`] in
@@ -1222,6 +1287,86 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
         sim.new_transaction(SpendBundle::new(wupd.coin_spends, wsig))?;
         assert_eq!(wupd.datastore.info.metadata.root_hash, new_root);
+        Ok(())
+    }
+
+    /// **Proves (#172):** the writer-set transforms are correct + idempotent —
+    /// `is_authorized_writer` is false before delegation and true after; adding a
+    /// writer that is already present is a no-op (`None`); removing preserves every
+    /// OTHER delegate (a second writer + an oracle survive) and drops only the target.
+    /// **Catches:** a wholesale-replace bug that would revoke co-writers, or a
+    /// re-authorize that redundantly rebuilds the set.
+    #[test]
+    fn writer_set_add_remove_is_idempotent_and_preserves_others() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let origin = sim.bls(0); // the RPC's identity pubkey
+        let other_writer = sim.bls(0);
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: Bytes32::default(),
+                label: Some("site".into()),
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            // Pre-existing delegated set: a co-writer + an oracle that MUST survive.
+            vec![
+                writer_delegated_puzzle(other_writer.pk),
+                oracle_delegated_puzzle(owner.puzzle_hash, 1000),
+            ],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        // Before authorizing: origin is NOT a writer, the co-writer IS.
+        assert!(!is_authorized_writer(&store, origin.pk));
+        assert!(is_authorized_writer(&store, other_writer.pk));
+
+        // Add origin as a writer: the new set keeps the co-writer + oracle + adds origin.
+        let added = delegated_set_with_writer_added(&store, origin.pk)
+            .expect("origin is not yet a writer, so a change is produced");
+        assert_eq!(added.len(), 3, "co-writer + oracle + origin");
+        assert!(added.contains(&writer_delegated_puzzle(origin.pk)));
+        assert!(added.contains(&writer_delegated_puzzle(other_writer.pk)));
+        assert!(added.contains(&oracle_delegated_puzzle(owner.puzzle_hash, 1000)));
+
+        let owner_keys = WalletKeys {
+            synthetic_sk: owner.sk.clone(),
+            synthetic_pk: owner.pk,
+            owner_puzzle_hash: owner.puzzle_hash,
+        };
+        // Apply the authorization on-chain (owner-signed, ownership unchanged).
+        let upd =
+            build_update_ownership_unsigned(&owner_keys, store, owner.puzzle_hash, added, &[], 0)?;
+        let sig = sign_coin_spends(&upd.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(upd.coin_spends, sig))?;
+        let authorized = upd.datastore;
+
+        // Now origin IS a writer; re-adding is a no-op (idempotent).
+        assert!(is_authorized_writer(&authorized, origin.pk));
+        assert!(delegated_set_with_writer_added(&authorized, origin.pk).is_none());
+
+        // Remove origin: the co-writer + oracle survive; origin is gone.
+        let removed = delegated_set_with_writer_removed(&authorized, origin.pk)
+            .expect("origin was a writer, so a change is produced");
+        assert!(!removed.contains(&writer_delegated_puzzle(origin.pk)));
+        assert!(removed.contains(&writer_delegated_puzzle(other_writer.pk)));
+        assert!(removed.contains(&oracle_delegated_puzzle(owner.puzzle_hash, 1000)));
+        assert_eq!(removed.len(), 2, "co-writer + oracle preserved");
+
+        // Removing a non-writer is a no-op.
+        let never = sim.bls(0);
+        assert!(delegated_set_with_writer_removed(&authorized, never.pk).is_none());
         Ok(())
     }
 

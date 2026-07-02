@@ -90,6 +90,21 @@ pub trait ChainAnchor: Send + Sync {
         fee: u64,
         dig_amount: u64,
     ) -> Result<UpdateOutcome>;
+    /// Authorize (`add = true`) or deauthorize (`add = false`) `writer_pubkey` as a
+    /// WRITER for `launcher_id`, via an owner-authorized ownership update that changes
+    /// ONLY the delegated set (ownership unchanged). `writer_pubkey` is the origin RPC's
+    /// §21.9 identity pubkey discovered from `/.well-known/dig-rpc` (#172). The wallet
+    /// `w` (owner) signs + funds the XCH fee; NO $DIG is paid (a delegation change is
+    /// not a capsule commit). Idempotent: `changed = false` (no spend, no `tx_id`) when
+    /// the store already has the desired delegation. Every other delegate is preserved.
+    async fn set_writer_authorization(
+        &self,
+        launcher_id: Bytes32,
+        writer_pubkey: datalayer_driver::PublicKey,
+        add: bool,
+        w: &ScannedWallet,
+        fee: u64,
+    ) -> Result<WriterDelegationOutcome>;
     /// Poll until `coin_id` is confirmed (present in a block) or `timeout_secs` elapses.
     async fn confirm(&self, coin_id: Bytes32, timeout_secs: u64) -> Result<ConfirmState>;
 }
@@ -207,6 +222,41 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
             new_coin_id: built.new_coin_id,
             tx_id,
         })
+    }
+
+    async fn set_writer_authorization(
+        &self,
+        launcher_id: Bytes32,
+        writer_pubkey: datalayer_driver::PublicKey,
+        add: bool,
+        w: &ScannedWallet,
+        fee: u64,
+    ) -> Result<WriterDelegationOutcome> {
+        let built = build_authorize_writer_bundle(
+            &self.chain as &dyn ChainReads,
+            launcher_id,
+            writer_pubkey,
+            add,
+            w,
+            fee,
+        )
+        .await?;
+        match built {
+            None => Ok(WriterDelegationOutcome {
+                new_coin_id: None,
+                tx_id: None,
+                changed: false,
+            }),
+            Some(b) => {
+                let tx_id = b.bundle.name();
+                self.chain.push(b.bundle).await?;
+                Ok(WriterDelegationOutcome {
+                    new_coin_id: Some(b.new_coin_id),
+                    tx_id: Some(tx_id),
+                    changed: true,
+                })
+            }
+        }
     }
 
     /// Polls chain every 10 s until `coin_id` appears or the poll budget expires.
@@ -464,6 +514,95 @@ pub async fn build_advance_store_writer_bundle(
     } else {
         build(effective).or(Ok(first))
     }
+}
+
+/// The outcome of an authorize/deauthorize-writer spend: the new singleton coin to
+/// poll, the conventional tx id, and whether a spend was actually broadcast (`false`
+/// when the delegation was already in the desired state — a no-op, no chain write).
+#[derive(Clone, Debug)]
+pub struct WriterDelegationOutcome {
+    pub new_coin_id: Option<Bytes32>,
+    pub tx_id: Option<Bytes32>,
+    /// `true` = a spend was built + broadcast; `false` = the store already had the
+    /// desired delegation (idempotent no-op — nothing was sent, no fee spent).
+    pub changed: bool,
+}
+
+/// Build + sign the OWNER-authorized ownership update that adds (`add = true`) or
+/// removes (`add = false`) `writer_pubkey` from `launcher_id`'s delegated writer set,
+/// with ownership UNCHANGED. This is the on-chain "authorize/deauthorize an origin as
+/// a writer" spend (#172): the owner wallet signs it, funding the XCH fee. It carries
+/// NO $DIG payment — a delegation change is not a capsule commit (like a mint, #111).
+///
+/// Returns `Ok(None)` when the delegation is already in the desired state (the writer
+/// is already present on an add, or already absent on a remove) — an idempotent no-op,
+/// so the caller neither signs nor broadcasts. The delegated set REPLACES the prior
+/// set, so every OTHER delegate (co-writers, admins, oracles) is re-sent verbatim
+/// (via the pure `delegated_set_with_writer_{added,removed}` transforms).
+#[allow(clippy::too_many_arguments)]
+pub async fn build_authorize_writer_bundle(
+    chain: &dyn ChainReads,
+    launcher_id: Bytes32,
+    writer_pubkey: datalayer_driver::PublicKey,
+    add: bool,
+    w: &ScannedWallet,
+    fee: u64,
+) -> Result<Option<AdvanceStoreBundle>> {
+    let owner_keys = crate::keys::WalletKeys {
+        synthetic_sk: w.addrs[0].keys.synthetic_sk.clone(),
+        synthetic_pk: w.addrs[0].keys.synthetic_pk,
+        owner_puzzle_hash: w.addrs[0].keys.owner_puzzle_hash,
+    };
+    let store = sync_datastore(chain, launcher_id).await?;
+    // The store owner MUST be this wallet — the delegated set can only be changed by
+    // an owner-authorized spend. A non-owner attempt would fail on-chain; fail early
+    // with a clear message.
+    if store.info.owner_puzzle_hash != owner_keys.owner_puzzle_hash {
+        return Err(ChainError::Chain(
+            "this wallet is not the store owner; only the owner can authorize writers".into(),
+        ));
+    }
+    // Pure transform over the CURRENT on-chain delegated set (preserves co-delegates).
+    let new_set = if add {
+        crate::singleton::delegated_set_with_writer_added(&store, writer_pubkey)
+    } else {
+        crate::singleton::delegated_set_with_writer_removed(&store, writer_pubkey)
+    };
+    let Some(new_delegated) = new_set else {
+        // Already in the desired state — idempotent no-op, no spend.
+        return Ok(None);
+    };
+
+    let owner_ph = store.info.owner_puzzle_hash; // ownership UNCHANGED
+    let build = |effective_fee: u64| -> Result<AdvanceStoreBundle> {
+        let all_xch = coins_with_keys_from_wallet(w);
+        // Fee coins for the ownership update: the wallet's XCH across all addresses.
+        let fee_coins: Vec<chia_protocol::Coin> = all_xch.iter().map(|c| c.coin).collect();
+        let upd = crate::singleton::build_update_ownership_unsigned(
+            &owner_keys,
+            store.clone(),
+            owner_ph,
+            new_delegated.clone(),
+            &fee_coins,
+            effective_fee,
+        )?;
+        let new_coin_id = upd.new_coin_id;
+        let signature = sign_coin_spends(&upd.coin_spends, &w.signing_keys(), false)
+            .map_err(|e| ChainError::Chain(format!("sign writer-delegation bundle: {e}")))?;
+        Ok(AdvanceStoreBundle {
+            bundle: SpendBundle::new(upd.coin_spends, signature),
+            new_coin_id,
+        })
+    };
+
+    let first = build(fee)?;
+    let effective = resolve_fee(chain, &first.bundle, w, fee).await;
+    let built = if effective == fee {
+        first
+    } else {
+        build(effective).unwrap_or(first)
+    };
+    Ok(Some(built))
 }
 
 #[cfg(test)]

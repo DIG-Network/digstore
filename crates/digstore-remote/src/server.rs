@@ -26,6 +26,12 @@ pub struct AppState {
     /// key) or it is rejected 401. `allow_anonymous()` turns this off for a
     /// fully-public read mirror or in-process tests.
     pub require_auth: bool,
+    /// This RPC's own §21.9 IDENTITY public key (48-byte hex), published at
+    /// `GET /.well-known/dig-rpc` so a client can discover the pubkey to authorize
+    /// as a writer delegate. `None` when the operator has no identity key (the
+    /// well-known endpoint then reports an empty `pubkey`, signalling "not
+    /// discoverable"). Set via [`RemoteServer::with_identity_pubkey`].
+    pub identity_pubkey: Option<String>,
 }
 
 /// The Digstore remote server. Wraps an axum Router over a RemoteBackend.
@@ -40,6 +46,7 @@ impl RemoteServer {
                 backend,
                 rate_limiter: Arc::new(RateLimiter::new(10_000)),
                 require_auth: true,
+                identity_pubkey: None,
             },
         }
     }
@@ -50,6 +57,7 @@ impl RemoteServer {
                 backend,
                 rate_limiter: rl,
                 require_auth: true,
+                identity_pubkey: None,
             },
         }
     }
@@ -59,6 +67,16 @@ impl RemoteServer {
     /// protocol logic rather than the auth layer. Builder-style.
     pub fn allow_anonymous(mut self) -> Self {
         self.state.require_auth = false;
+        self
+    }
+
+    /// Publish this RPC's own §21.9 identity public key (48-byte hex) at
+    /// `GET /.well-known/dig-rpc`, so a store owner can discover which pubkey to
+    /// authorize as a writer delegate for the RPC. Builder-style; the operator wires
+    /// it from `digstore_remote::identity::identity_pubkey_hex()`. Absent, the
+    /// well-known document reports an empty `pubkey` ("no discoverable identity").
+    pub fn with_identity_pubkey(mut self, pubkey_hex: impl Into<String>) -> Self {
+        self.state.identity_pubkey = Some(pubkey_hex.into());
         self
     }
 
@@ -73,6 +91,11 @@ impl RemoteServer {
             // gateway exists — `rpc.dig.net`) to decide whether a tier is up,
             // mirroring `dig-node`'s own `GET /health` (`dig-node/SPEC.md` §1.1).
             .route("/health", get(get_health))
+            // RPC identity discovery (§21 well-known). Unauthenticated + unguarded
+            // (NOT under `/stores/:id`, so `request_method_tag` returns None and the
+            // auth layer passes it through): a client MUST be able to fetch the RPC's
+            // pubkey BEFORE it can authenticate. Publishes only public metadata.
+            .route("/.well-known/dig-rpc", get(get_well_known))
             .route(
                 "/stores/:id",
                 get(crate::handlers::descriptor::get_descriptor),
@@ -264,6 +287,17 @@ async fn get_health() -> impl IntoResponse {
     axum::Json(serde_json::json!({ "status": "ok" }))
 }
 
+/// `GET /.well-known/dig-rpc` — publish the RPC's §21.9 identity pubkey for
+/// discovery (writer-authorization bootstrapping). Public metadata only; served
+/// without auth. Reports an empty `pubkey` when the operator configured no identity.
+async fn get_well_known(State(s): State<AppState>) -> impl IntoResponse {
+    axum::Json(crate::wire::RpcWellKnown {
+        pubkey: s.identity_pubkey.clone().unwrap_or_default(),
+        protocol: crate::wire::DIG_RPC_PROTOCOL_VERSION.to_string(),
+        software: concat!("digstore/", env!("CARGO_PKG_VERSION")).to_string(),
+    })
+}
+
 /// Run a synchronous backend call off the async runtime (wasmtime is sync, §18).
 pub async fn run_blocking<T, F>(f: F) -> Result<T, RemoteError>
 where
@@ -289,5 +323,75 @@ impl IntoResponse for RemoteError {
             other => other.to_string(),
         };
         (self.status(), body).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend_inmem::InMemoryBackend;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt; // for `oneshot`
+
+    /// Drive the router with a single GET request and return `(status, body-bytes)`.
+    async fn get(router: Router, path: &str) -> (u16, Vec<u8>) {
+        let resp = router
+            .oneshot(
+                AxRequest::builder()
+                    .uri(path)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status().as_u16();
+        let body = resp
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec();
+        (status, body)
+    }
+
+    /// **Proves:** `/.well-known/dig-rpc` serves the configured identity pubkey
+    /// UNAUTHENTICATED, even when the server otherwise requires §21.9 auth — a client
+    /// must be able to discover the pubkey BEFORE it can sign a request.
+    /// **Catches:** the well-known route being auth-guarded (a chicken-and-egg lock-out).
+    #[tokio::test]
+    async fn well_known_serves_pubkey_without_auth() {
+        let pk = "ab".repeat(48);
+        // require_auth defaults ON for `new` — the discovery route must still be open.
+        let server = RemoteServer::new(std::sync::Arc::new(InMemoryBackend::new()))
+            .with_identity_pubkey(pk.clone());
+        let (status, body) = get(server.router(), "/.well-known/dig-rpc").await;
+        assert_eq!(status, 200, "discovery is unauthenticated");
+        let doc: crate::wire::RpcWellKnown = serde_json::from_slice(&body).unwrap();
+        assert_eq!(doc.pubkey, pk);
+        assert_eq!(doc.protocol, crate::wire::DIG_RPC_PROTOCOL_VERSION);
+        assert!(doc.software.starts_with("digstore/"));
+    }
+
+    /// **Proves:** with no identity configured, the document reports an EMPTY pubkey
+    /// (a discoverable "not available" signal), not a 404/500.
+    /// **Catches:** a panic/omission when the operator ran with no identity key.
+    #[tokio::test]
+    async fn well_known_reports_empty_pubkey_when_unset() {
+        let server = RemoteServer::new(std::sync::Arc::new(InMemoryBackend::new()));
+        let (status, body) = get(server.router(), "/.well-known/dig-rpc").await;
+        assert_eq!(status, 200);
+        let doc: crate::wire::RpcWellKnown = serde_json::from_slice(&body).unwrap();
+        assert!(doc.pubkey.is_empty());
+    }
+
+    /// **Proves:** a guarded store route STILL requires auth (401) — adding the open
+    /// discovery route did not accidentally widen the auth bypass.
+    #[tokio::test]
+    async fn store_route_still_requires_auth() {
+        let server = RemoteServer::new(std::sync::Arc::new(InMemoryBackend::new()))
+            .with_identity_pubkey("ab".repeat(48));
+        let (status, _) = get(server.router(), &format!("/stores/{}", "11".repeat(32))).await;
+        assert_eq!(status, 401, "an unsigned store fetch is rejected");
     }
 }

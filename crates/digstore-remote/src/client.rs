@@ -2,7 +2,8 @@ use crate::auth::push_signing_message;
 use crate::error::ClientError;
 use crate::etag::parse_if_none_match;
 use crate::wire::{
-    DeltaNegotiateRequest, DeltaResponse, RootHistory, StoreDescriptor, TombstoneRequest,
+    DeltaNegotiateRequest, DeltaResponse, RootHistory, RpcWellKnown, StoreDescriptor,
+    TombstoneRequest,
 };
 use base64::Engine;
 use digstore_core::{
@@ -190,6 +191,39 @@ impl DigClient {
             .header("X-Dig-Timestamp", timestamp.to_string())
             .header("X-Dig-Nonce", hex::encode(nonce))
             .header("X-Dig-Auth", hex::encode(sig.0))
+    }
+
+    /// Discover the RPC's own §21.9 identity from `GET /.well-known/dig-rpc`.
+    ///
+    /// UNAUTHENTICATED (no `authed` wrap): the well-known document is public metadata
+    /// and a client must be able to read it BEFORE it can sign a request. Returns the
+    /// full [`RpcWellKnown`]; the caller reads `pubkey` (the identity to authorize as a
+    /// writer delegate). An RPC that does not implement the endpoint yields a
+    /// [`ClientError::Status`] (404) — the caller MUST handle "no discovery" gracefully.
+    pub async fn discover_well_known(&self) -> Result<RpcWellKnown, ClientError> {
+        self.http
+            .get(self.url("/.well-known/dig-rpc"))
+            .send()
+            .await
+            .map_err(|e| ClientError::Transport(e.to_string()))?
+            .error_for_status()
+            .map_err(|e| ClientError::Status(e.status().map(|s| s.as_u16()).unwrap_or(0)))?
+            .json::<RpcWellKnown>()
+            .await
+            .map_err(|e| ClientError::Decode(e.to_string()))
+    }
+
+    /// Convenience over [`discover_well_known`]: the RPC's identity pubkey (48-byte
+    /// hex), or `Ok(None)` when the RPC advertises no discoverable identity (empty
+    /// `pubkey`). A non-96-hex value is normalized to `None` so a caller never builds
+    /// an on-chain authorization spend for a malformed key. Transport / decode / non-
+    /// 404 status errors still surface as `Err`; a 404 (endpoint absent) is `Err`
+    /// too — the CLI treats that as "this RPC cannot be auto-authorized".
+    pub async fn discover_pubkey(&self) -> Result<Option<String>, ClientError> {
+        let doc = self.discover_well_known().await?;
+        let pk = doc.pubkey.trim().to_ascii_lowercase();
+        let is_bls_g1_hex = pk.len() == 96 && pk.bytes().all(|b| b.is_ascii_hexdigit());
+        Ok(is_bls_g1_hex.then_some(pk))
     }
 
     /// §21.3 fetch: descriptor + root history only.
@@ -943,5 +977,55 @@ mod content_tests {
             decode_inclusion_proof("!!!not base64!!!"),
             Err(ClientError::Decode(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend_inmem::InMemoryBackend;
+    use crate::server::RemoteServer;
+    use std::sync::Arc;
+
+    /// Bind a real `RemoteServer` (with the given identity pubkey) on an ephemeral
+    /// loopback port and return its base URL + the join handle. The server requires
+    /// §21.9 auth for store routes, exercising that discovery is UNaffected by auth.
+    async fn spawn_server(pubkey: Option<String>) -> (String, tokio::task::JoinHandle<()>) {
+        let mut server = RemoteServer::new(Arc::new(InMemoryBackend::new()));
+        if let Some(pk) = pubkey {
+            server = server.with_identity_pubkey(pk);
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = server.router();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, router.into_make_service()).await;
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    /// **Proves:** a client discovers the RPC's identity pubkey over real HTTP from
+    /// `/.well-known/dig-rpc`, WITHOUT presenting §21.9 auth — the discovery
+    /// bootstrapping path end-to-end (server → wire → client).
+    /// **Catches:** a client that signs the discovery request (chicken-and-egg) or a
+    /// wire-shape mismatch between server and client.
+    #[tokio::test]
+    async fn discovers_pubkey_over_http() {
+        let pk = "cd".repeat(48);
+        let (base, handle) = spawn_server(Some(pk.clone())).await;
+        // No `.with_identity(...)` — the client is anonymous, as it must be pre-auth.
+        let client = DigClient::new(&base);
+        let got = client.discover_pubkey().await.unwrap();
+        assert_eq!(got, Some(pk));
+        handle.abort();
+    }
+
+    /// **Proves:** an RPC advertising no identity yields `Ok(None)`, not an error.
+    #[tokio::test]
+    async fn discovers_none_when_rpc_has_no_identity() {
+        let (base, handle) = spawn_server(None).await;
+        let client = DigClient::new(&base);
+        assert_eq!(client.discover_pubkey().await.unwrap(), None);
+        handle.abort();
     }
 }

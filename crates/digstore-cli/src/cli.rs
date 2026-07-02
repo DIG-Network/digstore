@@ -688,6 +688,31 @@ pub enum RemoteAction {
     Remove {
         name: String,
     },
+    /// Authorize a remote's RPC as an on-chain WRITER for the active store, so that
+    /// RPC (e.g. rpc.dig.net) can advance the store's root on your behalf. Discovers
+    /// the RPC's identity pubkey from its `/.well-known/dig-rpc` endpoint, then the
+    /// OWNER wallet signs a delegation update adding it as a writer. Pass an explicit
+    /// `--pubkey <96-hex>` to authorize a specific key without discovery.
+    Authorize {
+        /// The remote name to authorize (default `origin`).
+        #[arg(default_value = "origin")]
+        name: String,
+        /// Authorize this exact identity pubkey (48-byte / 96-hex) instead of
+        /// discovering it from the remote's well-known endpoint.
+        #[arg(long)]
+        pubkey: Option<String>,
+    },
+    /// Deauthorize (revoke) a remote's RPC as a writer for the active store. Removes
+    /// only that writer delegate; other delegates are preserved. Owner-signed.
+    Deauthorize {
+        /// The remote name to deauthorize (default `origin`).
+        #[arg(default_value = "origin")]
+        name: String,
+        /// Deauthorize this exact identity pubkey (48-byte / 96-hex) instead of
+        /// discovering it from the remote's well-known endpoint.
+        #[arg(long)]
+        pubkey: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -728,10 +753,17 @@ pub struct CloneArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "EXAMPLES:\n  digstore push origin")]
+#[command(
+    after_help = "EXAMPLES:\n  digstore push origin\n  digstore push origin --yes   # auto-authorize the origin as a writer if needed\n  digstore push origin --no-auth   # never prompt/authorize; push only\n\nOn push, if the origin RPC's identity is not yet an authorized WRITER for this\nstore, digstore offers to authorize it (discover its pubkey via the well-known\nendpoint, then owner-sign a delegation update). --yes auto-approves; --no-auth\nskips the check entirely (useful for CI / scripted pushes)."
+)]
 pub struct PushArgs {
     #[arg(default_value = "origin")]
     pub remote: String,
+    /// Do NOT prompt to authorize the origin as a writer on push — push only. For CI
+    /// / scripting where writer authorization is managed out of band. The global
+    /// `--yes` instead AUTO-authorizes without prompting.
+    #[arg(long)]
+    pub no_auth: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1265,6 +1297,61 @@ mod tests {
                 _ => panic!("expected remote add"),
             },
             _ => panic!("expected remote"),
+        }
+    }
+
+    #[test]
+    fn parses_remote_authorize_with_default_origin_and_explicit_pubkey() {
+        // Bare `remote authorize` defaults the remote to `origin` and no explicit pubkey
+        // (discover via well-known).
+        let cli = Cli::try_parse_from(["digstore", "remote", "authorize"]).unwrap();
+        match cli.command {
+            Command::Remote(r) => match r.action {
+                RemoteAction::Authorize { name, pubkey } => {
+                    assert_eq!(name, "origin");
+                    assert!(pubkey.is_none());
+                }
+                _ => panic!("expected remote authorize"),
+            },
+            _ => panic!("expected remote"),
+        }
+        // Explicit remote + --pubkey.
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "remote",
+            "deauthorize",
+            "mirror",
+            "--pubkey",
+            &"ab".repeat(48),
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Remote(r) => match r.action {
+                RemoteAction::Deauthorize { name, pubkey } => {
+                    assert_eq!(name, "mirror");
+                    assert_eq!(pubkey.as_deref(), Some("ab".repeat(48).as_str()));
+                }
+                _ => panic!("expected remote deauthorize"),
+            },
+            _ => panic!("expected remote"),
+        }
+    }
+
+    #[test]
+    fn parses_push_no_auth_flag() {
+        let cli = Cli::try_parse_from(["digstore", "push", "origin", "--no-auth"]).unwrap();
+        match cli.command {
+            Command::Push(p) => {
+                assert_eq!(p.remote, "origin");
+                assert!(p.no_auth);
+            }
+            _ => panic!("expected push"),
+        }
+        // Default: no_auth off.
+        let cli = Cli::try_parse_from(["digstore", "push"]).unwrap();
+        match cli.command {
+            Command::Push(p) => assert!(!p.no_auth),
+            _ => panic!("expected push"),
         }
     }
 

@@ -19,6 +19,18 @@ pub fn push_core(
     ui: &crate::ui::Ui,
     remote: &str,
 ) -> Result<PushOutcome, CliError> {
+    push_core_opts(ctx, ui, remote, false)
+}
+
+/// Push with control over the writer-authorization auto-prompt (#172). `no_auth`
+/// skips the prompt entirely (CI / out-of-band authorization). [`push_core`] is the
+/// default (`no_auth = false`).
+pub fn push_core_opts(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    remote: &str,
+    no_auth: bool,
+) -> Result<PushOutcome, CliError> {
     let base = config::resolve_remote_url(ctx, remote)?;
     // Product gate: require a dighub account — but ONLY for dighub-managed remotes
     // (*.dig.net). Pushing to a self-hosted / loopback node needs no dighub account.
@@ -46,11 +58,21 @@ pub fn push_core(
         ))
         .unwrap_or(false);
 
+    // Writer-authorization auto-prompt (#172): after a successful push, if the origin
+    // RPC's identity is not yet an authorized WRITER for this store, offer to authorize
+    // it (discover its pubkey via /.well-known/dig-rpc, then owner-sign a delegation
+    // update). Best-effort + non-fatal — a discovery/chain hiccup never fails the push.
+    // Skipped in --json mode (a machine push should not surface an interactive prompt;
+    // scripts use `digstore remote authorize` explicitly) and when --no-auth is set.
+    if !no_auth && !ui.json() {
+        let _ = crate::commands::remote::ensure_origin_authorized(ctx, ui, remote, &base, no_auth);
+    }
+
     Ok(PushOutcome { root, claimed })
 }
 
 pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PushArgs) -> Result<(), CliError> {
-    let out = push_core(ctx, ui, &args.remote)?;
+    let out = push_core_opts(ctx, ui, &args.remote, args.no_auth)?;
 
     if ui.json() {
         ui.emit_json(&serde_json::json!({
