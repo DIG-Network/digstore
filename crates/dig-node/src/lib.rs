@@ -4085,7 +4085,10 @@ mod tests {
             if c.is_ipv4() {
                 seen_ipv4 = true;
             } else {
-                assert!(!seen_ipv4, "IPv6 candidate must not follow an IPv4 one: {candidates:?}");
+                assert!(
+                    !seen_ipv4,
+                    "IPv6 candidate must not follow an IPv4 one: {candidates:?}"
+                );
             }
         }
     }
