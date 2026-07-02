@@ -730,6 +730,31 @@ impl PeerRpcResponder for NodeResponder {
                     off += this_len;
                 }
                 Err((code, message)) => {
+                    // A LOCAL MISS (-32004) over the peer stream: try the #165 P2P miss path first —
+                    // stream the fetched-through frames (transparent to the caller), or write a
+                    // redirect ERROR FRAME naming the holder(s) so the caller re-requests there. An
+                    // empty engine / no provider falls back to the bare error frame (no silent miss
+                    // when a provider exists). The redirect frame carries the SAME `-32008` +
+                    // `data.redirect` shape as the JSON-RPC redirect (the read-tier redirect response).
+                    if code == crate::download::RESOURCE_UNAVAILABLE {
+                        if let Some(content) = crate::download::range_content_id(&req) {
+                            let depth = crate::download::redirect_depth(&req);
+                            match self.node.miss_outcome(&content, depth).await {
+                                crate::download::MissOutcome::Fetched(f) => {
+                                    return stream_fetched_range(out, &f, off, length).await;
+                                }
+                                crate::download::MissOutcome::Redirect {
+                                    providers,
+                                    next_depth,
+                                } => {
+                                    let errf = json!({"error": crate::download::redirect_error_object(
+                                        &content, &providers, next_depth)});
+                                    return write_framed(out, &errf).await;
+                                }
+                                crate::download::MissOutcome::NotFound => {}
+                            }
+                        }
+                    }
                     let errf = json!({"error": {"code": code, "message": message}});
                     return write_framed(out, &errf).await;
                 }
@@ -747,6 +772,40 @@ impl PeerRpcResponder for NodeResponder {
                 message: "DHT not running on this node".to_string(),
             }
             .encode(),
+        }
+    }
+}
+
+/// Stream a fetched-through resource (#165) over the peer range stream: write node-window
+/// [`crate::download::FetchedResource::range_frame`]s advancing `offset` until complete, exactly like
+/// the local-hold path streams `fetch_range_frame` — so a fetch-through serve is byte-shape-identical
+/// to a locally-held one (first frame carries the verification metadata the caller checks against the
+/// chain-anchored root). A bad range (offset past the resource) writes one error frame.
+async fn stream_fetched_range(
+    out: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    fetched: &crate::download::FetchedResource,
+    offset: usize,
+    length: usize,
+) -> std::io::Result<()> {
+    let mut off = offset;
+    loop {
+        match fetched.range_frame(off, length) {
+            Ok(frame) => {
+                write_framed(out, &frame).await?;
+                let complete = frame
+                    .get("complete")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let this_len = frame.get("length").and_then(Value::as_u64).unwrap_or(0) as usize;
+                if complete || this_len == 0 {
+                    return Ok(());
+                }
+                off += this_len;
+            }
+            Err((code, message)) => {
+                let errf = json!({"error": {"code": code, "message": message}});
+                return write_framed(out, &errf).await;
+            }
         }
     }
 }
@@ -927,6 +986,29 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
             None
         }
     };
+
+    // 4b. Bring up the P2P CONTENT engine (#164/#165) over the live DHT + this node's mTLS identity: the
+    //     dig-download multi-source fetch path (locate→confirm→fan ranges→verify→reassemble) plus the
+    //     redirect-on-miss provider lookup. Attached to the node so a content miss on the peer/§21/agent
+    //     surface REDIRECTS the caller to a holder (default) or FETCHES-THROUGH (`DIG_NODE_ON_MISS=fetch`)
+    //     instead of dead-ending. Only wired when the DHT is up (it is the provider source); a startup
+    //     GC sweep + interval reap abandoned `.download.tmp` staging files.
+    if let Some(dht) = dht.clone() {
+        let content = crate::download::NodeContent::for_dht(
+            dht.service().clone(),
+            identity.clone(),
+            &network_id_str,
+            crate::download::miss_mode_from_env(),
+            Some(peer_id_hex.clone()),
+            node.cache_dir_path(),
+        );
+        content.spawn_gc();
+        node.set_p2p_content(content);
+        println!(
+            "dig-node peer network: P2P content engine up (miss mode: {:?})",
+            crate::download::miss_mode_from_env()
+        );
+    }
 
     // Graceful shutdown: on ctrl-c, best-effort withdraw this node's provider records so peers stop
     // being told to dial a node that is going away (TTL expiry is the backstop if this does not reach

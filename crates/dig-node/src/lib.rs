@@ -31,7 +31,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
 use base64::Engine;
@@ -47,6 +47,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 pub mod dht;
+pub mod download;
 pub mod peer;
 pub mod pex;
 
@@ -98,6 +99,12 @@ pub struct Node {
     /// (Replaces the retired bespoke relay-connection status; relay reachability now lives in
     /// dig-nat/dig-gossip and is reported here as the pool's relay-reservation flag.)
     peer_status: Arc<peer::PeerStatus>,
+    /// The P2P content engine (#164/#165): the dig-download multi-source fetch path + the
+    /// redirect-on-miss provider lookup. Set ONCE by the standalone peer-network bring-up
+    /// ([`peer::spawn_peer_network`]) via [`Node::set_p2p_content`]; NEVER set in the in-process FFI
+    /// path (the browser is a pure consumer), so a content miss there behaves exactly as before (no
+    /// redirect/fetch-through — the miss handler is a no-op without this). See [`crate::download`].
+    p2p_content: OnceLock<Arc<download::NodeContent>>,
 }
 
 /// The CANONICAL (shared) cache dir — the one the DIG Browser's in-process
@@ -1297,6 +1304,24 @@ impl Node {
                 }
             }
         }
+
+        // NOT-HELD → REDIRECT-ON-MISS hint (#165, read tier): if this node lacks the item but its P2P
+        // engine locates holders in the DHT, name them in a `providers` array so the caller re-requests
+        // against a holder instead of dead-ending — the availability-shaped counterpart to the
+        // getContent/fetchRange redirect. No engine / no provider → the plain not-available answer
+        // stands (the field is simply absent). Self is excluded by `find_providers`.
+        if answer["available"].as_bool() != Some(true) {
+            if let Some(pc) = self.p2p_content() {
+                if let Some(content) = download::availability_content_id(store, root, rk) {
+                    let providers = pc.find_providers(&content).await;
+                    if !providers.is_empty() {
+                        if let Some(obj) = answer.as_object_mut() {
+                            obj.insert("providers".into(), download::providers_json(&providers));
+                        }
+                    }
+                }
+            }
+        }
         answer
     }
 
@@ -1779,7 +1804,24 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
             .await
         {
             Ok(frame) => json!({"jsonrpc":"2.0","id":id,"result": frame}),
-            Err((code, message)) => rpc_err(&id, code, &message),
+            // A LOCAL MISS (-32004): try the #165 P2P miss path — redirect to a holder (default) or
+            // fetch-through via dig-download — before returning the bare not-found. An empty engine
+            // (FFI path) or no provider yields `None` and the original error stands (no silent 404
+            // when a provider exists). Other errors (e.g. -32007 bad range) pass through unchanged.
+            Err((code, message)) => {
+                if code == download::RESOURCE_UNAVAILABLE {
+                    if let Some(content) = download::miss_content_for(store_hex, root_hex, rk_hex) {
+                        let depth = download::redirect_depth(&params);
+                        if let Some(envelope) = node
+                            .range_miss_envelope(&id, &content, depth, offset, length)
+                            .await
+                        {
+                            return envelope;
+                        }
+                    }
+                }
+                rpc_err(&id, code, &message)
+            }
         };
     }
     // cache.* — the local-cache config for the chrome://settings DIG section.
@@ -2005,6 +2047,24 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         return local(&id, result);
     }
 
+    // 2b. P2P REDIRECT-ON-MISS (#165): this node does NOT hold the content locally. If it runs a P2P
+    //     content engine (the standalone peer network — never the in-process FFI/browser path) and the
+    //     DHT locates a holder, answer with a REDIRECT to that holder (default) or FETCH-THROUGH via
+    //     dig-download (`DIG_NODE_ON_MISS=fetch`) instead of dead-ending — never a silent miss while a
+    //     provider exists. A bounded `redirect_depth` (echoed by the caller) prevents redirect loops.
+    //     Applies only to a concrete resource (store+root+retrieval_key); an empty engine or no
+    //     provider falls through to the upstream proxy below (byte-identical to before).
+    if let Some(content) = download::miss_content_for(store_hex, &root_hex, rk_hex) {
+        let depth = download::redirect_depth(&params);
+        let pin_hex = pinned_root.map(|r| r.to_hex());
+        if let Some(envelope) = node
+            .content_miss_envelope(&id, &content, depth, offset, pin_hex.as_deref())
+            .await
+        {
+            return envelope;
+        }
+    }
+
     // 3. MISS: proxy to rpc.dig.net, then cache the result window (LRU-capped)
     //    so the next load of this resource is served locally. (rpc.dig.net is the
     //    remote DIG network, not a local server — the in-process node IS local.)
@@ -2112,6 +2172,7 @@ impl Node {
             identity_seed,
             anchored_root_resolver: default_anchored_resolver(),
             peer_status: peer::PeerStatus::new(),
+            p2p_content: OnceLock::new(),
         })
     }
 
@@ -2132,6 +2193,12 @@ impl Node {
     /// `peer-net/` subdir of the cache dir, so it shares the node's data root + writability handling).
     pub fn peer_cert_dir(&self) -> PathBuf {
         self.cache_dir.join("peer-net")
+    }
+
+    /// The node's cache dir root — the data root the P2P content engine's download staging
+    /// (`<cache>/downloads`) + `.download.tmp` GC live under (shares the node's writability handling).
+    pub fn cache_dir_path(&self) -> &Path {
+        &self.cache_dir
     }
 }
 
@@ -2344,6 +2411,7 @@ mod tests {
             identity_seed,
             anchored_root_resolver,
             peer_status: peer::PeerStatus::new(),
+            p2p_content: OnceLock::new(),
         };
         (node, td)
     }
@@ -3726,5 +3794,252 @@ mod tests {
             resp.get("result").is_none(),
             "no proof result is fabricated: {resp}"
         );
+    }
+
+    // -- REDIRECT-ON-MISS (#165) — the content-orchestration miss handler wired into the RPC ----------
+    //
+    // These drive the REAL `dig.getContent` / `dig.fetchRange` dispatch on a node that does NOT hold the
+    // requested resource but has a P2P content engine attached (the standalone peer path). With a mock
+    // DHT locator + mock range transport (dig-download's testkit — no real network) they assert: a
+    // holder exists → REDIRECT (not not-found); no holder → proper not-found; the hop cap is honored;
+    // and `DIG_NODE_ON_MISS=fetch` fetches-through and serves the bytes. The pin resolver returns the
+    // tip so the read gets past the anchored-root gate into the miss path.
+
+    use crate::download::{MissMode, NodeContent, CONTENT_REDIRECT, REDIRECT_HOP_CAP};
+    use dig_download::ContentId;
+
+    /// A `MockContent` whose `root`/`inclusion_proof` are a REAL digstore merkle proof over its bytes,
+    /// so the chain-binding `DigstoreProofVerifier` (and the download's whole-resource verify) pass for
+    /// honest bytes — the same construction `download::tests::anchored_mock_content` uses.
+    fn anchored_mock_content(n: usize, chunks: usize) -> dig_download::testkit::MockContent {
+        use digstore_core::codec::Encode;
+        let mut content = dig_download::testkit::MockContent::even(n, chunks);
+        let leaf = digstore_core::resource_leaf(&content.bytes);
+        let tree = digstore_core::MerkleTree::from_leaves(vec![leaf]);
+        let proof = tree.prove(0).expect("single-leaf proof");
+        content.root = tree.root().to_hex();
+        content.inclusion_proof =
+            Some(base64::engine::general_purpose::STANDARD.encode(Encode::to_bytes(&proof)));
+        content
+    }
+
+    /// Attach a P2P content engine to `node` with a mock locator (the given providers) + a mock
+    /// transport serving `content`, in `mode`. Returns nothing — the engine lives on the node.
+    fn attach_p2p(
+        node: &Node,
+        providers: Vec<dig_download::ProviderRecord>,
+        content: dig_download::testkit::MockContent,
+        mode: MissMode,
+        td: &tempfile::TempDir,
+    ) {
+        let locator = Arc::new(dig_download::testkit::MockProviderLocator::fixed(providers));
+        let transport = Arc::new(dig_download::testkit::MockRangeTransport::new(content));
+        let pc = NodeContent::new(locator, transport, mode, None, td.path());
+        node.set_p2p_content(pc);
+    }
+
+    /// A store + its chain tip, with a request that resolves past the pin into the miss path.
+    fn miss_setup() -> (Bytes32, Bytes32, String) {
+        (Bytes32([0x21; 32]), Bytes32([0x22; 32]), any_rk_hex())
+    }
+
+    #[test]
+    fn get_content_miss_with_a_provider_redirects_not_notfound() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        std::env::remove_var("DIG_NODE_ON_MISS");
+        let rt = pin_test_rt();
+        let (store, tip, rk) = miss_setup();
+        let (node, td) = test_node_with_resolver(None, MockResolver::one(&store.to_hex(), tip));
+        // A holder exists in the DHT for this content.
+        let cid = ContentId::resource(store.0, tip.0, [0xcd; 32]);
+        attach_p2p(
+            &node,
+            vec![dig_download::testkit::mock_provider(3, &cid)],
+            dig_download::testkit::MockContent::even(10, 1),
+            MissMode::Redirect,
+            &td,
+        );
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.getContent","params":{
+                "store_id": store.to_hex(), "root": tip.to_hex(), "retrieval_key": rk,
+            }}),
+        ));
+        // Not held locally, but a provider exists → a REDIRECT (never a silent miss/upstream error).
+        assert_eq!(
+            resp["error"]["code"],
+            json!(CONTENT_REDIRECT),
+            "expected redirect: {resp}"
+        );
+        let redirect = &resp["error"]["data"]["redirect"];
+        assert_eq!(
+            redirect["providers"][0]["peer_id"],
+            json!(dig_download::testkit::mock_peer_hex(3))
+        );
+        assert_eq!(redirect["redirect_depth"], json!(1), "depth advanced 0 → 1");
+        assert_eq!(redirect["max_redirects"], json!(REDIRECT_HOP_CAP));
+        assert_eq!(redirect["content"]["store_id"], json!(store.to_hex()));
+    }
+
+    #[test]
+    fn get_content_miss_with_no_provider_is_notfound_not_redirect() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        std::env::remove_var("DIG_NODE_ON_MISS");
+        let rt = pin_test_rt();
+        let (store, tip, rk) = miss_setup();
+        let (node, td) = test_node_with_resolver(None, MockResolver::one(&store.to_hex(), tip));
+        // NO provider in the DHT for this content.
+        attach_p2p(
+            &node,
+            vec![],
+            dig_download::testkit::MockContent::even(10, 1),
+            MissMode::Redirect,
+            &td,
+        );
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.getContent","params":{
+                "store_id": store.to_hex(), "root": tip.to_hex(), "retrieval_key": rk,
+            }}),
+        ));
+        // No provider anywhere → NOT a redirect. The engine yields None and the request falls through
+        // to the upstream proxy, which (unroutable in tests) returns a -32000 upstream error, never a
+        // -32008 redirect.
+        assert_ne!(
+            resp["error"]["code"],
+            json!(CONTENT_REDIRECT),
+            "no provider must NOT redirect: {resp}"
+        );
+    }
+
+    #[test]
+    fn get_content_miss_honors_the_redirect_hop_cap() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        std::env::remove_var("DIG_NODE_ON_MISS");
+        let rt = pin_test_rt();
+        let (store, tip, rk) = miss_setup();
+        let (node, td) = test_node_with_resolver(None, MockResolver::one(&store.to_hex(), tip));
+        let cid = ContentId::resource(store.0, tip.0, [0xcd; 32]);
+        attach_p2p(
+            &node,
+            vec![dig_download::testkit::mock_provider(3, &cid)],
+            dig_download::testkit::MockContent::even(10, 1),
+            MissMode::Redirect,
+            &td,
+        );
+        // A request already redirected up to the cap → NO further redirect (loop guard), even though a
+        // provider exists.
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"dig.getContent","params":{
+                "store_id": store.to_hex(), "root": tip.to_hex(), "retrieval_key": rk,
+                "redirect_depth": REDIRECT_HOP_CAP,
+            }}),
+        ));
+        assert_ne!(
+            resp["error"]["code"],
+            json!(CONTENT_REDIRECT),
+            "at the hop cap the node must not redirect again: {resp}"
+        );
+    }
+
+    #[test]
+    fn fetch_range_miss_with_a_provider_redirects() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        std::env::remove_var("DIG_NODE_ON_MISS");
+        let rt = pin_test_rt();
+        let (store, tip, rk) = miss_setup();
+        let (node, td) = test_node(None);
+        let cid = ContentId::resource(store.0, tip.0, [0xcd; 32]);
+        attach_p2p(
+            &node,
+            vec![dig_download::testkit::mock_provider(5, &cid)],
+            dig_download::testkit::MockContent::even(10, 1),
+            MissMode::Redirect,
+            &td,
+        );
+        // dig.fetchRange for a resource the node does not hold → redirect (fetchRange has no pin gate).
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":7,"method":"dig.fetchRange","params":{
+                "store_id": store.to_hex(), "root": tip.to_hex(), "retrieval_key": rk,
+                "length": 4096, "offset": 0,
+            }}),
+        ));
+        assert_eq!(
+            resp["error"]["code"],
+            json!(CONTENT_REDIRECT),
+            "fetchRange miss → redirect: {resp}"
+        );
+        assert_eq!(
+            resp["error"]["data"]["redirect"]["providers"][0]["peer_id"],
+            json!(dig_download::testkit::mock_peer_hex(5))
+        );
+    }
+
+    #[test]
+    fn fetch_through_pulls_from_the_holder_and_serves_the_bytes() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        std::env::remove_var("DIG_NODE_ON_MISS");
+        let rt = pin_test_rt();
+        let (store, tip, rk) = miss_setup();
+        let (node, td) = test_node(None);
+        // A holder serves an ANCHORED resource (real digstore proof over its bytes) so the download's
+        // whole-resource verify against the chain-anchored root passes.
+        let content = anchored_mock_content(30, 3);
+        let cid = dig_download::testkit::mock_content_id();
+        attach_p2p(
+            &node,
+            vec![
+                dig_download::testkit::mock_provider(1, &cid),
+                dig_download::testkit::mock_provider(2, &cid),
+            ],
+            content.clone(),
+            MissMode::FetchThrough,
+            &td,
+        );
+        // fetch-through: the node pulls the resource from the holders and serves it directly. The
+        // request's content id must be the mock content id the holders serve.
+        let (store_hex, tip_hex, rk_hex) = match &cid {
+            ContentId::Resource {
+                store_id,
+                root,
+                retrieval_key,
+            } => (
+                hex::encode(store_id),
+                hex::encode(root),
+                hex::encode(retrieval_key),
+            ),
+            _ => unreachable!("mock_content_id is a resource"),
+        };
+        let _ = (store, tip, rk);
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":9,"method":"dig.fetchRange","params":{
+                "store_id": store_hex, "root": tip_hex, "retrieval_key": rk_hex,
+                "length": 4096, "offset": 0,
+            }}),
+        ));
+        // A fetched-through frame is served (NOT a redirect, NOT a miss): the first frame carries the
+        // reassembled bytes + verification metadata.
+        assert!(
+            resp.get("result").is_some(),
+            "fetch-through serves a frame: {resp}"
+        );
+        let frame = &resp["result"];
+        assert_eq!(frame["complete"], json!(true));
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(frame["bytes"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            bytes, content.bytes,
+            "fetch-through serves the holder's bytes"
+        );
+        assert_eq!(frame["root"], json!(content.root));
     }
 }
