@@ -479,6 +479,28 @@ exists, does ONE of two things — never a silent 404 while a provider exists:
 is answered with the plain not-found. A node MUST NOT redirect a caller to itself (its own `peer_id`
 is excluded). The redirect is a READ-TIER response — it exposes no peer/write/control surface.
 
+### 5.6 Background capsule backfill (read-triggered warm-up)
+
+When a resource read for a concrete `(store_id, root)` is satisfied **from another node** — i.e. the
+node missed locally and answered with a redirect (§5.4) or a fetch-through — the node SHOULD, in the
+background, ALSO pull the WHOLE `.dig` capsule for that generation and cache it, so the NEXT read of
+that store is served locally. This turns a one-off remote read into a durable local copy without the
+user (or the caller) opting the store into a subscription (§6).
+
+- **Configurable, default ON.** Controlled by `DIG_NODE_BACKFILL_ON_MISS`; only an explicit falsy
+  value (`off`/`0`/`false`/`no`) disables it. Distinct from `DIG_NODE_ON_MISS` (redirect vs.
+  fetch-through for the CURRENT read) — backfill is the behind-the-scenes whole-capsule warm-up that
+  applies under BOTH miss modes.
+- **Non-blocking + deduped.** The backfill is fire-and-forget: it spawns a detached pull and returns
+  immediately, so the current read is never delayed. A burst of resource reads for the same
+  not-yet-held store triggers ONE whole-capsule pull (in-flight dedup keyed `store:root`), not one per
+  read. It is a no-op when backfill is disabled, when the capsule is already held, or on the
+  in-process FFI consumer path (which has no peer network / upstream to pull a whole capsule from).
+- **Same verification.** The pull reuses the whole-generation gap-fill (§5.1, `gap_fill_generation` →
+  the authenticated §21 whole-store sync): the capsule is chain-anchored-root pinned on every serve
+  (§4.2) and, when a DHT is up, announced (§6.2) — verified exactly like every other cached
+  generation. A failed backfill is retried on the next miss (the in-flight slot is released).
+
 ---
 
 ## 6. Subscription management
@@ -857,6 +879,7 @@ cache cap is `config.json` > env > default).
 | `DIG_NODE_CACHE_CAP` | on-disk cache cap (bytes) | `DEFAULT_CACHE_CAP` = 1 GiB (floor 64 MiB) |
 | `DIG_NODE_PIN` | anchored-root pin enforcement (`off`/`0`/`false` disables) | enforced (fail-closed) |
 | `DIG_NODE_ON_MISS` | `fetch`/`fetch-through` ⇒ fetch-through on miss, else redirect | redirect |
+| `DIG_NODE_BACKFILL_ON_MISS` | background-pull the whole `.dig` capsule after a resource read from another node (§5.6); `off`/`0`/`false`/`no` disables | on |
 | `DIG_NODE_WATCH_INTERVAL` | chain-watch poll interval (seconds) over the subscribed store set (§4.3) | `30` (floor `1`) |
 | `DIG_PEER_NETWORK` | `off`/`0`/`false` disables the peer network (read path only) | on |
 | `DIG_NETWORK_ID` | network id for peer discovery / handshake scope | `DIG_MAINNET` |

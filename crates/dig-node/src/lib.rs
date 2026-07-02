@@ -3148,6 +3148,50 @@ mod tests {
         );
     }
 
+    /// **Proves:** capsule backfill (§5.6) is a safe NO-OP on the FFI/consumer path — a node with no
+    /// P2P content engine + no installed self-ref (the browser's in-process node) never spawns a pull
+    /// and never records an in-flight entry, so a resource read there is unchanged.
+    /// **Catches:** a backfill that panics without a runtime self-ref, or that pulls on the consumer
+    /// path (which has no upstream/peer network and must not).
+    #[tokio::test]
+    async fn backfill_is_a_noop_without_a_peer_network() {
+        let (node, _td) = test_node(Some([5u8; 32]));
+        let store_hex = "ab".repeat(32);
+        let root_hex = "cd".repeat(32);
+        // No p2p_content and no self_ref installed (FFI path) → must be an immediate no-op.
+        node.maybe_backfill_capsule(&store_hex, &root_hex);
+        // Nothing pulled, nothing left in-flight.
+        assert!(!module_exists(&node.cache_dir, &store_hex, &root_hex));
+        assert!(
+            node.backfilling
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_empty(),
+            "no in-flight backfill claimed on the consumer path"
+        );
+    }
+
+    /// **Proves:** backfill skips a capsule already held locally (no redundant whole-`.dig` pull) even
+    /// when the config is on. Uses a bare node (no peer network) so we only assert the held-skip guard
+    /// short-circuits before the peer-network gate. **Catches:** a backfill that re-pulls held content.
+    #[tokio::test]
+    async fn backfill_skips_an_already_held_capsule() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_BACKFILL_ON_MISS"); // default on
+        let (node, _td) = test_node(Some([5u8; 32]));
+        let store_hex = "ab".repeat(32);
+        let root_hex = "cd".repeat(32);
+        seed_module(&node, &store_hex, &root_hex, b"already-here");
+        node.maybe_backfill_capsule(&store_hex, &root_hex);
+        assert!(
+            node.backfilling
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_empty(),
+            "an already-held capsule claims no in-flight backfill slot"
+        );
+    }
+
     #[tokio::test]
     async fn anonymous_request_rejected_by_authed_remote() {
         // Prove the auth gate is real (not an open server) — so the test above is
