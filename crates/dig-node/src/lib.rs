@@ -90,6 +90,9 @@ const MAX_AVAILABILITY_ITEMS: usize = 512;
 /// comfortably holds a few large resources' decoded ciphertext while capping node memory.
 const CONTENT_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
+/// The [`ContentCache`] key: `(store_hex, root_hex, retrieval_key)` identifying one served resource.
+type ContentCacheKey = (String, String, [u8; 32]);
+
 /// A bounded, LRU decoded-content cache: `(store, root, retrieval_key) → decoded ContentResponse`.
 /// Keeps the total cached ciphertext under [`CONTENT_CACHE_MAX_BYTES`], evicting the
 /// least-recently-used entries on overflow. Entries are `Arc`-shared so a hit is a cheap pointer
@@ -98,7 +101,7 @@ const CONTENT_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 #[derive(Default)]
 struct ContentCache {
     /// key → (response, a monotonically increasing "last used" tick for LRU ordering).
-    entries: std::collections::HashMap<(String, String, [u8; 32]), (Arc<ContentResponse>, u64)>,
+    entries: std::collections::HashMap<ContentCacheKey, (Arc<ContentResponse>, u64)>,
     /// Monotonic clock for recency; bumped on every get/insert.
     tick: u64,
     /// Running sum of cached `ciphertext.len()` for the byte budget.
@@ -107,7 +110,7 @@ struct ContentCache {
 
 impl ContentCache {
     /// Look up a decoded response, bumping its recency on a hit.
-    fn get(&mut self, key: &(String, String, [u8; 32])) -> Option<Arc<ContentResponse>> {
+    fn get(&mut self, key: &ContentCacheKey) -> Option<Arc<ContentResponse>> {
         self.tick += 1;
         let tick = self.tick;
         let entry = self.entries.get_mut(key)?;
@@ -118,7 +121,7 @@ impl ContentCache {
     /// Insert a decoded response, then evict least-recently-used entries until the total cached
     /// ciphertext is under [`CONTENT_CACHE_MAX_BYTES`]. A single response larger than the budget is
     /// still cached (so the current stream benefits) but immediately evicts everything else.
-    fn insert(&mut self, key: (String, String, [u8; 32]), resp: Arc<ContentResponse>) {
+    fn insert(&mut self, key: ContentCacheKey, resp: Arc<ContentResponse>) {
         self.tick += 1;
         let size = resp.ciphertext.len() as u64;
         if let Some((old, _)) = self.entries.insert(key, (resp, self.tick)) {
@@ -607,7 +610,9 @@ fn walk_dir_files_bounded(
         out: &mut Vec<(String, Vec<u8>)>,
     ) -> std::io::Result<()> {
         if depth > max_depth {
-            return Err(oversize("staging directory nested deeper than the recursion cap"));
+            return Err(oversize(
+                "staging directory nested deeper than the recursion cap",
+            ));
         }
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
@@ -1618,10 +1623,13 @@ impl Node {
                 "retrieval_key must be 32 bytes (64-hex)".to_string(),
             )
         })?;
-        let resp = self.serve_local_cached(store_hex, root_hex, &rk).await.ok_or((
-            -32004,
-            "resource not held at the requested root".to_string(),
-        ))?;
+        let resp = self
+            .serve_local_cached(store_hex, root_hex, &rk)
+            .await
+            .ok_or((
+                -32004,
+                "resource not held at the requested root".to_string(),
+            ))?;
 
         let total = resp.ciphertext.len();
         // offset past the end is unsatisfiable (spec -32007). offset == total is the empty terminal.
@@ -3956,7 +3964,10 @@ mod tests {
         let resp = cc_resp(10);
         cache.insert(key.clone(), resp.clone());
         let got = cache.get(&key).expect("hit");
-        assert!(Arc::ptr_eq(&got, &resp), "hit returns the cached Arc, no reload");
+        assert!(
+            Arc::ptr_eq(&got, &resp),
+            "hit returns the cached Arc, no reload"
+        );
     }
 
     #[test]
@@ -3972,9 +3983,9 @@ mod tests {
         // Touch A so B becomes the LRU when we overflow.
         let _ = cache.get(&a);
         cache.insert(b.clone(), cc_resp(sz)); // now over budget → evicts the LRU (A was just touched, so B stays and A... )
-        // After inserting B, total = 2*sz > budget → the LRU (A, older tick before the get bumped it?
-        // get bumped A to a newer tick than B's pre-insert, but insert bumps tick for B). Assert the
-        // cache never holds more than fits: only one of {A,B} survives.
+                                              // After inserting B, total = 2*sz > budget → the LRU (A, older tick before the get bumped it?
+                                              // get bumped A to a newer tick than B's pre-insert, but insert bumps tick for B). Assert the
+                                              // cache never holds more than fits: only one of {A,B} survives.
         let a_present = cache.get(&a).is_some();
         let b_present = cache.get(&b).is_some();
         assert!(
@@ -4029,14 +4040,14 @@ mod tests {
     #[tokio::test]
     async fn clear_content_cache_drops_all_entries() {
         let (node, _td) = test_node(None);
-        node.content_cache.lock().unwrap().insert(
-            ("aa".repeat(32), "bb".repeat(32), [1u8; 32]),
-            cc_resp(10),
-        );
-        node.content_cache.lock().unwrap().insert(
-            ("cc".repeat(32), "dd".repeat(32), [2u8; 32]),
-            cc_resp(20),
-        );
+        node.content_cache
+            .lock()
+            .unwrap()
+            .insert(("aa".repeat(32), "bb".repeat(32), [1u8; 32]), cc_resp(10));
+        node.content_cache
+            .lock()
+            .unwrap()
+            .insert(("cc".repeat(32), "dd".repeat(32), [2u8; 32]), cc_resp(20));
         node.clear_content_cache();
         let c = node.content_cache.lock().unwrap();
         assert!(c.entries.is_empty(), "all entries dropped");
@@ -4049,9 +4060,8 @@ mod tests {
     async fn availability_batch_answers_each_item_from_one_inventory_snapshot() {
         // Seed two real cached capsules, then ask a batch spanning both + a miss. Each answer must
         // reflect the shared snapshot (held vs not), proving the per-item directory walk was removed
-        // without changing the per-item result.
-        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-        std::env::remove_var("DIG_NODE_PIN");
+        // without changing the per-item result. (availability_batch does not consult DIG_NODE_PIN, so
+        // no ENV_GUARD is needed.)
         let (node, _td) = test_node(None);
         let store_a = Bytes32([0xa1; 32]);
         let store_b = Bytes32([0xb2; 32]);
@@ -4082,8 +4092,6 @@ mod tests {
 
     #[tokio::test]
     async fn availability_batch_caps_the_item_count() {
-        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-        std::env::remove_var("DIG_NODE_PIN");
         let (node, _td) = test_node(None);
         // One past the cap → the answer array is aligned to the capped prefix, not the full request.
         let items: Vec<Value> = (0..(MAX_AVAILABILITY_ITEMS + 1))

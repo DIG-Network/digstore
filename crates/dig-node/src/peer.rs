@@ -561,7 +561,9 @@ pub async fn serve_peer_session_from_with(
     // logical streams, each spawning a handler that may read a whole module + wasmtime-decrypt or
     // make a chain/proxy call. Bound the concurrent handlers PER CONNECTION so one peer cannot spawn
     // unbounded tasks; streams opened past the cap are dropped (closed without a handler).
-    let stream_permits = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_STREAMS_PER_CONNECTION));
+    let stream_permits = Arc::new(tokio::sync::Semaphore::new(
+        MAX_INFLIGHT_STREAMS_PER_CONNECTION,
+    ));
     while let Some(stream) = session.accept_stream().await {
         let responder = responder.clone();
         let caller = caller.clone();
@@ -1879,7 +1881,11 @@ mod tests {
         assert!(spawn_with_permit(&sem, mk(running.clone(), gate.clone())));
         // Let the two tasks start + park so both permits are held.
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        assert_eq!(sem.available_permits(), 0, "both permits held by parked tasks");
+        assert_eq!(
+            sem.available_permits(),
+            0,
+            "both permits held by parked tasks"
+        );
 
         // Third spawn: no permit free → shed (not spawned), returns false.
         let shed = spawn_with_permit(&sem, mk(running.clone(), gate.clone()));
@@ -1889,7 +1895,11 @@ mod tests {
         // Release the parked tasks; permits return so new work is admitted again.
         gate.notify_waiters();
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        assert_eq!(sem.available_permits(), 2, "permits released on task completion");
+        assert_eq!(
+            sem.available_permits(),
+            2,
+            "permits released on task completion"
+        );
         assert!(
             spawn_with_permit(&sem, async {}),
             "capacity freed → admits again"
