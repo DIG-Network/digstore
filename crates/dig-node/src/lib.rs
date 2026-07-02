@@ -2262,6 +2262,32 @@ async fn health(State(node): State<Arc<Node>>) -> Json<Value> {
     }))
 }
 
+/// Crate-internal test helpers shared across module test suites (e.g. the peer-surface
+/// tests in [`crate::peer`] need a lightweight [`Node`]). Not compiled into the release build.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// A minimal in-memory [`Node`] over a fresh temp cache dir, with an unroutable upstream
+    /// and the production anchored-root resolver (peer-surface tests never reach the chain).
+    /// Returned with its [`tempfile::TempDir`] so the cache dir outlives the node. Used to
+    /// exercise the peer-RPC method allowlist without a live pool/network.
+    pub(crate) fn test_node_for_peer_surface() -> (Arc<Node>, tempfile::TempDir) {
+        let td = tempfile::tempdir().expect("tempdir");
+        let node = Node {
+            cache_dir: td.path().to_path_buf(),
+            http: reqwest::Client::new(),
+            upstream: "http://127.0.0.1:1/".to_string(),
+            cache_lock: Mutex::new(()),
+            identity_seed: None,
+            anchored_root_resolver: default_anchored_resolver(),
+            peer_status: peer::PeerStatus::new(),
+            p2p_content: OnceLock::new(),
+        };
+        (Arc::new(node), td)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

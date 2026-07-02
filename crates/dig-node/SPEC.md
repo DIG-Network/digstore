@@ -153,10 +153,16 @@ launchers).
 - `dig.listCollectionItems` params: `{ launcher_ids: [64hex], offset?: u64, limit?: u64 (≤200) }`;
   result: `{ items: [...], offset, limit, total, next_offset }`. Error `-32602`.
 
-#### 2.3.2 Node cache + control (CONTROL, loopback)
+#### 2.3.2 Node cache + control (CONTROL, loopback / in-process ONLY)
 
-These are loopback-authorized control methods (in-process FFI or the local read port); they are NOT
-on the public read listener.
+These are loopback-authorized control methods (in-process FFI or the local read port). They are
+**management/mutation** methods and MUST NOT be reachable over the mTLS peer surface (§7.4): the
+peer verifier accepts any well-formed self-signed leaf, so an "authenticated" peer is merely "some
+`peer_id`", never an authorized administrator. The peer responder enforces a method **allowlist**
+(§7.4a) and returns `-32601` (method not found) for any method in this section — a remote peer can
+never call `cache.clear` / `cache.setCapBytes` / `cache.removeCached` / `cache.fetchAndCache` /
+`cache.listCached` / `cache.getConfig` / `control.peerStatus` / `dig.stage`. They stay reachable
+only from the loopback admin / in-process FFI dispatch (`handle_rpc`).
 
 - **`cache.getConfig`** → `{ cap_bytes: u64, used_bytes: u64, cache_dir: string, shared: bool }`.
 - **`cache.setCapBytes`** `{ cap_bytes: u64 }` → `{ cap_bytes: u64 (effective) }`; the value is floored
@@ -569,6 +575,30 @@ classified by its fields: `method` present → JSON-RPC; `length` present (no `m
 - **The four PEX messages** `pex_handshake` / `pex_snapshot` / `pex_delta` / `pex_error` (§7.7).
 
 All of these are PEER/CONTROL tier — reachable only over mTLS, never on the anonymous read listener.
+
+### 7.4a Peer-surface method allowlist (mandatory authorization boundary)
+
+The mTLS peer surface exposes an **allowlist**, not the full RPC dispatch. The peer client-cert
+verifier accepts ANY well-formed self-signed leaf (key-is-identity, no CA), so a peer that completes
+the handshake has only proven "I hold the key for some `peer_id`" — NOT "I am authorized to
+administer this node." The node MUST therefore route only the following methods to its dispatch when
+a JSON-RPC frame arrives over the peer surface, and MUST answer every other method with `-32601`
+(method not found) **before** any dispatch (so a mutation method never executes):
+
+**Peer-reachable (allowlisted):** `dig.getContent`, `dig.getAvailability`, `dig.listInventory`,
+`dig.fetchRange`, `dig.getNetworkInfo`, `dig.getPeers`, `dig.announce`, `dig.getAnchoredRoot`,
+`dig.getCollection`, `dig.listCollectionItems` (plus the DHT + PEX frame families above, which are
+classified by shape, not the `method` field).
+
+**NOT peer-reachable (loopback / in-process ONLY, answered `-32601` on the peer surface):** every
+`cache.*` method (`cache.getConfig`, `cache.setCapBytes`, `cache.clear`, `cache.listCached`,
+`cache.removeCached`, `cache.fetchAndCache`), every `control.*` method (`control.peerStatus`), and
+`dig.stage`. These mutate node state, read attacker-chosen local paths, or expose local
+configuration, and are reachable only from the loopback admin server / in-process FFI dispatch.
+
+Adding a method to the allowlist is a deliberate security decision — it exposes that method to any
+remote peer. New read/discovery methods safe for untrusted peers may be added; anything that mutates
+node state or reads local resources MUST stay off the list.
 
 ### 7.5 Content-location DHT (Kademlia)
 
