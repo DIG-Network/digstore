@@ -1192,6 +1192,18 @@ mod tests {
         content
     }
 
+    /// The [`ContentId`] a test must request for an [`anchored_mock_content`]: its `root` MUST equal
+    /// the root the transport reports in each range's first frame, because the download orchestrator
+    /// now cross-checks the peer-reported root against the content-id root (dig-download #179 HIGH).
+    /// Store id + retrieval key match `mock_content_id` (`[1;32]` / `[3;32]`); only the root is bound
+    /// to the anchored content's real merkle root so an honest download proceeds.
+    pub(crate) fn anchored_cid_for(content: &MockContent) -> ContentId {
+        let root_bytes: [u8; 32] = digstore_core::Bytes32::from_hex(&content.root)
+            .expect("anchored content root is 64-hex")
+            .0;
+        ContentId::resource([1; 32], root_bytes, [3; 32])
+    }
+
     // -- miss-mode resolution --------------------------------------------------------------------
 
     #[test]
@@ -1385,7 +1397,8 @@ mod tests {
     async fn fetch_resource_downloads_reassembles_and_caches() {
         let td = tempfile::tempdir().unwrap();
         let content = anchored_mock_content(30, 3);
-        let cid = mock_content_id();
+        // The content-id root MUST equal the transport-reported root (dig-download #179 cross-check).
+        let cid = anchored_cid_for(&content);
         let transport = Arc::new(MockRangeTransport::new(content.clone()));
         let locator = Arc::new(MockProviderLocator::fixed(vec![
             mock_provider(1, &cid),
@@ -1588,7 +1601,8 @@ mod tests {
     async fn fetch_feeds_record_outcome_and_selector_learns() {
         let td = tempfile::tempdir().unwrap();
         let content = anchored_mock_content(60, 6);
-        let cid = mock_content_id();
+        // The content-id root MUST equal the transport-reported root (dig-download #179 cross-check).
+        let cid = anchored_cid_for(&content);
         let transport = Arc::new(MockRangeTransport::new(content.clone()));
         let locator = Arc::new(MockProviderLocator::fixed(vec![
             mock_provider(1, &cid),
