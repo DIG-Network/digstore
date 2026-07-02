@@ -1110,6 +1110,9 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
     // Pin the rustls crypto provider (ring) before ANY TLS use (the pool + the mTLS listener + any
     // outbound dial), since aws-lc-rs is also in the graph and rustls won't auto-pick between them.
     install_crypto_provider();
+    // Install the weak self-reference so a `&self` read handler can spawn an owned-`Arc` background
+    // task — the capsule backfill on a read-from-another-node (SPEC §5.6). Weak: no self-keep-alive.
+    node.set_self_ref(Arc::downgrade(&node));
     let status = node.peer_status();
     let network_id_str = network_id_from_env();
     let relay_endpoint = relay_url_from_env();
