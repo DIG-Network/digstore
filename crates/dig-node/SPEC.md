@@ -827,6 +827,17 @@ cache cap is `config.json` > env > default).
 - **mTLS-authenticated peer identity.** All node↔node traffic is mTLS with
   `peer_id = SHA-256(SPKI DER)`, derived from the presented cert; no unauthenticated peer channel; the
   boundary invariant keeps every write/peer/control surface off the anonymous read tier (§2.1).
+- **Peer authorization is an allowlist, not just authentication.** The peer client-cert verifier
+  accepts any well-formed self-signed leaf, so "authenticated" means only "some `peer_id`". The peer
+  JSON-RPC surface therefore exposes ONLY the §7.4a allowlist and answers `-32601` for every
+  management/mutation method (`cache.*`, `control.*`, `dig.stage`) — those are loopback/in-process
+  only. Peer-triggered chain fanout is bounded (`launcher_ids` ≤ 10,000; §2.3.1) and the `dig.stage`
+  directory walk is bounded (§2.3.2), so no peer-reachable call amplifies into unbounded work.
+- **Bounded connection + stream concurrency.** The mTLS accept loop caps concurrent accepted
+  CONNECTIONS at a global semaphore (permit taken before the handshake, so half-open/slowloris
+  handshakes count), and each connection caps its concurrent in-flight STREAMS per-connection. Past
+  either cap the connection/stream is SHED (dropped), never queued — a peer cannot spawn unbounded
+  tasks / hold unbounded FDs + TLS sessions.
 - **Authenticated writes.** §21 push/write is mTLS + per-request BLS-signed (`SYSTEM.md`
   per-request auth); §21 whole-store sync stamps the same signed headers (§5.2).
 - **Onion (target).** The onion identity key is distinct from `peer_id`; the requester is hidden from
