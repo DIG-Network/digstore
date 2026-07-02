@@ -573,6 +573,9 @@ classified by its fields: `method` present → JSON-RPC; `length` present (no `m
 - **`dig.getAvailability`** — batch answer for queried `items` (store / root / resource granularity),
   positionally aligned with the request; per item `{ available: bool, roots?: [64hex] (store
   granularity), total_length?: u64, chunk_count?: u64, complete?: bool (root/resource granularity) }`.
+  The `items` count is CAPPED at **512** (items past the cap are not answered; the result array is
+  aligned to the answered prefix) and the local inventory is snapshotted ONCE per batch, so an
+  N-item batch does one directory walk, not N (audit #179).
 - **`dig.listInventory`** — the node's held capsules (`{ store_id?, limit? }` → stores, or the roots
   for a given store). Best-effort discovery; `dig.getAvailability` is the authoritative per-item check.
 - **`dig.fetchRange`** — one range frame of a served resource/capsule (the caller streams by requesting

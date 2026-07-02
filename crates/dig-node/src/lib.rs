@@ -76,6 +76,12 @@ const DEFAULT_CACHE_CAP: u64 = 1024 * 1024 * 1024; // 1 GiB
 /// within this at ≤200 per page.
 const MAX_LAUNCHER_IDS: usize = 10_000;
 
+/// Hard cap on the number of `items` a single `dig.getAvailability` batch answers (audit #179).
+/// This is a peer-reachable path with a caller-controlled item count; each held-resource item can
+/// also read+decrypt a module, so an uncapped batch is a fanout amplifier. Items past the cap are
+/// not answered (the aligned result array stops at the cap).
+const MAX_AVAILABILITY_ITEMS: usize = 512;
+
 /// The DIG node state. Public so `dig-runtime` can construct one ([`Node::from_env`])
 /// and drive it via [`handle_rpc`] in-process inside the browser. Fields stay
 /// private — callers only need the constructor + the dispatch.
@@ -1395,12 +1401,15 @@ impl Node {
     /// pure presence answer (`peer::availability_presence`) with the per-resource `total_length` +
     /// `chunk_count` when the item is at resource granularity (`store_id` + `root` + `retrieval_key`)
     /// and the resource is actually served locally. Returns one `AvailabilityAnswer` value.
-    async fn availability_answer(&self, item: &Value) -> Value {
+    ///
+    /// Takes a `cached` inventory SNAPSHOT (audit #179): the caller
+    /// ([`Node::availability_batch`]) walks the cache directory ONCE per batch and passes the slice
+    /// in, so an N-item batch does O(1) directory walks instead of O(N).
+    async fn availability_answer(&self, item: &Value, cached: &[CachedCapsule]) -> Value {
         let store = item.get("store_id").and_then(Value::as_str).unwrap_or("");
         let root = item.get("root").and_then(Value::as_str);
         let rk = item.get("retrieval_key").and_then(Value::as_str);
-        let cached = self.cache_list_cached().await;
-        let mut answer = peer::availability_presence(&cached, store, root, rk);
+        let mut answer = peer::availability_presence(cached, store, root, rk);
 
         // Resource granularity: if we hold this capsule AND can serve the resource, report its
         // ciphertext length + chunk count so the caller can plan ranges without a probe fetch.
@@ -1440,10 +1449,19 @@ impl Node {
 
     /// `dig.getAvailability` — batch answer for `items` (positionally aligned). Wraps
     /// [`Node::availability_answer`] per item into the `{ "items": [...] }` result shape.
+    ///
+    /// The cache inventory is snapshotted ONCE here and shared across every item (audit #179): each
+    /// answer used to walk the whole `<cache>/modules` directory, so an N-item batch did N full
+    /// directory walks; it now does one. The batch is CAPPED at [`MAX_AVAILABILITY_ITEMS`] — this is
+    /// a peer-reachable path (§7.4) and the item count is caller-controlled — with the excess simply
+    /// not answered (the result array is aligned to the answered prefix).
     pub async fn availability_batch(&self, items: &[Value]) -> Value {
-        let mut answers = Vec::with_capacity(items.len());
-        for item in items {
-            answers.push(self.availability_answer(item).await);
+        let capped = &items[..items.len().min(MAX_AVAILABILITY_ITEMS)];
+        // One directory walk for the whole batch (was one per item).
+        let cached = self.cache_list_cached().await;
+        let mut answers = Vec::with_capacity(capped.len());
+        for item in capped {
+            answers.push(self.availability_answer(item, &cached).await);
         }
         json!({ "items": answers })
     }
@@ -3775,6 +3793,60 @@ mod tests {
         let root = Bytes32::from_hex(r["root"].as_str().expect("root")).unwrap();
         let module = std::fs::read(r["module_path"].as_str().expect("module_path")).unwrap();
         (root, module)
+    }
+
+    // -- availability_batch: single-walk snapshot + item cap (audit #179 optimization) -----------
+
+    #[tokio::test]
+    async fn availability_batch_answers_each_item_from_one_inventory_snapshot() {
+        // Seed two real cached capsules, then ask a batch spanning both + a miss. Each answer must
+        // reflect the shared snapshot (held vs not), proving the per-item directory walk was removed
+        // without changing the per-item result.
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        let (node, _td) = test_node(None);
+        let store_a = Bytes32([0xa1; 32]);
+        let store_b = Bytes32([0xb2; 32]);
+        // Stage each module then seed it into the SERVED cache (module_path), so the inventory walk
+        // sees it as held (staging alone lands the module in a scratch dir, not the served cache).
+        let seed = |store: &Bytes32, files: &[(&str, &[u8])]| -> Bytes32 {
+            let (root, module) = stage_real_module(&node, store, files);
+            let path = module_path(&node.cache_dir, &store.to_hex(), &root.to_hex());
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &module).unwrap();
+            root
+        };
+        let root_a = seed(&store_a, &[("a.html", b"A")]);
+        let root_b = seed(&store_b, &[("b.html", b"B")]);
+
+        let items = vec![
+            json!({ "store_id": store_a.to_hex(), "root": root_a.to_hex() }),
+            json!({ "store_id": store_b.to_hex(), "root": root_b.to_hex() }),
+            json!({ "store_id": "cc".repeat(32), "root": "dd".repeat(32) }), // a miss
+        ];
+        let resp = node.availability_batch(&items).await;
+        let arr = resp["items"].as_array().expect("items array");
+        assert_eq!(arr.len(), 3, "positionally aligned with the request");
+        assert_eq!(arr[0]["available"], true, "store A root held");
+        assert_eq!(arr[1]["available"], true, "store B root held");
+        assert_eq!(arr[2]["available"], false, "unknown capsule is a miss");
+    }
+
+    #[tokio::test]
+    async fn availability_batch_caps_the_item_count() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("DIG_NODE_PIN");
+        let (node, _td) = test_node(None);
+        // One past the cap → the answer array is aligned to the capped prefix, not the full request.
+        let items: Vec<Value> = (0..(MAX_AVAILABILITY_ITEMS + 1))
+            .map(|_| json!({ "store_id": "ee".repeat(32) }))
+            .collect();
+        let resp = node.availability_batch(&items).await;
+        assert_eq!(
+            resp["items"].as_array().unwrap().len(),
+            MAX_AVAILABILITY_ITEMS,
+            "batch is capped at MAX_AVAILABILITY_ITEMS"
+        );
     }
 
     // -- launcher_ids cap (audit #179 HIGH — peer-triggered unbounded chain fanout) ---------------
