@@ -468,21 +468,94 @@ fn module_path(dir: &Path, store_hex: &str, root_hex: &str) -> PathBuf {
         .join(format!("{root_hex}.module"))
 }
 
+/// Hard bound on the total bytes [`walk_dir_files`] will read into memory before aborting.
+/// A staging walk buffers every file's bytes; without a running budget an attacker-chosen
+/// directory (e.g. a filesystem root) would recurse the whole tree into RAM before the
+/// downstream `MAX_STORE_BYTES` compile cap ever runs. Slightly above `MAX_STORE_BYTES` so
+/// a legitimately-at-the-cap store is read (then rejected by the compile cap with the precise
+/// `-32013`), but an unbounded tree aborts here. See audit #179 (HIGH — peer-reachable
+/// dig.stage reads an attacker-chosen local tree into memory; the allowlist §7.4a already
+/// bars peers, this bounds the local caller too).
+const WALK_MAX_TOTAL_BYTES: u64 = digstore_core::MAX_STORE_BYTES.saturating_add(64 * 1024 * 1024);
+
+/// Hard bound on the number of files [`walk_dir_files`] will read before aborting — caps the
+/// entry count independently of total bytes (many tiny files also exhaust memory + time).
+const WALK_MAX_FILES: usize = 1_000_000;
+
+/// Hard bound on directory-recursion depth in [`walk_dir_files`] — stops a pathological /
+/// deliberately-deep tree (and bounds stack use) before it exhausts resources.
+const WALK_MAX_DEPTH: usize = 256;
+
 /// Recursively read every file under `root` into `(resource_key, bytes)`, where
 /// the key is the file path relative to `root`, FORWARD-SLASHED — the exact key
 /// convention the CLI `add` walk uses (`ops::walk::key_for`), so the same folder
 /// produces the same capsule root through the CLI and the in-process node.
 /// Sorted by key for deterministic staging order. Used by the `dig.stage` RPC
 /// (#95 Pass C); a symlink loop or unreadable entry is skipped best-effort.
+///
+/// The walk is BOUNDED (audit #179): it aborts with an error the moment the running total
+/// exceeds [`WALK_MAX_TOTAL_BYTES`], the file count exceeds [`WALK_MAX_FILES`], or the
+/// recursion depth exceeds [`WALK_MAX_DEPTH`] — so a caller cannot point `dir` at an
+/// arbitrarily large tree and force the whole tree into memory before the downstream
+/// `MAX_STORE_BYTES` compile cap runs.
 fn walk_dir_files(root: &Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
-    fn rec(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> std::io::Result<()> {
+    walk_dir_files_bounded(root, WALK_MAX_TOTAL_BYTES, WALK_MAX_FILES, WALK_MAX_DEPTH)
+}
+
+/// The bounded walk core (see [`walk_dir_files`]). The caps are parameters so the abort
+/// behaviour is unit-testable with tiny bounds; production uses the module constants. Aborts
+/// with `InvalidInput` the moment the byte budget, file-count cap, or recursion-depth cap is
+/// exceeded — never buffering the whole tree first.
+fn walk_dir_files_bounded(
+    root: &Path,
+    max_total_bytes: u64,
+    max_files: usize,
+    max_depth: usize,
+) -> std::io::Result<Vec<(String, Vec<u8>)>> {
+    fn oversize(msg: &str) -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, msg.to_string())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn rec(
+        base: &Path,
+        dir: &Path,
+        depth: usize,
+        max_total_bytes: u64,
+        max_files: usize,
+        max_depth: usize,
+        total: &mut u64,
+        out: &mut Vec<(String, Vec<u8>)>,
+    ) -> std::io::Result<()> {
+        if depth > max_depth {
+            return Err(oversize("staging directory nested deeper than the recursion cap"));
+        }
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             let ft = entry.file_type()?;
             if ft.is_dir() {
-                rec(base, &path, out)?;
+                rec(
+                    base,
+                    &path,
+                    depth + 1,
+                    max_total_bytes,
+                    max_files,
+                    max_depth,
+                    total,
+                    out,
+                )?;
             } else if ft.is_file() {
+                if out.len() >= max_files {
+                    return Err(oversize("staging directory has more files than the cap"));
+                }
+                // Enforce the byte budget BEFORE reading: stat the entry and abort if this file
+                // would push the running total over the cap, so we never buffer past the bound.
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                if total.saturating_add(size) > max_total_bytes {
+                    return Err(oversize(
+                        "staging directory exceeds the maximum total size read into memory",
+                    ));
+                }
                 // Key = path relative to base, forward-slashed (URN-safe).
                 let rel = path.strip_prefix(base).unwrap_or(&path);
                 let key = rel
@@ -491,6 +564,14 @@ fn walk_dir_files(root: &Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
                     .collect::<Vec<_>>()
                     .join("/");
                 let bytes = std::fs::read(&path)?;
+                // Guard against a file that grew between stat and read (TOCTOU) — re-check the
+                // real read length against the budget so the bound holds regardless of races.
+                *total = total.saturating_add(bytes.len() as u64);
+                if *total > max_total_bytes {
+                    return Err(oversize(
+                        "staging directory exceeds the maximum total size read into memory",
+                    ));
+                }
                 out.push((key, bytes));
             }
             // Symlinks / other types are skipped (not staged).
@@ -498,7 +579,17 @@ fn walk_dir_files(root: &Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
         Ok(())
     }
     let mut out = Vec::new();
-    rec(root, root, &mut out)?;
+    let mut total = 0u64;
+    rec(
+        root,
+        root,
+        0,
+        max_total_bytes,
+        max_files,
+        max_depth,
+        &mut total,
+        &mut out,
+    )?;
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
 }
@@ -3663,6 +3754,56 @@ mod tests {
         let root = Bytes32::from_hex(r["root"].as_str().expect("root")).unwrap();
         let module = std::fs::read(r["module_path"].as_str().expect("module_path")).unwrap();
         (root, module)
+    }
+
+    // -- walk_dir_files bounds (audit #179 HIGH — dig.stage memory exhaustion) --------------------
+
+    #[test]
+    fn walk_dir_files_reads_a_small_tree_within_bounds() {
+        let td = tempfile::tempdir().unwrap();
+        std::fs::write(td.path().join("a.txt"), b"aaa").unwrap();
+        std::fs::create_dir(td.path().join("sub")).unwrap();
+        std::fs::write(td.path().join("sub").join("b.txt"), b"bb").unwrap();
+        let files = walk_dir_files_bounded(td.path(), 1024, 100, 16).expect("within bounds");
+        // Deterministic key order, forward-slashed relative keys.
+        let keys: Vec<&str> = files.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, vec!["a.txt", "sub/b.txt"]);
+    }
+
+    #[test]
+    fn walk_dir_files_aborts_when_total_bytes_exceed_the_budget() {
+        // Two 100-byte files with a 150-byte budget: the SECOND file pushes past the cap and
+        // the walk aborts instead of buffering both — a proxy for an attacker-chosen huge tree.
+        let td = tempfile::tempdir().unwrap();
+        std::fs::write(td.path().join("a.bin"), vec![0u8; 100]).unwrap();
+        std::fs::write(td.path().join("b.bin"), vec![0u8; 100]).unwrap();
+        let err = walk_dir_files_bounded(td.path(), 150, 100, 16).expect_err("must abort");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn walk_dir_files_aborts_when_file_count_exceeds_the_cap() {
+        let td = tempfile::tempdir().unwrap();
+        for i in 0..5 {
+            std::fs::write(td.path().join(format!("f{i}.txt")), b"x").unwrap();
+        }
+        // Cap of 2 files → the third file aborts the walk.
+        let err = walk_dir_files_bounded(td.path(), 1 << 20, 2, 16).expect_err("must abort");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn walk_dir_files_aborts_when_recursion_exceeds_the_depth_cap() {
+        // Build a chain of nested dirs deeper than the cap; the walk aborts before reading.
+        let td = tempfile::tempdir().unwrap();
+        let mut p = td.path().to_path_buf();
+        for i in 0..5 {
+            p = p.join(format!("d{i}"));
+            std::fs::create_dir(&p).unwrap();
+        }
+        std::fs::write(p.join("deep.txt"), b"z").unwrap();
+        let err = walk_dir_files_bounded(td.path(), 1 << 20, 100, 2).expect_err("must abort");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]
