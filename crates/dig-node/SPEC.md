@@ -292,6 +292,13 @@ but the stored artifact and the served wire stay ciphertext + proof.
   cfg)`, which instantiates the compiled module and returns a `ContentResponse` = ciphertext + merkle
   proof + `chunk_lens`. The serve host key is local/ephemeral: the client verifies against the
   chain-anchored root, not against a host signature.
+- The whole-module read + `serve_blind` decrypt runs on a BLOCKING thread (`spawn_blocking`), never on
+  an async worker, and the decoded `ContentResponse` is MEMOIZED in a bounded in-memory LRU keyed by
+  `(store, root, retrieval_key)` (default 256 MiB, least-recently-used eviction). Successive windows of
+  the same streamed resource slice from the cached decode instead of re-reading + re-decrypting the
+  whole module per window — O(n) instead of O(n²) over a streamed resource. The decoded cache is
+  invalidated for a capsule when its module is removed/replaced (`cache.removeCached` / a re-synced
+  module) and fully cleared by `cache.clear`, so a removed capsule is never served from RAM.
 - `dig.fetchRange` serves a byte range `[offset, offset+length)` of a resource or whole capsule,
   `length` clamped to `WINDOW` (3 MiB) and widened to whole-chunk boundaries so each returned chunk is
   a complete verifiable unit; the first frame carries `total_length` + `chunk_lens` + `chunk_index` +
