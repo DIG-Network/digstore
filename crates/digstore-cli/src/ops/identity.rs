@@ -41,15 +41,15 @@ pub fn request_signer() -> Result<(String, digstore_remote::RequestSignFn), CliE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use crate::testutil::DIG_IDENTITY_DIR_ENV_LOCK as ENV_LOCK;
 
-    // `DIG_IDENTITY_DIR` is process-global; serialize the tests that mutate it so
-    // they cannot clobber each other's setting when run in parallel.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
+    // `DIG_IDENTITY_DIR` is process-global and also read by `ops::dighub` /
+    // `ops::node` tests in other modules of this same test binary; the SHARED
+    // `testutil` lock (not a private per-module one) is what actually
+    // serializes across all of them.
     #[test]
     fn identity_is_created_then_stable() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_IDENTITY_DIR", td.path());
         let (_seed1, pk1) = load_or_create_seed().unwrap();
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn request_signer_produces_verifiable_signatures() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_IDENTITY_DIR", td.path());
         let (pk_hex, sign) = request_signer().unwrap();

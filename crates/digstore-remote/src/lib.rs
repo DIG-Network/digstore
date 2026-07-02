@@ -21,12 +21,18 @@ pub mod etag;
 pub mod handlers;
 pub mod identity;
 pub mod ratelimit;
+pub mod resolver;
 pub mod server;
 pub mod wire;
 
 pub use auth::{push_signing_message, verify_push_signature};
 pub use client::{DigClient, FetchInfo, PullResult, PushResult, RequestIdentity, RequestSignFn};
 pub use ratelimit::RateLimiter;
+pub use resolver::{
+    override_source, resolve_node, CachedResolver, HealthProbe, HttpHealthProbe, OverrideInputs,
+    OverrideSource, ResolvedNode, ResolvedTier, TransportMode, DEFAULT_LOCAL_NODE_PORT,
+    DEFAULT_PROBE_TIMEOUT, DIG_LOCAL_HOST, RPC_DIG_NET,
+};
 pub use server::{AppState, RemoteServer};
 
 pub use backend::{

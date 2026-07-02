@@ -65,6 +65,14 @@ impl RemoteServer {
     /// Build the axum Router exposing the full §21.2 surface.
     pub fn router(&self) -> Router {
         Router::new()
+            // Cheap, unauthenticated liveness probe: NOT under `/stores/:id`, so it
+            // is unguarded by §21.9 auth (`request_method_tag` returns `None` for
+            // it) and skips the store lookup entirely. This is the health check the
+            // `CLAUDE.md` §5.3 client→node ladder (`digstore_remote::resolver`)
+            // probes at every tier (`dig.local`, `localhost`, and — once the
+            // gateway exists — `rpc.dig.net`) to decide whether a tier is up,
+            // mirroring `dig-node`'s own `GET /health` (`dig-node/SPEC.md` §1.1).
+            .route("/health", get(get_health))
             .route(
                 "/stores/:id",
                 get(crate::handlers::descriptor::get_descriptor),
@@ -246,6 +254,14 @@ async fn rate_limit_mw(State(s): State<AppState>, req: AxRequest, next: Next) ->
 /// Parse a hex store id from a path parameter, or 400.
 pub fn parse_store_id(s: &str) -> Result<Bytes32, RemoteError> {
     Bytes32::from_hex(s).map_err(|_| RemoteError::BadRequest("bad store id".into()))
+}
+
+/// `GET /health` — always 200 with a minimal JSON body when the process is up
+/// and accepting connections. Deliberately does no backend work (no store
+/// lookup, no chain call): it answers the single question a health probe asks
+/// ("is anything listening here"), as cheaply as possible.
+async fn get_health() -> impl IntoResponse {
+    axum::Json(serde_json::json!({ "status": "ok" }))
 }
 
 /// Run a synchronous backend call off the async runtime (wasmtime is sync, §18).

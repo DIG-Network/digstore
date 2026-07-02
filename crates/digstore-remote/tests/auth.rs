@@ -117,3 +117,26 @@ async fn stale_timestamp_is_rejected() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// `GET /health` is the cheap liveness probe the `CLAUDE.md` §5.3 client→node
+/// ladder (`digstore_remote::resolver`) uses to decide whether a tier
+/// (`dig.local`/`localhost`) is up. It MUST answer with NO auth headers even on
+/// a server with auth REQUIRED (the default) — a probe cannot know the caller's
+/// identity in advance, and a probe that itself required a signed request would
+/// defeat the point of a cheap reachability check.
+#[tokio::test]
+async fn health_requires_no_auth_even_when_auth_is_required() {
+    let (be, _id, _id_hex) = one_store();
+    let app = RemoteServer::new(be).router(); // auth REQUIRED (default)
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}

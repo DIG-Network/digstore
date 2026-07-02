@@ -14,6 +14,7 @@ pub mod collection;
 pub mod commit;
 pub mod compile;
 pub mod completion;
+pub mod config;
 pub mod deploy;
 pub mod deploy_key;
 pub mod dev;
@@ -177,6 +178,15 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Command::Seed(a) => return seed::run(&ui, a),
         Command::Lock(_) => return lock::run(&ui),
+        // `config` is workspace-independent: it reads/writes the global dig
+        // config dir (identity_dir), the same home `seed`/`login` use — not a
+        // per-store setting, so no CliContext with a resolved store is needed.
+        // Passed a workspace-only context purely to satisfy the `run` signature
+        // shape shared with other commands; `node.url` itself ignores it.
+        Command::Config(a) => {
+            let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
+            return config::run(&ctx, &ui, a);
+        }
         // `setup`/`auth` guides seed + fund check + optional login; like `seed`/
         // `login` it is workspace-independent (it touches the identity dir, not a
         // store). `completion` just prints a static script.
@@ -242,7 +252,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Urn(a) => urn::run(&ctx, &ui, a),
         Command::Remote(a) => remote::run(&ctx, &ui, a),
         Command::Push(a) => push::run(&ctx, &ui, a),
-        Command::Pull(a) => pull::run(&ctx, &ui, a),
+        Command::Pull(a) => pull::run(&ctx, &ui, a, cli.node.as_deref()),
         Command::Revoke(a) => revoke::run(&ctx, &ui, a),
         Command::Serve(a) => serve::run(&ctx, &ui, a),
         Command::Anchor(a) => anchor::run(&ctx, &ui, a),
@@ -262,6 +272,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         | Command::Update(_)
         | Command::Seed(_)
         | Command::Lock(_)
+        | Command::Config(_)
         | Command::Balance(_)
         | Command::Login(_)
         | Command::Whoami(_)
