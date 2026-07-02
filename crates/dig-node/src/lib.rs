@@ -68,6 +68,14 @@ const WINDOW: usize = 3 * 1024 * 1024;
 /// Default LRU cap for the on-disk module cache.
 const DEFAULT_CACHE_CAP: u64 = 1024 * 1024 * 1024; // 1 GiB
 
+/// Hard cap on the number of `launcher_ids` accepted by `dig.getCollection` /
+/// `dig.listCollectionItems` (audit #179 HIGH). These are peer-reachable and each launcher id
+/// costs one chain (coinset.org) read, so an uncapped array is an outbound-fanout amplifier;
+/// an over-cap request is rejected before any chain read. Chosen generously (a large collection
+/// still fits) while bounding the per-request fanout. `dig.listCollectionItems` still paginates
+/// within this at ≤200 per page.
+const MAX_LAUNCHER_IDS: usize = 10_000;
+
 /// The DIG node state. Public so `dig-runtime` can construct one ([`Node::from_env`])
 /// and drive it via [`handle_rpc`] in-process inside the browser. Fields stay
 /// private — callers only need the constructor + the dispatch.
@@ -1042,6 +1050,13 @@ impl Node {
     /// Parse `params.launcher_ids` (an array of 64-hex strings) into canonical
     /// [`chia_protocol::Bytes32`] launcher ids, preserving order (the result is
     /// deterministic in input order). `Err(bad_value)` names the first malformed id.
+    ///
+    /// The array length is CAPPED at [`MAX_LAUNCHER_IDS`] (audit #179 HIGH): `dig.getCollection`
+    /// / `dig.listCollectionItems` are peer-reachable and each launcher id costs one chain
+    /// (coinset.org) read, so an uncapped array is an outbound-fanout amplifier. An over-cap
+    /// array is rejected here (before any chain read) rather than resolved. `dig.getCollection`
+    /// resolves the WHOLE array, so the cap is the collection's hard item ceiling per call;
+    /// `dig.listCollectionItems` additionally paginates within it (≤200 per page).
     fn parse_launcher_ids(params: &Value) -> Result<Vec<chia_protocol::Bytes32>, String> {
         let arr = params
             .get("launcher_ids")
@@ -1049,6 +1064,12 @@ impl Node {
             .ok_or_else(|| {
                 "params.launcher_ids must be an array of 64-hex launcher ids".to_string()
             })?;
+        if arr.len() > MAX_LAUNCHER_IDS {
+            return Err(format!(
+                "too many launcher_ids: {} (max {MAX_LAUNCHER_IDS})",
+                arr.len()
+            ));
+        }
         let mut out = Vec::with_capacity(arr.len());
         for v in arr {
             let s = v
@@ -3754,6 +3775,45 @@ mod tests {
         let root = Bytes32::from_hex(r["root"].as_str().expect("root")).unwrap();
         let module = std::fs::read(r["module_path"].as_str().expect("module_path")).unwrap();
         (root, module)
+    }
+
+    // -- launcher_ids cap (audit #179 HIGH — peer-triggered unbounded chain fanout) ---------------
+
+    #[test]
+    fn parse_launcher_ids_accepts_a_reasonable_array() {
+        let ids: Vec<String> = (0..3).map(|_| "ab".repeat(32)).collect();
+        let params = json!({ "launcher_ids": ids });
+        let out = Node::parse_launcher_ids(&params).expect("within cap");
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn parse_launcher_ids_rejects_an_over_cap_array_before_any_chain_read() {
+        // One past the cap → rejected at parse time (no chain resolution attempted).
+        let ids: Vec<String> = (0..(MAX_LAUNCHER_IDS + 1))
+            .map(|_| "ab".repeat(32))
+            .collect();
+        let params = json!({ "launcher_ids": ids });
+        let err = Node::parse_launcher_ids(&params).expect_err("must reject over-cap");
+        assert!(err.contains("too many launcher_ids"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn get_collection_rejects_an_over_cap_launcher_array() {
+        let ids: Vec<String> = (0..(MAX_LAUNCHER_IDS + 1))
+            .map(|_| "ab".repeat(32))
+            .collect();
+        let resp = Node::get_collection(&json!({ "launcher_ids": ids }), json!(1)).await;
+        assert_eq!(resp["error"]["code"], json!(-32602));
+    }
+
+    #[tokio::test]
+    async fn list_collection_items_rejects_an_over_cap_launcher_array() {
+        let ids: Vec<String> = (0..(MAX_LAUNCHER_IDS + 1))
+            .map(|_| "ab".repeat(32))
+            .collect();
+        let resp = Node::list_collection_items(&json!({ "launcher_ids": ids }), json!(1)).await;
+        assert_eq!(resp["error"]["code"], json!(-32602));
     }
 
     // -- walk_dir_files bounds (audit #179 HIGH — dig.stage memory exhaustion) --------------------
