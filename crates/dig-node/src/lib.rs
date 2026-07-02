@@ -2330,7 +2330,9 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
                 json!({"jsonrpc":"2.0","id":id,"result":{
                     "subscribed": true,
                     "added": added,
-                    "store_id": store_id.to_ascii_lowercase()}})
+                    // Echo the CANONICAL persisted id (trimmed + lower-cased), so the response can
+                    // never disagree with control.listSubscriptions.
+                    "store_id": subscription::normalize_store_id(store_id)}})
             }
             Err(e) => control_err(&id, CONTROL_ERROR, &format!("subscribe failed: {e}")),
         };
@@ -2342,7 +2344,7 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
             Ok(removed) => json!({"jsonrpc":"2.0","id":id,"result":{
                 "subscribed": false,
                 "removed": removed,
-                "store_id": store_id.to_ascii_lowercase()}}),
+                "store_id": subscription::normalize_store_id(store_id)}}),
             Err(e) => control_err(&id, CONTROL_ERROR, &format!("unsubscribe failed: {e}")),
         };
     }

@@ -67,6 +67,15 @@ fn is_hex64(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// The canonical form of a store id as stored in the set: trimmed + lower-cased. This is the SINGLE
+/// normalization [`SubscriptionSet::add`]/[`remove`](SubscriptionSet::remove)/[`contains`](SubscriptionSet::contains)
+/// apply, exposed so a caller (the `control.subscribe`/`unsubscribe` RPC echo) can report EXACTLY the
+/// id that was persisted — never the raw input — so the echo can never disagree with
+/// `control.listSubscriptions`.
+pub fn normalize_store_id(store_id: &str) -> String {
+    store_id.trim().to_ascii_lowercase()
+}
+
 impl SubscriptionSet {
     /// An empty set.
     pub fn new() -> Self {
@@ -95,7 +104,7 @@ impl SubscriptionSet {
     /// already subscribed (idempotent), or `Err` if `store_id` is not a valid 64-hex id. The id is
     /// normalized to lower-case so mixed-case duplicates collapse to one subscription.
     pub fn add(&mut self, store_id: &str) -> Result<bool, String> {
-        let id = store_id.trim().to_ascii_lowercase();
+        let id = normalize_store_id(store_id);
         if !is_hex64(&id) {
             return Err(format!("store_id must be 64-hex, got {store_id:?}"));
         }
@@ -109,7 +118,7 @@ impl SubscriptionSet {
     /// Unsubscribe from `store_id`. Returns `Ok(true)` if it was present + removed, `Ok(false)` if it
     /// was not subscribed (idempotent), or `Err` on a malformed id.
     pub fn remove(&mut self, store_id: &str) -> Result<bool, String> {
-        let id = store_id.trim().to_ascii_lowercase();
+        let id = normalize_store_id(store_id);
         if !is_hex64(&id) {
             return Err(format!("store_id must be 64-hex, got {store_id:?}"));
         }
@@ -120,7 +129,7 @@ impl SubscriptionSet {
 
     /// Whether `store_id` (case-insensitive) is subscribed.
     pub fn contains(&self, store_id: &str) -> bool {
-        let id = store_id.trim().to_ascii_lowercase();
+        let id = normalize_store_id(store_id);
         self.stores.iter().any(|s| s == &id)
     }
 
@@ -273,6 +282,20 @@ mod tests {
 
         let loaded = load(dir);
         assert_eq!(loaded, set, "encode → disk → load round-trips");
+    }
+
+    /// **Proves:** `normalize_store_id` trims AND lower-cases, so it matches what add/remove persist;
+    /// a whitespace-padded mixed-case id normalizes to the exact stored form. **Catches:** an RPC echo
+    /// that reports the raw input and disagrees with `listSubscriptions`.
+    #[test]
+    fn normalize_matches_stored_form() {
+        let raw = format!("  {}  ", id(0xcd).to_ascii_uppercase());
+        let norm = normalize_store_id(&raw);
+        assert_eq!(norm, id(0xcd), "trimmed + lower-cased");
+        // And the stored form equals the normalized form.
+        let mut set = SubscriptionSet::new();
+        set.add(&raw).unwrap();
+        assert_eq!(set.stores(), std::slice::from_ref(&norm));
     }
 
     /// **Proves:** load tolerates a legacy bare `{ "stores": [...] }` shape (no `version`).
