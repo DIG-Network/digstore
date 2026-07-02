@@ -921,6 +921,86 @@ pub fn spawn_peer_network(node: Arc<crate::Node>) {
     });
 }
 
+/// Feed the peer selector's registry (#178) from the dig-gossip connected pool: seed it with the
+/// current pool snapshot, then forward every `PoolEvent` churn event so the selector always ranks
+/// against the live peer set (SPEC §2.3). Each `dig_gossip::PoolEvent` is mapped 1:1 into the
+/// selector's local `PoolEvent` (field-identical shapes — the selector mirrors the type locally to
+/// avoid a dig-gossip dependency; see `crate::download::pool_event_to_selector`). Best-effort: a
+/// subscribe failure logs + returns (the selector still learns from the DHT candidates passed to
+/// `select` on each fetch); the task ends when the pool event channel closes.
+fn spawn_selector_registry_feed(
+    content: Arc<crate::download::NodeContent>,
+    handle: dig_gossip::GossipHandle,
+) {
+    // Seed from the current snapshot so the registry is populated before the first fetch.
+    for (peer_id, addr, _outbound) in handle.connected_pool_peers() {
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(peer_id.as_ref());
+        let event = crate::download::pool_event_to_selector(
+            bytes,
+            crate::download::PoolEventKind::Added { addr },
+        );
+        content.on_pool_event(&event);
+    }
+
+    let mut rx = match handle.subscribe_pool_events() {
+        Ok(rx) => rx,
+        Err(e) => {
+            tracing::debug!(error = %e, "selector registry feed: could not subscribe to pool events");
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    let selector_event = map_gossip_pool_event(&ev);
+                    content.on_pool_event(&selector_event);
+                }
+                // Lagged (slow consumer) — keep going; a missed add/remove is re-seeded by the pool.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                // Channel closed (service stopped) — the feed is done.
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+/// Map a live `dig_gossip::PoolEvent` into the selector's local `PoolEvent` (the 1:1 field map —
+/// SPEC §5.4). This is the boundary where dig-gossip's concrete type is in scope; it destructures the
+/// event into the raw 32-byte peer id + a transport-free `PoolEventKind`, then defers the actual
+/// construction to `crate::download::pool_event_to_selector` (which owns the identity byte-copy + the
+/// removal-reason map, unit-tested there without dig-gossip in scope).
+fn map_gossip_pool_event(ev: &dig_gossip::PoolEvent) -> dig_peer_selector::PoolEvent {
+    match ev {
+        dig_gossip::PoolEvent::PeerAdded { peer_id, addr } => {
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(peer_id.as_ref());
+            crate::download::pool_event_to_selector(
+                bytes,
+                crate::download::PoolEventKind::Added { addr: *addr },
+            )
+        }
+        dig_gossip::PoolEvent::PeerRemoved { peer_id, reason } => {
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(peer_id.as_ref());
+            let reason = match reason {
+                dig_gossip::PoolRemovalReason::Disconnected => {
+                    crate::download::GossipRemovalReason::Disconnected
+                }
+                dig_gossip::PoolRemovalReason::Dead => crate::download::GossipRemovalReason::Dead,
+                dig_gossip::PoolRemovalReason::Banned => {
+                    crate::download::GossipRemovalReason::Banned
+                }
+            };
+            crate::download::pool_event_to_selector(
+                bytes,
+                crate::download::PoolEventKind::Removed { reason },
+            )
+        }
+    }
+}
+
 /// Bring up the peer network (the fallible body of [`spawn_peer_network`]).
 async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
     // Pin the rustls crypto provider (ring) before ANY TLS use (the pool + the mTLS listener + any
@@ -1020,9 +1100,14 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
             node.cache_dir_path(),
         );
         content.spawn_gc();
+        // Feed the selector's registry from the connected pool (#178, SPEC §2.3): seed from the current
+        // pool snapshot, then forward every pool churn event so the selector always ranks against the
+        // live peer set. The selector already drives dig-download's source choice + learns from every
+        // range outcome inside `NodeContent`; this keeps its candidate registry current.
+        spawn_selector_registry_feed(content.clone(), handle.clone());
         node.set_p2p_content(content);
         println!(
-            "dig-node peer network: P2P content engine up (miss mode: {:?})",
+            "dig-node peer network: P2P content engine up (selector-driven, miss mode: {:?})",
             crate::download::miss_mode_from_env()
         );
     }

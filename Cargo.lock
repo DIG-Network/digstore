@@ -2444,6 +2444,7 @@ dependencies = [
  "dig-download",
  "dig-gossip",
  "dig-nat",
+ "dig-peer-selector",
  "dig-pex",
  "digstore-chain",
  "digstore-core",
@@ -2471,6 +2472,18 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "dig-peer-selector"
+version = "0.1.0"
+source = "git+https://github.com/DIG-Network/dig-peer-selector#2e0e0ec445984f7a4b40d160f50e1e5aba1fedfa"
+dependencies = [
+ "dig-dht",
+ "dig-nat",
+ "rand 0.8.6",
+ "rand_pcg",
+ "serde",
 ]
 
 [[package]]
@@ -5323,6 +5336,15 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "rand_pcg"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59cad018caf63deb318e5a4586d99a24424a364f40f1e5778c29aca23f4fc73e"
+dependencies = [
+ "rand_core 0.6.4",
+]
 
 [[package]]
 name = "rand_xorshift"
