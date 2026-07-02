@@ -816,9 +816,9 @@ MUST NOT oversell the guarantee (dig-onion §9).
         │ PEER-NET BRING-  │   │  CONSUMER-ONLY            │
         │ UP (§7.2)        │   │  no listener/DHT/PEX/relay │
         │ identity→pool→    │   │  p2p_content never set     │
-        │ DHT→announce→     │   └──────────┬────────────────┘
-        │ engine→listener   │              │
-        │ →PEX              │              │
+        │ DHT→announce→     │   │  no chain-watch/gap-fill   │
+        │ engine→watch→     │   └──────────┬────────────────┘
+        │ listener→PEX      │              │
         └───────┬───────────┘              │
                 ▼                          ▼
         ┌──────────────────────────────────────────────┐
@@ -826,8 +826,8 @@ MUST NOT oversell the guarantee (dig-onion §9).
         │  per read: resolve anchored root (§4) → serve   │
         │  local | sync (§5.2) | multi-source pull (§5.3) │
         │  | redirect/fetch-through (§5.4) | proxy         │
-        │  ─ WATCHING each held store's root (§4)          │
-        │  ─ SYNCING missing generations (§5)              │
+        │  ─ WATCHING each SUBSCRIBED store's root (§4.3)  │
+        │  ─ GAP-FILLING missing generations (§5.1)        │
         │  ─ republishing provider records (§6.2)          │
         └───────┬──────────────────────────────────────────┘
                 ▼ Ctrl-C
