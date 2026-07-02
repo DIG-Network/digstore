@@ -44,6 +44,18 @@ ignore = [
     # serialization only within those deps; no security vulnerability, no drop-in fix.
     # Accepted; RE-EVALUATE once the upstream deps move to bincode 2.x.
     "RUSTSEC-2025-0141",
+    # quick-xml <0.41.0: two unbounded-allocation DoS advisories in the XML namespace
+    # parser (a start tag declaring a huge number of namespace bindings / duplicate
+    # attributes allocates without a cap). Pulled TRANSITIVELY as quick-xml 0.37.5 via
+    # object_store 0.11.2 → digstore-host (object_store parses S3/GCS cloud-storage XML
+    # responses). object_store 0.11.2 pins quick-xml ^0.37, so the fixed 0.41 is a
+    # semver-major bump that requires upgrading object_store itself — no drop-in fix. The
+    # DoS requires parsing attacker-controlled XML with pathological namespace/attribute
+    # declarations; digstore's object_store XML parsing is against a configured, trusted
+    # cloud-storage endpoint, not arbitrary peer input. Accepted; RE-EVALUATE (and remove)
+    # once object_store is upgraded to a release depending on quick-xml >= 0.41.0.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]
 
 [bans]
