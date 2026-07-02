@@ -1216,15 +1216,12 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
         );
     }
 
-    // 4c. Install the DHT inventory-refresh hook + spawn the CHAIN-WATCH + GAP-FILL loop (SPEC §4.3 +
-    //     §5.1 + §6.2). The hook lets the FFI-safe `Node` reconcile its DHT provider records against
-    //     its cache inventory the moment a generation is gap-filled (so peers find the new holder
-    //     without waiting for the maintenance loop). The chain-watch loop polls each SUBSCRIBED store's
-    //     anchored root on an interval and pulls down any confirmed generation it lacks, verifying
-    //     against the chain-anchored root. Both are wired only when the DHT is up (the DHT is the
-    //     provider source + the refresh target); the in-process FFI path runs neither.
+    // 4c. Install the DHT inventory-refresh hook (SPEC §6.2). The hook lets the FFI-safe `Node`
+    //     reconcile its DHT provider records against its cache inventory the moment a generation is
+    //     gap-filled or a capsule is explicitly cached, so peers find the new holder without waiting
+    //     for the maintenance loop. It is wired ONLY when the DHT is up (the DHT is the refresh
+    //     target); with no hook installed the refresh is a documented no-op.
     if let Some(dht) = dht.clone() {
-        // Inventory-refresh hook: reconcile provider records with the current cache inventory.
         let node_for_hook = node.clone();
         let dht_for_hook = dht.clone();
         node.set_inventory_refresher(Box::new(move || {
@@ -1242,13 +1239,20 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
                 }
             })
         }));
-        // Chain-watch + gap-fill loop over the subscribed store set.
-        crate::chainwatch::spawn_chain_watch(node.clone());
-        println!(
-            "dig-node peer network: chain-watch + gap-fill loop up (interval {:?})",
-            crate::chainwatch::watch_interval_from_env()
-        );
     }
+
+    // 4d. Spawn the CHAIN-WATCH + GAP-FILL loop (SPEC §4.3 + §5.1) over the subscribed store set. This
+    //     runs INDEPENDENTLY of the DHT: the pull path (`Node::gap_fill_generation` → the authenticated
+    //     §21 whole-store sync) does not need the DHT, so a DHT bring-up failure must NOT silently
+    //     disable proactive gap-fill. The loop polls each subscribed store's anchored root on an
+    //     interval and pulls down any confirmed generation it lacks, verifying against the
+    //     chain-anchored root; when the DHT is up, a successful pull also refreshes the provider records
+    //     via the hook above. The in-process FFI path never reaches this bring-up, so it runs no watcher.
+    crate::chainwatch::spawn_chain_watch(node.clone());
+    println!(
+        "dig-node peer network: chain-watch + gap-fill loop up (interval {:?})",
+        crate::chainwatch::watch_interval_from_env()
+    );
 
     // Graceful shutdown: on ctrl-c, best-effort withdraw this node's provider records so peers stop
     // being told to dial a node that is going away (TTL expiry is the backstop if this does not reach

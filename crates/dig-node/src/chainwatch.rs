@@ -94,14 +94,17 @@ pub fn decide_watch(
     }
 }
 
-/// The gap-fill actuator: pull a missing generation for `(store_id, root)` down from other nodes,
+/// The gap-fill actuator: pull a missing generation for `(store_id, root)` down from another node,
 /// verify it against the chain-anchored root, and land it in the node's cache. Returns `Ok(())` on a
-/// verified, cached generation, or `Err` describing the failure (the loop logs + retries next tick —
-/// interrupted transfers resume via the underlying downloader's per-range resume).
+/// verified, cached generation, or `Err` describing the failure (the loop logs + retries next tick).
 ///
 /// Abstracted as a trait so the watch loop is driven with a deterministic mock in tests (no chain, no
-/// peers). Production is [`NodeGapFiller`], which delegates to the node's authenticated whole-store
-/// sync + the multi-source download engine.
+/// peers). Production is [`NodeGapFiller`], which delegates to the node's authenticated §21 whole-store
+/// sync (`Node::gap_fill_generation`): the whole `.dig` module for the confirmed generation is pulled
+/// from the node's upstream (the tier-4 gateway `rpc.dig.net` by default, or a configured node),
+/// chain-anchored-root pinned on every serve (§4.2). A failed pull is simply retried on the next tick.
+/// (The DHT-located multi-source range engine (§5.3) is the read-miss fetch path; the proactive
+/// whole-generation gap-fill here uses the whole-store sync, per the SPEC §5.1 ordering note.)
 #[async_trait::async_trait]
 pub trait GapFiller: Send + Sync {
     /// Pull + verify + cache the generation `(store_id, root)`. Idempotent: a call for an
@@ -266,9 +269,12 @@ impl GapFiller for NodeGapFiller {
 /// the persisted subscription set each tick (so a live subscribe/unsubscribe takes effect), resolves
 /// each subscribed store's anchored root via the node's resolver, and gap-fills any confirmed
 /// generation it does not hold. Best-effort + fail-closed — a chain-unreachable / no-generation store
-/// is skipped, and a failed pull is retried next tick. Returns the spawned task handle so the
-/// bring-up can abort it on shutdown.
-pub fn spawn_chain_watch(node: Arc<crate::Node>) -> tokio::task::JoinHandle<()> {
+/// is skipped, and a failed pull is retried next tick.
+///
+/// Spawn-and-detach, like the DHT maintenance loop: the task runs for the process lifetime and is
+/// reclaimed on process exit (the standalone node runs the peer network once per process). It does
+/// not need explicit abort — nothing in-process tears the peer network down and re-brings it up.
+pub fn spawn_chain_watch(node: Arc<crate::Node>) {
     let deps = WatchDeps {
         // Re-read the persisted subscription set each tick.
         subscriptions: Arc::new(crate::load_subscriptions),
@@ -277,7 +283,7 @@ pub fn spawn_chain_watch(node: Arc<crate::Node>) -> tokio::task::JoinHandle<()> 
         filler: Arc::new(NodeGapFiller::new(node.clone())),
     };
     let interval = watch_interval_from_env();
-    tokio::spawn(async move { run_loop(deps, interval).await })
+    tokio::spawn(async move { run_loop(deps, interval).await });
 }
 
 #[cfg(test)]
