@@ -179,6 +179,10 @@ only from the loopback admin / in-process FFI dispatch (`handle_rpc`).
 - **`dig.stage`** — compile a folder into a capsule module in-process (`{ dir, store_id?, salt?,
   metadata? }` → `{ capsule, store_id, root, module_path, size, ... }`). Errors: `-32602`, `-32011`
   (dir not readable), `-32012` (no files), `-32013` (over the store cap), `-32014` (compile/IO).
+  The directory walk is BOUNDED — it aborts (`-32011`) the moment the running total exceeds a
+  maximum-bytes-read budget, the file count exceeds a maximum, or recursion exceeds a depth cap —
+  so an over-large or pathological `dir` cannot be read wholesale into memory before the store-cap
+  compile check runs. This is a loopback/in-process-only method (§2.3.2, §7.4a).
 
 #### 2.3.3 Peer / sync (PEER/CONTROL tier)
 
