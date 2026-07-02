@@ -48,6 +48,7 @@ use tokio::sync::Mutex;
 
 pub mod dht;
 pub mod download;
+pub mod net;
 pub mod peer;
 pub mod pex;
 
@@ -1407,7 +1408,17 @@ impl Node {
         let network_id = peer::network_id_from_env();
         let endpoint = peer::relay_url_from_env();
         let port = peer::peer_port_from_env();
-        let listen = format!("0.0.0.0:{port}");
+        // The node's REAL advertised candidate addresses, ordered IPv6-first (ecosystem HARD RULE):
+        // a routable IPv6 address (when discoverable) precedes the IPv4 fallback. `listen_addr` reports
+        // the primary (IPv6-preferred) advertised endpoint — a dialable address, NOT the wildcard bind
+        // address (`[::]` / `0.0.0.0`) the listener binds. (The listener itself binds `[::]` dual-stack;
+        // that wildcard is a bind target, never a dialable candidate to report to peers.)
+        let candidates = net::advertised_socket_addrs(port, net::advertise_loopback_from_env());
+        let candidate_addresses: Vec<String> = candidates.iter().map(|a| a.to_string()).collect();
+        let listen = candidate_addresses
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("[::]:{port}"));
         let snap = self.peer_status.snapshot_json(&endpoint, &network_id);
         let reserved = snap["relay"]["reserved"].as_bool().unwrap_or(false);
         // Conservative, honest reachability: while a relay reservation is held we report "relayed"
@@ -1420,7 +1431,7 @@ impl Node {
             "network_id": network_id,
             "listen_addr": listen,
             "reflexive_addr": Value::Null,
-            "candidate_addresses": [],
+            "candidate_addresses": candidate_addresses,
             "reachability": reachability,
             "relay": snap["relay"],
         })
@@ -4041,5 +4052,41 @@ mod tests {
             "fetch-through serves the holder's bytes"
         );
         assert_eq!(frame["root"], json!(content.root));
+    }
+
+    /// `dig.getNetworkInfo` must never report the wildcard bind address as a dialable endpoint, and
+    /// its candidate list must be IPv6-first (ecosystem HARD RULE). The exact addresses are
+    /// host-dependent (real local-address discovery), so this asserts the host-independent invariants:
+    /// no `0.0.0.0` / `[::]` leaks, and any IPv4 candidate follows every IPv6 candidate.
+    #[test]
+    fn network_info_reports_ipv6_first_dialable_addrs_never_the_wildcard() {
+        let (node, _td) = test_node(Some([5u8; 32]));
+        let info = node.network_info();
+
+        let listen = info["listen_addr"].as_str().expect("listen_addr string");
+        assert!(
+            !listen.starts_with("0.0.0.0:") && !listen.starts_with("[::]:"),
+            "listen_addr must be a dialable address, never the wildcard bind address: {listen}"
+        );
+
+        let candidates: Vec<std::net::SocketAddr> = info["candidate_addresses"]
+            .as_array()
+            .expect("candidate_addresses array")
+            .iter()
+            .map(|v| v.as_str().unwrap().parse().expect("a socket addr"))
+            .collect();
+        // No wildcard address ever appears as an advertised candidate.
+        for c in &candidates {
+            assert!(!c.ip().is_unspecified(), "no wildcard candidate: {c}");
+        }
+        // IPv6-first: once an IPv4 candidate appears, no later candidate may be IPv6.
+        let mut seen_ipv4 = false;
+        for c in &candidates {
+            if c.is_ipv4() {
+                seen_ipv4 = true;
+            } else {
+                assert!(!seen_ipv4, "IPv6 candidate must not follow an IPv4 one: {candidates:?}");
+            }
+        }
     }
 }

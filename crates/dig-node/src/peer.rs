@@ -36,6 +36,23 @@
 //! seam — "who holds capsule X?" beyond the local pool — is [`PeerRpcClient::find_holders`], which
 //! today queries the connected pool via availability; #163 (dig-dht) slots in as an additional
 //! provider source behind the SAME interface without touching the serve path.
+//!
+//! ## Address-family policy — IPv6-first, IPv4-fallback (ecosystem HARD RULE)
+//!
+//! All peer communication is IPv6-first with IPv4 as the fallback, applied at three points (the
+//! mechanics live in [`crate::net`]):
+//!
+//! - **Listener bind.** The mTLS peer-RPC listener binds the IPv6 unspecified address `[::]:{port}`
+//!   as a DUAL-STACK socket (`IPV6_V6ONLY` cleared), so ONE socket serves both native IPv6 peers and
+//!   IPv4-mapped peers on the same port. (It does NOT bind `0.0.0.0`, which is IPv4-only.)
+//! - **Advertised addresses.** The node advertises its REAL routable candidate addresses (in the DHT
+//!   provider record and `dig.getNetworkInfo`), ordered IPv6-first: a global-unicast IPv6 address
+//!   (when the host has one) precedes the IPv4 fallback. The wildcard bind address (`[::]`/`0.0.0.0`)
+//!   is never advertised (it is not dialable). A NAT'd node with no routable address advertises no
+//!   direct candidate and relies on the relay tiers.
+//! - **Dialing.** When dialing a discovered peer, the node passes that peer's FULL candidate list to
+//!   `dig_nat::PeerTarget::with_addrs`, which orders it IPv6-first; dig-nat's happy-eyeballs dialer
+//!   then tries the peer's IPv6 candidate(s) first and falls back to IPv4 (see [`crate::dht`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -1029,12 +1046,15 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
     //    identity, requiring a client cert (peer_id enforced), each accepted connection muxed +
     //    served via `serve_peer_session`. Inbound DHT RPCs on those sessions are answered by the DHT
     //    (folding in the mTLS-verified caller) when it is up.
+    //
+    //    IPv6-first, IPv4-fallback (ecosystem HARD RULE): bind the IPv6 unspecified address `[::]` as a
+    //    DUAL-STACK socket (IPV6_V6ONLY cleared) so this ONE socket serves both native IPv6 peers AND
+    //    IPv4-mapped peers on the same port. (The old `0.0.0.0` bind was IPv4-only and dropped IPv6.)
     let port = peer_port_from_env();
-    let addr = format!("0.0.0.0:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|e| format!("bind peer-RPC listener {addr}: {e}"))?;
-    println!("dig-node peer network: mTLS peer-RPC listening on {addr}");
+    let addr = crate::net::dual_stack_listen_addr(port);
+    let listener = crate::net::bind_tcp_dual_stack(addr)
+        .map_err(|e| format!("bind dual-stack peer-RPC listener {addr}: {e}"))?;
+    println!("dig-node peer network: mTLS peer-RPC listening on {addr} (dual-stack, IPv6-first)");
     // 6. Bring up the node↔node PEX peer-sharing layer (#166): one node-wide engine advertising this
     //    node's first-hand connected pool, a pool feeder mirroring pool churn into its advertise set,
     //    the ~1/s tick loop, and the production pool sink (candidates → dial+verify+adopt over dig-nat,
@@ -1084,10 +1104,18 @@ async fn bring_up_dht(
         network_id.to_string(),
         config.rpc_timeout,
     ));
-    // Our own advertised addresses: the P2P listen port. We advertise it as a direct candidate; a
-    // NAT'd node is still reachable via the relay tiers dig-nat composes (finders sort candidates).
+    // Our own advertised addresses: the node's REAL routable address(es) at the P2P listen port,
+    // ordered IPv6-first (ecosystem HARD RULE) — a global-unicast IPv6 address (when the host has one)
+    // precedes the IPv4 fallback, so a peer's happy-eyeballs dialer prefers IPv6. The wildcard bind
+    // address (`[::]` / `0.0.0.0`) is NOT dialable and must never leak as a candidate. A NAT'd node
+    // with no routable address advertises nothing here and stays reachable via the relay tiers dig-nat
+    // composes; loopback/in-process setups opt into a loopback candidate via DIG_NODE_ADVERTISE_LOOPBACK.
     let port = peer_port_from_env();
-    let local_addresses = vec![CandidateAddr::direct("0.0.0.0", port)];
+    let local_addresses: Vec<CandidateAddr> =
+        crate::net::advertised_socket_addrs(port, crate::net::advertise_loopback_from_env())
+            .into_iter()
+            .map(|sa| CandidateAddr::direct(sa.ip().to_string(), sa.port()))
+            .collect();
     let service = Arc::new(DhtService::new(
         identity.peer_id,
         local_addresses,

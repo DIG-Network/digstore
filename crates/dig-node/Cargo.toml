@@ -107,6 +107,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 # Bridge the tokio mTLS byte stream to yamux (dig-nat's PeerStream is a futures-compat stream).
 tokio-util = { version = "0.7", features = ["compat"] }
+# IPv6-first, IPv4-fallback (ecosystem HARD RULE): bind the peer-RPC listener on the IPv6 unspecified
+# address `[::]` as a DUAL-STACK socket (IPV6_V6ONLY cleared) so ONE socket serves both native IPv6
+# and IPv4-mapped peers. Mirrors dig-relay's `net.rs` / dig-gossip's own dual-stack bind.
+socket2 = "0.5"
 # RangeFrame ciphertext payloads over the peer stream.
 serde_bytes = "0.11"
 # The peer transport still frames JSON over the mux + speaks async stream traits.
