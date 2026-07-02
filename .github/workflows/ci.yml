@@ -20,6 +20,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"        # reproducible, smaller caches in CI
   RUST_BACKTRACE: "1"
+  # The workspace compiles wasmtime/cranelift (dig-node), whose debug symbols
+  # dominate target/ and overran the runner disk ("No space left on device").
+  # Strip debuginfo in CI — behaviour is identical; backtraces keep symbol names
+  # (just not line numbers). This is the biggest single reduction in target/ size.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   test:
@@ -52,8 +58,10 @@ jobs:
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
-            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
-            /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-}" || true
+            /usr/local/lib/android /opt/hostedtoolcache \
+            /usr/local/share/boost /usr/share/swift /usr/local/share/powershell \
+            /usr/local/lib/node_modules /usr/local/share/chromium \
+            /usr/local/graalvm "${AGENT_TOOLSDIRECTORY:-}" || true
           sudo docker image prune --all --force || true
           df -h /
 
