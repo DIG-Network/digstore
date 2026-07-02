@@ -672,12 +672,13 @@ mod tests {
     #[test]
     fn candidate_socket_addrs_keeps_every_dialable_candidate() {
         // A contact advertising BOTH families (+ a relay marker + a bare hostname): the pure mapping
-        // keeps only the two dialable IP candidates, preserving the contact's order (the IPv6-first
-        // re-ordering is `PeerTarget::with_addrs`'s job, verified separately below).
+        // keeps only the two dialable IP candidates and drops the relay-marker + hostname. `Contact`
+        // itself orders its addresses IPv6-first (ecosystem HARD RULE §5.2), so even though IPv4 is
+        // advertised first on the wire, the IPv6 candidate comes first here.
         let contact = Contact::new(
             &PeerId::from_bytes([3u8; 32]),
             vec![
-                CandidateAddr::direct("203.0.113.7", 9444),  // IPv4
+                CandidateAddr::direct("203.0.113.7", 9444),  // IPv4 (advertised first on the wire)
                 CandidateAddr::direct("2001:db8::7", 9444),  // IPv6
                 CandidateAddr::relay_marker(),               // dropped (not dialable)
                 CandidateAddr::direct("peer.example", 9444), // dropped (not an IP literal)
@@ -687,10 +688,10 @@ mod tests {
         assert_eq!(
             addrs,
             vec![
-                "203.0.113.7:9444".parse().unwrap(),
                 "[2001:db8::7]:9444".parse().unwrap(),
+                "203.0.113.7:9444".parse().unwrap(),
             ],
-            "both dialable candidates kept, order preserved; relay-marker + hostname dropped"
+            "both dialable candidates kept (IPv6-first per Contact ordering); relay-marker + hostname dropped"
         );
     }
 

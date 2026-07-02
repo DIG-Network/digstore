@@ -4389,6 +4389,17 @@ mod tests {
         content
     }
 
+    /// The `ContentId` to request for an [`anchored_mock_content`]: its `root` MUST equal the root the
+    /// transport reports in each range frame, because the download orchestrator now cross-checks the
+    /// peer-reported root against the content-id root (dig-download #179 HIGH). Store id + retrieval
+    /// key match `mock_content_id` (`[1;32]` / `[3;32]`); only the root is bound to the content.
+    fn anchored_cid_for(content: &dig_download::testkit::MockContent) -> ContentId {
+        let root: [u8; 32] = Bytes32::from_hex(&content.root)
+            .expect("anchored content root is 64-hex")
+            .0;
+        ContentId::resource([1; 32], root, [3; 32])
+    }
+
     /// Attach a P2P content engine to `node` with a mock locator (the given providers) + a mock
     /// transport serving `content`, in `mode`. Returns nothing — the engine lives on the node.
     fn attach_p2p(
@@ -4556,9 +4567,10 @@ mod tests {
         let (store, tip, rk) = miss_setup();
         let (node, td) = test_node(None);
         // A holder serves an ANCHORED resource (real digstore proof over its bytes) so the download's
-        // whole-resource verify against the chain-anchored root passes.
+        // whole-resource verify against the chain-anchored root passes. The content id root MUST equal
+        // the transport-reported root (dig-download #179 cross-check).
         let content = anchored_mock_content(30, 3);
-        let cid = dig_download::testkit::mock_content_id();
+        let cid = anchored_cid_for(&content);
         attach_p2p(
             &node,
             vec![
