@@ -678,9 +678,9 @@ mod tests {
         let contact = Contact::new(
             &PeerId::from_bytes([3u8; 32]),
             vec![
-                CandidateAddr::direct("203.0.113.7", 9444),  // IPv4 (advertised first on the wire)
-                CandidateAddr::direct("2001:db8::7", 9444),  // IPv6
-                CandidateAddr::relay_marker(),               // dropped (not dialable)
+                CandidateAddr::direct("203.0.113.7", 9444), // IPv4 (advertised first on the wire)
+                CandidateAddr::direct("2001:db8::7", 9444), // IPv6
+                CandidateAddr::relay_marker(),              // dropped (not dialable)
                 CandidateAddr::direct("peer.example", 9444), // dropped (not an IP literal)
             ],
         );
