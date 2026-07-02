@@ -79,6 +79,43 @@ pub const DEFAULT_P2P_PORT: u16 = 9444;
 /// cap the HTTP read path (`WINDOW`) uses.
 pub const RANGE_WINDOW: usize = 3 * 1024 * 1024;
 
+/// Maximum concurrent accepted mTLS peer CONNECTIONS the listener will serve at once (audit #179
+/// HIGH). The accept loop acquires a permit before spawning each connection's serve task and drops
+/// the connection when saturated, so an attacker cannot force unbounded connection tasks (each
+/// holding a TLS session + FD + yamux session). Sheds load rather than buffering.
+pub const MAX_INFLIGHT_PEER_CONNECTIONS: usize = 512;
+
+/// Maximum concurrent in-flight logical STREAMS a single peer connection may have being served at
+/// once (audit #179 HIGH). Each accepted yamux stream acquires a permit before its handler task is
+/// spawned; a peer opening streams past this cap has the excess dropped (the stream is closed
+/// without a handler) instead of spawning unbounded per-stream tasks. Keyed per connection so one
+/// peer cannot starve the others.
+pub const MAX_INFLIGHT_STREAMS_PER_CONNECTION: usize = 64;
+
+/// Try to spawn `fut` holding a permit from `sem`; if the semaphore is saturated (no permit
+/// available WITHOUT waiting), SHED the work by dropping it (returns `false`) rather than queuing
+/// unboundedly. On success the spawned task holds the permit for its whole lifetime, so the live
+/// task count can never exceed the semaphore's capacity. This is the single choke point the peer
+/// accept loops use to bound concurrency (audit #179 HIGH).
+fn spawn_with_permit<F>(sem: &Arc<tokio::sync::Semaphore>, fut: F) -> bool
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    // try_acquire_owned never blocks: it returns Err the instant no permit is free, so a saturated
+    // node sheds the connection/stream immediately instead of parking a task.
+    match Arc::clone(sem).try_acquire_owned() {
+        Ok(permit) => {
+            tokio::spawn(async move {
+                // The permit is moved into the task and released on drop when the task ends.
+                let _permit = permit;
+                fut.await;
+            });
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 // -- Peer-network status (replaces the old relay-only RelayStatus) -----------------------------------
 
 /// Live, pool-oriented status of the node's peer network, shared (via `Arc`) between the peer-network
@@ -520,15 +557,24 @@ pub async fn serve_peer_session_from_with(
         }
     }
 
+    // Per-connection stream-concurrency cap (audit #179 HIGH): a single peer can open many yamux
+    // logical streams, each spawning a handler that may read a whole module + wasmtime-decrypt or
+    // make a chain/proxy call. Bound the concurrent handlers PER CONNECTION so one peer cannot spawn
+    // unbounded tasks; streams opened past the cap are dropped (closed without a handler).
+    let stream_permits = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_STREAMS_PER_CONNECTION));
     while let Some(stream) = session.accept_stream().await {
         let responder = responder.clone();
         let caller = caller.clone();
         let pex = pex.clone();
-        tokio::spawn(async move {
+        let spawned = spawn_with_permit(&stream_permits, async move {
             if let Err(e) = serve_one_stream_from_with(caller, stream, responder, pex).await {
                 tracing::debug!(error = %e, "peer stream ended with an error");
             }
         });
+        if !spawned {
+            // At the per-connection stream cap: shed this stream (drop it — the peer must slow down).
+            tracing::debug!("peer stream shed: per-connection concurrency cap reached");
+        }
     }
 
     // The session closed: discard this link's PEX state so a reconnect starts fresh (SPEC §5.5).
@@ -1333,6 +1379,13 @@ pub async fn serve_peer_rpc_listener_with(
     let server_config = Arc::new(build_server_tls_config(&identity)?);
     let acceptor = tokio_rustls::TlsAcceptor::from(server_config);
 
+    // Global accepted-connection concurrency cap (audit #179 HIGH). A permit is acquired BEFORE the
+    // per-connection serve task is spawned — INCLUDING the mTLS handshake, so half-open/slowloris
+    // handshakes count against the budget — and held until the connection is fully served. When
+    // saturated the raw TCP socket is dropped immediately (load-shed) rather than spawning unbounded
+    // connection tasks that each hold a TLS session + FD + yamux session.
+    let conn_permits = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_PEER_CONNECTIONS));
+
     loop {
         let (tcp, peer_addr) = match listener.accept().await {
             Ok(pair) => pair,
@@ -1344,7 +1397,7 @@ pub async fn serve_peer_rpc_listener_with(
         let acceptor = acceptor.clone();
         let responder = responder.clone();
         let pex = pex.clone();
-        tokio::spawn(async move {
+        let spawned = spawn_with_permit(&conn_permits, async move {
             // mTLS handshake (client cert required by build_server_tls_config; a peer with no cert or
             // a failed handshake is dropped here — no unauthenticated peer traffic reaches the RPC).
             match acceptor.accept(tcp).await {
@@ -1362,6 +1415,12 @@ pub async fn serve_peer_rpc_listener_with(
                 Err(e) => tracing::debug!(error = %e, "peer mTLS handshake failed; dropped"),
             }
         });
+        if !spawned {
+            // At the global connection cap: shed this connection. `tcp` was moved into the (dropped)
+            // future, so it is closed here — the peer must retry later. Sheds instead of unbounded
+            // spawning (audit #179 HIGH).
+            tracing::debug!(%peer_addr, "peer connection shed: global connection cap reached");
+        }
     }
 }
 
@@ -1796,6 +1855,45 @@ mod tests {
             .expect("an error response");
         assert_eq!(resp["error"]["code"], json!(-32600));
         srv.await.unwrap().unwrap();
+    }
+
+    // -- Concurrency cap: spawn_with_permit (audit #179 HIGH — unbounded task spawning) -----------
+
+    #[tokio::test]
+    async fn spawn_with_permit_sheds_work_past_the_capacity() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::sync::Semaphore;
+
+        // Capacity 2: the first two spawns take permits and PARK (holding them); the third is shed.
+        let sem = Arc::new(Semaphore::new(2));
+        let running = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Notify::new());
+
+        let mk = |running: Arc<AtomicUsize>, gate: Arc<tokio::sync::Notify>| async move {
+            running.fetch_add(1, Ordering::SeqCst);
+            gate.notified().await; // hold the permit until released
+            running.fetch_sub(1, Ordering::SeqCst);
+        };
+
+        assert!(spawn_with_permit(&sem, mk(running.clone(), gate.clone())));
+        assert!(spawn_with_permit(&sem, mk(running.clone(), gate.clone())));
+        // Let the two tasks start + park so both permits are held.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(sem.available_permits(), 0, "both permits held by parked tasks");
+
+        // Third spawn: no permit free → shed (not spawned), returns false.
+        let shed = spawn_with_permit(&sem, mk(running.clone(), gate.clone()));
+        assert!(!shed, "past capacity → work is shed, not spawned");
+        assert_eq!(running.load(Ordering::SeqCst), 2, "only 2 tasks ever ran");
+
+        // Release the parked tasks; permits return so new work is admitted again.
+        gate.notify_waiters();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(sem.available_permits(), 2, "permits released on task completion");
+        assert!(
+            spawn_with_permit(&sem, async {}),
+            "capacity freed → admits again"
+        );
     }
 
     // -- Peer-surface method allowlist (SPEC §2.3/§7.4; audit #179 CRITICAL) -----------------------
