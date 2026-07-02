@@ -45,6 +45,8 @@ Node/runtime dependency. On startup it:
 - Brings up the **L7 peer network** (§7): the mTLS peer-RPC listener, the dig-gossip connected pool +
   relay introducer, the dig-dht content-location DHT, dig-pex peer exchange, and the multi-source
   content-fetch engine — unless disabled by `DIG_PEER_NETWORK=off`.
+- Runs the **chain-watch + gap-fill loop** (§4.3, §5.1): polls each subscribed store's (§6) singleton
+  on an interval and actively pulls down + verifies any confirmed generation it is missing.
 
 The loopback HTTP read surface is the local face of the network-wide **public read tier**; when a node
 is exposed to the wider network as `rpc.dig.net`, that same read surface is served TLS-fronted on a
@@ -166,13 +168,15 @@ peer verifier accepts any well-formed self-signed leaf, so an "authenticated" pe
 `peer_id`", never an authorized administrator. The peer responder enforces a method **allowlist**
 (§7.4a) and returns `-32601` (method not found) for any method in this section — a remote peer can
 never call `cache.clear` / `cache.setCapBytes` / `cache.removeCached` / `cache.fetchAndCache` /
-`cache.listCached` / `cache.getConfig` / `control.peerStatus` / `dig.stage`. They stay reachable
-only from the loopback admin / in-process FFI dispatch (`handle_rpc`).
+`cache.listCached` / `cache.getConfig` / `control.peerStatus` / `control.subscribe` /
+`control.unsubscribe` / `control.listSubscriptions` / `dig.stage`. They stay reachable only from the
+loopback admin / in-process FFI dispatch (`handle_rpc`).
 
 - **`cache.getConfig`** → `{ cap_bytes: u64, used_bytes: u64, cache_dir: string, shared: bool }`.
 - **`cache.setCapBytes`** `{ cap_bytes: u64 }` → `{ cap_bytes: u64 (effective) }`; the value is floored
-  at **64 MiB**. Error `-32000` on write failure. This is the single source of truth for the cache cap
-  — the browser's `chrome://settings` handler and the wallet config endpoint both go through it.
+  at **64 MiB**. Error `-32032` `CONTROL_ERROR` on write failure. This is the single source of truth
+  for the cache cap — the browser's `chrome://settings` handler and the wallet config endpoint both go
+  through it.
 - **`cache.clear`** → `{}`.
 - **`cache.listCached`** → the durable module inventory: `{ cached: [ { capsule: "storeId:rootHash",
   store_id: 64hex, root: 64hex, size_bytes: u64, last_used_unix_ms: u64 } ] }` (§3, §6).
@@ -181,6 +185,11 @@ only from the loopback admin / in-process FFI dispatch (`handle_rpc`).
   "cached"|"already_cached"|"failed", size_bytes?: u64, served_root?: 64hex, message?: string }`.
 - **`control.peerStatus`** → the peer-network status snapshot (§7.2); always safe to call, reports
   "not running" on the FFI path.
+- **`control.subscribe`** `{ store_id: 64hex }` → `{ subscribed: true, added: bool, store_id }`,
+  **`control.unsubscribe`** `{ store_id: 64hex }` → `{ subscribed: false, removed: bool, store_id }`,
+  **`control.listSubscriptions`** → `{ subscriptions: [64hex], count: u64 }` — manage the node's
+  persisted subscribed-store set (§6.1), which drives the chain-watch (§4.3) + gap-fill (§5.1) loop. A
+  malformed `store_id` → `-32032` `CONTROL_ERROR` (with `data.code`/`data.origin`, §2.6).
 - **`dig.stage`** — compile a folder into a capsule module in-process (`{ dir, store_id?, salt?,
   metadata? }` → `{ capsule, store_id, root, module_path, size, ... }`). Errors: `-32602`, `-32011`
   (dir not readable), `-32012` (no files), `-32013` (over the store cap), `-32014` (compile/IO).
@@ -248,11 +257,18 @@ ROUTING.md §11` Phase 4). §2.5 + §8 are the normative target the integration 
 | `-32007` | `RANGE_NOT_SATISFIABLE` | `offset ≥ total_length` or the range is otherwise unsatisfiable |
 | `-32008` | `CONTENT_REDIRECT` | this node does not hold the content but located holders — a redirect, not a 404 (§5.4) |
 | `-32011`..`-32014` | stage errors | dir not readable / no files / over cap / compile-IO (`dig.stage`) |
-| `-32020` | `onion_circuit_unavailable` | (target) a `mode:"privacy"` request could not be served privately — MUST NOT downgrade (§8) |
-| `-32021` | `privacy_requires_local_node` | (target) `mode:"privacy"` on a node with no trusted local originator |
-| `-32022` | `onion_hops_out_of_range` | (target) requested hop count outside `[2,5]` |
+| `-32020` | `ONION_CIRCUIT_UNAVAILABLE` | (target) a `mode:"privacy"` request could not be served privately — MUST NOT downgrade (§8) |
+| `-32021` | `PRIVACY_REQUIRES_LOCAL_NODE` | (target) `mode:"privacy"` on a node with no trusted local originator |
+| `-32022` | `ONION_HOPS_OUT_OF_RANGE` | (target) requested hop count outside `[2,5]` |
+| `-32030` | `UNAUTHORIZED` | a control-plane call is not authorized (loopback / token gate) |
+| `-32031` | `NOT_SUPPORTED` | a control-plane method is recognized but not supported on this node |
+| `-32032` | `CONTROL_ERROR` | a control-plane runtime error (subscription persistence, config write, sync trigger) |
 
-Codes MUST match the `docs.dig.net` error catalog and the dig-onion SPEC byte-for-byte.
+Codes MUST match the `docs.dig.net` error catalog, the `dig-rpc-types` taxonomy, and the dig-onion SPEC
+byte-for-byte. The onion codes `-32020`/`-32021`/`-32022` are RESERVED for private retrieval; the
+control-plane codes are renumbered CLEAR of them to `-32030`/`-32031`/`-32032` (matching
+`dig-rpc-types` §10). Control-plane errors carry the canonical `{code, message, data:{code, origin}}`
+envelope — `data.code` the `UPPER_SNAKE_CASE` machine key, `data.origin` = `"control"`.
 
 ---
 
@@ -366,13 +382,15 @@ the CLI `clone`/`pull` pin ("chain is the authority", fail closed).
 - Per store the node needs only its `store_id`; the anchored root is resolved on demand and is the sole
   authority for the current generation. The resolver holds no persistent chain state; a resolution is
   a live singleton walk. "Confirmed" = the singleton's unspent tip as coinset reports it.
-- **Poll/subscribe (target).** The reference implementation resolves the anchored root **on demand per
-  read** — it does NOT run a background poll/subscribe loop that proactively detects a new
-  root/generation for a watched store. A conforming node that actively syncs (§5) SHOULD watch each
-  subscribed store's singleton on an interval (poll coinset, or subscribe to a chain feed) so it
-  detects a new generation without a client read driving it; the confirmation semantics (unspent-tip
-  root, fail-closed on unreachable) are unchanged. This proactive watcher is the chain-watching piece
-  the active-sync loop (§5.1) depends on and is **(target)** where the code is on-demand only.
+- **Poll/subscribe.** In ADDITION to the on-demand per-read resolution, the standalone node runs a
+  background **chain-watch loop** (`crate::chainwatch`) that polls each SUBSCRIBED store's (§6)
+  singleton on an interval (`DIG_NODE_WATCH_INTERVAL`, default 30 s, floored at 1 s), so a new
+  generation is detected without a client read driving it. Each tick resolves the store's anchored root
+  via the SAME injectable `AnchoredRootResolver` the read-path pin uses; the confirmation semantics are
+  identical (unspent-tip root is the authority, fail-closed on unreachable / no confirmed generation —
+  the loop NEVER gap-fills against a root the chain could not confirm). The watcher runs only in the
+  standalone peer-network form (it drives §5.1 gap-fill, which needs the peer network); the in-process
+  FFI consumer runs no watcher.
 
 ---
 
@@ -395,11 +413,18 @@ byte against the chain-anchored root. Two mechanisms exist; both end in the same
    it under `(store_id, root)`. The node MUST fill generations toward the confirmed tip; it MUST NOT
    serve a generation it has not both fetched AND verified against the chain-anchored root.
 
-**Ordering + status.** The reference code fetches on-demand — a concrete `(store, root)` miss triggers
-either the authenticated whole-module §21 sync (§5.2) or the multi-source range fetch (§5.3). A
-proactive, background gap-fill that walks a subscribed store's generation history and pre-pulls missing
-capsules newest-first is **(target)**, gated on the proactive chain watcher (§4.3). Whichever path
-runs, the verification invariant (§5.3) is mandatory.
+**Ordering + status.** Two triggers drive gap-fill, both ending in the mandatory §5.3 verification:
+(a) ON-DEMAND — a concrete `(store, root)` read miss triggers the authenticated whole-module §21 sync
+(§5.2) or the multi-source range fetch (§5.3); and (b) PROACTIVE — the standalone node's chain-watch
+loop (§4.3), each tick, resolves every SUBSCRIBED store's anchored tip and, when that confirmed
+generation is not held locally (`<cache>/modules/<store>/<root>.module` absent), pulls it down via
+`Node::gap_fill_generation` (the authenticated §21 whole-store sync, landed under `(store, root)`),
+then refreshes the DHT provider records (§6.2) so peers find the node as a new holder. The pull is
+idempotent (an already-held generation is a cheap success) and interruption-retrying — a failed pull is
+simply retried on the next tick, and an interrupted transfer resumes via the underlying downloader's
+per-range resume (§5.3). A node MUST NOT serve a gap-filled generation it has not verified against the
+chain-anchored root — the read-path pin (§4.2) re-validates on every serve, so a wrong-generation or
+tampered pull can never be served as current.
 
 ### 5.2 Authenticated whole-store sync (§21)
 
@@ -471,13 +496,26 @@ as provider records so other nodes find it as a holder.
   capsule so the node thereafter watches + serves it. **`cache.removeCached`** is the unsubscribe/evict
   primitive.
 
-**Explicit subscription surface (target).** The reference code has NO first-class "subscribe to a
-store" surface that persists a subscription list and drives watching independent of the cache — the
-served set IS derived from the cache/inventory. A conforming node SHOULD expose an explicit persisted
-subscription (subscribe = start watching+syncing+serving a store and keep it current across restarts;
-unsubscribe = stop + optionally evict), which drives the proactive chain watcher (§4.3) + gap-fill
-(§5.1) + provider-record publication (§6.2). This is **(target)**; today subscription is effectively
-"what is in the cache."
+**Explicit subscription surface.** The node exposes a first-class, PERSISTED subscription set — the
+stores it INTENDS to keep current — DISTINCT from the durable capsule inventory (what it currently
+holds). The set lives in `<cache>/subscriptions.json` (schema-versioned `{version, stores:[64hex]}`,
+atomic write, serialized by the same cross-process advisory lock as the config RMW, so two DIG
+processes sharing the cache cannot lose each other's updates). Managed by three CONTROL-tier methods
+(loopback / in-process ONLY, never peer-reachable — §7.4a):
+
+- **`control.subscribe`** `{ store_id: 64hex }` → `{ subscribed: true, added: bool, store_id }` —
+  start watching+syncing+serving a store, persisted across restarts. Idempotent (`added:false` when
+  already subscribed). A malformed id → `-32032` `CONTROL_ERROR`.
+- **`control.unsubscribe`** `{ store_id: 64hex }` → `{ subscribed: false, removed: bool, store_id }` —
+  stop watching (the held modules are NOT auto-evicted; use `cache.removeCached` to reclaim).
+- **`control.listSubscriptions`** → `{ subscriptions: [64hex], count: u64 }`.
+
+The subscription set drives the proactive chain watcher (§4.3) + gap-fill (§5.1) + provider-record
+publication (§6.2): a store may be subscribed BEFORE any of its modules are held (the watcher pulls
+them down), and a module may be held WITHOUT a subscription (a one-off cached read). The
+`cache.fetchAndCache` / `cache.removeCached` capsule primitives remain the inventory-level pin/evict
+controls; subscriptions are the store-level "keep current" intent that makes the node actively seek
+other nodes to pull the generations it is missing.
 
 ### 6.2 Provider-record publication (inventory → DHT)
 
@@ -524,6 +562,8 @@ Standalone startup (`spawn_peer_network` → `run_peer_network`) proceeds in ord
 3. bring up the dig-dht content-location DHT (bootstrap from the gossip pool), and announce the held
    inventory (§6.2);
 4. wire the multi-source content engine (`NodeContent`) to the DHT + the selector (fed by pool churn);
+4b. install the DHT inventory-refresh hook (so a gap-filled generation is announced immediately, §6.2)
+   and spawn the chain-watch + gap-fill loop over the subscribed store set (§4.3, §5.1);
 5. install the Ctrl-C graceful-shutdown hook (DHT `withdraw_all` sweep);
 6. bind the mTLS peer-RPC listener dual-stack on `[::]:{DIG_PEER_PORT}` (§7.3) and enter the accept
    loop, one mTLS session → yamux mux per peer;
@@ -611,9 +651,10 @@ classified by shape, not the `method` field).
 
 **NOT peer-reachable (loopback / in-process ONLY, answered `-32601` on the peer surface):** every
 `cache.*` method (`cache.getConfig`, `cache.setCapBytes`, `cache.clear`, `cache.listCached`,
-`cache.removeCached`, `cache.fetchAndCache`), every `control.*` method (`control.peerStatus`), and
-`dig.stage`. These mutate node state, read attacker-chosen local paths, or expose local
-configuration, and are reachable only from the loopback admin server / in-process FFI dispatch.
+`cache.removeCached`, `cache.fetchAndCache`), every `control.*` method (`control.peerStatus`,
+`control.subscribe`, `control.unsubscribe`, `control.listSubscriptions`), and `dig.stage`. These
+mutate node state, read attacker-chosen local paths, or expose local configuration, and are reachable
+only from the loopback admin server / in-process FFI dispatch.
 
 Adding a method to the allowlist is a deliberate security decision — it exposes that method to any
 remote peer. New read/discovery methods safe for untrusted peers may be added; anything that mutates
@@ -816,6 +857,7 @@ cache cap is `config.json` > env > default).
 | `DIG_NODE_CACHE_CAP` | on-disk cache cap (bytes) | `DEFAULT_CACHE_CAP` = 1 GiB (floor 64 MiB) |
 | `DIG_NODE_PIN` | anchored-root pin enforcement (`off`/`0`/`false` disables) | enforced (fail-closed) |
 | `DIG_NODE_ON_MISS` | `fetch`/`fetch-through` ⇒ fetch-through on miss, else redirect | redirect |
+| `DIG_NODE_WATCH_INTERVAL` | chain-watch poll interval (seconds) over the subscribed store set (§4.3) | `30` (floor `1`) |
 | `DIG_PEER_NETWORK` | `off`/`0`/`false` disables the peer network (read path only) | on |
 | `DIG_NETWORK_ID` | network id for peer discovery / handshake scope | `DIG_MAINNET` |
 | `DIG_RELAY_URL` | relay endpoint (`off`/`disabled` disables the reservation) | `wss://relay.dig.net:9450` |

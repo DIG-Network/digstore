@@ -1216,6 +1216,40 @@ async fn run_peer_network(node: Arc<crate::Node>) -> Result<(), String> {
         );
     }
 
+    // 4c. Install the DHT inventory-refresh hook + spawn the CHAIN-WATCH + GAP-FILL loop (SPEC §4.3 +
+    //     §5.1 + §6.2). The hook lets the FFI-safe `Node` reconcile its DHT provider records against
+    //     its cache inventory the moment a generation is gap-filled (so peers find the new holder
+    //     without waiting for the maintenance loop). The chain-watch loop polls each SUBSCRIBED store's
+    //     anchored root on an interval and pulls down any confirmed generation it lacks, verifying
+    //     against the chain-anchored root. Both are wired only when the DHT is up (the DHT is the
+    //     provider source + the refresh target); the in-process FFI path runs neither.
+    if let Some(dht) = dht.clone() {
+        // Inventory-refresh hook: reconcile provider records with the current cache inventory.
+        let node_for_hook = node.clone();
+        let dht_for_hook = dht.clone();
+        node.set_inventory_refresher(Box::new(move || {
+            let node = node_for_hook.clone();
+            let dht = dht_for_hook.clone();
+            Box::pin(async move {
+                let cached = node.cache_list_cached().await;
+                let (announced, withdrawn) = dht.refresh_inventory(&cached).await;
+                if announced > 0 || withdrawn > 0 {
+                    tracing::debug!(
+                        announced,
+                        withdrawn,
+                        "dig-node DHT: refreshed provider records after an inventory change"
+                    );
+                }
+            })
+        }));
+        // Chain-watch + gap-fill loop over the subscribed store set.
+        crate::chainwatch::spawn_chain_watch(node.clone());
+        println!(
+            "dig-node peer network: chain-watch + gap-fill loop up (interval {:?})",
+            crate::chainwatch::watch_interval_from_env()
+        );
+    }
+
     // Graceful shutdown: on ctrl-c, best-effort withdraw this node's provider records so peers stop
     // being told to dial a node that is going away (TTL expiry is the backstop if this does not reach
     // every replica). Spawned so it does not block the listener; a no-op when the DHT is not up.
