@@ -152,6 +152,11 @@ launchers).
   `{ did, declared_did, item_count, resolved_count, royalty_basis_points }`. Errors `-32602`, `-32000`.
 - `dig.listCollectionItems` params: `{ launcher_ids: [64hex], offset?: u64, limit?: u64 (≤200) }`;
   result: `{ items: [...], offset, limit, total, next_offset }`. Error `-32602`.
+- Each launcher id costs one chain read, and both methods are peer-reachable (§7.4a), so
+  `launcher_ids` is CAPPED at **10,000** entries — an over-cap array is rejected with `-32602`
+  BEFORE any chain read (bounds the peer-triggered outbound fanout). `dig.getCollection` resolves
+  the whole (capped) array per call; `dig.listCollectionItems` additionally paginates within it at
+  ≤200 items per page.
 
 #### 2.3.2 Node cache + control (CONTROL, loopback / in-process ONLY)
 
