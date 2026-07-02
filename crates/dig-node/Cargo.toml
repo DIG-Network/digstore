@@ -96,6 +96,21 @@ dig-pex = { git = "https://github.com/DIG-Network/dig-pex" }
 # own dig-dht + dig-nat dependencies with ours — ONE crate instance each across the graph (its
 # re-exported `ContentId`/`ProviderRecord` ARE our dig-dht types). Resolved via the lockfile.
 dig-download = { git = "https://github.com/DIG-Network/dig-download" }
+# -- Self-optimizing peer selection (#178) ------------------------------------------------------------
+# The decision + learning layer between dig-dht discovery and dig-download execution: it ranks the
+# providers `find_providers` returns (learning throughput/rtt/reliability + a per-class saturation
+# point + an adaptive relayed penalty from the REAL measured outcome of every range) and hands
+# dig-download the ranked subset + per-peer concurrency, instead of dig-download picking sources
+# blindly. Every completed/failed range streams back via `record_outcome` in real time, and a dropped
+# source drives a `rebalance`. See `download.rs` (SelectorLocator + the outcome-feedback loop).
+#
+# Sourcing: bare git form (no `rev`), matching dig-dht/dig-nat/dig-download above, so cargo unifies the
+# selector's `dig-nat` + `dig-dht` dependencies with ours — ONE crate instance each (its re-used
+# `PeerId`/`ContentId`/`ProviderRecord`/`CandidateAddr` ARE our dig-nat/dig-dht types). Resolved via
+# the lockfile. The selector mirrors `dig_gossip::PoolEvent` LOCALLY (it does not depend on dig-gossip,
+# which lags as a git dep), so the node maps `dig_gossip::PoolEvent` → the selector's local `PoolEvent`
+# 1:1 (see `download.rs::pool_event_to_selector`).
+dig-peer-selector = { git = "https://github.com/DIG-Network/dig-peer-selector" }
 # Deterministic self-signed node certificate derived from the node's persistent identity seed, so the
 # node's mTLS peer_id is stable across restarts. rustls-only (no OpenSSL), matching dig-nat.
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }

@@ -36,21 +36,31 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use base64::Engine;
 use serde_json::{json, Value};
 
 use dig_dht::ContentId;
 use dig_download::{
-    download_key, DhtProviderLocator, DownloadConfig, DownloadOptions, Downloader, FileSink,
-    FileStateStore, GcConfig, MerkleVerifier, NatRangeTransport, ProofVerifier, ProviderLocator,
-    ProviderRecord, RangeTransport, StateStore,
+    download_key, DhtProviderLocator, DownloadConfig, DownloadError, DownloadEvent,
+    DownloadOptions, Downloader, FileSink, FileStateStore, GcConfig, MerkleVerifier,
+    NatRangeTransport, ProofVerifier, ProviderLocator, ProviderRecord, RangeTransport, StateStore,
+};
+use dig_peer_selector::{
+    Candidate, ContentRequest, FailureReason, OutcomeKind, OutcomeResult, PeerId, PeerSelector,
+    PoolEvent, PoolRemovalReason, RangePlanDelta, SelectorConfig, TransferOutcome, TraversalKind,
 };
 use digstore_core::codec::Decode;
 
 use crate::dht::hex64;
+
+/// How many parallel sources the node asks the selector to rank for a content fetch. Matches the
+/// dig-download default `max_concurrency` (8) so the selector's ranked subset is wide enough to feed
+/// the executor's fan-out without over-selecting a low-quality tail.
+const SELECT_PARALLELISM: usize = 8;
 
 /// JSON-RPC error code: the content is NOT held by this node, but the DHT located peers that DO
 /// hold it — the `error.data.redirect` names them (peer_id + candidate addresses) so the caller
@@ -245,6 +255,247 @@ impl FetchedResource {
     }
 }
 
+// -- The self-optimizing peer selector (#178) — the brain between discovery and download ------------
+//
+// The selector (dig-peer-selector) is the DECISION + LEARNING layer that sits between dig-dht
+// discovery and dig-download execution (its SPEC §1, §6.1, §7.4): of the providers `find_providers`
+// returns, WHICH subset should serve this content and in what order — learned from the REAL measured
+// outcome of every range it influenced. dig-node owns the wiring (the selector crate defines only the
+// contract): it feeds the registry (pool churn + connection classes), drives source choice through the
+// [`SelectorLocator`] seam below, and streams every completed/failed range back via `record_outcome`.
+
+/// Map a `dig_gossip::PoolEvent` into the selector's local [`PoolEvent`] (SPEC §5.4 — the shapes are
+/// byte-identical; the selector mirrors the type LOCALLY rather than depending on dig-gossip, so the
+/// host maps it 1:1). `dig-gossip`'s `peer_id` is a `chia_protocol::Bytes32` (32 bytes); the selector
+/// re-uses `dig_nat::PeerId` (also SHA-256(SPKI DER), 32 bytes) — the SAME identity, so the map is a
+/// byte copy through [`PeerId::from_bytes`]. Generic over the 32-byte peer-id representation so the
+/// caller passes gossip's `Bytes32` (which derefs / `Into`s `[u8; 32]`).
+pub(crate) fn pool_event_to_selector(peer_id: [u8; 32], event: PoolEventKind) -> PoolEvent {
+    let peer_id = PeerId::from_bytes(peer_id);
+    match event {
+        PoolEventKind::Added { addr } => PoolEvent::PeerAdded { peer_id, addr },
+        PoolEventKind::Removed { reason } => PoolEvent::PeerRemoved {
+            peer_id,
+            reason: pool_removal_reason(reason),
+        },
+    }
+}
+
+/// The 1:1 field map of `dig_gossip::PoolRemovalReason` → the selector's local [`PoolRemovalReason`]
+/// (identical variants; `Banned` makes the peer ineligible until re-added, SPEC §9.4).
+pub(crate) fn pool_removal_reason(reason: GossipRemovalReason) -> PoolRemovalReason {
+    match reason {
+        GossipRemovalReason::Disconnected => PoolRemovalReason::Disconnected,
+        GossipRemovalReason::Dead => PoolRemovalReason::Dead,
+        GossipRemovalReason::Banned => PoolRemovalReason::Banned,
+    }
+}
+
+/// The kind of a pool churn event, extracted from `dig_gossip::PoolEvent` at the call site so this
+/// module does not depend on dig-gossip's concrete type. The caller (`crate::peer`) destructures the
+/// gossip event into this + the raw 32-byte peer id, keeping the 1:1 map explicit and testable here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PoolEventKind {
+    /// A peer joined the connected pool at `addr`.
+    Added {
+        /// The remote endpoint the connection runs over.
+        addr: std::net::SocketAddr,
+    },
+    /// A peer left the connected pool for `reason`.
+    Removed {
+        /// Why it left.
+        reason: GossipRemovalReason,
+    },
+}
+
+/// A local, dig-gossip-free mirror of `dig_gossip::PoolRemovalReason` so the 1:1 map
+/// ([`pool_removal_reason`]) is expressed + tested WITHOUT this module importing dig-gossip. The
+/// caller in `crate::peer` (which DOES have the gossip type in scope) converts the real
+/// `dig_gossip::PoolRemovalReason` into this at the boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GossipRemovalReason {
+    /// A normal disconnect.
+    Disconnected,
+    /// Evicted dead / unresponsive.
+    Dead,
+    /// Banned for misbehaviour.
+    Banned,
+}
+
+/// The [`ProviderLocator`] seam that makes the selector DRIVE dig-download's source choice (SPEC
+/// §6.1). dig-download picks sources from whatever its injected locator returns; this wrapper
+/// intercepts each `find_providers` call, runs the DHT-located providers through the shared
+/// [`PeerSelector`], and returns them **filtered to the ranked subset and ordered best-first** — so
+/// the executor fans byte-ranges across the peers the selector chose, not a blind least-loaded pick.
+///
+/// The FIRST `find_providers` for a content uses `select` (the initial ranking); a SUBSEQUENT call
+/// (dig-download's relocate, fired when live sources run low — its `ProvidersRefreshed`) uses
+/// `rebalance`, which re-queries the up-to-the-moment models (reflecting every `record_outcome`
+/// streamed back so far) and de-ranks the peers already active, so the selector DRIVES the
+/// replacement-source choice too (SPEC §5.5). Peers the selector omits (a low-quality / bad tail) are
+/// dropped from the set the executor sees.
+///
+/// When the DHT locate returns no providers, or the selector chooses none, the raw located set is
+/// passed through unchanged (never fewer than what discovery found when the selector abstains), so the
+/// selector can only REFINE the executor's source set, never starve a fetch that has holders.
+pub(crate) struct SelectorLocator {
+    /// The real discovery locator (the DHT in production, a mock in tests).
+    inner: Arc<dyn ProviderLocator>,
+    /// The shared selector — the same instance fed by pool churn + `record_outcome`.
+    selector: Arc<PeerSelector>,
+    /// Per-content call state: has this content been `select`ed yet? Drives select-vs-rebalance and
+    /// tracks the active (already-selected) peers a rebalance must de-rank. Keyed by content DHT key.
+    state: Mutex<HashMap<String, Vec<PeerId>>>,
+}
+
+impl SelectorLocator {
+    /// Wrap the real locator + the shared selector.
+    pub(crate) fn new(inner: Arc<dyn ProviderLocator>, selector: Arc<PeerSelector>) -> Arc<Self> {
+        Arc::new(SelectorLocator {
+            inner,
+            selector,
+            state: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Order + filter `located` providers by the selector's decision for `content`. Pure over the
+    /// selector's current models (no I/O) so the select→order transformation is unit-tested directly.
+    /// Returns the located records reordered best-first and filtered to the selected subset; if the
+    /// selector returns an empty selection (e.g. abstains), the raw located set is returned unchanged.
+    fn rank(&self, content: &ContentId, located: Vec<ProviderRecord>) -> Vec<ProviderRecord> {
+        if located.is_empty() {
+            return located;
+        }
+        let key = download_key(content);
+        // Map located providers → selector candidates (a record whose peer_id is malformed hex is not
+        // addressable; it is dropped from the candidate set but kept as a raw fallback below).
+        let candidates: Vec<Candidate> = located
+            .iter()
+            .filter_map(Candidate::from_provider_record)
+            .collect();
+
+        // Decide select (first call for this content) vs rebalance (a relocate re-query).
+        let mut state = self.state.lock().expect("selector-locator mutex poisoned");
+        let first_time = !state.contains_key(&key);
+        let selection = if first_time {
+            let req = ContentRequest::new(*content, SELECT_PARALLELISM);
+            self.selector.select(&req, &candidates)
+        } else {
+            // A relocate: rebalance over the still-needed ranges, de-ranking the peers already active.
+            let active = state.get(&key).cloned().unwrap_or_default();
+            let req = ContentRequest::new(*content, SELECT_PARALLELISM);
+            let need = RangePlanDelta::of_count(SELECT_PARALLELISM);
+            self.selector.rebalance(&req, &active, &need)
+        };
+
+        if selection.is_empty() {
+            // The selector abstained (all candidates ineligible / none worth using). Record the raw
+            // located peers as active (so a later rebalance de-ranks them) and pass discovery through.
+            state.insert(
+                key,
+                candidates.iter().map(|c| c.peer_id).collect::<Vec<_>>(),
+            );
+            return located;
+        }
+
+        // Record the selected peers as active for this content (a later rebalance de-ranks them).
+        state.insert(key, selection.peers.iter().map(|p| p.peer_id).collect());
+
+        // Reorder `located` best-first, keeping only records whose peer_id the selector chose. A
+        // located record with the same peer_id keeps its addresses (the selector carries none of its
+        // own transport detail — it only decides identity + order).
+        let mut ordered = Vec::with_capacity(selection.peers.len());
+        for sp in &selection.peers {
+            let hex = sp.peer_id.to_hex();
+            if let Some(rec) = located.iter().find(|r| r.provider_peer_id == hex) {
+                ordered.push(rec.clone());
+            }
+        }
+        // A selected peer with no matching located record (should not happen — candidates come FROM
+        // `located`) is simply skipped; if that emptied the set, fall back to the raw located set so a
+        // fetch with holders is never starved by a ranking edge case.
+        if ordered.is_empty() {
+            located
+        } else {
+            ordered
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderLocator for SelectorLocator {
+    async fn find_providers(
+        &self,
+        content: &ContentId,
+    ) -> Result<Vec<ProviderRecord>, DownloadError> {
+        let located = self.inner.find_providers(content).await?;
+        Ok(self.rank(content, located))
+    }
+}
+
+/// Current unix seconds (the `at` timestamp on a [`TransferOutcome`]).
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Map a `dig-download` `RangeFailed.reason` (stable text) to a selector [`FailureReason`] (SPEC §6.2,
+/// §6.3). A verify/integrity/merkle/decrypt reason is a HARD [`FailureReason::VerificationFailed`] (a
+/// bad/hostile source the selector drives below cold peers); a timeout/unavailable maps to its own
+/// class; everything else is a soft transport failure. Pure so the mapping is unit-tested.
+pub(crate) fn failure_reason_of(reason: &str) -> FailureReason {
+    let r = reason.to_ascii_lowercase();
+    if r.contains("verif")
+        || r.contains("integrity")
+        || r.contains("merkle")
+        || r.contains("decrypt")
+    {
+        FailureReason::VerificationFailed
+    } else if r.contains("timeout") || r.contains("timed out") {
+        FailureReason::Timeout
+    } else if r.contains("unavailable") || r.contains("not found") || r.contains("no provider") {
+        FailureReason::Unavailable
+    } else if r.contains("cancel") {
+        FailureReason::Cancelled
+    } else {
+        FailureReason::Transport
+    }
+}
+
+/// Build a `Range`-granularity [`TransferOutcome`] for `provider` (a 64-hex `peer_id`), or `None` if
+/// the provider hex is malformed (then no outcome is recorded — the selector attributes only to
+/// transport-verified identities, SPEC §9.1). `bytes`/`duration_ms` are the executor's MEASURED
+/// values; the selector derives throughput strictly from them (SPEC §9.3).
+fn range_outcome(
+    content: &ContentId,
+    provider: &str,
+    range: usize,
+    bytes: u64,
+    duration_ms: u64,
+    result: OutcomeResult,
+) -> Option<TransferOutcome> {
+    let peer_id = PeerId::from_hex(provider)?;
+    Some(TransferOutcome {
+        peer_id,
+        content: *content,
+        kind: OutcomeKind::Range {
+            index: range,
+            // The selector needs range identity (index) to attribute the outcome; the exact offset/
+            // length is not carried on the dig-download event, so it is left 0 (index is the key —
+            // SPEC §6.5). `bytes` is what actually transferred (the measured throughput input).
+            offset: 0,
+            length: bytes,
+        },
+        result,
+        bytes,
+        duration_ms,
+        rtt_ms: None,
+        at: now_unix(),
+    })
+}
+
 // -- The node's P2P content engine ------------------------------------------------------------------
 
 /// The standalone node's P2P content engine: the dig-download [`Downloader`] wired from the node's
@@ -253,9 +504,19 @@ impl FetchedResource {
 /// ([`crate::Node::set_p2p_content`]); absent in the FFI path, where every miss behaves exactly as
 /// before.
 pub struct NodeContent {
-    /// "Which peers hold this content?" — the DHT in production, a mock in tests.
+    /// "Which peers hold this content?" — the DHT in production, a mock in tests. This is the RAW
+    /// discovery locator (unfiltered): the redirect-on-miss path names EVERY holder here, not the
+    /// selector's ranked subset (a redirect should offer the caller all known holders).
     locator: Arc<dyn ProviderLocator>,
-    /// The multi-source download engine (locate → confirm → fan out → verify → reassemble).
+    /// The self-optimizing peer selector (#178) — the decision + learning brain between discovery and
+    /// download. It ranks the located providers (driving the [`Downloader`]'s source choice via
+    /// [`SelectorLocator`]) and learns from every range outcome streamed back in [`Self::fetch_resource`].
+    /// Fed the pool churn + connection classes by the node ([`Self::on_pool_event`],
+    /// [`Self::on_connection_class`]).
+    selector: Arc<PeerSelector>,
+    /// The multi-source download engine (locate → confirm → fan out → verify → reassemble). Its
+    /// injected locator is a [`SelectorLocator`] wrapping `locator` + `selector`, so the executor fans
+    /// ranges across the selector's ranked subset instead of picking sources blindly.
     downloader: Downloader,
     /// The resume-state store the downloader checkpoints into, wrapped so the last-known commitment
     /// (chunk layout + root + proof) is captured BEFORE the download clears it on completion — a
@@ -353,8 +614,15 @@ impl NodeContent {
         let verifier = Arc::new(MerkleVerifier::with_proof_verifier(Arc::new(
             DigstoreProofVerifier,
         )));
+        // One selector per engine, wiring-only config (no behavior knobs — every tradeoff is learned).
+        // Deterministic across runs so a node's ranking is reproducible for a given outcome stream.
+        let selector = Arc::new(PeerSelector::new(SelectorConfig::default()));
+        // The Downloader's locator is the selector-driven wrapper: each `find_providers` (initial +
+        // relocate) is ranked/filtered by the selector, so the executor fans ranges across the chosen
+        // subset (SPEC §6.1). The RAW `locator` stays on the engine for the redirect-on-miss path.
+        let select_locator = SelectorLocator::new(locator.clone(), selector.clone());
         let downloader = Downloader::new(
-            locator.clone(),
+            select_locator,
             transport,
             verifier,
             state_store.clone(),
@@ -362,6 +630,7 @@ impl NodeContent {
         );
         Arc::new(NodeContent {
             locator,
+            selector,
             downloader,
             state_store,
             downloads_dir,
@@ -412,6 +681,28 @@ impl NodeContent {
         self.downloader.active_downloads()
     }
 
+    /// The shared peer selector (for the registry-feed hooks + observability). Exposed so the
+    /// standalone peer-network bring-up can forward pool churn + connection classes into it.
+    pub fn selector(&self) -> &Arc<PeerSelector> {
+        &self.selector
+    }
+
+    /// Feed one pool churn event into the selector's registry (SPEC §2.3, §5.4). The caller
+    /// (`crate::peer`) maps the live `dig_gossip::PoolEvent` into the selector's local [`PoolEvent`]
+    /// via [`pool_event_to_selector`] before calling this — the shapes are byte-identical, so the map
+    /// is 1:1. A `PeerAdded` upserts (provenance Gossip, preserving learned quality); a `PeerRemoved`
+    /// marks disconnected (retaining history) or, for `Banned`, ineligible until re-added.
+    pub fn on_pool_event(&self, event: &PoolEvent) {
+        self.selector.on_pool_event(event);
+    }
+
+    /// Feed a `dig-nat` connection class for a peer into the selector (SPEC §5.4, §7.3), seeding its
+    /// per-class saturation prior + the relayed-penalty prior. Observational only — subordinate to the
+    /// peer's measured outcomes.
+    pub fn on_connection_class(&self, peer: &PeerId, class: TraversalKind) {
+        self.selector.on_connection_class(peer, class);
+    }
+
     /// Locate the peers holding `content` via the DHT (best-effort: a locate failure is an empty
     /// set), excluding this node itself — a redirect must never point the caller back at the node
     /// that just missed.
@@ -459,12 +750,13 @@ impl NodeContent {
         let sink: Arc<dyn dig_download::Sink> = Arc::new(FileSink::new(final_path.clone()));
 
         // 4. Run the multi-source download to completion (locate → confirm → fan ranges → verify per
-        //    range + whole-resource against the chain-anchored root → reassemble → finalize).
+        //    range + whole-resource against the chain-anchored root → reassemble → finalize),
+        //    STREAMING every range outcome back into the selector in real time so the models learn and
+        //    the next select()/rebalance() is smarter (#178, SPEC §6.2).
         let handle = self
             .downloader
             .download(*content, sink, DownloadOptions::default());
-        handle
-            .join()
+        self.drive_download(content, handle)
             .await
             .map_err(|e| format!("download failed: {e}"))?;
 
@@ -502,6 +794,108 @@ impl NodeContent {
         let _ = std::fs::remove_file(&final_path);
 
         Ok(fetched)
+    }
+
+    /// Drive a running download's [`DownloadEvent`] stream, translating each event into a selector
+    /// [`TransferOutcome`] (or a `rebalance`) IN REAL TIME (SPEC §6.2), then await the terminal result.
+    ///
+    /// This is the node-side adapter that closes the `select → execute → record_outcome → rebalance`
+    /// loop (the selector crate defines no `dig-download` dependency, so the mapping lives here):
+    /// - `RangeCompleted { range, provider, progress }` → a `Range` `Success` outcome. The MEASURED
+    ///   `bytes` are the resource-byte delta since this provider's previous event, and `duration_ms` is
+    ///   the wall-clock since then — the throughput the executor actually observed on the wire (never a
+    ///   self-reported rate, SPEC §9.3).
+    /// - `RangeFailed { range, provider, reason }` → a `Failure` outcome; a verify/integrity reason maps
+    ///   to [`FailureReason::VerificationFailed`] (a HARD signal, SPEC §6.3), everything else to a soft
+    ///   transport/timeout failure the selector re-routes around.
+    /// - `ProvidersRefreshed` → the executor is relocating (its live sources ran low); the next
+    ///   `find_providers` through the [`SelectorLocator`] is a `rebalance` — the selector DRIVES the
+    ///   replacement-source choice (SPEC §5.5). (No quality change here; that comes from the per-range
+    ///   failures already recorded.)
+    /// - `Paused` is NOT a failure — no outcome is recorded (SPEC §6.4).
+    /// - `Completed { total_length }` → an aggregate `Request` outcome for whole-request (P99) learning
+    ///   (SPEC §4.4-C), attributed to the last provider that served a range.
+    async fn drive_download(
+        &self,
+        content: &ContentId,
+        mut handle: dig_download::DownloadHandle,
+    ) -> Result<u64, DownloadError> {
+        // Per-provider clock for deriving MEASURED per-range throughput from the cumulative progress
+        // stream: bytes = Δ(progress.bytes_done) since this provider's previous event; duration =
+        // wall-clock since then. Falls back to the download start for a provider's first completion.
+        let start = Instant::now();
+        let mut last_event_at: HashMap<String, Instant> = HashMap::new();
+        let mut last_bytes_done: u64 = 0;
+        let mut last_provider: Option<String> = None;
+
+        // Consume the event stream to exhaustion (it closes when the task ends), feeding the selector.
+        while let Some(event) = handle.next_event().await {
+            match event {
+                DownloadEvent::RangeCompleted {
+                    range,
+                    provider,
+                    progress,
+                } => {
+                    let bytes = progress.bytes_done.saturating_sub(last_bytes_done);
+                    last_bytes_done = progress.bytes_done;
+                    let since = last_event_at.get(&provider).copied().unwrap_or(start);
+                    let duration_ms = since.elapsed().as_millis() as u64;
+                    last_event_at.insert(provider.clone(), Instant::now());
+                    last_provider = Some(provider.clone());
+                    if let Some(outcome) = range_outcome(
+                        content,
+                        &provider,
+                        range,
+                        bytes,
+                        duration_ms,
+                        OutcomeResult::Success,
+                    ) {
+                        self.selector.record_outcome(&outcome);
+                    }
+                }
+                DownloadEvent::RangeFailed {
+                    range,
+                    provider,
+                    reason,
+                } => {
+                    let since = last_event_at.get(&provider).copied().unwrap_or(start);
+                    let duration_ms = since.elapsed().as_millis() as u64;
+                    last_event_at.insert(provider.clone(), Instant::now());
+                    let result = OutcomeResult::Failure {
+                        reason: failure_reason_of(&reason),
+                    };
+                    if let Some(outcome) =
+                        range_outcome(content, &provider, range, 0, duration_ms, result)
+                    {
+                        self.selector.record_outcome(&outcome);
+                    }
+                }
+                DownloadEvent::Completed { total_length } => {
+                    // Aggregate whole-request outcome for P99 learning (attributed to the last server).
+                    if let Some(provider) = last_provider.clone() {
+                        if let Some(peer_id) = PeerId::from_hex(&provider) {
+                            let outcome = TransferOutcome {
+                                peer_id,
+                                content: *content,
+                                kind: OutcomeKind::Request { total_length },
+                                result: OutcomeResult::Success,
+                                bytes: total_length,
+                                duration_ms: start.elapsed().as_millis() as u64,
+                                rtt_ms: None,
+                                at: now_unix(),
+                            };
+                            self.selector.record_outcome(&outcome);
+                        }
+                    }
+                }
+                // ProvidersRefreshed → the executor relocated; the next SelectorLocator::find_providers
+                // is a rebalance (that is where the selector drives the replacement choice). Paused/
+                // Resumed/Planned/Failed carry no per-range quality signal beyond what is recorded above.
+                _ => {}
+            }
+        }
+
+        handle.join().await
     }
 
     /// One staging-file GC sweep now: reap `.download.tmp` files older than `ttl` that no
@@ -1088,5 +1482,175 @@ mod tests {
         assert_eq!(removed, 1, "exactly the stale orphan is reaped");
         assert!(!stale.exists(), "stale orphan removed");
         assert!(live.exists(), "protected staging file kept");
+    }
+
+    // -- the peer selector (#178): the discovery → select → download → record_outcome loop ----------
+
+    /// The gossip → selector `PoolEvent` map is a byte-identical 1:1 (SPEC §5.4): the peer id is the
+    /// same 32 bytes and the removal reasons map variant-for-variant.
+    #[test]
+    fn pool_event_map_is_1_to_1() {
+        let addr: std::net::SocketAddr = "203.0.113.7:9444".parse().unwrap();
+        let added = pool_event_to_selector([9u8; 32], PoolEventKind::Added { addr });
+        assert_eq!(
+            added,
+            PoolEvent::PeerAdded {
+                peer_id: PeerId::from_bytes([9u8; 32]),
+                addr
+            }
+        );
+        for (g, s) in [
+            (
+                GossipRemovalReason::Disconnected,
+                PoolRemovalReason::Disconnected,
+            ),
+            (GossipRemovalReason::Dead, PoolRemovalReason::Dead),
+            (GossipRemovalReason::Banned, PoolRemovalReason::Banned),
+        ] {
+            assert_eq!(pool_removal_reason(g), s);
+            assert_eq!(
+                pool_event_to_selector([1u8; 32], PoolEventKind::Removed { reason: g }),
+                PoolEvent::PeerRemoved {
+                    peer_id: PeerId::from_bytes([1u8; 32]),
+                    reason: s
+                }
+            );
+        }
+    }
+
+    /// The failure-reason classifier maps a verify/integrity reason to the HARD signal and other
+    /// reasons to their soft classes (SPEC §6.3).
+    #[test]
+    fn failure_reason_classification() {
+        assert_eq!(
+            failure_reason_of("range verification failed"),
+            FailureReason::VerificationFailed
+        );
+        assert_eq!(
+            failure_reason_of("merkle proof mismatch"),
+            FailureReason::VerificationFailed
+        );
+        assert_eq!(
+            failure_reason_of("request timed out"),
+            FailureReason::Timeout
+        );
+        assert_eq!(
+            failure_reason_of("provider unavailable"),
+            FailureReason::Unavailable
+        );
+        assert_eq!(
+            failure_reason_of("connection reset"),
+            FailureReason::Transport
+        );
+    }
+
+    /// The `SelectorLocator` CONSULTS the selector before download: given a fixed provider set, its
+    /// `find_providers` returns the located records ordered by the selector's ranking (all healthy
+    /// candidates chosen on the first, exploratory pass). This is the seam that makes the selector
+    /// drive the executor's source choice (SPEC §6.1).
+    #[tokio::test]
+    async fn selector_locator_consults_selector_and_returns_ranked_subset() {
+        let cid = mock_content_id();
+        let inner = Arc::new(MockProviderLocator::fixed(vec![
+            mock_provider(1, &cid),
+            mock_provider(2, &cid),
+            mock_provider(3, &cid),
+        ]));
+        let selector = Arc::new(PeerSelector::new(SelectorConfig::deterministic(1000, 7)));
+        let loc = SelectorLocator::new(inner, selector.clone());
+
+        let ranked = loc.find_providers(&cid).await.expect("locate ok");
+        // Every located holder is a candidate; on the cold pass the selector picks a subset (bounded by
+        // the exploration cap) — non-empty and drawn only from the located set.
+        assert!(!ranked.is_empty(), "selector chose at least one source");
+        let located_ids: std::collections::HashSet<String> =
+            [1u8, 2, 3].iter().map(|n| mock_peer_hex(*n)).collect();
+        for r in &ranked {
+            assert!(
+                located_ids.contains(&r.provider_peer_id),
+                "ranked source came from the located set"
+            );
+        }
+        // The selector's registry now knows the candidates (select registered them) — proving it was
+        // consulted, not bypassed.
+        let snap = selector.snapshot();
+        assert!(
+            snap.registry_size >= ranked.len(),
+            "selector registered the candidates it ranked"
+        );
+    }
+
+    /// The full loop end-to-end: a multi-source fetch over the mock DHT + transport drives the
+    /// selector — `select` is consulted (the download only sees the ranked subset) AND `record_outcome`
+    /// is fed for the completed ranges, so the selector has learned a measured quality for the peer(s)
+    /// that served the transfer. Deterministic (fixed seed + mock transport).
+    #[tokio::test]
+    async fn fetch_feeds_record_outcome_and_selector_learns() {
+        let td = tempfile::tempdir().unwrap();
+        let content = anchored_mock_content(60, 6);
+        let cid = mock_content_id();
+        let transport = Arc::new(MockRangeTransport::new(content.clone()));
+        let locator = Arc::new(MockProviderLocator::fixed(vec![
+            mock_provider(1, &cid),
+            mock_provider(2, &cid),
+        ]));
+        let pc = NodeContent::new(locator, transport, MissMode::FetchThrough, None, td.path());
+
+        // Before any fetch the selector has learned nothing.
+        let before = pc.selector().snapshot();
+        assert_eq!(before.measured_peers, 0, "no measured peers before a fetch");
+
+        let f = pc.fetch_resource(&cid).await.expect("download succeeds");
+        assert_eq!(f.bytes, content.bytes, "reassembled bytes match the source");
+
+        // After the fetch the selector has folded in measured outcomes for the peer(s) that served the
+        // ranges — proving record_outcome was fed in real time from the download event stream.
+        let after = pc.selector().snapshot();
+        assert!(
+            after.measured_peers >= 1,
+            "record_outcome fed at least one peer's measured quality (got {})",
+            after.measured_peers
+        );
+        // At least one of the two providers now carries a positive sample count from the served ranges.
+        let learned = [1u8, 2].iter().any(|n| {
+            pc.selector()
+                .peer_snapshot(&PeerId::from_bytes([*n; 32]))
+                .map(|p| p.samples > 0)
+                .unwrap_or(false)
+        });
+        assert!(learned, "a served peer acquired measured samples");
+    }
+
+    /// The registry-feed hooks the node calls: a pool `PeerAdded` upserts a candidate; a `Banned`
+    /// removal makes it ineligible; a connection class attaches without error (SPEC §2.3, §5.4).
+    #[tokio::test]
+    async fn registry_feed_hooks_are_wired() {
+        let td = tempfile::tempdir().unwrap();
+        let pc = NodeContent::new(
+            Arc::new(MockProviderLocator::fixed(vec![])),
+            Arc::new(MockRangeTransport::new(MockContent::even(10, 1))),
+            MissMode::Redirect,
+            None,
+            td.path(),
+        );
+        let peer = PeerId::from_bytes([42u8; 32]);
+        let addr: std::net::SocketAddr = "203.0.113.42:9444".parse().unwrap();
+        pc.on_pool_event(&PoolEvent::PeerAdded {
+            peer_id: peer,
+            addr,
+        });
+        pc.on_connection_class(&peer, TraversalKind::Direct);
+        assert_eq!(
+            pc.selector().snapshot().registry_size,
+            1,
+            "pool add registered the peer"
+        );
+        // A ban makes the peer ineligible (retained but not selectable).
+        pc.on_pool_event(&PoolEvent::PeerRemoved {
+            peer_id: peer,
+            reason: PoolRemovalReason::Banned,
+        });
+        let snap = pc.selector().peer_snapshot(&peer).expect("peer retained");
+        assert!(snap.banned, "banned peer is retained but ineligible");
     }
 }
