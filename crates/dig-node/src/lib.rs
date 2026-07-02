@@ -46,11 +46,13 @@ use fs4::FileExt;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
+pub mod chainwatch;
 pub mod dht;
 pub mod download;
 pub mod net;
 pub mod peer;
 pub mod pex;
+pub mod subscription;
 
 /// JSON-RPC error code: the served/requested root is NOT the store's
 /// chain-anchored root (gap #127). A content read is gated on this: it serves
@@ -61,6 +63,48 @@ pub mod pex;
 /// uniform with the CLI clone/pull pin (which fails closed with the same
 /// "chain is the authority" semantics).
 const ROOT_NOT_ANCHORED: i64 = -32005;
+
+// -- Canonical control-plane error taxonomy (dig-rpc-types §10, #200) ------------------------------
+//
+// The control-plane errors adopt the CANONICAL numbering + machine codes from the `dig-rpc-types`
+// crate (`ErrorCode::Unauthorized`/`NotSupported`/`ControlError`), which is the single source of
+// truth both DIG node implementations track. These renumber the control-plane errors CLEAR of the
+// onion codes: `-32020`/`-32021`/`-32022` are RESERVED for the onion (private-retrieval) failures
+// (SPEC §2.6), so the control-plane codes are `-32030`/`-32031`/`-32032`. Kept as byte-identical
+// constants (rather than a crate dep) because `dig-rpc-types` is a private sibling repo the digstore
+// CI cannot fetch — the numbers + machine strings mirror it exactly, and the shared value is the
+// wire contract (asserted in `control_error_codes_match_dig_rpc_types`). Full type-level adoption of
+// the `dig-rpc-types` `RpcError` struct is a tracked follow-up (#200b) gated on that repo being
+// public / a workspace vendoring.
+
+/// `UNAUTHORIZED` — a control-plane call is not authorized (loopback / token gate). `data.code` =
+/// `"UNAUTHORIZED"`, `data.origin` = `"control"`.
+const CONTROL_UNAUTHORIZED: i64 = -32030;
+/// `NOT_SUPPORTED` — a control-plane method is recognized but not supported on this node. `data.code`
+/// = `"NOT_SUPPORTED"`, `data.origin` = `"control"`.
+#[allow(dead_code)]
+const CONTROL_NOT_SUPPORTED: i64 = -32031;
+/// `CONTROL_ERROR` — a control-plane runtime error (subscription persistence, config write, sync
+/// trigger). `data.code` = `"CONTROL_ERROR"`, `data.origin` = `"control"`.
+const CONTROL_ERROR: i64 = -32032;
+
+/// Build a control-plane JSON-RPC error carrying the canonical `{code, message, data:{code, origin}}`
+/// envelope (`dig-rpc-types` §10) — `data.code` is the stable `UPPER_SNAKE_CASE` machine key an agent
+/// branches on, `data.origin` is `"control"`. Used by the loopback/in-process control methods
+/// (`control.subscribe` / `control.unsubscribe` / …) so their errors are machine-branchable + never
+/// drift from the canonical taxonomy.
+fn control_err(id: &Value, code: i64, message: &str) -> Value {
+    let machine = match code {
+        CONTROL_UNAUTHORIZED => "UNAUTHORIZED",
+        CONTROL_NOT_SUPPORTED => "NOT_SUPPORTED",
+        _ => "CONTROL_ERROR",
+    };
+    json!({"jsonrpc":"2.0","id":id,"error":{
+        "code": code,
+        "message": message,
+        "data": { "code": machine, "origin": "control" }
+    }})
+}
 
 const RPC_FALLBACK: &str = "https://rpc.dig.net/";
 /// Per-window ciphertext cap (bytes) when paging the JSON-RPC response.
@@ -189,6 +233,37 @@ pub struct Node {
     /// this lets successive windows of the same resource slice from RAM instead of re-decrypting,
     /// turning a streamed resource from O(n²) into O(n) work. Bounded by [`CONTENT_CACHE_MAX_BYTES`].
     content_cache: std::sync::Mutex<ContentCache>,
+    /// Hook the standalone peer-network bring-up installs so the node can refresh its DHT provider
+    /// records when its inventory changes (a gap-filled generation, a `cache.fetchAndCache`) — so
+    /// peers find it as a NEW holder without waiting for the maintenance loop (SPEC §6.2). Set ONCE by
+    /// [`peer::spawn_peer_network`] via [`Node::set_inventory_refresher`]; NEVER set on the FFI path
+    /// (the browser is a consumer with no DHT), where an inventory-change refresh is a no-op. Kept off
+    /// the `Node` struct's DHT-handle dependency (the node stays FFI-safe) by taking a boxed async hook.
+    inventory_refresher: OnceLock<InventoryRefresher>,
+}
+
+/// A boxed async hook that reconciles the node's DHT provider records with its current cache
+/// inventory (announce new capsules, withdraw gone ones). Installed by the standalone peer-network
+/// bring-up ([`peer::spawn_peer_network`]); the FFI path installs none. The closure is `Send + Sync`
+/// and returns a boxed future so the async DHT `refresh_inventory` call can be driven from the
+/// FFI-safe [`Node`] without the node holding the DHT handle directly.
+type InventoryRefresher =
+    Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+
+impl Node {
+    /// Install the DHT inventory-refresh hook (the standalone peer-network bring-up calls this once;
+    /// the FFI path never does). Idempotent — a second install is ignored.
+    pub(crate) fn set_inventory_refresher(&self, refresher: InventoryRefresher) {
+        let _ = self.inventory_refresher.set(refresher);
+    }
+
+    /// Refresh the node's DHT provider records against its current inventory, if a peer network is
+    /// running (SPEC §6.2). A no-op on the FFI path (no hook installed) or before bring-up.
+    pub(crate) async fn refresh_dht_inventory(&self) {
+        if let Some(refresh) = self.inventory_refresher.get() {
+            refresh().await;
+        }
+    }
 }
 
 /// The CANONICAL (shared) cache dir — the one the DIG Browser's in-process
@@ -542,6 +617,62 @@ pub fn set_wc_project_id(id: &str) -> std::io::Result<()> {
     })
 }
 
+// -- Subscription set (SPEC §6) — persisted, cross-process-locked ---------------------------------
+//
+// The node's OWN set of subscribed stores (the stores it actively watches + gap-fills) lives in
+// `<cache>/subscriptions.json`, distinct from the durable capsule inventory (the `.dig` modules).
+// All the add/remove/list policy is pure in `crate::subscription`; these thin wrappers add the disk
+// path + the cross-process-locked read-modify-write (the SAME `.dignode.lock` the config RMW uses),
+// so two DIG processes sharing the cache can't lose each other's subscription updates.
+
+/// The subscriptions file for the effective cache dir (`<cache>/subscriptions.json`).
+fn subscriptions_path() -> PathBuf {
+    subscription::subscriptions_path(&cache_dir())
+}
+
+/// Load the persisted subscription set from the effective cache dir (empty if none/unreadable).
+pub fn load_subscriptions() -> subscription::SubscriptionSet {
+    subscription::load(&cache_dir())
+}
+
+/// Read-modify-write the subscription set under the in-process mutex + cross-process advisory lock
+/// (mirroring [`update_config_locked`]), applying `mutate` to the loaded set and persisting it
+/// atomically (temp + rename). Returns whatever `mutate` returns so the caller can report
+/// added/removed. A `mutate` that returns `Err` aborts the write (nothing is persisted).
+fn update_subscriptions_locked<T>(
+    mutate: impl FnOnce(&mut subscription::SubscriptionSet) -> Result<T, String>,
+) -> Result<T, String> {
+    let path = subscriptions_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    // Serialize this PROCESS's RMWs (recover from a poisoned lock — the guarded file is always left
+    // in a consistent on-disk state, so a prior panic carries no broken invariant).
+    let _in_proc = CONFIG_RMW_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Hold the cross-process lock across the read AND the write so another PROCESS can't read then
+    // clobber our update.
+    let _lock = acquire_cache_lock();
+    let mut set = subscription::load(&cache_dir());
+    let out = mutate(&mut set)?;
+    let bytes = subscription::encode(&set);
+    write_atomic(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// Subscribe to `store_id` (persisted). `Ok(true)` = newly added, `Ok(false)` = already subscribed,
+/// `Err` = malformed id / write failure.
+pub fn subscribe_store(store_id: &str) -> Result<bool, String> {
+    update_subscriptions_locked(|set| set.add(store_id))
+}
+
+/// Unsubscribe from `store_id` (persisted). `Ok(true)` = removed, `Ok(false)` = was not subscribed,
+/// `Err` = malformed id / write failure.
+pub fn unsubscribe_store(store_id: &str) -> Result<bool, String> {
+    update_subscriptions_locked(|set| set.remove(store_id))
+}
+
 /// Path of a cached store module for (store_id, root), if present. Modules live
 /// under `<cache>/modules/` — populated out-of-band (a local digstore store, or
 /// authed whole-store sync) and served via `serve_blind`.
@@ -549,6 +680,13 @@ fn module_path(dir: &Path, store_hex: &str, root_hex: &str) -> PathBuf {
     dir.join("modules")
         .join(store_hex)
         .join(format!("{root_hex}.module"))
+}
+
+/// Whether the module for `(store_id, root)` is held locally under `dir` — the "is this generation
+/// missing?" check the chain-watch gap-fill loop keys on (SPEC §5.1 step 1). Thin over
+/// [`module_path`] so the loop's held-check seam ([`chainwatch::HeldCheck`]) has one source of truth.
+fn module_exists(dir: &Path, store_hex: &str, root_hex: &str) -> bool {
+    module_path(dir, store_hex, root_hex).exists()
 }
 
 /// Hard bound on the total bytes [`walk_dir_files`] will read into memory before aborting.
@@ -1513,6 +1651,51 @@ impl Node {
         }
     }
 
+    /// GAP-FILL one missing generation (SPEC §5.1 step 4): pull the whole `.dig` module for
+    /// `(store_id, root)` down from other nodes, verify it against the chain-anchored root, land it in
+    /// the local cache, and (best-effort) refresh the DHT provider records so peers immediately find
+    /// this node as a NEW holder of the just-synced capsule (§6.2). Idempotent — an already-held
+    /// generation is a cheap success with no network.
+    ///
+    /// The pull reuses the authenticated whole-store sync ([`Self::cache_fetch_and_cache`] →
+    /// `sync_module_from`), which lands the module keyed by capsule `(store, root)`. The
+    /// VERIFICATION INVARIANT (SPEC §5.3) is upheld at every SERVE: a gap-filled module is never served
+    /// as current unless its root equals the chain-anchored tip (the read-path pin, §4.2), so a
+    /// tampered or wrong-generation pull can never be served — the same guarantee whether the module
+    /// arrived via a client read, a §21 sync, or this proactive gap-fill.
+    ///
+    /// `root` is passed as [`Bytes32`] (the chain-anchored tip the watcher resolved), so gap-fill
+    /// always targets a chain-confirmed generation — never a caller-chosen root.
+    pub async fn gap_fill_generation(
+        &self,
+        store_id: [u8; 32],
+        root: Bytes32,
+    ) -> Result<(), String> {
+        let store_hex = hex::encode(store_id);
+        let root_hex = root.to_hex();
+        // Already held → nothing to pull (idempotent).
+        if module_exists(&self.cache_dir, &store_hex, &root_hex) {
+            return Ok(());
+        }
+        // Pull + cache the whole module under (store, root) via the authenticated §21 whole-store sync.
+        // `cache_fetch_and_cache` serializes concurrent pulls of the same capsule and reports the
+        // failure reason (no identity / not authorized / served root differs) on error.
+        self.cache_fetch_and_cache(&store_hex, &root_hex).await?;
+
+        // Confirm the generation actually landed (a sync whose served root differed leaves it absent).
+        if !module_exists(&self.cache_dir, &store_hex, &root_hex) {
+            return Err(format!(
+                "gap-fill for {store_hex}:{root_hex} pulled a module but not at the confirmed root"
+            ));
+        }
+
+        // Best-effort: refresh the DHT provider records so peers find this node as a holder of the
+        // newly-synced capsule (§6.2). The peer-network bring-up installs the announce hook; when no
+        // peer network is running (FFI path) this is a no-op.
+        self.refresh_dht_inventory().await;
+        Ok(())
+    }
+
     // -- L7 peer RPC (PHASE-2b, #162) — serving the node's LOCAL inventory ------
     //
     // The node serves the SAME content over the peer network that it serves over §21 / the HTTP read
@@ -2131,6 +2314,44 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         return json!({"jsonrpc":"2.0","id":id,
             "result": node.peer_status.snapshot_json(&endpoint, &network_id)});
     }
+    // control.subscribe / control.unsubscribe / control.listSubscriptions (SPEC §6) — manage the
+    // node's OWN persisted set of subscribed stores (the stores it actively watches + gap-fills). These
+    // are CONTROL-plane methods: reachable ONLY from the loopback admin server / in-process FFI
+    // dispatch, NEVER over the mTLS peer surface (they are absent from `is_peer_reachable_method`, so
+    // the peer responder answers `-32601` before dispatch). Errors carry the canonical control-plane
+    // taxonomy (`-32030`/`-32032`, `data.code`/`data.origin`; dig-rpc-types §10).
+    if method == "control.subscribe" {
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        let store_id = params.get("store_id").and_then(Value::as_str).unwrap_or("");
+        return match subscribe_store(store_id) {
+            Ok(added) => {
+                // A newly-subscribed store is reconciled promptly (the watch loop also polls it on its
+                // interval); a refresh of the DHT inventory is not needed here (subscription != held).
+                json!({"jsonrpc":"2.0","id":id,"result":{
+                    "subscribed": true,
+                    "added": added,
+                    "store_id": store_id.to_ascii_lowercase()}})
+            }
+            Err(e) => control_err(&id, CONTROL_ERROR, &format!("subscribe failed: {e}")),
+        };
+    }
+    if method == "control.unsubscribe" {
+        let params = req.get("params").cloned().unwrap_or(json!({}));
+        let store_id = params.get("store_id").and_then(Value::as_str).unwrap_or("");
+        return match unsubscribe_store(store_id) {
+            Ok(removed) => json!({"jsonrpc":"2.0","id":id,"result":{
+                "subscribed": false,
+                "removed": removed,
+                "store_id": store_id.to_ascii_lowercase()}}),
+            Err(e) => control_err(&id, CONTROL_ERROR, &format!("unsubscribe failed: {e}")),
+        };
+    }
+    if method == "control.listSubscriptions" {
+        let set = load_subscriptions();
+        return json!({"jsonrpc":"2.0","id":id,"result":{
+            "subscriptions": set.stores(),
+            "count": set.len()}});
+    }
     if method == "cache.setCapBytes" {
         let requested = req
             .get("params")
@@ -2141,8 +2362,8 @@ pub async fn handle_rpc(node: &Node, req: Value) -> Value {
         let cap = requested.max(64 * 1024 * 1024);
         return match set_cache_cap_bytes(cap) {
             Ok(()) => json!({"jsonrpc":"2.0","id":id,"result":{"cap_bytes": cap}}),
-            Err(e) => json!({"jsonrpc":"2.0","id":id,
-                "error":{"code":-32000,"message": e.to_string()}}),
+            // A config write failure is a control-plane runtime error (canonical taxonomy §10).
+            Err(e) => control_err(&id, CONTROL_ERROR, &e.to_string()),
         };
     }
     if method == "cache.clear" {
@@ -2459,6 +2680,7 @@ impl Node {
             peer_status: peer::PeerStatus::new(),
             p2p_content: OnceLock::new(),
             content_cache: std::sync::Mutex::new(ContentCache::default()),
+            inventory_refresher: OnceLock::new(),
         })
     }
 
@@ -2485,6 +2707,13 @@ impl Node {
     /// (`<cache>/downloads`) + `.download.tmp` GC live under (shares the node's writability handling).
     pub fn cache_dir_path(&self) -> &Path {
         &self.cache_dir
+    }
+
+    /// The node's anchored-root resolver (the trusted-root source for the read-path pin AND the
+    /// chain-watch loop). Cloned `Arc` so the chain-watch loop shares the SAME resolver the read path
+    /// uses — production coinset walk, or a deterministic one in tests.
+    pub fn anchored_root_resolver_arc(&self) -> Arc<dyn AnchoredRootResolver> {
+        self.anchored_root_resolver.clone()
     }
 }
 
@@ -2559,6 +2788,7 @@ pub(crate) mod test_support {
             peer_status: peer::PeerStatus::new(),
             p2p_content: OnceLock::new(),
             content_cache: std::sync::Mutex::new(ContentCache::default()),
+            inventory_refresher: OnceLock::new(),
         };
         (Arc::new(node), td)
     }
@@ -2726,6 +2956,7 @@ mod tests {
             peer_status: peer::PeerStatus::new(),
             p2p_content: OnceLock::new(),
             content_cache: std::sync::Mutex::new(ContentCache::default()),
+            inventory_refresher: OnceLock::new(),
         };
         (node, td)
     }
@@ -2767,6 +2998,103 @@ mod tests {
         assert!(matched, "authed sync to served root 0x10 should match");
         let cached = std::fs::read(module_path(&node.cache_dir, &store_hex, &root_hex)).unwrap();
         assert_eq!(cached, module, "served module must be cached locally");
+    }
+
+    /// **Proves:** `gap_fill_generation` ACTIVELY PULLS a missing generation end-to-end (SPEC §5.1) —
+    /// the node holds nothing for `(store, root)`, `gap_fill_generation` fetches the whole module from
+    /// a real auth-required §21 remote, verifies + lands it under `(store, root)`, and a second call is
+    /// an idempotent no-op. This is the "actively seek other nodes to pull the missing generations"
+    /// behavior the chain-watch loop drives.
+    /// **Catches:** a gap-fill that doesn't pull, lands the module at the wrong key, or re-pulls.
+    #[tokio::test]
+    async fn gap_fill_pulls_a_missing_generation_from_a_remote() {
+        let module = b"gap-filled-module-bytes".to_vec();
+        let (base, store_hex) = spawn_authed_remote(module.clone()).await;
+        let store_id: [u8; 32] = Bytes32::from_hex(&store_hex).unwrap().0;
+        // The remote's served genesis root.
+        let root = Bytes32([0x10; 32]);
+        // A node with a §21 identity whose UPSTREAM is the authed remote (gap-fill pulls via upstream).
+        let td = tempfile::tempdir().unwrap();
+        let node = Node {
+            cache_dir: td.path().to_path_buf(),
+            http: reqwest::Client::new(),
+            upstream: base,
+            cache_lock: Mutex::new(()),
+            identity_seed: Some([5u8; 32]),
+            anchored_root_resolver: MockResolver::one(&store_hex, root),
+            peer_status: peer::PeerStatus::new(),
+            p2p_content: OnceLock::new(),
+            content_cache: std::sync::Mutex::new(ContentCache::default()),
+            inventory_refresher: OnceLock::new(),
+        };
+
+        // Missing before the pull.
+        assert!(!module_exists(&node.cache_dir, &store_hex, &root.to_hex()));
+
+        // Gap-fill pulls + verifies + lands the module under (store, root).
+        assert_eq!(node.gap_fill_generation(store_id, root).await, Ok(()));
+        let cached =
+            std::fs::read(module_path(&node.cache_dir, &store_hex, &root.to_hex())).unwrap();
+        assert_eq!(
+            cached, module,
+            "the pulled generation is cached under (store, root)"
+        );
+
+        // A second gap-fill is an idempotent no-op (already held → cheap success).
+        assert_eq!(node.gap_fill_generation(store_id, root).await, Ok(()));
+    }
+
+    /// **Proves:** the chain-watch loop's PRODUCTION seams (`NodeGapFiller` + `NodeHeldCheck`) wire the
+    /// node's real pull path — one `run_tick` over a subscribed store whose confirmed tip is missing
+    /// pulls it from the §21 remote and marks it held. This exercises the full §4.3→§5.1 loop with the
+    /// real node actuator (only the chain resolver is a deterministic mock).
+    /// **Catches:** a mis-wired production seam (held-check or gap-filler pointed at the wrong path).
+    #[tokio::test]
+    async fn chain_watch_tick_gap_fills_a_subscribed_store_end_to_end() {
+        let module = b"watched-store-module".to_vec();
+        let (base, store_hex) = spawn_authed_remote(module.clone()).await;
+        let root = Bytes32([0x10; 32]);
+        let td = tempfile::tempdir().unwrap();
+        let node = Arc::new(Node {
+            cache_dir: td.path().to_path_buf(),
+            http: reqwest::Client::new(),
+            upstream: base,
+            cache_lock: Mutex::new(()),
+            identity_seed: Some([5u8; 32]),
+            anchored_root_resolver: MockResolver::one(&store_hex, root),
+            peer_status: peer::PeerStatus::new(),
+            p2p_content: OnceLock::new(),
+            content_cache: std::sync::Mutex::new(ContentCache::default()),
+            inventory_refresher: OnceLock::new(),
+        });
+
+        // Build the loop's deps from the PRODUCTION seams, with a fixed one-store subscription set.
+        let subs = {
+            let store_hex = store_hex.clone();
+            Arc::new(move || {
+                let mut s = subscription::SubscriptionSet::new();
+                s.add(&store_hex).unwrap();
+                s
+            }) as Arc<dyn Fn() -> subscription::SubscriptionSet + Send + Sync>
+        };
+        let deps = chainwatch::WatchDeps {
+            subscriptions: subs,
+            resolver: node.anchored_root_resolver_arc(),
+            held: Arc::new(chainwatch::NodeHeldCheck::new(node.cache_dir.clone())),
+            filler: Arc::new(chainwatch::NodeGapFiller::new(node.clone())),
+        };
+
+        assert!(!module_exists(&node.cache_dir, &store_hex, &root.to_hex()));
+        let summary = chainwatch::run_tick(&deps).await;
+        assert_eq!(
+            (summary.checked, summary.attempted, summary.filled),
+            (1, 1, 1),
+            "one subscribed store, one missing generation, one filled"
+        );
+        assert!(
+            module_exists(&node.cache_dir, &store_hex, &root.to_hex()),
+            "the watched store's missing generation is now held"
+        );
     }
 
     #[tokio::test]
@@ -3085,6 +3413,154 @@ mod tests {
         assert!(cleared["result"].is_object());
 
         std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    // -- Subscription management control RPCs (SPEC §6) -------------------------
+    //
+    // `control.subscribe` / `control.unsubscribe` / `control.listSubscriptions` manage the node's
+    // OWN persisted subscribed-store set. Like the cache.* config tests they mutate the PROCESS-GLOBAL
+    // `DIG_NODE_CACHE` (the subscription file lives at `<cache>/subscriptions.json`), so they hold
+    // `ENV_GUARD` for the whole body and drive a current-thread runtime via `block_on` (no std mutex
+    // held across an `.await`).
+
+    /// **Proves:** subscribe → list → unsubscribe round-trips through the real dispatch AND persists to
+    /// disk (a fresh `load_subscriptions` sees the change); add/remove report newly-added/removed.
+    /// **Catches:** a control RPC that doesn't persist, or a list that doesn't reflect the set.
+    #[test]
+    fn subscription_control_rpc_roundtrip_and_persistence() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
+        let (node, _td) = test_node(None);
+        let store = "ab".repeat(32);
+
+        // Initially no subscriptions.
+        let empty = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"control.listSubscriptions"}),
+        ));
+        assert_eq!(empty["result"]["count"], json!(0));
+        assert_eq!(empty["result"]["subscriptions"], json!([]));
+
+        // Subscribe → newly added.
+        let sub = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":2,"method":"control.subscribe",
+                   "params":{"store_id": store}}),
+        ));
+        assert_eq!(sub["result"]["subscribed"], json!(true));
+        assert_eq!(sub["result"]["added"], json!(true));
+
+        // Re-subscribe → idempotent (added:false).
+        let again = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":3,"method":"control.subscribe",
+                   "params":{"store_id": store}}),
+        ));
+        assert_eq!(again["result"]["added"], json!(false));
+
+        // List reflects it, AND it is persisted (a fresh load sees it).
+        let listed = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":4,"method":"control.listSubscriptions"}),
+        ));
+        assert_eq!(listed["result"]["count"], json!(1));
+        assert_eq!(listed["result"]["subscriptions"], json!([store]));
+        assert!(load_subscriptions().contains(&store), "persisted to disk");
+
+        // Unsubscribe → removed, and the set is empty again.
+        let unsub = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":5,"method":"control.unsubscribe",
+                   "params":{"store_id": store}}),
+        ));
+        assert_eq!(unsub["result"]["removed"], json!(true));
+        assert!(
+            !load_subscriptions().contains(&store),
+            "unsubscribe persisted"
+        );
+
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    /// **Proves:** subscribing a malformed store id returns the CANONICAL control-plane error
+    /// (`-32032` CONTROL_ERROR) with the `data.code`/`data.origin` envelope (dig-rpc-types §10).
+    /// **Catches:** a control error that drifts off the taxonomy or drops the machine-branchable data.
+    #[test]
+    fn subscribe_bad_id_uses_canonical_control_error() {
+        let _g = ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_NODE_CACHE", td.path().join("cache"));
+        let (node, _td) = test_node(None);
+
+        let resp = rt.block_on(handle_rpc(
+            &node,
+            json!({"jsonrpc":"2.0","id":1,"method":"control.subscribe",
+                   "params":{"store_id": "not-hex"}}),
+        ));
+        assert_eq!(resp["error"]["code"], json!(CONTROL_ERROR), "-32032");
+        assert_eq!(resp["error"]["data"]["code"], json!("CONTROL_ERROR"));
+        assert_eq!(resp["error"]["data"]["origin"], json!("control"));
+        assert!(resp.get("result").is_none());
+        // Nothing was persisted.
+        assert!(load_subscriptions().is_empty());
+
+        std::env::remove_var("DIG_NODE_CACHE");
+    }
+
+    /// **Proves:** the control-plane taxonomy constants match dig-rpc-types §10 byte-for-byte (the
+    /// shared wire contract): control errors are `-32030`/`-32031`/`-32032`, clear of the onion codes
+    /// `-32020`/`-32021`/`-32022`. **Catches:** a renumber that reintroduces the historical collision.
+    #[test]
+    fn control_error_codes_match_dig_rpc_types() {
+        assert_eq!(CONTROL_UNAUTHORIZED, -32030);
+        assert_eq!(CONTROL_NOT_SUPPORTED, -32031);
+        assert_eq!(CONTROL_ERROR, -32032);
+        // Disjoint from the reserved onion codes (SPEC §2.6).
+        for onion in [-32020, -32021, -32022] {
+            assert_ne!(CONTROL_UNAUTHORIZED, onion);
+            assert_ne!(CONTROL_NOT_SUPPORTED, onion);
+            assert_ne!(CONTROL_ERROR, onion);
+        }
+    }
+
+    /// **Proves:** the subscription control methods are NOT peer-reachable (SPEC §7.4a) — a remote
+    /// peer that names one gets `-32601`, exactly like `cache.*`. **Catches:** a new control method
+    /// accidentally exposed to untrusted peers.
+    #[test]
+    fn subscription_methods_are_not_peer_reachable() {
+        for m in [
+            "control.subscribe",
+            "control.unsubscribe",
+            "control.listSubscriptions",
+        ] {
+            assert!(
+                !peer::is_peer_reachable_method(m),
+                "{m} must be loopback/in-process only"
+            );
+        }
+    }
+
+    /// **Proves:** `gap_fill_generation` is a cheap no-op when the generation is already held (no
+    /// network, `Ok(())`). **Catches:** a gap-fill that re-pulls an already-held generation.
+    #[tokio::test]
+    async fn gap_fill_is_noop_when_already_held() {
+        let (node, _td) = test_node(None);
+        let store = [7u8; 32];
+        let root = Bytes32([9u8; 32]);
+        // Seed the module so the generation is "held".
+        seed_module(&node, &hex::encode(store), &root.to_hex(), b"already-here");
+        // Upstream is unroutable in test_node, so a real pull would fail; an already-held
+        // generation must succeed WITHOUT touching it.
+        assert_eq!(node.gap_fill_generation(store, root).await, Ok(()));
     }
 
     // -- Cached-store management RPCs (the DIG-settings cache manager, task #32) -
