@@ -36,6 +36,15 @@ pub struct Cli {
     /// confirmation in non-interactive mode.
     #[arg(short = 'y', long, global = true)]
     pub yes: bool,
+    /// Explicit DIG node/gateway to connect to for network reads (overrides the
+    /// dig.local -> localhost -> rpc.dig.net resolution ladder entirely). Also
+    /// settable via `$DIG_NODE_URL` or persisted with `digstore config node.url`;
+    /// this flag takes precedence over both (`--node` > `$DIG_NODE_URL` >
+    /// `node.url`). Deliberately NOT a clap `env=` attribute: the flag and the
+    /// env var must stay independently observable so the resolver can report
+    /// (and tests can assert) exactly which override source won.
+    #[arg(long, global = true)]
+    pub node: Option<String>,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -70,6 +79,9 @@ pub enum Command {
     Cat(CatArgs),
     /// Manage remote endpoints for this store (add, list, remove).
     Remote(RemoteArgs),
+    /// Get/set global CLI configuration (currently: the node/gateway ladder
+    /// override, `node.url`).
+    Config(ConfigArgs),
     /// Clone a store from a remote into the current directory.
     Clone(CloneArgs),
     /// Upload your store's content and signed head to a remote.
@@ -675,6 +687,37 @@ pub enum RemoteAction {
     List,
     Remove {
         name: String,
+    },
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Every network read resolves the DIG node in this fixed order (CLAUDE.md \
+§5.3), using the first that answers: an explicit override (--node flag / $DIG_NODE_URL / this \
+config) > dig.local (the installed local node) > localhost (default port) > rpc.dig.net (public \
+gateway, final fallback).\n\nEXAMPLES:\n  digstore config node.url https://dig.local:9778\n  \
+digstore config node.url --show\n  digstore config node.url --unset"
+)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub action: ConfigAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigAction {
+    /// Get, set, or clear the persisted node/gateway override (lowest-precedence
+    /// override source: a `--node` flag or `$DIG_NODE_URL` still win).
+    #[command(name = "node.url")]
+    NodeUrl {
+        /// The node/gateway base URL to persist (e.g. https://dig.local:9778).
+        /// Omit with --show to print the current value, or pass --unset to clear it.
+        url: Option<String>,
+        /// Print the currently persisted value (or "(unset)") instead of setting one.
+        #[arg(long, conflicts_with_all = ["unset"])]
+        show: bool,
+        /// Clear the persisted value, reverting to the dig.local/localhost/rpc.dig.net ladder.
+        #[arg(long)]
+        unset: bool,
     },
 }
 

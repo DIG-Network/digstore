@@ -8,6 +8,7 @@ pub mod client_crypto;
 pub mod dighub;
 pub mod discovery;
 pub mod identity;
+pub mod node;
 pub mod remote_ops;
 pub mod serve;
 pub mod store_ops;

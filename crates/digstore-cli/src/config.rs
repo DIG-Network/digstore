@@ -1,4 +1,5 @@
-//! CLI-level configuration: the remotes table (`remotes.toml`).
+//! CLI-level configuration: the remotes table (`remotes.toml`) and the global
+//! node-resolution config (`node.url`, `CLAUDE.md` §5.3).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -131,6 +132,109 @@ pub fn normalize_remote_url(url: &str) -> String {
     format!("https://{host}/{path}")
 }
 
+// ===========================================================================
+// Global node-resolution config (`CLAUDE.md` §5.3): `digstore config node.url`.
+//
+// This is deliberately NOT part of `remotes.toml` (which is per-workspace,
+// under `.dig/`): the node override is a machine-wide default (like `git`'s
+// `--global` config), so it lives beside the identity/session state in the OS
+// config dir, keyed the same way `ops::identity`/`ops::dighub` key their state
+// (`DIG_IDENTITY_DIR` override, else `<config_dir>/dig`) — one global "dig"
+// config home, not a third ad-hoc location.
+// ===========================================================================
+
+/// The environment variable an explicit node override can be supplied through
+/// (`CLAUDE.md` §5.3 tier-1 override, second-highest precedence after `--node`).
+pub const DIG_NODE_URL_ENV: &str = "DIG_NODE_URL";
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct NodeConfigFile {
+    #[serde(default)]
+    node: NodeSection,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct NodeSection {
+    #[serde(default)]
+    url: Option<String>,
+}
+
+/// The global dig config directory: `DIG_IDENTITY_DIR` override, else
+/// `<OS config_dir>/dig`. Mirrors `ops::identity`/`ops::dighub` exactly (the
+/// same env var) so a test/deployment that redirects one redirects all of them
+/// together — there is one global "dig home", not per-feature ones.
+fn global_dig_dir() -> Result<std::path::PathBuf, CliError> {
+    if let Some(d) = std::env::var_os("DIG_IDENTITY_DIR") {
+        return Ok(std::path::PathBuf::from(d));
+    }
+    let base = dirs::config_dir().ok_or_else(|| {
+        CliError::Other(anyhow::anyhow!(
+            "no OS config directory available for the dig config"
+        ))
+    })?;
+    Ok(base.join("dig"))
+}
+
+fn node_config_path_in(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("config.toml")
+}
+
+fn load_node_config_in(dir: &std::path::Path) -> Result<NodeConfigFile, CliError> {
+    let p = node_config_path_in(dir);
+    if !p.exists() {
+        return Ok(NodeConfigFile::default());
+    }
+    let text = fs::read_to_string(&p).map_err(|e| CliError::Other(e.into()))?;
+    toml::from_str(&text).map_err(|e| CliError::Other(e.into()))
+}
+
+fn save_node_config_in(dir: &std::path::Path, f: &NodeConfigFile) -> Result<(), CliError> {
+    fs::create_dir_all(dir).map_err(|e| CliError::Other(e.into()))?;
+    let text = toml::to_string_pretty(f).map_err(|e| CliError::Other(e.into()))?;
+    fs::write(node_config_path_in(dir), text).map_err(|e| CliError::Other(e.into()))
+}
+
+/// Persist `digstore config node.url <url>` — the LOWEST-precedence override
+/// source (a `--node` flag or `$DIG_NODE_URL` still win; see
+/// `digstore_remote::resolver::OverrideInputs`), but the only one that
+/// survives across invocations. Writes into the global dig config dir
+/// (`DIG_IDENTITY_DIR` override, else `<OS config_dir>/dig`).
+pub fn set_node_url(url: &str) -> Result<(), CliError> {
+    set_node_url_in(&global_dig_dir()?, url)
+}
+
+/// Clear a persisted `node.url` (`digstore config node.url --unset`). A no-op
+/// (not an error) when nothing was set — `--unset` is idempotent.
+pub fn unset_node_url() -> Result<(), CliError> {
+    unset_node_url_in(&global_dig_dir()?)
+}
+
+/// The persisted `node.url`, if any has been set via `digstore config node.url`.
+pub fn get_node_url() -> Result<Option<String>, CliError> {
+    get_node_url_in(&global_dig_dir()?)
+}
+
+/// Explicit-directory variant of [`set_node_url`] — free of the process-global
+/// `DIG_IDENTITY_DIR` env var, so tests need no lock (mirrors the `*_in(dir)`
+/// pattern already used by `ops::dighub`'s session storage).
+pub fn set_node_url_in(dir: &std::path::Path, url: &str) -> Result<(), CliError> {
+    let mut f = load_node_config_in(dir)?;
+    f.node.url = Some(url.trim_end_matches('/').to_string());
+    save_node_config_in(dir, &f)
+}
+
+/// Explicit-directory variant of [`unset_node_url`].
+pub fn unset_node_url_in(dir: &std::path::Path) -> Result<(), CliError> {
+    let mut f = load_node_config_in(dir)?;
+    f.node.url = None;
+    save_node_config_in(dir, &f)
+}
+
+/// Explicit-directory variant of [`get_node_url`].
+pub fn get_node_url_in(dir: &std::path::Path) -> Result<Option<String>, CliError> {
+    Ok(load_node_config_in(dir)?.node.url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,6 +335,67 @@ mod tests {
         assert_eq!(
             resolve_remote_url(&ctx, "origin").unwrap(),
             format!("https://rpc.dig.net/stores/{id}")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Global node config (`digstore config node.url`, `CLAUDE.md` §5.3).
+    //
+    // Uses the `*_in(dir)` explicit-directory variants, so these tests are free
+    // of the process-global `DIG_IDENTITY_DIR` env var and need no lock (the
+    // same pattern `ops::dighub`'s `session_round_trip_save_load_clear` uses).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn node_url_unset_by_default() {
+        let td = tempdir().unwrap();
+        assert_eq!(get_node_url_in(td.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn node_url_set_then_get_round_trips() {
+        let td = tempdir().unwrap();
+        set_node_url_in(td.path(), "https://my-node.example:9778").unwrap();
+        assert_eq!(
+            get_node_url_in(td.path()).unwrap().as_deref(),
+            Some("https://my-node.example:9778")
+        );
+    }
+
+    #[test]
+    fn node_url_set_strips_trailing_slash() {
+        let td = tempdir().unwrap();
+        set_node_url_in(td.path(), "https://my-node.example/").unwrap();
+        assert_eq!(
+            get_node_url_in(td.path()).unwrap().as_deref(),
+            Some("https://my-node.example")
+        );
+    }
+
+    #[test]
+    fn node_url_unset_clears_it() {
+        let td = tempdir().unwrap();
+        set_node_url_in(td.path(), "https://my-node.example").unwrap();
+        unset_node_url_in(td.path()).unwrap();
+        assert_eq!(get_node_url_in(td.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn node_url_unset_is_idempotent_when_never_set() {
+        let td = tempdir().unwrap();
+        // Unsetting with no config file present at all must not error.
+        unset_node_url_in(td.path()).unwrap();
+        assert_eq!(get_node_url_in(td.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn node_url_set_overwrites_previous_value() {
+        let td = tempdir().unwrap();
+        set_node_url_in(td.path(), "https://first.example").unwrap();
+        set_node_url_in(td.path(), "https://second.example").unwrap();
+        assert_eq!(
+            get_node_url_in(td.path()).unwrap().as_deref(),
+            Some("https://second.example")
         );
     }
 }

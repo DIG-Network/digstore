@@ -68,19 +68,29 @@ fn out_file_name(resource_key: &str) -> String {
     }
 }
 
-pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PullArgs) -> Result<(), CliError> {
+pub fn run(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    args: PullArgs,
+    node_flag: Option<&str>,
+) -> Result<(), CliError> {
     // Product gate: require a dighub account only for a DIGHUB remote (*.dig.net). A URN pull or a
-    // remote name resolving to a self-hosted / loopback node needs no dighub account.
+    // remote name resolving to a self-hosted / loopback node needs no dighub account. A URN read
+    // with NO explicitly-configured `origin` resolves via the §5.3 ladder (never necessarily
+    // dighub), so the gate only fires when `origin` is a *configured* dighub remote.
     let gate_base = if args.remote.starts_with("urn:") {
-        config::resolve_remote_url(ctx, "origin").unwrap_or_else(|_| "https://rpc.dig.net".into())
+        config::list_remotes(ctx)
+            .ok()
+            .and_then(|m| m.get("origin").cloned())
+            .map(|raw| config::normalize_remote_url(&raw))
     } else {
-        config::resolve_remote_url(ctx, &args.remote).unwrap_or_default()
+        config::resolve_remote_url(ctx, &args.remote).ok()
     };
-    if dighub::is_dighub_remote(&gate_base) {
+    if gate_base.as_deref().is_some_and(dighub::is_dighub_remote) {
         dighub::ensure_logged_in(ui)?;
     }
     match route(&args.remote)? {
-        PullRoute::UrnResource(urn) => pull_urn_resource(ctx, ui, &args, urn),
+        PullRoute::UrnResource(urn) => pull_urn_resource(ctx, ui, &args, urn, node_flag),
         PullRoute::UrnWholeStore(urn) => {
             // A bare-store URN can only be synced into a LOCAL store with the same id. The whole-
             // store sync (remote_ops::pull_from) operates on the store in the current `.dig` dir.
@@ -123,17 +133,28 @@ fn pull_urn_resource(
     ui: &crate::ui::Ui,
     args: &PullArgs,
     urn: Urn,
+    node_flag: Option<&str>,
 ) -> Result<(), CliError> {
-    // The RPC host base: the configured `origin` if present, else the public RPC. Reduce either to
-    // the scheme://host root the dig RPC POST is addressed at.
-    let base = rpc_base(
-        &config::resolve_remote_url(ctx, "origin").unwrap_or_else(|_| "https://rpc.dig.net".into()),
-    );
-
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| CliError::Other(e.into()))?;
+
+    // The RPC host base: an EXPLICITLY-configured `origin` remote wins outright (it is the user's
+    // own choice of node, same standing as `--node`); otherwise resolve via the `CLAUDE.md` §5.3
+    // client->node ladder (override > dig.local > localhost > rpc.dig.net) rather than hard-coding
+    // the public gateway. Reduced to the scheme://host root the dig RPC POST is addressed at.
+    let configured_origin = config::list_remotes(ctx)
+        .ok()
+        .and_then(|m| m.get("origin").cloned())
+        .map(|raw| config::normalize_remote_url(&raw));
+    let base = rpc_base(&match configured_origin {
+        Some(url) => url,
+        None => {
+            rt.block_on(crate::ops::node::resolve_node(node_flag))?
+                .base_url
+        }
+    });
 
     // Carry the §21.9 identity (harmless for the unauthenticated RPC POST; future-proofs node hosts
     // that gate the read). Built the same way as remote_ops::authed_client.
