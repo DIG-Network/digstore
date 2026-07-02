@@ -483,8 +483,9 @@ pub fn default_rpc_timeout() -> Duration {
 
 /// Decode a 64-char hex string into 32 bytes, or `None` if the length/alphabet is wrong. Used to turn
 /// an inventory `store_id`/`root` (lowercase 64-hex on disk) into the raw bytes a [`dig_dht::ContentId`]
-/// keys over.
-fn hex64(s: &str) -> Option<[u8; 32]> {
+/// keys over. `pub(crate)` so the download/redirect-on-miss path ([`crate::download`]) shares the exact
+/// same hex→bytes mapping when deriving a [`dig_dht::ContentId`] from an RPC's store/root/retrieval_key.
+pub(crate) fn hex64(s: &str) -> Option<[u8; 32]> {
     if s.len() != 64 {
         return None;
     }
