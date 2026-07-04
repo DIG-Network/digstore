@@ -182,3 +182,28 @@ lowercase hex:
   cross-check it against the served bytes and the merkle root.
 - The capsule format and the additive-section rule are mirrored in
   `docs.dig.net/docs/protocol/capsule-format.md`; all three MUST agree.
+
+## 9. Well-known origin pubkey discovery & writer authorization
+
+Scope note: unlike §1–8, this section is a CLI/on-chain-authority contract, not a `.dig`
+byte-format contract — it is kept here because it is a public surface an independent
+`digstore` reimplementation must also expose.
+
+- `digstore authorize-origin-as-writer <origin> [--pubkey <hex>] [--dry-run] [--fee <mojos>]`
+  authorizes an origin's DIG identity as a CHIP-0035 **writer** delegate on the active store's
+  on-chain singleton, using the existing `digstore_chain::singleton` delegation primitive
+  (`writer_delegated_puzzle` + `update_store_ownership`) — never a hand-rolled puzzle.
+- **Pubkey resolution**: `--pubkey <96-hex>` (a BLS12-381 G1 public key) if given; otherwise
+  `GET https://<origin>/.well-known/dig/pubkey` → `{"pubkey": "<96-hex>"}`. The canonical wire
+  contract for this endpoint (path, method, response shape, failure semantics) is normative in
+  the superproject `SYSTEM.md` → Shared contracts → "Well-known origin pubkey discovery"; this
+  repo is a CONSUMER (discovery client) only — the endpoint's SERVING side is implemented by
+  whichever origin is being authorized (e.g. a hub), not by digstore.
+- **Merge semantics**: `update_store_ownership`'s delegated-puzzle set is a REPLACE, not an
+  append, so the command reads the store's CURRENT delegated puzzles first and re-sends every
+  existing delegate plus the new writer — an existing admin/writer/oracle delegate is never
+  dropped by authorizing another writer.
+- **Idempotent**: authorizing an already-authorized pubkey is a no-op (no spend, `tx_id: null`,
+  `already_authorized: true` in `--json` output).
+- A writer delegate may advance the store's root (publish capsules) but can never change
+  ownership or the delegated set itself — only the owner key can.

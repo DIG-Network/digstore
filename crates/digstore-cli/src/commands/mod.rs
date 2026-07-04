@@ -6,6 +6,7 @@ use crate::error::CliError;
 
 pub mod add;
 pub mod anchor;
+pub mod authorize_origin;
 pub mod balance;
 pub mod cat;
 pub mod checkout;
@@ -259,6 +260,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Serve(a) => serve::run(&ctx, &ui, a),
         Command::Anchor(a) => anchor::run(&ctx, &ui, a),
         Command::DeployKey(a) => deploy_key::run(&ctx, &ui, a),
+        Command::AuthorizeOriginAsWriter(a) => authorize_origin::run(&ctx, &ui, a),
         Command::New(_)
         | Command::Dev(_)
         | Command::Doctor(_)
