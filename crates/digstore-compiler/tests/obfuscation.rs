@@ -23,6 +23,7 @@ fn compile(dir: &std::path::Path, obfuscate: bool) -> Vec<u8> {
         common::no_auth(),
         &trusted_keys(),
         None,
+        None,
     )
     .unwrap();
     std::fs::read(&outcome.result.output_path).unwrap()

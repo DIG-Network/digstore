@@ -72,6 +72,7 @@ pub enum SectionId {
     MerkleNodes = 10,
     Filler = 11,
     ChainState = 12,
+    PublicManifest = 13,
 }
 
 /// Build the data-section blob from `(id, body)` sections.
@@ -432,6 +433,33 @@ pub fn read_chain_state(blob: &[u8]) -> Result<Option<ChainState>, DecodeError> 
 }
 
 // ---------------------------------------------------------------------------
+// PublicManifest body (id 13) — the normalized latest-per-path public file set
+// (see `crate::public_manifest`). ADDITIVE: absent on older modules; a reader
+// treats absence as "no public manifest". Emitted only for PUBLIC stores (a
+// private store's paths stay opaque, so it carries no PublicManifest section).
+// ---------------------------------------------------------------------------
+
+/// Encode the `PublicManifest` section body (id 13).
+pub fn encode_public_manifest(manifest: &crate::public_manifest::PublicManifest) -> Vec<u8> {
+    manifest.to_bytes()
+}
+
+/// Decode the embedded `PublicManifest` from a module data-section blob, if
+/// present. Returns `Ok(None)` for older modules (and any private store) that
+/// carry no `PublicManifest` section.
+pub fn read_public_manifest(
+    blob: &[u8],
+) -> Result<Option<crate::public_manifest::PublicManifest>, DecodeError> {
+    let view = DataView::parse(blob)?;
+    match view.section(SectionId::PublicManifest) {
+        Some(body) => Ok(Some(crate::public_manifest::PublicManifest::from_bytes(
+            body,
+        )?)),
+        None => Ok(None),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -465,6 +493,38 @@ mod tests {
     fn read_chain_state_absent_is_none() {
         let blob = encode_blob(&[(SectionId::StoreId as u16, vec![7u8; 32])]);
         assert!(read_chain_state(&blob).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_public_manifest_absent_is_none() {
+        // A blob with no PublicManifest section (older format) reads back as None
+        // through the new reader — backwards compatible.
+        let blob = encode_blob(&[(SectionId::StoreId as u16, vec![7u8; 32])]);
+        assert!(read_public_manifest(&blob).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_public_manifest_present_round_trips() {
+        use crate::public_manifest::{PublicManifest, PublicManifestEntry};
+        let pm = PublicManifest::new(vec![PublicManifestEntry {
+            path: "index.html".into(),
+            latest_root: Bytes32([0xab; 32]),
+            generation_index: 2,
+            sha256_latest: Bytes32([0xcd; 32]),
+            version_count: 3,
+        }]);
+        let blob = encode_blob(&[
+            (SectionId::StoreId as u16, vec![1u8; 32]),
+            (
+                SectionId::PublicManifest as u16,
+                encode_public_manifest(&pm),
+            ),
+        ]);
+        assert_eq!(read_public_manifest(&blob).unwrap().unwrap(), pm);
+        // A reader that only knows the pre-existing sections still reads them —
+        // the new section id does not disturb the offset table.
+        let view = DataView::parse(&blob).unwrap();
+        assert_eq!(view.section(SectionId::StoreId).unwrap(), &[1u8; 32]);
     }
 
     #[test]

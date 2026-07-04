@@ -997,6 +997,9 @@ pub fn finalize_commit(
         metadata,
         chain_state,
         auth: digstore_stage::no_auth(),
+        // Embed the normalized public manifest only for PUBLIC stores; a private
+        // store's file paths must stay opaque (§5.1 / privacy model).
+        include_public_manifest: matches!(cfg.visibility, digstore_core::Visibility::Public),
     };
     let compiled = digstore_stage::finalize(prepared, &finalize_opts)
         .map_err(|e| CliError::Other(anyhow::anyhow!("{e}")))?;
@@ -1233,6 +1236,17 @@ pub fn list_resource_keys(
         .collect();
     out.sort_by(|a, b| a.resource_key.cmp(&b.resource_key));
     Ok(out)
+}
+
+/// Build the store's normalized public manifest: the COMPLETE public file set
+/// across ALL committed capsules (generations), one entry per path holding its
+/// LATEST version + provenance (root, generation index), content SHA-256, and
+/// total version count. Walks every generation on disk (host-side), so it is the
+/// complete cross-generation view even though a single compiled `.dig` embeds
+/// only the current capsule's own listing.
+pub fn public_manifest(ctx: &CliContext) -> Result<digstore_core::PublicManifest, CliError> {
+    digstore_store::build_public_manifest(ctx.generations_dir())
+        .map_err(|e| CliError::Other(anyhow::anyhow!("build public manifest: {e}")))
 }
 
 /// Resolve the resource key whose retrieval (static) key equals `retrieval_key`

@@ -294,6 +294,11 @@ pub struct FinalizeOptions {
     /// The per-store auth policy compiled into the module (§4.1/§5.2). Most
     /// stores want [`no_auth`]; a JWT/session-required store supplies its own.
     pub auth: AuthenticationInfo,
+    /// Embed the normalized public manifest section (the store's complete public
+    /// file set, latest version per path) in the compiled `.dig`. Set `true` for
+    /// PUBLIC stores; leave `false` for PRIVATE stores so their file paths stay
+    /// opaque (a private store carries no `PublicManifest` section).
+    pub include_public_manifest: bool,
 }
 
 /// The explicit no-auth policy: a store requiring neither a session nor a JWT.
@@ -366,8 +371,28 @@ pub fn finalize(
         .write_to(generations_dir.join(&root_hex).join("manifest.json"))
         .map_err(|e| StageError::Compile(format!("write manifest: {e}")))?;
 
+    // Normalized public manifest (PUBLIC stores only): walk every generation now
+    // on disk (including the one just written) → latest version per path. Built
+    // here, after the current generation manifest is persisted, so it reflects the
+    // complete public file surface up to and including this commit.
+    let public_manifest = if opts.include_public_manifest {
+        Some(
+            digstore_store::build_public_manifest(&generations_dir)
+                .map_err(|e| StageError::Compile(format!("build public manifest: {e}")))?,
+        )
+    } else {
+        None
+    };
+
     // Compile a real module (so a real .wasm exists for host/push/clone).
-    let output_path = compile_module(store_id, &pool_bodies, &manifest, root, opts)?;
+    let output_path = compile_module(
+        store_id,
+        &pool_bodies,
+        &manifest,
+        root,
+        opts,
+        public_manifest,
+    )?;
     let output_size = std::fs::metadata(&output_path)
         .map(|m| m.len())
         .unwrap_or(0);
@@ -414,6 +439,7 @@ fn compile_module(
     manifest: &GenerationManifest,
     root: Bytes32,
     opts: &FinalizeOptions,
+    public_manifest: Option<digstore_core::PublicManifest>,
 ) -> Result<PathBuf, StageError> {
     use digstore_compiler::{Compiler, CompilerConfig, GenerationView, ResourceView};
 
@@ -491,6 +517,7 @@ fn compile_module(
         opts.auth.clone(),
         &opts.trusted_keys,
         opts.chain_state.clone(),
+        public_manifest,
     )
     .map_err(|e| StageError::Compile(format!("{e:?}")))?;
     Ok(outcome.result.output_path)
@@ -641,6 +668,7 @@ mod tests {
             metadata: empty_manifest(),
             chain_state: None,
             auth: no_auth(),
+            include_public_manifest: true,
         }
     }
 
@@ -673,6 +701,66 @@ mod tests {
             cap.capsule(),
             format!("{}:{}", store_id.to_hex(), cap.root.to_hex())
         );
+    }
+
+    #[test]
+    fn public_store_embeds_public_manifest_section() {
+        // A PUBLIC store's compiled `.dig` carries the normalized public manifest
+        // section; a consumer reads the whole public file surface from the module.
+        let td = tempdir().unwrap();
+        let store_id = Bytes32([2u8; 32]);
+        let files = vec![
+            ("index.html".to_string(), b"<h1>hi</h1>".to_vec()),
+            ("assets/app.js".to_string(), b"console.log(1)".to_vec()),
+        ];
+        let cap = stage_and_compile(
+            &files,
+            store_id,
+            &Visibility::Public,
+            MAX_STORE_BYTES,
+            false,
+            0,
+            0,
+            &finalize_opts(td.path()),
+        )
+        .unwrap();
+        let module = std::fs::read(&cap.module_path).unwrap();
+        let blob = digstore_compiler::extract_data_section_blob(&module).unwrap();
+        let pm = digstore_core::datasection::read_public_manifest(&blob)
+            .unwrap()
+            .expect("public store embeds a PublicManifest section");
+        let paths: Vec<&str> = pm.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["assets/app.js", "index.html"]);
+        // Each entry's latest is this single generation (root) with version_count 1.
+        for e in &pm.entries {
+            assert_eq!(e.latest_root, cap.root);
+            assert_eq!(e.generation_index, 0);
+            assert_eq!(e.version_count, 1);
+        }
+    }
+
+    #[test]
+    fn private_store_omits_public_manifest_section() {
+        // A PRIVATE store must NOT leak its file paths: no PublicManifest section.
+        let td = tempdir().unwrap();
+        let mut opts = finalize_opts(td.path());
+        opts.include_public_manifest = false;
+        let cap = stage_and_compile(
+            &[("secret.txt".to_string(), b"top secret".to_vec())],
+            Bytes32([3u8; 32]),
+            &Visibility::Private(SecretSalt([9u8; 32])),
+            MAX_STORE_BYTES,
+            false,
+            0,
+            0,
+            &opts,
+        )
+        .unwrap();
+        let module = std::fs::read(&cap.module_path).unwrap();
+        let blob = digstore_compiler::extract_data_section_blob(&module).unwrap();
+        assert!(digstore_core::datasection::read_public_manifest(&blob)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

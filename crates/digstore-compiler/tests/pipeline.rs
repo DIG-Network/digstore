@@ -27,6 +27,7 @@ fn empty_trusted_set_is_refused() {
         common::no_auth(),
         &[],
         None,
+        None,
     )
     .unwrap_err();
     assert!(matches!(err, CompilerError::NoTrustedKeys));
@@ -48,6 +49,7 @@ fn produces_result_with_exact_filename_and_stats() {
         sample_manifest(),
         common::no_auth(),
         &trusted_keys(),
+        None,
         None,
     )
     .expect("compiles");
@@ -100,6 +102,7 @@ fn obfuscation_flag_sets_stat_and_still_writes_valid_module() {
         common::no_auth(),
         &trusted_keys(),
         None,
+        None,
     )
     .expect("compiles");
     assert!(outcome.detail.obfuscation_applied);
@@ -126,6 +129,7 @@ fn pool_byte_len_is_total_unique_content_bytes() {
         sample_manifest(),
         common::no_auth(),
         &trusted_keys(),
+        None,
         None,
     )
     .unwrap();

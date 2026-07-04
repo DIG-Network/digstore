@@ -58,6 +58,7 @@ impl Compiler {
         auth_info: AuthenticationInfo,
         trusted_keys: &[TrustedHostKey],
         chain_state: Option<digstore_core::datasection::ChainState>,
+        public_manifest: Option<digstore_core::PublicManifest>,
     ) -> Result<CompileOutcome> {
         // Stage 1: trusted-key precondition (§5.3, §19.2).
         if trusted_keys.is_empty() {
@@ -121,6 +122,10 @@ impl Compiler {
             // a content-sized addition already included in `blob_len_without_filler`
             // below (it contains variable-length strings, so it is NOT fixed-size).
             chain_state,
+            // Optional normalized public manifest (id 13); like `chain_state` it is
+            // a variable-length section counted into `blob_len_without_filler`, so
+            // the uniform-size filler shrinks to keep the module the same size.
+            public_manifest,
         };
         let blob_len_without_filler = encode_data_section(&inputs).len();
         if blob_len_without_filler > config.uniform_blob_len {

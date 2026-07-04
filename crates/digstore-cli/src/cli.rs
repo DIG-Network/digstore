@@ -107,6 +107,8 @@ pub enum Command {
     Urn(UrnArgs),
     /// List the retrieval key (and URN) for every committed resource.
     Keys(KeysArgs),
+    /// List every public file with its latest version, capsule, and version history.
+    Manifest(ManifestArgs),
     /// Update DigStore to the latest release.
     Update(UpdateArgs),
     /// Manage the encrypted wallet seed in ~/.dig.
@@ -827,6 +829,15 @@ pub struct KeysArgs {
     #[arg(long)]
     pub root: Option<String>,
 }
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Shows the store's COMPLETE public file surface: every path with its latest \
+version's capsule, version index, content hash, and how many versions exist across all published \
+capsules — including files whose latest version lives in an earlier capsule.\n\nEXAMPLES:\n  \
+digstore manifest\n  digstore manifest --json"
+)]
+pub struct ManifestArgs {}
 
 #[derive(Debug, Args)]
 pub struct SeedArgs {

@@ -71,6 +71,7 @@ for (const fn of [
   "decryptResource",
   "decryptResourceToText",
   "verifyInclusion",
+  "readPublicManifest",
   "version",
 ]) {
   check(`.d.ts exports ${fn}`, new RegExp(`export function ${fn}\\b`).test(dts));

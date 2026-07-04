@@ -13,6 +13,7 @@ mod error;
 mod generation;
 mod history;
 mod paths;
+mod public_manifest;
 mod staging;
 mod store;
 
@@ -24,5 +25,6 @@ pub use error::{Result, StoreError};
 pub use generation::{ChunkRef, GenerationManifest, KeyTableRecord};
 pub use history::RootHistory;
 pub use paths::StorePaths;
+pub use public_manifest::build_public_manifest;
 pub use staging::{StagedRecord, StagingArea};
 pub use store::Store;
