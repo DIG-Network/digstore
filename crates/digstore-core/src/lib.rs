@@ -14,6 +14,7 @@ pub mod hash;
 pub mod keytable;
 pub mod manifest;
 pub mod merkle;
+pub mod public_manifest;
 pub mod tombstone;
 pub mod urn;
 pub mod urn_grammar;
@@ -59,6 +60,7 @@ pub use config::{
 pub use keytable::{KeyTableEntry, PathWalk};
 pub use manifest::{Author, MetadataManifest};
 pub use merkle::{resource_leaf, MerkleProof, MerkleTree, ProofStep};
+pub use public_manifest::{PublicManifest, PublicManifestEntry, PUBLIC_MANIFEST_SCHEMA_VERSION};
 pub use tombstone::{RevocationReason, Tombstone, TombstoneScope};
 pub use urn::Urn;
 

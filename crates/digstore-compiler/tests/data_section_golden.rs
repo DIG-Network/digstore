@@ -47,6 +47,7 @@ fn fixed_inputs() -> DataSectionInputs {
         merkle_leaves: leaves,
         filler: vec![0x09; 16],
         chain_state: None,
+        public_manifest: None,
     }
 }
 
@@ -126,4 +127,22 @@ fn data_section_matches_golden_vector() {
         got, expected,
         "data-section layout changed; structural test guards correctness"
     );
+}
+
+/// Backwards-compatibility (store-format §5.1): the CURRENT reader decodes the
+/// OLDER golden `.dig` data-section (frozen before the `PublicManifest` section
+/// existed) without error, and correctly reports NO public manifest — an older
+/// format never breaks a newer reader.
+#[test]
+fn new_reader_accepts_older_golden_without_public_manifest() {
+    use digstore_core::datasection::read_public_manifest;
+    let hex = include_str!("fixtures/golden_data_section.hex").trim();
+    let blob = hex::decode(hex).expect("golden fixture is valid hex");
+    // Parses cleanly through the current DataView + every existing section is
+    // still readable (guarded by `structure_is_independently_valid`).
+    DataView::parse(&blob).expect("older golden blob still parses under the current reader");
+    // And the new field is simply absent — no panic, no error, just None.
+    assert!(read_public_manifest(&blob)
+        .expect("older golden blob decodes")
+        .is_none());
 }

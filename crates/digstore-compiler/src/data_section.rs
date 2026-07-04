@@ -20,6 +20,9 @@
 //!  ChunkPool    = 9   core encode_chunk_pool, GLOBAL INDEX ORDER (D4)
 //!  MerkleNodes  = 10  core encode_merkle_nodes = per-resource leaves (D5)
 //!  Filler       = 11  deterministic ChaCha20 filler (unreferenced, §8.3)
+//!  ChainState   = 12  OPTIONAL on-chain anchor pointer (emitted before Filler)
+//!  PublicManifest = 13 OPTIONAL normalized public file set, PUBLIC stores only
+//!                      (emitted before Filler; §5.1 additive — older readers ignore it)
 //! ```
 //! Multi-byte integers are big-endian (Chia streamable, deviation #1).
 
@@ -53,6 +56,11 @@ pub struct DataSectionInputs {
     pub filler: Vec<u8>,
     /// Optional on-chain anchor pointer embedded as `SectionId::ChainState`.
     pub chain_state: Option<digstore_core::datasection::ChainState>,
+    /// Optional normalized public manifest (the store's complete public file set,
+    /// latest version per path) embedded as `SectionId::PublicManifest` (id 13).
+    /// Present only for PUBLIC stores; a private store's paths stay opaque, so it
+    /// carries `None`. ADDITIVE: older readers ignore the section (§5.1).
+    pub public_manifest: Option<digstore_core::PublicManifest>,
 }
 
 /// Encode `Vec<TrustedHostKey>` using core primitive framing field-by-field.
@@ -81,9 +89,12 @@ fn encode_root_history(roots: &[Bytes32]) -> Vec<u8> {
 
 /// Build the full data-section blob in the canonical contract format (D1).
 ///
-/// Sections are emitted in ascending id order (1..=11); the offset table and
-/// header are produced by [`digstore_core::datasection::encode_blob`], so the
-/// bytes are byte-identical to what the guest's `DataView` parses.
+/// The always-present sections (ids 1..=10) are emitted in ascending id order,
+/// then the OPTIONAL `ChainState` (12) and `PublicManifest` (13) — when present —
+/// and finally `Filler` (11), which MUST stay the trailing / highest-offset body.
+/// The offset table and header are produced by
+/// [`digstore_core::datasection::encode_blob`], so the bytes are byte-identical to
+/// what the guest's `DataView` parses.
 pub fn encode_data_section(i: &DataSectionInputs) -> Vec<u8> {
     use digstore_core::datasection::SectionId;
 
@@ -115,6 +126,15 @@ pub fn encode_data_section(i: &DataSectionInputs) -> Vec<u8> {
     // stays the trailing section: uniform-size padding grows only the last body.
     if let Some(cs) = &i.chain_state {
         sections.push((SectionId::ChainState as u16, cs.encode()));
+    }
+
+    // Optional normalized public manifest (id 13). Also BEFORE Filler, for the
+    // same reason. Additive: absent for private stores and older writers.
+    if let Some(pm) = &i.public_manifest {
+        sections.push((
+            SectionId::PublicManifest as u16,
+            digstore_core::datasection::encode_public_manifest(pm),
+        ));
     }
 
     // Filler MUST be the last body (highest start offset) for the uniform-size
@@ -191,6 +211,12 @@ fn rekey_blob_trusted(
     // Optional ChainState (id 12) passthrough, BEFORE the trailing Filler body.
     if let Some(body) = view.section(SectionId::ChainState) {
         sections.push((SectionId::ChainState as u16, body.to_vec()));
+    }
+
+    // Optional PublicManifest (id 13) passthrough — preserve it byte-for-byte so
+    // a rekey never drops the public file listing. Also before the trailing Filler.
+    if let Some(body) = view.section(SectionId::PublicManifest) {
+        sections.push((SectionId::PublicManifest as u16, body.to_vec()));
     }
 
     // Filler last (if present), preserving the uniform-size padding invariant.
@@ -374,6 +400,7 @@ mod tests {
             merkle_leaves: leaves,
             filler: vec![0x09u8; 16],
             chain_state: None,
+            public_manifest: None,
         }
     }
 
@@ -494,6 +521,65 @@ mod tests {
         let inp = inputs(); // chain_state defaults to None
         let blob = encode_data_section(&inp);
         assert!(read_chain_state(&blob).unwrap().is_none());
+    }
+
+    #[test]
+    fn encode_emits_public_manifest_when_present_and_filler_stays_last() {
+        use digstore_core::datasection::{read_public_manifest, DataView, SectionId};
+        use digstore_core::{PublicManifest, PublicManifestEntry};
+        let mut inp = inputs();
+        let pm = PublicManifest::new(vec![PublicManifestEntry {
+            path: "index.html".into(),
+            latest_root: Bytes32([0x77; 32]),
+            generation_index: 4,
+            sha256_latest: Bytes32([0x88; 32]),
+            version_count: 2,
+        }]);
+        inp.public_manifest = Some(pm.clone());
+        let blob = encode_data_section(&inp);
+        // The new reader recovers the manifest verbatim.
+        assert_eq!(read_public_manifest(&blob).unwrap().unwrap(), pm);
+        // Every pre-existing section is still readable (old readers unaffected).
+        let view = DataView::parse(&blob).unwrap();
+        assert_eq!(view.section(SectionId::StoreId).unwrap(), &inp.store_id.0);
+        // Filler must remain the trailing body for uniform-size padding.
+        let filler_ptr = view.section(SectionId::Filler).unwrap().as_ptr() as usize;
+        let pm_ptr = view.section(SectionId::PublicManifest).unwrap().as_ptr() as usize;
+        assert!(
+            filler_ptr > pm_ptr,
+            "Filler must come after PublicManifest in the blob"
+        );
+    }
+
+    #[test]
+    fn encode_without_public_manifest_has_no_section() {
+        use digstore_core::datasection::read_public_manifest;
+        let inp = inputs(); // public_manifest defaults to None
+        let blob = encode_data_section(&inp);
+        assert!(read_public_manifest(&blob).unwrap().is_none());
+    }
+
+    #[test]
+    fn rekey_preserves_public_manifest() {
+        use digstore_core::datasection::read_public_manifest;
+        use digstore_core::{PublicManifest, PublicManifestEntry};
+        let mut inp = inputs();
+        let pm = PublicManifest::new(vec![PublicManifestEntry {
+            path: "a.txt".into(),
+            latest_root: Bytes32([0x12; 32]),
+            generation_index: 1,
+            sha256_latest: Bytes32([0x34; 32]),
+            version_count: 1,
+        }]);
+        inp.public_manifest = Some(pm.clone());
+        let blob = encode_data_section(&inp);
+        let new_keys = vec![TrustedHostKey {
+            public_key: [0x99u8; 48],
+            label: "new".into(),
+        }];
+        let rebuilt = rekey_blob_trusted(&blob, &new_keys).expect("rekey");
+        // PublicManifest preserved byte-for-byte through the rekey.
+        assert_eq!(read_public_manifest(&rebuilt).unwrap().unwrap(), pm);
     }
 
     #[test]

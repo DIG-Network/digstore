@@ -29,6 +29,7 @@ pub mod lock;
 pub mod log;
 pub mod login;
 pub mod logout;
+pub mod manifest;
 pub mod new;
 pub mod nft;
 pub mod offer;
@@ -246,6 +247,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Checkout(a) => checkout::run(&ctx, &ui, a),
         Command::Cat(a) => cat::run(&ctx, &ui, a),
         Command::Keys(a) => keys::run(&ctx, &ui, a),
+        Command::Manifest(a) => manifest::run(&ctx, &ui, a),
         Command::Dir(a) => dir::run(&ctx, &ui, a),
         Command::Unstage(a) => unstage::run(&ctx, &ui, a),
         Command::Staged(a) => staged::run(&ctx, &ui, a),

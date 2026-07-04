@@ -350,6 +350,30 @@ pub fn verify_inclusion(
     Ok(verify_inclusion_core(ciphertext, &proof, &trusted_root).is_ok())
 }
 
+// ---------------------------------------------------------------------------
+// (4) Public manifest — the store's complete public file surface
+// ---------------------------------------------------------------------------
+
+/// Read the normalized PUBLIC MANIFEST from a store's data-section `blob` (the
+/// bytes extracted from a `.dig` module's `DIGS` data section), returning it as a
+/// JSON string, or `null` when the blob carries no public manifest (an older
+/// `.dig`, or a private store whose paths stay opaque).
+///
+/// The JSON is `{ "schema_version": <u32>, "entries": [ { "path", "latest_root",
+/// "generation_index", "sha256_latest", "version_count" } ] }` — one entry per
+/// public path with the LATEST version's capsule root (hex), generation index,
+/// content SHA-256 (hex), and total version count across the store history. The
+/// caller `JSON.parse`s it. Backwards compatible: absence returns `null`, never
+/// an error (malformed blob bytes throw).
+#[wasm_bindgen(js_name = readPublicManifest)]
+pub fn read_public_manifest(blob: &[u8]) -> Result<Option<String>, JsError> {
+    match digstore_core::datasection::read_public_manifest(blob) {
+        Ok(Some(pm)) => Ok(Some(pm.to_json())),
+        Ok(None) => Ok(None),
+        Err(_) => Err(JsError::new("data-section blob is malformed")),
+    }
+}
+
 /// Library version (matches the crate version), for SRI / compatibility checks.
 #[wasm_bindgen(js_name = version)]
 pub fn version() -> String {
@@ -453,6 +477,12 @@ pub fn install_global() {
                 &s, &r, &ct, &p, &root, salt, lens
             )
         )
+    );
+    set!(
+        "readPublicManifest",
+        Closure::<dyn Fn(Vec<u8>) -> Result<Option<String>, JsError>>::new(|blob: Vec<u8>| {
+            read_public_manifest(&blob)
+        })
     );
     set!("version", Closure::<dyn Fn() -> String>::new(version));
 
