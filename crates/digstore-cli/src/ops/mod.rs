@@ -14,3 +14,4 @@ pub mod serve;
 pub mod store_ops;
 pub mod walk;
 pub mod wallet;
+pub mod well_known;
