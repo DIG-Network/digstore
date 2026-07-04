@@ -1225,6 +1225,141 @@ mod tests {
         Ok(())
     }
 
+    /// Delegating a SECOND writer must NOT revoke the first (#24 `authorize-origin-as-writer`
+    /// relies on this: it reads the CURRENT delegated set and re-sends it plus the new writer,
+    /// since `new_delegated_puzzles` REPLACES the whole set at the driver level). Proves on a
+    /// real simulator that after two sequential delegate-adds, BOTH writers can independently
+    /// advance the root.
+    #[test]
+    fn owner_delegates_second_writer_without_revoking_the_first() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let writer_a = sim.bls(0);
+        let writer_b = sim.bls(0);
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: Bytes32::default(),
+                label: Some("site".into()),
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            vec![],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        let owner_keys = WalletKeys {
+            synthetic_sk: owner.sk.clone(),
+            synthetic_pk: owner.pk,
+            owner_puzzle_hash: owner.puzzle_hash,
+        };
+
+        // Delegate writer A (starting from an empty delegated set).
+        let writer_a_dp = writer_delegated_puzzle(writer_a.pk);
+        let upd_a = build_update_ownership_unsigned(
+            &owner_keys,
+            store,
+            owner.puzzle_hash,
+            vec![writer_a_dp],
+            &[],
+            0,
+        )?;
+        let sig_a = sign_coin_spends(&upd_a.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(upd_a.coin_spends, sig_a))?;
+
+        // Delegate writer B by re-sending the CURRENT delegated set (read back from the store
+        // returned by the first update) plus the new delegate — exactly the pattern
+        // `authorize-origin-as-writer` follows.
+        let mut delegates = upd_a.datastore.info.delegated_puzzles.clone();
+        assert_eq!(
+            delegates,
+            vec![writer_a_dp],
+            "writer A must be present before adding B"
+        );
+        let writer_b_dp = writer_delegated_puzzle(writer_b.pk);
+        delegates.push(writer_b_dp);
+        let upd_b = build_update_ownership_unsigned(
+            &owner_keys,
+            upd_a.datastore,
+            owner.puzzle_hash,
+            delegates,
+            &[],
+            0,
+        )?;
+        let sig_b = sign_coin_spends(&upd_b.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(upd_b.coin_spends, sig_b))?;
+
+        let both_delegated_store = upd_b.datastore;
+        assert_eq!(
+            both_delegated_store.info.delegated_puzzles.len(),
+            2,
+            "both writer A and writer B must be delegated"
+        );
+        assert!(both_delegated_store
+            .info
+            .delegated_puzzles
+            .contains(&writer_a_dp));
+        assert!(both_delegated_store
+            .info
+            .delegated_puzzles
+            .contains(&writer_b_dp));
+
+        // Writer A (delegated FIRST) can still advance the root after B was added.
+        let root_after_a = Bytes32::new([0xaa; 32]);
+        let wupd_a = build_update_unsigned_writer(
+            writer_a.pk,
+            both_delegated_store,
+            root_after_a,
+            Some("site".into()),
+            None,
+            &owner_keys,
+            &[],
+            0,
+        )?;
+        let wsig_a = sign_coin_spends(
+            &wupd_a.coin_spends,
+            std::slice::from_ref(&writer_a.sk),
+            true,
+        )
+        .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(wupd_a.coin_spends, wsig_a))?;
+        assert_eq!(wupd_a.datastore.info.metadata.root_hash, root_after_a);
+
+        // Writer B can also independently advance the root.
+        let root_after_b = Bytes32::new([0xbb; 32]);
+        let wupd_b = build_update_unsigned_writer(
+            writer_b.pk,
+            wupd_a.datastore,
+            root_after_b,
+            Some("site".into()),
+            None,
+            &owner_keys,
+            &[],
+            0,
+        )?;
+        let wsig_b = sign_coin_spends(
+            &wupd_b.coin_spends,
+            std::slice::from_ref(&writer_b.sk),
+            true,
+        )
+        .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(wupd_b.coin_spends, wsig_b))?;
+        assert_eq!(wupd_b.datastore.info.metadata.root_hash, root_after_b);
+
+        Ok(())
+    }
+
     /// An owner can TRANSFER the store to a new owner via an ownership update
     /// (`update_store_ownership`, `new_owner_ph` = recipient). The recreated store
     /// carries the recipient's owner puzzle hash, and the spend validates on the

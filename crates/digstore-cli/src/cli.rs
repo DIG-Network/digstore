@@ -130,6 +130,8 @@ pub enum Command {
     Deploy(DeployArgs),
     /// Manage the per-store publisher deploy key (export it once for CI; import it).
     DeployKey(DeployKeyArgs),
+    /// Discover an origin's DIG pubkey (well-known) and authorize it as a writer.
+    AuthorizeOriginAsWriter(AuthorizeOriginArgs),
     /// Get set up to publish: seed (import/generate), fund check, optional login.
     #[command(visible_alias = "auth")]
     Setup(SetupArgs),
@@ -1035,6 +1037,33 @@ pub enum DeployKeyAction {
 
 #[derive(Debug, Args)]
 #[command(
+    after_help = "Discovers ORIGIN's DIG pubkey at https://ORIGIN/.well-known/dig/pubkey and adds \
+it as a CHIP-0035 WRITER delegate on the active store's on-chain singleton — the same \
+writer-delegation primitive behind deploy keys and hub Teams roles (never a hand-rolled \
+puzzle). The writer may publish new capsules (advance the root) but can never change \
+ownership or delegation. Idempotent: authorizing an already-authorized pubkey is a no-op.\n\n\
+EXAMPLES:\n  digstore authorize-origin-as-writer hub.dig.net\n  digstore \
+authorize-origin-as-writer hub.dig.net --dry-run --json\n  digstore authorize-origin-as-writer \
+my-ci-runner --pubkey <96-hex>"
+)]
+pub struct AuthorizeOriginArgs {
+    /// The origin whose DIG pubkey to authorize (e.g. `hub.dig.net`). A scheme
+    /// (`https://`) is accepted and ignored — well-known discovery is always https.
+    pub origin: String,
+    /// Skip well-known discovery and authorize this BLS12-381 G1 pubkey (96-hex) directly —
+    /// for an origin whose well-known endpoint isn't live yet, or a non-web origin.
+    #[arg(long)]
+    pub pubkey: Option<String>,
+    /// Build the delegation-update spend and print the plan WITHOUT signing or pushing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Optional XCH network fee in mojos (drawn from the wallet's spendable XCH).
+    #[arg(long, default_value_t = 0)]
+    pub fee: u64,
+}
+
+#[derive(Debug, Args)]
+#[command(
     after_help = "EXAMPLES:\n  digstore update\n  digstore update --check\n  digstore update --yes"
 )]
 pub struct UpdateArgs {
@@ -1692,6 +1721,42 @@ mod tests {
                 action: NftAction::List(_)
             })
         ));
+    }
+
+    #[test]
+    fn parses_authorize_origin_as_writer() {
+        let cli =
+            Cli::try_parse_from(["digstore", "authorize-origin-as-writer", "hub.dig.net"]).unwrap();
+        match cli.command {
+            Command::AuthorizeOriginAsWriter(a) => {
+                assert_eq!(a.origin, "hub.dig.net");
+                assert!(a.pubkey.is_none());
+                assert!(!a.dry_run);
+                assert_eq!(a.fee, 0);
+            }
+            _ => panic!("expected authorize-origin-as-writer"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "authorize-origin-as-writer",
+            "my-ci-runner",
+            "--pubkey",
+            &"ab".repeat(48),
+            "--dry-run",
+            "--fee",
+            "10",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::AuthorizeOriginAsWriter(a) => {
+                assert_eq!(a.origin, "my-ci-runner");
+                assert_eq!(a.pubkey.as_deref(), Some("ab".repeat(48).as_str()));
+                assert!(a.dry_run);
+                assert_eq!(a.fee, 10);
+            }
+            _ => panic!("expected authorize-origin-as-writer"),
+        }
     }
 
     #[test]
