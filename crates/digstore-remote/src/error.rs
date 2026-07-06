@@ -64,6 +64,12 @@ pub enum ClientError {
     /// `message` is the human-readable server reason (or the raw body if not JSON).
     #[error("remote rejected ({status}): {message}")]
     Remote { status: u16, message: String },
+    /// The remote returned a NON-JSON body (typically an HTML error page from a
+    /// CDN/edge such as CloudFront) instead of a DIG RPC reply — e.g. the request
+    /// was rejected at the edge before reaching the RPC origin. `hint` is a clean,
+    /// actionable diagnostic; the raw HTML is deliberately NOT surfaced.
+    #[error("remote returned a non-JSON response ({status}): {hint}")]
+    NonJsonResponse { status: u16, hint: String },
 }
 
 #[cfg(test)]
