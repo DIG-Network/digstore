@@ -134,6 +134,144 @@ pub fn suggest_manual_asset(assets: &[Asset]) -> Option<&Asset> {
 }
 
 // ---------------------------------------------------------------------------
+// Platform binary-asset selection (macOS / Linux self-install path).
+// ---------------------------------------------------------------------------
+
+/// The release asset that carries the `digstore` binary for a platform, plus whether
+/// it is a compressed archive that must be extracted (vs a raw executable usable as-is).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlatformAsset {
+    /// The chosen asset's file name.
+    pub name: String,
+    /// The download URL, used verbatim (never reconstructed — the reported "doubled
+    /// URL" was terminal wrapping; digstore passes GitHub's `browser_download_url`
+    /// through unchanged).
+    pub url: String,
+    /// True when the asset is a `.tar.gz`/`.tgz`/`.zip`/`.tar` needing extraction.
+    pub is_tarball: bool,
+}
+
+/// OS-name tokens that appear in release asset names for a `std::env::consts::OS`.
+fn os_tokens(os: &str) -> &'static [&'static str] {
+    match os {
+        "macos" => &["macos", "darwin"],
+        "linux" => &["linux"],
+        "windows" => &["windows"],
+        _ => &[],
+    }
+}
+
+/// Arch tokens for a `std::env::consts::ARCH` (release names use short + triple forms).
+fn arch_tokens(arch: &str) -> &'static [&'static str] {
+    match arch {
+        "x86_64" => &["x86_64", "x64", "amd64"],
+        "aarch64" => &["aarch64", "arm64"],
+        _ => &[],
+    }
+}
+
+/// True if `name` is a compressed archive (needs extraction before use).
+fn is_archive_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.ends_with(".tar.gz") || n.ends_with(".tgz") || n.ends_with(".zip") || n.ends_with(".tar")
+}
+
+/// True if `name` is a GUI installer / disk image (the installer path, NOT the raw
+/// self-replace path): NSIS `*setup*.exe`, `.msi`, `.dmg`, `.AppImage`.
+fn is_installer_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.ends_with(".msi")
+        || n.ends_with(".dmg")
+        || n.ends_with(".appimage")
+        || (n.ends_with(".exe") && n.contains("setup"))
+}
+
+/// Select the release asset carrying the `digstore` binary for `os`/`arch` (from
+/// `std::env::consts`). Matches an asset whose name mentions BOTH an OS token and an
+/// arch token, excluding GUI installers/disk-images. Prefers a raw executable; falls
+/// back to a tarball when that is the only match (e.g. Linux aarch64 ships only a
+/// `.tar.gz`). Returns `None` when nothing matches (caller fails loud with manual steps).
+pub fn select_binary_asset(assets: &[Asset], os: &str, arch: &str) -> Option<PlatformAsset> {
+    let oss = os_tokens(os);
+    let ars = arch_tokens(arch);
+    let matches: Vec<&Asset> = assets
+        .iter()
+        .filter(|a| {
+            let n = a.name.to_ascii_lowercase();
+            !is_installer_name(&n)
+                && oss.iter().any(|t| n.contains(t))
+                && ars.iter().any(|t| n.contains(t))
+        })
+        .collect();
+    // Prefer a raw (non-archive) binary; otherwise take the (tarball) match.
+    let chosen = matches
+        .iter()
+        .find(|a| !is_archive_name(&a.name))
+        .or_else(|| matches.first())?;
+    Some(PlatformAsset {
+        name: chosen.name.clone(),
+        url: chosen.browser_download_url.clone(),
+        is_tarball: is_archive_name(&chosen.name),
+    })
+}
+
+/// Sanity-check that `bytes` looks like a native executable for `os` (no checksums are
+/// published, so this guards against downloading an HTML error page / truncated file).
+/// Checks the leading magic: ELF (Linux), Mach-O / fat (macOS), `MZ` (Windows).
+pub fn looks_like_native_binary(bytes: &[u8], os: &str) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    match os {
+        "linux" => &bytes[..4] == b"\x7fELF",
+        "macos" => {
+            // Mach-O thin (BE/LE, 32/64) + fat/universal (BE/LE), any order of the 4 bytes.
+            const MACHO: [[u8; 4]; 6] = [
+                [0xFE, 0xED, 0xFA, 0xCE], // MH_MAGIC (32, BE)
+                [0xCE, 0xFA, 0xED, 0xFE], // MH_CIGAM (32, LE)
+                [0xFE, 0xED, 0xFA, 0xCF], // MH_MAGIC_64 (BE)
+                [0xCF, 0xFA, 0xED, 0xFE], // MH_CIGAM_64 (LE)
+                [0xCA, 0xFE, 0xBA, 0xBE], // FAT_MAGIC (BE)
+                [0xBE, 0xBA, 0xFE, 0xCA], // FAT_CIGAM (LE)
+            ];
+            MACHO.iter().any(|m| &bytes[..4] == m)
+        }
+        "windows" => &bytes[..2] == b"MZ",
+        _ => true,
+    }
+}
+
+/// Extract the `digstore` executable from a gzip-compressed tarball's raw bytes.
+/// Returns the binary's bytes, or an error if the archive holds no `digstore` entry.
+pub fn extract_digstore_from_targz(bytes: &[u8]) -> Result<Vec<u8>, CliError> {
+    use std::io::Read;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
+    let entries = archive
+        .entries()
+        .map_err(|e| CliError::UpdateFailed(format!("open release archive: {e}")))?;
+    for entry in entries {
+        let mut entry =
+            entry.map_err(|e| CliError::UpdateFailed(format!("read release archive: {e}")))?;
+        let is_digstore = entry
+            .path()
+            .ok()
+            .and_then(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_owned))
+            .map(|n| n == "digstore" || n == "digstore.exe")
+            .unwrap_or(false);
+        if is_digstore {
+            let mut buf = Vec::new();
+            entry
+                .read_to_end(&mut buf)
+                .map_err(|e| CliError::UpdateFailed(format!("extract digstore: {e}")))?;
+            return Ok(buf);
+        }
+    }
+    Err(CliError::UpdateFailed(
+        "the release archive contains no `digstore` executable".to_string(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Network: fetch the latest release.
 // ---------------------------------------------------------------------------
 
@@ -335,25 +473,67 @@ fn perform_update(
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = yes;
-        // No bundled installer on macOS/Linux yet: point the user at the release.
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+
         ui.line(format!(
             "update available: {} -> {}",
             display_version(current),
             latest
         ));
-        if !release.html_url.is_empty() {
-            ui.line(format!("release: {}", release.html_url));
+
+        // Pick the correct raw-binary (or tarball) asset for this OS+arch.
+        let Some(sel) = select_binary_asset(&release.assets, os, arch) else {
+            if !release.html_url.is_empty() {
+                ui.line(format!("release: {}", release.html_url));
+            }
+            return Err(CliError::NotFound(format!(
+                "no digstore binary asset for {os}/{arch} in release {latest}; \
+                 download it from the release page above and place it on your PATH"
+            )));
+        };
+        ui.line(format!("asset: {}", sel.name));
+
+        if !yes && !confirm("Download it and replace the current binary now?") {
+            ui.line("aborted; run `digstore update --yes` to skip this prompt");
+            return Ok(());
         }
-        match suggest_manual_asset(&release.assets) {
-            Some(a) => ui.line(format!("download: {}", a.browser_download_url)),
-            None => ui.line("download the asset for your platform from the release page"),
+
+        // Download -> (extract if tarball) -> sanity-check -> atomic self-replace.
+        ui.verb("Downloading", sel.name.clone());
+        let payload = fetch_bytes(&sel.url)?;
+        let binary = if sel.is_tarball {
+            extract_digstore_from_targz(&payload)?
+        } else {
+            payload
+        };
+        if !looks_like_native_binary(&binary, os) {
+            return Err(CliError::UpdateFailed(
+                "the downloaded asset is not a valid digstore binary (aborting; nothing changed)"
+                    .to_string(),
+            ));
+        }
+
+        let target = resolve_self_path()?;
+        ui.verb("Installing", target.display().to_string());
+        install_binary(&target, &binary)?;
+
+        ui.success(format!("updated to {} ({})", latest, target.display()));
+        // Best-effort post-verify: run the freshly installed binary's --version.
+        if let Ok(out) = std::process::Command::new(&target)
+            .arg("--version")
+            .output()
+        {
+            let v = String::from_utf8_lossy(&out.stdout);
+            let v = v.trim();
+            if !v.is_empty() {
+                ui.line(format!("now: {v}"));
+            }
         }
         Ok(())
     }
 }
 
-#[cfg(target_os = "windows")]
 fn confirm(prompt: &str) -> bool {
     use std::io::Write;
     print!("{prompt} [y/N] ");
@@ -363,6 +543,114 @@ fn confirm(prompt: &str) -> bool {
         return false;
     }
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+// ---------------------------------------------------------------------------
+// Self-install (macOS / Linux): download -> verify -> chmod -> de-quarantine ->
+// atomic rename over the running binary.
+// ---------------------------------------------------------------------------
+
+/// Download an asset URL into memory. Used verbatim from `browser_download_url`.
+/// (The Windows update path uses the bundled installer, not this raw-binary download.)
+#[cfg(not(target_os = "windows"))]
+fn fetch_bytes(url: &str) -> Result<Vec<u8>, CliError> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| CliError::Other(e.into()))?;
+    rt.block_on(async {
+        let client = reqwest::Client::builder()
+            .timeout(UPDATE_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .map_err(|e| CliError::Network(format!("http client: {e}")))?;
+        let resp = client
+            .get(url)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .await
+            .map_err(|e| CliError::Network(format!("download: {e}")))?;
+        if !resp.status().is_success() {
+            return Err(CliError::Network(format!(
+                "download returned status {}",
+                resp.status().as_u16()
+            )));
+        }
+        resp.bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| CliError::Network(format!("read body: {e}")))
+    })
+}
+
+/// The on-disk path of the binary to replace. Resolves `current_exe()` through symlinks
+/// (via `canonicalize`) so we overwrite the REAL file — e.g. a Homebrew symlink at
+/// `/opt/homebrew/bin/digstore` keeps pointing at the (now-updated) Cellar target.
+pub fn resolve_self_path() -> Result<std::path::PathBuf, CliError> {
+    let exe = std::env::current_exe()
+        .map_err(|e| CliError::UpdateFailed(format!("locate the running binary: {e}")))?;
+    Ok(std::fs::canonicalize(&exe).unwrap_or(exe))
+}
+
+/// Atomically replace the executable at `target` with `new_bytes`.
+///
+/// Writes to a temp file in the SAME directory (so the final rename is atomic on one
+/// filesystem), sets the exec bit (Unix), clears the macOS Gatekeeper quarantine
+/// best-effort, then renames over `target`. On Unix renaming over the running binary
+/// is safe — the live process keeps the old inode until it exits. Returns a clear
+/// [`CliError::UpdateFailed`] with manual steps if the destination is not writable.
+pub fn install_binary(target: &std::path::Path, new_bytes: &[u8]) -> Result<(), CliError> {
+    let dir = target.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let tmp = dir.join(format!(".digstore-update-{}.tmp", std::process::id()));
+
+    std::fs::write(&tmp, new_bytes).map_err(|e| not_writable(target, &e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perm = std::fs::Permissions::from_mode(0o755);
+        if let Err(e) = std::fs::set_permissions(&tmp, perm) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(CliError::UpdateFailed(format!("set exec bit: {e}")));
+        }
+    }
+
+    // Downloaded-then-written bytes carry no quarantine attr, but clear it defensively
+    // (harmless if absent) so a self-updated binary is never Gatekeeper-blocked.
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("xattr")
+        .args(["-d", "com.apple.quarantine"])
+        .arg(&tmp)
+        .output();
+
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(not_writable(target, &e));
+    }
+
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("xattr")
+        .args(["-d", "com.apple.quarantine"])
+        .arg(target)
+        .output();
+
+    Ok(())
+}
+
+/// A fail-LOUD error for a non-writable install location, with the manual recovery
+/// steps (§ install docs) so the user is never left with a silent no-op.
+fn not_writable(target: &std::path::Path, e: &std::io::Error) -> CliError {
+    CliError::UpdateFailed(format!(
+        "cannot write {} ({e}).\n\
+         Manual update:\n  \
+         1. Download the digstore binary for your OS/arch from \
+         https://github.com/DIG-Network/digstore/releases/latest\n  \
+         2. chmod +x ./digstore\n  \
+         3. (macOS) xattr -d com.apple.quarantine ./digstore\n  \
+         4. mv ./digstore \"{}\"   # or re-run with write permission / the installer",
+        target.display(),
+        target.display(),
+    ))
 }
 
 /// Download `asset` into a temp directory and return the on-disk path.
@@ -534,6 +822,161 @@ mod tests {
     fn display_version_adds_v_prefix() {
         assert_eq!(display_version("0.3.0"), "v0.3.0");
         assert_eq!(display_version("v0.3.0"), "v0.3.0");
+    }
+
+    // --- #127: platform binary-asset selection --------------------------------
+
+    /// The ACTUAL release asset set (from `gh release view v0.7.2`), so the selector
+    /// is pinned to the real names. Raw binaries for macOS + linux-x64; a `.tar.gz`
+    /// for linux aarch64 (the only asset for that target).
+    fn real_release_assets() -> Vec<Asset> {
+        [
+            "digstore-0.7.2-aarch64-unknown-linux-gnu.tar.gz",
+            "digstore-0.7.2-linux-x64",
+            "digstore-0.7.2-macos-arm64",
+            "digstore-0.7.2-macos-x64",
+            "digstore-0.7.2-windows-x64.exe",
+            "digstore-0.7.2-x86_64-unknown-linux-gnu.tar.gz",
+        ]
+        .iter()
+        .map(|n| asset(n))
+        .collect()
+    }
+
+    #[test]
+    fn selects_macos_arm64_raw_binary() {
+        let a = select_binary_asset(&real_release_assets(), "macos", "aarch64").unwrap();
+        assert_eq!(a.name, "digstore-0.7.2-macos-arm64");
+        assert!(!a.is_tarball);
+    }
+
+    #[test]
+    fn selects_macos_x64_raw_binary() {
+        let a = select_binary_asset(&real_release_assets(), "macos", "x86_64").unwrap();
+        assert_eq!(a.name, "digstore-0.7.2-macos-x64");
+        assert!(!a.is_tarball);
+    }
+
+    #[test]
+    fn selects_linux_x64_raw_binary_over_tarball() {
+        let a = select_binary_asset(&real_release_assets(), "linux", "x86_64").unwrap();
+        assert_eq!(a.name, "digstore-0.7.2-linux-x64");
+        assert!(!a.is_tarball, "prefer the raw binary over the .tar.gz");
+    }
+
+    #[test]
+    fn selects_linux_aarch64_tarball_when_only_option() {
+        let a = select_binary_asset(&real_release_assets(), "linux", "aarch64").unwrap();
+        assert_eq!(a.name, "digstore-0.7.2-aarch64-unknown-linux-gnu.tar.gz");
+        assert!(a.is_tarball);
+    }
+
+    #[test]
+    fn selector_uses_browser_download_url_verbatim() {
+        // Guards the reported "doubled URL": digstore passes GitHub's URL through
+        // unchanged (the doubling was terminal line-wrapping, not construction).
+        let url = "https://github.com/DIG-Network/digstore/releases/download/v0.7.2/digstore-0.7.2-macos-arm64";
+        let assets = vec![Asset {
+            name: "digstore-0.7.2-macos-arm64".into(),
+            browser_download_url: url.into(),
+        }];
+        let a = select_binary_asset(&assets, "macos", "aarch64").unwrap();
+        assert_eq!(a.url, url);
+    }
+
+    #[test]
+    fn selector_skips_installers_and_disk_images() {
+        // A .dmg / setup.exe is the installer path, never a raw self-replace asset.
+        let assets = vec![
+            asset("DigStore-Setup-0.7.2-macos.dmg"),
+            asset("DigStore-Setup-0.7.2-windows-x64.exe"),
+        ];
+        assert!(select_binary_asset(&assets, "macos", "aarch64").is_none());
+    }
+
+    // --- #127: downloaded-binary sanity check ---------------------------------
+
+    #[test]
+    fn native_binary_magic_recognized_per_os() {
+        assert!(looks_like_native_binary(b"\x7fELF....", "linux"));
+        assert!(!looks_like_native_binary(b"<!DOCTYPE html>", "linux"));
+        assert!(looks_like_native_binary(
+            &[0xCF, 0xFA, 0xED, 0xFE, 0, 0],
+            "macos"
+        )); // Mach-O 64 LE
+        assert!(looks_like_native_binary(
+            &[0xCA, 0xFE, 0xBA, 0xBE, 0, 0],
+            "macos"
+        )); // fat/universal
+        assert!(!looks_like_native_binary(b"nope-not-macho", "macos"));
+        assert!(looks_like_native_binary(b"MZ\x90\x00", "windows"));
+        assert!(!looks_like_native_binary(b"", "linux"));
+    }
+
+    // --- #127: tarball extraction ---------------------------------------------
+
+    fn targz_with(entry_name: &str, data: &[u8]) -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut tb = tar::Builder::new(enc);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tb.append_data(&mut header, entry_name, data).unwrap();
+        tb.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn extracts_digstore_from_a_targz() {
+        let payload = b"\x7fELF this-is-the-digstore-binary";
+        let gz = targz_with("digstore", payload);
+        assert_eq!(extract_digstore_from_targz(&gz).unwrap(), payload);
+    }
+
+    #[test]
+    fn extract_errors_when_no_digstore_entry() {
+        let gz = targz_with("README.txt", b"not the binary");
+        assert!(extract_digstore_from_targz(&gz).is_err());
+    }
+
+    // --- #127: atomic self-replace (against a TEMP file, NEVER the live binary) --
+
+    #[test]
+    fn install_binary_replaces_contents_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("digstore");
+        std::fs::write(&target, b"OLD-BINARY").unwrap();
+
+        install_binary(&target, b"\x7fELF NEW-BINARY").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"\x7fELF NEW-BINARY");
+        // No temp file left behind (it was renamed over the target).
+        let leftovers = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("digstore-update-"))
+            .count();
+        assert_eq!(leftovers, 0, "temp file must be renamed away");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+            assert_eq!(mode & 0o111, 0o111, "exec bits must be set");
+        }
+    }
+
+    #[test]
+    fn install_binary_fails_loud_on_unwritable_target() {
+        // A target under a non-existent directory can't be written -> clear error + steps.
+        let bad = std::path::Path::new("digstore-update-nope")
+            .join("deeper")
+            .join("digstore");
+        let err = install_binary(&bad, b"\x7fELFx").unwrap_err();
+        assert!(matches!(err, CliError::UpdateFailed(_)));
+        assert!(
+            err.to_string().contains("Manual update"),
+            "gives manual steps"
+        );
     }
 
     /// Live-network smoke test, gated so CI/unit runs never hit GitHub.

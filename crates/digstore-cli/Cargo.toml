@@ -43,6 +43,10 @@ dirs = "5"
 hex = "0.4"
 base64 = "0.22"
 getrandom = "0.2"
+# `digstore update` self-updater: extract the `digstore` binary from a release
+# `.tar.gz` asset (Linux aarch64 ships only a tarball). Pure-Rust (miniz_oxide).
+flate2 = "1"
+tar = "0.4"
 anstream = "0.6"
 anstyle = "1"
 ignore = "0.4"
