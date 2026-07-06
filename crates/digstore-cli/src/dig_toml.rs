@@ -143,25 +143,25 @@ impl DigToml {
         }
     }
 
-    /// Resolve the per-capsule DIG amount (base units) with the uniform precedence
-    /// `flag > env > dig.toml > default`. `flag` is the parsed `--dig-amount` (already
-    /// in base units); the file/env layer here is the human DIG string in
-    /// `self.dig_amount`. Falls back to `default_units` when nothing is set. The
-    /// resolution is DETERMINISTIC — no network/price fetch (SYSTEM.md: the hub
-    /// computes the dynamic USD-pegged amount and passes it in).
-    pub fn resolve_dig_amount(
-        &self,
-        flag: Option<u64>,
-        default_units: u64,
-    ) -> Result<u64, CliError> {
+    /// Resolve an EXPLICIT per-capsule DIG amount (base units) override, if one is
+    /// set, with the uniform precedence `flag > env > dig.toml`. `flag` is the parsed
+    /// `--dig-amount` (already in base units); the file/env layer is the human DIG
+    /// string in `self.dig_amount` (the env layer was overlaid by [`Self::with_env`]).
+    ///
+    /// Returns `Some(base_units)` when the user pinned an amount, or `None` when none
+    /// is set — in which case the caller fetches the dynamic, USD-pegged price from
+    /// the canonical pricing endpoint ([`crate::ops::pricing`]). This selection is
+    /// DETERMINISTIC (no network); the fetch happens in the caller so an explicit
+    /// amount stays reproducible + offline (#125).
+    pub fn explicit_dig_amount(&self, flag: Option<u64>) -> Result<Option<u64>, CliError> {
         if let Some(units) = flag {
-            return Ok(units);
+            return Ok(Some(units));
         }
         match &self.dig_amount {
-            Some(s) => digstore_chain::dig::parse_dig(s).map_err(|e| {
+            Some(s) => digstore_chain::dig::parse_dig(s).map(Some).map_err(|e| {
                 CliError::InvalidArgument(format!("invalid dig.toml `dig-amount`: {e}"))
             }),
-            None => Ok(default_units),
+            None => Ok(None),
         }
     }
 }
@@ -262,30 +262,28 @@ keywords = ["chia", "dapp"]
         assert_eq!(cfg.output_dir.as_deref(), Some("env-dist"));
     }
 
-    /// `resolve_dig_amount` precedence: flag (base units) > file/env `dig-amount`
-    /// (human DIG string) > the supplied default. Deterministic; no price fetch.
+    /// `explicit_dig_amount` precedence: flag (base units) > file/env `dig-amount`
+    /// (human DIG string). Returns `None` when nothing is set (caller then fetches
+    /// the dynamic price). Deterministic; no price fetch.
     #[test]
-    fn resolve_dig_amount_precedence() {
-        // No flag, no file value → the default.
+    fn explicit_dig_amount_precedence() {
+        // No flag, no file value → None (the caller fetches the dynamic price).
         let cfg = DigToml::default();
-        assert_eq!(cfg.resolve_dig_amount(None, 100_000).unwrap(), 100_000);
-        // File `dig-amount` (human DIG) wins over the default.
+        assert_eq!(cfg.explicit_dig_amount(None).unwrap(), None);
+        // File `dig-amount` (human DIG) is an explicit override.
         let cfg = DigToml {
             dig_amount: Some("87.5".to_string()),
             ..Default::default()
         };
-        assert_eq!(cfg.resolve_dig_amount(None, 100_000).unwrap(), 87_500);
+        assert_eq!(cfg.explicit_dig_amount(None).unwrap(), Some(87_500));
         // The flag (already base units) wins over the file value.
-        assert_eq!(
-            cfg.resolve_dig_amount(Some(42_000), 100_000).unwrap(),
-            42_000
-        );
-        // A malformed file value is a hard error (never silently spends the default).
+        assert_eq!(cfg.explicit_dig_amount(Some(42_000)).unwrap(), Some(42_000));
+        // A malformed file value is a hard error (never silently spends a wrong amount).
         let bad = DigToml {
             dig_amount: Some("not-a-number".to_string()),
             ..Default::default()
         };
-        assert!(bad.resolve_dig_amount(None, 100_000).is_err());
+        assert!(bad.explicit_dig_amount(None).is_err());
     }
 
     /// The `dig-amount` field reads from both kebab and snake keys.
@@ -295,7 +293,7 @@ keywords = ["chia", "dapp"]
         std::fs::write(td.path().join("dig.toml"), "dig-amount = \"50\"\n").unwrap();
         let cfg = DigToml::read(td.path()).unwrap();
         assert_eq!(cfg.dig_amount.as_deref(), Some("50"));
-        assert_eq!(cfg.resolve_dig_amount(None, 100_000).unwrap(), 50_000);
+        assert_eq!(cfg.explicit_dig_amount(None).unwrap(), Some(50_000));
     }
 
     /// An UNSET env var leaves the file value intact (env layer is additive).

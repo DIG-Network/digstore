@@ -207,3 +207,37 @@ byte-format contract — it is kept here because it is a public surface an indep
   `already_authorized: true` in `--json` output).
 - A writer delegate may advance the store's root (publish capsules) but can never change
   ownership or the delegated set itself — only the owner key can.
+
+## 10. Per-capsule $DIG price (commit / deploy)
+
+Scope note: like §9, this is a CLI/economic contract, not a `.dig` byte-format contract; it is
+normative for how a `digstore` reimplementation prices a capsule.
+
+Minting a store (`init`) is **FREE of $DIG** (XCH network fee only). The $DIG payment is
+attached ONLY to a `commit` / root-advance (a capsule), atomic with the singleton update in one
+co-signed bundle (§ the enforcement in `digstore_chain::dig::verify_commit_pays_dig_treasury`).
+
+The per-capsule price is **dynamic and USD-pegged**, NOT a fixed token amount:
+
+- `dig_amount = target_usd ÷ live_dig_usd`, where `target_usd ≈ $1 / capsule / year` (realistic
+  AWS hosting for one fixed-size capsule) and the amount is **uniform per capsule** (every capsule
+  is the same fixed size, so size-varying pricing is FORBIDDEN — it would re-leak content size).
+- **ONE canonical source.** The price is computed on the DIGHub server (the pure formula +
+  USD-target constants; a live DIG→USD oracle) and served at **`GET https://hub.dig.net/v1/pricing`**
+  as `mint_dig` (the capsule price in DIG **base units**; 1 DIG = 1000 base units). A `digstore`
+  implementation MUST consume this SAME source so it never diverges from what DIGHub charges — it
+  MUST NOT hard-code a fixed price or reimplement the formula/oracle. The response is additive-only
+  (`{dig_usd, computed_at, source, mint_dig, mint_usd, subdomain_dig, subdomain_usd, cert_dig,
+  cert_usd, basis}`); a reader takes `mint_dig` and ignores unknown fields.
+- **Resolution order (commit/deploy):** an explicit amount — `--dig-amount <DIG>` flag >
+  `DIGSTORE_DIG_AMOUNT` env > `dig.toml` `dig-amount` (a human DIG decimal, ≤ 3 dp) — always wins
+  and is deterministic (no fetch). Absent any override, the CLI FETCHES the live price from the
+  pricing endpoint and uses `mint_dig`. The endpoint URL is overridable via `DIGSTORE_PRICING_URL`
+  (default `https://hub.dig.net/v1/pricing`).
+- **Fail LOUD (money-path discipline).** If no explicit amount is set AND the pricing endpoint is
+  unreachable/undecodable/omits a valid `mint_dig`, the command MUST error clearly (pointing the
+  user at `--dig-amount`) and spend NOTHING — it MUST NOT silently fall back to a stale flat
+  amount. (The endpoint has its own server-side fallback price, so a reachable endpoint always
+  returns a usable `mint_dig`; digstore surfaces a note when `source` is `"fallback"`/`"… (stale)"`.)
+- The amount displayed to the user (and in `--dry-run`'s `cost_dig`) is byte-for-byte the amount
+  built into the on-chain DIG-CAT payment (`digstore_chain::cat::build_dig_store_payment`).

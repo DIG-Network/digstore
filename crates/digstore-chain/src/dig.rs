@@ -40,20 +40,29 @@ pub const TREASURY_ADDRESS: &str = "xch1a37rq3cgcl2ecpudttsf35x75qzdan68lgw2l6aj
 
 /// DIG has 3 decimals: 1 DIG = 1000 base units.
 pub const DIG_DECIMALS: u32 = 3;
-/// DEFAULT base units per root update (`commit`/`deploy`) — a CAPSULE — 100 DIG.
+/// LEGACY fixed base-units-per-capsule constant (100 DIG) — retained for
+/// cross-repo API compatibility; NO LONGER the digstore CLI spend fallback (#125).
 ///
 /// **Minting a store is FREE of $DIG** (#111, SYSTEM.md → "DIG CAT payment"): the mint
 /// only launches the on-chain singleton (empty/initial root) + the XCH network fee, so
 /// there is no `INIT_DIG` mint cost — the DIG payment is attached ONLY to a commit /
-/// root-advance (= a capsule). This is a DEFAULT, not a hard constant: the per-capsule
-/// price is **dynamic and USD-pegged** (SYSTEM.md — `dig_amount = target_usd ÷ live DIG
-/// price`, where `target_usd ≈ $1/capsule/year` of realistic AWS hosting; uniform per
-/// fixed-size capsule → same USD target → obfuscation preserved). The hub computes that
-/// live amount in the browser and the CLI accepts it explicitly (`--dig-amount` /
-/// `DIGSTORE_DIG_AMOUNT` / `dig.toml`'s `dig-amount`). The CLI stays DETERMINISTIC: it
-/// never fetches a live price itself — it takes the amount as input and falls back to
-/// this default when none is given. See [`resolve_dig_amount`]. Matches the hub web
-/// app's `lib/dig.js` default and chip35's per-capsule payment.
+/// root-advance (= a capsule).
+///
+/// The per-capsule price is **dynamic and USD-pegged** (SYSTEM.md — `dig_amount =
+/// target_usd ÷ live DIG price`, where `target_usd ≈ $1/capsule/year` of realistic AWS
+/// hosting; uniform per fixed-size capsule → same USD target → obfuscation preserved).
+/// The ONE canonical computation lives on the hub server (pure formula in the hub's
+/// `dighub_data::pricing`; live DIG→USD oracle) and is served at `GET
+/// https://hub.dig.net/v1/pricing` as `mint_dig`. The digstore CLI now consumes that
+/// SAME number ([`crate::pricing`]): when no explicit amount is passed it FETCHES the
+/// live price and fails LOUD if the endpoint is unreachable — it never silently spends
+/// this flat 100. An explicit amount (`--dig-amount` / `DIGSTORE_DIG_AMOUNT` /
+/// `dig.toml`'s `dig-amount`) still wins and stays deterministic.
+///
+/// This constant survives ONLY because sibling repos depend on it as a public
+/// symbol (e.g. dig-node's `dig-wallet` uses it as the wallet-host default when an
+/// RPC caller omits the amount). Removing it is a breaking cross-repo change; do not
+/// reintroduce it as a spend fallback in the digstore money-path.
 pub const COMMIT_DIG: u64 = 100_000;
 
 /// Resolve the DIG amount (base units) to spend for a mint/commit, DETERMINISTICALLY.

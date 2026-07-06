@@ -9,6 +9,7 @@ pub mod dighub;
 pub mod discovery;
 pub mod identity;
 pub mod node;
+pub mod pricing;
 pub mod remote_ops;
 pub mod serve;
 pub mod store_ops;
