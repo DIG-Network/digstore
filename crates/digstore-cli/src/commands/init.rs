@@ -20,24 +20,56 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
 
     // Load or create the workspace (migrating a legacy single-store layout first).
     let mut ws = crate::workspace::Workspace::load_or_migrate(&ctx.workspace_dir)?;
+
+    // Compute (WITHOUT creating) the on-disk store dir up front. `store_ops::init_store`
+    // also checks it, but only AFTER the mint — by which point we'd already have spent
+    // XCH on a singleton we then orphan. The workspace registry and the on-disk layout
+    // can disagree (e.g. a prior run minted+scaffolded but died before `ws.save()`, or
+    // `stores.toml` was edited/deleted), so this disk-level guard runs PRE-mint.
+    let store_dir = ws.store_dir(&name);
+
+    // RESUME, never re-mint (#84 — money path). A store already scaffolded on disk was
+    // minted by a prior `init`. If its mint is still PENDING — e.g. a previous run hit a
+    // transient coinset error AFTER broadcasting the mint (`submitted mint …` then an
+    // "error decoding response body") — re-running `init <name>` RESUMES confirmation of
+    // the EXISTING coin instead of minting a SECOND singleton, which would double-spend
+    // real XCH. This is read-only (no seed unlock, no spend): it confirms the recorded
+    // coin and flips `anchor.toml`, reusing the exact `digstore anchor` resume logic.
+    // A CONFIRMED (or non-anchored) store on disk is a genuine name collision → reject.
+    if store_dir.join("config.toml").exists() {
+        match AnchorState::load(&store_dir)? {
+            Some(state) if state.status == AnchorStatus::Pending => {
+                let store_ctx = CliContext {
+                    dig_dir: store_dir,
+                    workspace_dir: ctx.workspace_dir.clone(),
+                    op_dir: ctx.op_dir.clone(),
+                    store_name: Some(name.clone()),
+                    json: ctx.json,
+                    verbose: ctx.verbose,
+                };
+                return crate::commands::anchor::run(
+                    &store_ctx,
+                    ui,
+                    crate::cli::AnchorArgs {
+                        action: None,
+                        wait_timeout: args.wait_timeout,
+                    },
+                );
+            }
+            _ => {
+                return Err(CliError::InvalidArgument(format!(
+                    "store already initialized at {}",
+                    store_dir.display()
+                )));
+            }
+        }
+    }
+
+    // Registered in the workspace registry but not scaffolded on disk (an
+    // inconsistent/edited registry): treat as a name collision.
     if ws.stores.contains_key(&name) {
         return Err(CliError::InvalidArgument(format!(
             "store '{name}' already exists"
-        )));
-    }
-
-    // Compute (WITHOUT creating) the on-disk store dir, and reject up front if a
-    // store is already scaffolded there. `store_ops::init_store` performs the same
-    // check, but only AFTER the mint — by which point we'd already have spent XCH
-    // on a singleton we then orphan. The workspace registry and the on-disk layout
-    // can disagree (e.g. a prior run minted+scaffolded but died before `ws.save()`,
-    // or `stores.toml` was edited/deleted), so this disk-level guard must run
-    // PRE-mint, in addition to the registry check above. Fail before spending.
-    let store_dir = ws.store_dir(&name);
-    if store_dir.join("config.toml").exists() {
-        return Err(CliError::InvalidArgument(format!(
-            "store already initialized at {}",
-            store_dir.display()
         )));
     }
 

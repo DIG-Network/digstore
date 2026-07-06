@@ -1,9 +1,157 @@
 //! Coinset.org access behind a small trait so anchoring logic is testable
 //! without a network. Real impl wraps `chia_sdk_coinset::CoinsetClient`.
+//!
+//! ## Transient-failure resilience (#84 — a live user was blocked minting on mainnet)
+//!
+//! coinset.org intermittently truncates/aborts an HTTP response body under load
+//! (`reqwest` surfaces this as `error decoding response body`). It has NO built-in
+//! retry or timeout. A single such hiccup used to abort `digstore doctor` (the fund
+//! scan) and `digstore init` (the mint) — and, critically, one hiccup landed AFTER
+//! the mint spend was already broadcast, aborting a flow whose XCH was already spent.
+//!
+//! Every coinset read here therefore goes through [`Coinset::call`], which wraps the
+//! underlying RPC in retry-with-exponential-backoff + jitter + a per-attempt timeout
+//! ([`retry_core`] / [`RetryConfig`]). Transient failures (truncated body, transport
+//! errors, timeouts, 5xx, 429 — see [`TransientClass`]) are retried; a definitive
+//! not-found or other terminal 4xx is NOT retried (it never becomes a hang). Reads are
+//! issued SEQUENTIALLY (the wallet scan loops address-by-address), so concurrency is
+//! already bounded to 1 and digstore never triggers coinset's parallel-fan-out volume
+//! failure (#62); the retry+timeout handles the isolated transient truncation.
 
 use crate::error::{ChainError, Result};
 use chia_protocol::{Bytes32, Coin, CoinSpend, SpendBundle};
 use chia_sdk_coinset::ChiaRpcClient;
+use std::future::Future;
+use std::time::Duration;
+
+/// Retry policy for transient coinset RPC failures.
+///
+/// Defaults are tuned for an interactive CLI: recover quickly from the common
+/// single-hiccup case while bounding the worst case (coinset fully down) so a
+/// command never hangs indefinitely.
+#[derive(Clone, Copy, Debug)]
+pub struct RetryConfig {
+    /// Total attempts (including the first). `1` disables retry.
+    pub max_attempts: u32,
+    /// Base backoff before the first retry; doubles each subsequent retry.
+    pub base_delay: Duration,
+    /// Upper bound on any single backoff sleep.
+    pub max_delay: Duration,
+    /// Per-attempt wall-clock budget; an attempt exceeding it is treated as a
+    /// transient timeout and retried. Needed because the coinset client sets no
+    /// reqwest timeout, so a hung connection would otherwise block forever.
+    pub per_attempt_timeout: Duration,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 5,
+            base_delay: Duration::from_millis(200),
+            max_delay: Duration::from_secs(5),
+            per_attempt_timeout: Duration::from_secs(20),
+        }
+    }
+}
+
+/// Classifies an operation error as transient (worth retrying) or terminal.
+trait TransientClass {
+    fn is_transient(&self) -> bool;
+}
+
+impl TransientClass for reqwest::Error {
+    fn is_transient(&self) -> bool {
+        // A truncated/failed body decode ("error decoding response body" — the exact
+        // #84 symptom), connect/request/body transport errors, and timeouts are all
+        // transient coinset hiccups under load. A surfaced 5xx / 429 is transient too;
+        // any other status (a real 4xx client error) is terminal.
+        if self.is_timeout()
+            || self.is_connect()
+            || self.is_request()
+            || self.is_body()
+            || self.is_decode()
+        {
+            return true;
+        }
+        if let Some(status) = self.status() {
+            return status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+        }
+        false
+    }
+}
+
+/// Failure outcome of [`retry_core`]: the terminal/last operation error, or an
+/// all-attempts-timed-out signal (no operation error to surface).
+enum RetryFail<E> {
+    Op(E),
+    Timeout,
+}
+
+/// Compute the (jittered) backoff before the `attempt`-th retry (1-based on the
+/// number of failures so far): exponential `base * 2^(attempt-1)`, capped at
+/// `max_delay`, then full-jittered into `[delay/2, delay]` to avoid thundering-herd
+/// synchronization across concurrent clients.
+fn jittered_backoff(cfg: &RetryConfig, attempt: u32) -> Duration {
+    let shift = attempt.saturating_sub(1).min(16);
+    let factor = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+    let base_ms = cfg.base_delay.as_millis() as u64;
+    let cap_ms = cfg.max_delay.as_millis() as u64;
+    let exp_ms = base_ms.saturating_mul(factor).min(cap_ms);
+    if exp_ms == 0 {
+        return Duration::from_millis(0);
+    }
+    let half = exp_ms / 2;
+    let span = exp_ms - half;
+    let rnd = rand_u64() % (span + 1);
+    Duration::from_millis(half + rnd)
+}
+
+/// A single random u64 for jitter. `getrandom` is a hard dependency; on its
+/// (effectively impossible) failure we degrade to zero jitter rather than panic.
+fn rand_u64() -> u64 {
+    let mut b = [0u8; 8];
+    if getrandom::getrandom(&mut b).is_ok() {
+        u64::from_le_bytes(b)
+    } else {
+        0
+    }
+}
+
+/// Run `op` with retry-on-transient + exponential backoff + jitter + a per-attempt
+/// timeout. Returns the first success; retries transient failures and per-attempt
+/// timeouts up to `cfg.max_attempts`; returns immediately on a terminal error.
+///
+/// Generic over the error + its [`TransientClass`] so the loop is unit-testable with
+/// a synthetic error (the production callers use `reqwest::Error`).
+async fn retry_core<T, E, F, Fut>(
+    cfg: &RetryConfig,
+    mut op: F,
+) -> std::result::Result<T, RetryFail<E>>
+where
+    E: TransientClass,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = std::result::Result<T, E>>,
+{
+    let max = cfg.max_attempts.max(1);
+    let mut attempt = 1u32;
+    loop {
+        match tokio::time::timeout(cfg.per_attempt_timeout, op()).await {
+            Ok(Ok(v)) => return Ok(v),
+            Ok(Err(e)) => {
+                if !e.is_transient() || attempt >= max {
+                    return Err(RetryFail::Op(e));
+                }
+            }
+            Err(_elapsed) => {
+                if attempt >= max {
+                    return Err(RetryFail::Timeout);
+                }
+            }
+        }
+        tokio::time::sleep(jittered_backoff(cfg, attempt)).await;
+        attempt += 1;
+    }
+}
 
 /// A confirmed coin record — the crate's mirror of coinset's `CoinRecord`.
 ///
@@ -243,19 +391,47 @@ pub trait ChainReads: Send + Sync {
 /// Production impl over coinset.org.
 pub struct Coinset {
     client: chia_sdk_coinset::CoinsetClient,
+    retry: RetryConfig,
 }
 
 impl Coinset {
     pub fn mainnet() -> Self {
         Self {
             client: chia_sdk_coinset::CoinsetClient::mainnet(),
+            retry: RetryConfig::default(),
         }
     }
 
     pub fn with_url(base_url: String) -> Self {
         Self {
             client: chia_sdk_coinset::CoinsetClient::new(base_url),
+            retry: RetryConfig::default(),
         }
+    }
+
+    /// Override the retry policy (tuning / tests). Defaults to [`RetryConfig::default`].
+    pub fn with_retry_config(mut self, retry: RetryConfig) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    /// Issue one coinset RPC through the transient-failure retry wrapper.
+    ///
+    /// `op` re-issues the underlying request on each attempt (so retries hit a fresh
+    /// connection after a truncated body). `label` names the RPC for error messages,
+    /// preserving the pre-existing `"<method>: <error>"` shape callers/tests expect.
+    async fn call<T, F, Fut>(&self, label: &str, op: F) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = reqwest::Result<T>>,
+    {
+        retry_core(&self.retry, op).await.map_err(|f| match f {
+            RetryFail::Op(e) => ChainError::Chain(format!("{label}: {e}")),
+            RetryFail::Timeout => ChainError::Chain(format!(
+                "{label}: coinset did not respond after {} attempts",
+                self.retry.max_attempts
+            )),
+        })
     }
 }
 
@@ -263,10 +439,15 @@ impl Coinset {
 impl ChainReads for Coinset {
     async fn unspent_coins(&self, puzzle_hash: Bytes32) -> Result<Vec<Coin>> {
         let resp = self
-            .client
-            .get_coin_records_by_puzzle_hashes(vec![puzzle_hash], None, None, Some(false))
-            .await
-            .map_err(|e| ChainError::Chain(format!("get_coin_records_by_puzzle_hashes: {e}")))?;
+            .call("get_coin_records_by_puzzle_hashes", || {
+                self.client.get_coin_records_by_puzzle_hashes(
+                    vec![puzzle_hash],
+                    None,
+                    None,
+                    Some(false),
+                )
+            })
+            .await?;
 
         if !resp.success {
             return Err(ChainError::Chain(format!(
@@ -292,10 +473,11 @@ impl ChainReads for Coinset {
 
     async fn unspent_coins_by_hint(&self, hint: Bytes32) -> Result<Vec<Coin>> {
         let resp = self
-            .client
-            .get_coin_records_by_hint(hint, None, None, Some(false))
-            .await
-            .map_err(|e| ChainError::Chain(format!("get_coin_records_by_hint: {e}")))?;
+            .call("get_coin_records_by_hint", || {
+                self.client
+                    .get_coin_records_by_hint(hint, None, None, Some(false))
+            })
+            .await?;
 
         if !resp.success {
             return Err(ChainError::Chain(format!(
@@ -326,10 +508,15 @@ impl ChainReads for Coinset {
         include_spent: bool,
     ) -> Result<Vec<CoinRecord>> {
         let resp = self
-            .client
-            .get_coin_records_by_puzzle_hash(puzzle_hash, None, None, Some(include_spent))
-            .await
-            .map_err(|e| ChainError::Chain(format!("get_coin_records_by_puzzle_hash: {e}")))?;
+            .call("get_coin_records_by_puzzle_hash", || {
+                self.client.get_coin_records_by_puzzle_hash(
+                    puzzle_hash,
+                    None,
+                    None,
+                    Some(include_spent),
+                )
+            })
+            .await?;
 
         if !resp.success {
             return Err(ChainError::Chain(format!(
@@ -353,10 +540,11 @@ impl ChainReads for Coinset {
         include_spent: bool,
     ) -> Result<Vec<CoinRecord>> {
         let resp = self
-            .client
-            .get_coin_records_by_hint(hint, None, None, Some(include_spent))
-            .await
-            .map_err(|e| ChainError::Chain(format!("get_coin_records_by_hint: {e}")))?;
+            .call("get_coin_records_by_hint", || {
+                self.client
+                    .get_coin_records_by_hint(hint, None, None, Some(include_spent))
+            })
+            .await?;
 
         if !resp.success {
             return Err(ChainError::Chain(format!(
@@ -380,10 +568,15 @@ impl ChainReads for Coinset {
         include_spent: bool,
     ) -> Result<Vec<CoinRecord>> {
         let resp = self
-            .client
-            .get_coin_records_by_parent_ids(parent_ids.to_vec(), None, None, Some(include_spent))
-            .await
-            .map_err(|e| ChainError::Chain(format!("get_coin_records_by_parent_ids: {e}")))?;
+            .call("get_coin_records_by_parent_ids", || {
+                self.client.get_coin_records_by_parent_ids(
+                    parent_ids.to_vec(),
+                    None,
+                    None,
+                    Some(include_spent),
+                )
+            })
+            .await?;
 
         if !resp.success {
             return Err(ChainError::Chain(format!(
@@ -403,10 +596,10 @@ impl ChainReads for Coinset {
 
     async fn coin_record(&self, name: Bytes32) -> Result<Option<CoinInfo>> {
         let resp = self
-            .client
-            .get_coin_record_by_name(name)
-            .await
-            .map_err(|e| ChainError::Chain(format!("get_coin_record_by_name: {e}")))?;
+            .call("get_coin_record_by_name", || {
+                self.client.get_coin_record_by_name(name)
+            })
+            .await?;
 
         let mapped = resp.coin_record.map(map_coin_record);
         classify_coin_record(resp.success, resp.error, mapped)
@@ -414,20 +607,21 @@ impl ChainReads for Coinset {
 
     async fn coin_spend(&self, coin_id: Bytes32, spent_height: u32) -> Result<Option<CoinSpend>> {
         let resp = self
-            .client
-            .get_puzzle_and_solution(coin_id, Some(spent_height))
-            .await
-            .map_err(|e| ChainError::Chain(format!("get_puzzle_and_solution: {e}")))?;
+            .call("get_puzzle_and_solution", || {
+                self.client
+                    .get_puzzle_and_solution(coin_id, Some(spent_height))
+            })
+            .await?;
 
         classify_coin_spend(resp.success, resp.error, resp.coin_solution)
     }
 
     async fn peak_height(&self) -> Result<u32> {
         let resp = self
-            .client
-            .get_blockchain_state()
-            .await
-            .map_err(|e| ChainError::Chain(format!("get_blockchain_state: {e}")))?;
+            .call("get_blockchain_state", || {
+                self.client.get_blockchain_state()
+            })
+            .await?;
 
         if !resp.success {
             return Err(ChainError::Chain(format!(
@@ -444,11 +638,13 @@ impl ChainReads for Coinset {
     }
 
     async fn push(&self, bundle: SpendBundle) -> Result<()> {
+        // Retrying a transient transport error on push is SAFE: the tx id is
+        // deterministic, so re-submitting the identical bundle is idempotent at the
+        // mempool (a duplicate is accepted / already-present, never a second spend).
+        // The bundle is cloned per attempt because `push_tx` consumes it.
         let resp = self
-            .client
-            .push_tx(bundle)
-            .await
-            .map_err(|e| ChainError::Chain(format!("push_tx: {e}")))?;
+            .call("push_tx", || self.client.push_tx(bundle.clone()))
+            .await?;
 
         if !resp.success {
             return Err(ChainError::Chain(format!(
@@ -866,5 +1062,247 @@ mod tests {
         m.push_tx(bundle).await.unwrap();
         let pushed = m.pushed.lock().unwrap();
         assert_eq!(pushed.len(), 1, "push_tx must record the submitted bundle");
+    }
+
+    // -----------------------------------------------------------------------
+    // #84: transient-failure retry wrapper. coinset.org intermittently returns
+    // a truncated body ("error decoding response body") under load; a single
+    // hiccup used to abort doctor's fund scan and init's mint (once even AFTER
+    // the mint was broadcast). These prove the wrapper retries transient
+    // failures, does NOT retry terminal ones (no hang), and bounds attempts.
+    // -----------------------------------------------------------------------
+
+    /// A synthetic op error so the retry loop is testable without a network.
+    #[derive(Debug, PartialEq)]
+    enum TestErr {
+        Transient,
+        Terminal,
+    }
+    impl TransientClass for TestErr {
+        fn is_transient(&self) -> bool {
+            matches!(self, TestErr::Transient)
+        }
+    }
+
+    /// Near-zero delays so retry tests are fast + deterministic.
+    fn fast_cfg(max_attempts: u32) -> RetryConfig {
+        RetryConfig {
+            max_attempts,
+            base_delay: Duration::from_millis(0),
+            max_delay: Duration::from_millis(1),
+            per_attempt_timeout: Duration::from_secs(5),
+        }
+    }
+
+    // Acceptance (a): a transient failure then success → the wrapper returns
+    // success, not an abort.
+    #[tokio::test]
+    async fn retry_recovers_from_transient_then_succeeds() {
+        let cfg = fast_cfg(5);
+        let calls = std::cell::Cell::new(0u32);
+        let out: std::result::Result<u32, RetryFail<TestErr>> = retry_core(&cfg, || {
+            let n = calls.get();
+            calls.set(n + 1);
+            async move {
+                if n == 0 {
+                    Err(TestErr::Transient)
+                } else {
+                    Ok(42u32)
+                }
+            }
+        })
+        .await;
+        assert!(
+            matches!(out, Ok(42)),
+            "should recover to success after retry"
+        );
+        assert_eq!(calls.get(), 2, "one failure + one success = two attempts");
+    }
+
+    // Acceptance (b): a terminal (definitive) error is NOT retried — it returns
+    // immediately and never hangs looping.
+    #[tokio::test]
+    async fn retry_does_not_retry_terminal_error() {
+        let cfg = fast_cfg(5);
+        let calls = std::cell::Cell::new(0u32);
+        let out: std::result::Result<u32, RetryFail<TestErr>> = retry_core(&cfg, || {
+            calls.set(calls.get() + 1);
+            async move { Err::<u32, _>(TestErr::Terminal) }
+        })
+        .await;
+        assert!(matches!(out, Err(RetryFail::Op(TestErr::Terminal))));
+        assert_eq!(calls.get(), 1, "terminal error must not be retried");
+    }
+
+    // A persistently transient failure is retried up to the bound, then gives up
+    // (surfaces the last error) — bounded, never an infinite loop.
+    #[tokio::test]
+    async fn retry_exhausts_attempts_on_persistent_transient() {
+        let cfg = fast_cfg(3);
+        let calls = std::cell::Cell::new(0u32);
+        let out: std::result::Result<u32, RetryFail<TestErr>> = retry_core(&cfg, || {
+            calls.set(calls.get() + 1);
+            async move { Err::<u32, _>(TestErr::Transient) }
+        })
+        .await;
+        assert!(matches!(out, Err(RetryFail::Op(TestErr::Transient))));
+        assert_eq!(calls.get(), 3, "exactly max_attempts tries");
+    }
+
+    // A per-attempt timeout is treated as transient and retried.
+    #[tokio::test]
+    async fn retry_recovers_from_per_attempt_timeout() {
+        let cfg = RetryConfig {
+            max_attempts: 3,
+            base_delay: Duration::from_millis(0),
+            max_delay: Duration::from_millis(1),
+            per_attempt_timeout: Duration::from_millis(20),
+        };
+        let calls = std::cell::Cell::new(0u32);
+        let out: std::result::Result<u32, RetryFail<TestErr>> = retry_core(&cfg, || {
+            let n = calls.get();
+            calls.set(n + 1);
+            async move {
+                if n == 0 {
+                    // First attempt overruns the per-attempt budget → timeout → retry.
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                }
+                Ok::<u32, TestErr>(7)
+            }
+        })
+        .await;
+        assert!(
+            matches!(out, Ok(7)),
+            "should retry after the first attempt times out"
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    // Acceptance (a), end-to-end through the REAL reqwest path: a local server that
+    // truncates the body on the first connection then returns valid JSON on the
+    // second. `unspent_coins` must succeed (retry), not abort with
+    // "error decoding response body".
+    #[tokio::test]
+    async fn coinset_retries_truncated_body_then_succeeds() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            // 1st connection: declare a large Content-Length, send a partial body,
+            // then close → reqwest fails decoding the response body (transient).
+            let (mut s1, _) = listener.accept().unwrap();
+            let _ = s1.read(&mut buf);
+            let _ = s1.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 200\r\nConnection: close\r\n\r\n{\"success\": tru",
+            );
+            drop(s1);
+            // 2nd connection: a full, valid empty-result response.
+            let (mut s2, _) = listener.accept().unwrap();
+            let _ = s2.read(&mut buf);
+            let body = b"{\"success\": true, \"coin_records\": []}";
+            let hdr = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = s2.write_all(hdr.as_bytes());
+            let _ = s2.write_all(body);
+            let _ = s2.flush();
+        });
+
+        let cs = Coinset::with_url(format!("http://{addr}")).with_retry_config(fast_cfg(5));
+        let coins = cs
+            .unspent_coins(Bytes32::default())
+            .await
+            .expect("retry must recover the truncated first response");
+        assert!(coins.is_empty(), "valid second response parsed");
+        handle.join().unwrap();
+    }
+
+    // Acceptance (b), end-to-end: a definitive not-found (`success:false` +
+    // "...not found") is returned in ONE response and maps to Ok(None) — it is NOT
+    // retried (the server only ever accepts a single connection) and never hangs.
+    #[tokio::test]
+    async fn coinset_not_found_is_terminal_single_call() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            let (mut s, _) = listener.accept().unwrap();
+            let _ = s.read(&mut buf);
+            let body = b"{\"success\": false, \"error\": \"Coin record 0xabc not found\"}";
+            let hdr = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = s.write_all(hdr.as_bytes());
+            let _ = s.write_all(body);
+            let _ = s.flush();
+            // Do NOT accept a second connection: if the code retried a not-found, the
+            // client would hang and the test would time out.
+        });
+
+        let cs = Coinset::with_url(format!("http://{addr}")).with_retry_config(fast_cfg(5));
+        let rec = cs
+            .coin_record(Bytes32::default())
+            .await
+            .expect("not-found must be Ok(None), not an error");
+        assert!(rec.is_none(), "not-found maps to Ok(None)");
+        handle.join().unwrap();
+    }
+
+    // Acceptance (c): post-submit confirmation survives a transient error. A
+    // `CoinsetAnchor::confirm` poll hits a truncated body on the first connection,
+    // then a valid coin record on the second → confirmation succeeds (Confirmed)
+    // rather than aborting the flow whose spend is already on the wire.
+    #[tokio::test]
+    async fn confirm_survives_transient_then_confirms() {
+        use crate::anchor::{ChainAnchor, CoinsetAnchor, ConfirmState};
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            // 1st poll: truncated body → transient.
+            let (mut s1, _) = listener.accept().unwrap();
+            let _ = s1.read(&mut buf);
+            let _ = s1.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 300\r\nConnection: close\r\n\r\n{\"succ",
+            );
+            drop(s1);
+            // 2nd poll: a valid coin record confirmed at height 12345.
+            let (mut s2, _) = listener.accept().unwrap();
+            let _ = s2.read(&mut buf);
+            let body = concat!(
+                "{\"success\": true, \"coin_record\": {",
+                "\"coin\": {\"amount\": 1, \"parent_coin_info\": \"0x0000000000000000000000000000000000000000000000000000000000000000\", \"puzzle_hash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"},",
+                "\"confirmed_block_index\": 12345, \"spent_block_index\": 0, \"spent\": false, \"coinbase\": false, \"timestamp\": 1700000000}}"
+            );
+            let hdr = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = s2.write_all(hdr.as_bytes());
+            let _ = s2.write_all(body.as_bytes());
+            let _ = s2.flush();
+        });
+
+        let cs = Coinset::with_url(format!("http://{addr}")).with_retry_config(fast_cfg(5));
+        let anchor = CoinsetAnchor::new(cs);
+        // timeout_secs=1 → a single poll; the retry happens WITHIN that poll's
+        // coin_record call, so confirmation still succeeds despite the transient.
+        let state = anchor
+            .confirm(Bytes32::default(), 1)
+            .await
+            .expect("confirm must survive a transient coinset error");
+        assert_eq!(state, ConfirmState::Confirmed { height: 12345 });
+        handle.join().unwrap();
     }
 }
