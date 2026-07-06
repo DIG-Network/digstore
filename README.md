@@ -58,9 +58,36 @@ Then open a **new** terminal and check it works:
 digstore --version
 ```
 
-You can also grab the raw per-OS `digstore` binary directly from this repo's
-[Releases](https://github.com/DIG-Network/digstore/releases) page
-(`digstore-<ver>-<os_arch>`) and drop it on your `PATH`.
+Already installed? Keep it current with the built-in self-updater:
+
+```sh
+digstore update          # download + install the latest release, in place
+digstore update --check  # just report whether a newer release exists
+```
+
+### Raw binary (macOS / Linux)
+
+Prefer the installer above. If you grab the raw per-OS binary from the
+[Releases](https://github.com/DIG-Network/digstore/releases) page instead, pick
+the file for your CPU — **`digstore-<ver>-macos-arm64`** (Apple Silicon: M1/M2/M3)
+or **`digstore-<ver>-macos-x64`** (Intel Mac); **`digstore-<ver>-linux-x64`** (or
+the `aarch64-unknown-linux-gnu.tar.gz` for ARM Linux). A macOS/Linux binary has
+**no file extension — that's normal**, not a broken download.
+
+Downloaded binaries lose their exec bit, and macOS quarantines an unsigned
+download (Gatekeeper). Two commands fix both — **no `sudo` needed**:
+
+```sh
+chmod +x digstore-<ver>-macos-arm64                 # make it executable
+xattr -d com.apple.quarantine digstore-<ver>-macos-arm64   # macOS only: clear Gatekeeper
+
+# then put it on your PATH under the name `digstore` (Apple Silicon: no sudo):
+mv digstore-<ver>-macos-arm64 /opt/homebrew/bin/digstore   # Intel mac / Linux: /usr/local/bin
+digstore --version
+```
+
+If you hit **`permission denied`**, it's the exec bit or quarantine above — not
+privileges; `sudo` is the wrong fix.
 
 ### Build from source (any platform)
 
@@ -90,12 +117,21 @@ cd my-store
 digstore dev                        # live local preview over the real chia:// read path — FREE
 ```
 
-When it's ready, publish it on Chia (this spends the per-capsule `$DIG` price + a small XCH fee):
+When it's ready, publish it on Chia. This is the canonical publish flow — run it
+top-to-bottom from inside your project (it spends the dynamic per-capsule `$DIG`
+price + a small XCH fee, fetched live so you always pay the same as DIGHub):
 
 ```sh
-digstore init                       # create the on-chain store (mints; store id = launcher id)
-digstore commit -m "first version"  # publish a capsule (advances the on-chain root)
+digstore init                       # create the on-chain store (mints on Chia; store id = launcher id)
+digstore add -A                     # stage every file under the store root
+digstore add --discovery            # publish the public /.well-known discovery manifest
+digstore commit -m "v3"             # anchor a new capsule on-chain (dynamic per-capsule $DIG price + XCH fee)
+digstore push origin                # push the deployment to DIGHub (rpc.dig.net)
+```
 
+Then inspect and read it back:
+
+```sh
 digstore log                        # list published capsules (each root hash = one capsule)
 digstore urn index.html             # preview the URN a file will have — no guessing
 
