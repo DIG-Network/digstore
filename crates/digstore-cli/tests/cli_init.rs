@@ -219,6 +219,50 @@ fn init_confirm_timeout_exits_14_and_keeps_pending_store() {
     );
 }
 
+/// #84 (money path): re-running `init` after a submitted-but-unconfirmed mint must
+/// RESUME confirmation of the EXISTING coin — never mint a second singleton (which
+/// would double-spend real XCH). First init times out confirming (mock TIMEOUT) and
+/// leaves a Pending anchor; the re-run (mock now confirms) resumes and the coin_id is
+/// UNCHANGED — proof no re-mint happened.
+#[test]
+fn init_rerun_after_pending_mint_resumes_without_reminting() {
+    let dir = tmp_dig();
+
+    // 1st init: confirmation times out → exit 14, store kept Pending.
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_TIMEOUT", "1")
+        .args(["init", "--wait-timeout", "1"])
+        .assert()
+        .failure()
+        .code(14);
+    let anchor = common::store_dir(&dir).join("anchor.toml");
+    let pending = std::fs::read_to_string(&anchor).unwrap();
+    assert!(
+        pending.contains("status = \"pending\""),
+        "first init leaves a pending anchor; got:\n{pending}"
+    );
+    let coin_line = |t: &str| {
+        t.lines()
+            .find(|l| l.trim_start().starts_with("coin_id"))
+            .unwrap()
+            .to_string()
+    };
+    let coin_before = coin_line(&pending);
+
+    // 2nd init (no TIMEOUT override → mock confirms): must RESUME, not re-mint.
+    dig(&dir).args(["init"]).assert().success();
+    let confirmed = std::fs::read_to_string(&anchor).unwrap();
+    assert!(
+        confirmed.contains("status = \"confirmed\""),
+        "re-run resumes to confirmed; got:\n{confirmed}"
+    );
+    assert_eq!(
+        coin_before,
+        coin_line(&confirmed),
+        "coin_id must be UNCHANGED across the resume (no re-mint / no double-spend)"
+    );
+}
+
 #[test]
 fn init_without_seed_exits_9() {
     // A bare DIGSTORE_HOME with NO session → unlock yields NoSeed (exit 9).
