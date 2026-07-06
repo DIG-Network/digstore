@@ -23,13 +23,14 @@ fn dry_run_previews_cost_without_publishing() {
         .assert()
         .success();
 
-    // Dry-run: discloses the 100 DIG cost and says nothing was spent.
+    // Dry-run: discloses the per-capsule DIG cost (the harness-pinned explicit 20 DIG,
+    // NOT a flat 100) and says nothing was spent.
     dig(&dir)
         .args(["commit", "--dry-run"])
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("100")
+            predicate::str::contains("20.000")
                 .and(predicate::str::contains("DIG"))
                 .and(predicate::str::contains("NOTHING spent")),
         );
@@ -71,7 +72,8 @@ fn dry_run_json_is_machine_readable() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["dry_run"], serde_json::json!(true));
     assert_eq!(v["spent"], serde_json::json!(false));
-    assert_eq!(v["cost_dig"], serde_json::json!(100_000));
+    // The resolved per-capsule amount (harness-pinned explicit 20 DIG), not flat 100.
+    assert_eq!(v["cost_dig"], serde_json::json!(20_000));
     assert!(v["root"].as_str().unwrap().len() == 64, "64-hex root");
     assert!(v["capsule"].as_str().unwrap().contains(':'), "storeId:root");
 }

@@ -56,7 +56,13 @@ pub fn seed_mock_env(cmd: &mut Command, dir: &std::path::Path) {
 
     cmd.env("DIGSTORE_HOME", &home)
         .env("DIGSTORE_ANCHOR_MOCK", "1")
-        .env("DIG_IDENTITY_DIR", &id_dir);
+        .env("DIG_IDENTITY_DIR", &id_dir)
+        // Pin an explicit per-capsule $DIG amount so the offline suite is deterministic
+        // and never reaches the live pricing endpoint (#125): commit/deploy resolve the
+        // dynamic price ONLY when no explicit amount is set. Pricing-specific tests
+        // override this (a mock `DIGSTORE_PRICING_URL`) or `.env_remove` it to exercise
+        // the fetch/fail-loud paths. A test that pins its own amount just re-sets it.
+        .env("DIGSTORE_DIG_AMOUNT", "20");
 }
 
 /// A `digstore` invocation against the temp project `dir`. The workspace lives at
@@ -79,6 +85,49 @@ pub fn dig(dir: &TempDir) -> Command {
 
 pub fn tmp_dig() -> TempDir {
     TempDir::new().unwrap()
+}
+
+/// Spawn a one-shot local HTTP server that answers a single GET with a canonical
+/// `/v1/pricing` body carrying `mint_dig` (the per-capsule price in DIG base units),
+/// and return the base URL to set as `DIGSTORE_PRICING_URL`. This lets a CLI test
+/// drive the dynamic-price FETCH path deterministically + offline (#125): a commit/
+/// deploy makes exactly one pricing GET when no explicit amount is set. The server
+/// thread is detached (it serves one request then exits, or is reclaimed at test end).
+pub fn spawn_pricing_server(mint_dig: u64) -> String {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind pricing mock");
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        if let Ok((mut s, _)) = listener.accept() {
+            let _ = s.read(&mut buf);
+            let body = format!(
+                "{{\"dig_usd\":0.03,\"computed_at\":1700000000,\"source\":\"dexie+coingecko\",\
+                 \"mint_dig\":{mint_dig},\"mint_usd\":1.0,\"subdomain_dig\":666667,\
+                 \"subdomain_usd\":20.0,\"cert_dig\":333333,\"cert_usd\":10.0,\"basis\":\"test\"}}"
+            );
+            let hdr = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = s.write_all(hdr.as_bytes());
+            let _ = s.write_all(body.as_bytes());
+            let _ = s.flush();
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// A `DIGSTORE_PRICING_URL` pointing at a bound-then-closed port so a pricing fetch
+/// fails FAST (connection refused) — exercises the fail-loud path without a real
+/// network call or a 10s timeout.
+pub fn unreachable_pricing_url() -> String {
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().unwrap();
+    drop(listener); // nothing listens on `addr` now
+    format!("http://{addr}")
 }
 
 /// The per-store directory for the default store. With the workspace at

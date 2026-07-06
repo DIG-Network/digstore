@@ -26,7 +26,7 @@
 
 use std::path::PathBuf;
 
-use digstore_chain::dig::{self, format_dig, format_xch};
+use digstore_chain::dig::{format_dig, format_xch};
 use digstore_core::{Bytes32, SecretSalt, Visibility};
 
 use crate::cli::{CommitArgs, DeployArgs};
@@ -62,9 +62,11 @@ struct DeployConfig {
     /// Extra exclude globs from `dig.toml`'s `ignore` (applied at staging via a
     /// transient `.digignore` in the output dir).
     ignore: Vec<String>,
-    /// The per-capsule DIG amount (base units) to spend on this deploy — resolved
-    /// flag > env > dig.toml > the protocol default (deterministic; no price fetch).
-    dig_amount: u64,
+    /// An EXPLICIT per-capsule DIG amount (base units) override — flag > env > dig.toml
+    /// — or `None` to fetch the dynamic, USD-pegged price at spend time (#125). The
+    /// live fetch is deferred to [`run`] so a no-op `--if-changed` deploy never hits
+    /// the pricing endpoint.
+    explicit_dig_amount: Option<u64>,
 }
 
 /// `DIGSTORE_DEPLOY_KEY` / `--deploy-key` → the 32-byte publisher seed.
@@ -115,11 +117,11 @@ fn resolve_config(ctx: &CliContext, args: &DeployArgs) -> Result<DeployConfig, C
     // env layer over the file; flags (`args.*.or(file.*)`) are applied last.
     let file = DigToml::read_with_env(&ctx.op_dir)?;
 
-    // Per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml `dig-amount`
-    // > the protocol default. Resolved FIRST (it borrows `file`) before the field moves
-    // below consume `file`. Deterministic — the dynamic, USD-pegged amount is computed
-    // by the hub and passed in; the CLI never fetches a live price.
-    let dig_amount = file.resolve_dig_amount(args.dig_amount, dig::COMMIT_DIG)?;
+    // An EXPLICIT per-capsule DIG amount override: flag > env (DIGSTORE_DIG_AMOUNT) >
+    // dig.toml `dig-amount`, or None. Resolved FIRST (it borrows `file`) before the
+    // fields below consume `file`. The dynamic, USD-pegged live price (when no override)
+    // is fetched later in `run`, only when a spend will actually happen (#125).
+    let explicit_dig_amount = file.explicit_dig_amount(args.dig_amount)?;
 
     let store_id_hex = args.store_id.clone().or(file.store_id).ok_or_else(|| {
         CliError::InvalidArgument(
@@ -154,7 +156,7 @@ fn resolve_config(ctx: &CliContext, args: &DeployArgs) -> Result<DeployConfig, C
         remote,
         network,
         ignore: file.ignore,
-        dig_amount,
+        explicit_dig_amount,
     })
 }
 
@@ -358,15 +360,18 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
     // --dry-run: preview the resulting version + the EXACT cost and STOP. Nothing
     // is chain-confirmed, spent, anchored, or pushed — and the source tree is left
     // byte-identical (undo the `.digignore` we wrote to compute the faithful root).
+    // Resolve the live dynamic price for an honest preview (or the explicit override);
+    // fail LOUD if the price is unavailable and no override is set (#125).
     if args.dry_run {
         ignore_restore.undo();
+        let price = crate::ops::pricing::resolve_capsule_price(cfg.explicit_dig_amount)?;
         return dry_run(
             ui,
             &cfg.store_id,
             &new_root,
             &capsule,
             cfg.remote.as_deref(),
-            cfg.dig_amount,
+            &price,
         );
     }
 
@@ -392,6 +397,16 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
         return Ok(());
     }
 
+    // Resolve the per-capsule $DIG price now that a real spend WILL happen (past the
+    // --if-changed no-op guard, so a no-op deploy never hits the pricing endpoint):
+    // the explicit override, or the live dynamic price. Fail LOUD if unavailable (#125).
+    let price = crate::ops::pricing::resolve_capsule_price(cfg.explicit_dig_amount)?;
+    if !ui.json() {
+        if let Some(note) = &price.note {
+            ui.line(format!("  {note}"));
+        }
+    }
+
     // 5. Commit (on-chain root update) + push to DIGHUb, non-interactively.
     //    This reuses the exact `commit -m --push` path the interactive CLI uses;
     //    `--push` publishes to the default `origin` remote without prompting.
@@ -409,9 +424,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             // root with a revocable writer key, not the owner seed. `--writer-key` /
             // DIGSTORE_WRITER_KEY (distinct from the §21 publisher --deploy-key above).
             writer_key: args.writer_key.clone(),
-            // Per-capsule DIG amount already resolved (flag>env>dig.toml>default); pass
-            // it explicitly so commit does not re-resolve from a different op_dir.
-            dig_amount: Some(cfg.dig_amount),
+            // Per-capsule DIG amount already resolved here (explicit override or the live
+            // dynamic price); pass it explicitly so commit does not re-fetch/re-resolve
+            // from a different op_dir.
+            dig_amount: Some(price.base_units),
         },
     )?;
 
@@ -440,8 +456,9 @@ fn dry_run(
     root: &Bytes32,
     capsule: &str,
     remote: Option<&str>,
-    dig_amount: u64,
+    price: &crate::ops::pricing::ResolvedCapsulePrice,
 ) -> Result<(), CliError> {
+    let dig_amount = price.base_units;
     // The XCH fee is a global-config value; load it directly (no wallet/seed). On
     // any load failure, fall back to the default fee so the preview still works.
     let fee = digstore_chain::config::dig_home()
@@ -458,6 +475,9 @@ fn dry_run(
             "store_id": store_id.to_hex(),
             "cost_dig": dig_amount,
             "cost_dig_display": format_dig(dig_amount),
+            "price_source": price.source,
+            "dig_usd": price.dig_usd,
+            "price_is_fallback": price.is_fallback,
             "fee_xch_mojos": fee,
             "fee_xch_display": format_xch(fee),
             "spent": false,
@@ -474,6 +494,9 @@ fn dry_run(
             format_dig(dig_amount),
             format_xch(fee)
         ));
+        if let Some(note) = &price.note {
+            ui.line(format!("  {note}"));
+        }
         if let Some(u) = &url {
             ui.line(format!("  would go live at: {u}"));
         }

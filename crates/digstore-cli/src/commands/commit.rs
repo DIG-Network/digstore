@@ -7,7 +7,7 @@ use crate::ops::anchor_state::{AnchorState, AnchorStatus};
 use crate::ops::{anchor_backend, anchor_ux, store_ops};
 use crate::runtime::block_on;
 use digstore_chain::anchor::ConfirmState;
-use digstore_chain::dig::{self, format_dig, format_xch};
+use digstore_chain::dig::{format_dig, format_xch};
 
 /// `digstore commit` pushes the staged generation's new root to the store's
 /// on-chain singleton via a Chia `update` and BLOCKS until confirmed BEFORE
@@ -23,17 +23,21 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let prepared = store_ops::stage_to_root(ctx)?;
     let new_root_hex = prepared.root.to_hex();
 
-    // Resolve the per-capsule DIG amount: flag > env (DIGSTORE_DIG_AMOUNT) > dig.toml
-    // `dig-amount` > the COMMIT_DIG protocol default. Deterministic — no live price fetch
-    // (the hub computes the dynamic, USD-pegged amount and passes it in via the flag/env).
-    let dig_amount = crate::dig_toml::DigToml::read_with_env(&ctx.op_dir)?
-        .resolve_dig_amount(args.dig_amount, dig::COMMIT_DIG)?;
+    // Resolve the per-capsule $DIG price. An explicit amount (--dig-amount flag > env
+    // DIGSTORE_DIG_AMOUNT > dig.toml `dig-amount`) wins and stays deterministic;
+    // otherwise fetch the live, dynamic, USD-pegged price from the canonical hub
+    // pricing endpoint — the SAME `mint_dig` the hub charges (#125). Fail LOUD if the
+    // price is unavailable: a real-money commit never silently spends a stale flat 100.
+    let explicit = crate::dig_toml::DigToml::read_with_env(&ctx.op_dir)?
+        .explicit_dig_amount(args.dig_amount)?;
+    let price = crate::ops::pricing::resolve_capsule_price(explicit)?;
+    let dig_amount = price.base_units;
 
     // --dry-run: report the resulting version (root) + the exact DIG/XCH cost and
     // STOP — no seed unlock, no wallet scan, no on-chain update, no finalize.
     // Nothing is spent and nothing is published; this is a safe cost preview.
     if args.dry_run {
-        return dry_run(ctx, ui, &prepared.root, dig_amount);
+        return dry_run(ctx, ui, &prepared.root, &price);
     }
 
     // 2. Anchor gate: unlock seed (NoSeed → exit 9), build the (mock or real)
@@ -68,10 +72,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let description = store_cfg.as_ref().and_then(|c| c.description.clone());
 
     // 3b. Preflight balance for BOTH assets, with up-front cost disclosure. A
-    //     commit pays the resolved per-capsule DIG amount (the COMMIT_DIG protocol
-    //     default unless overridden) embedded in the on-chain bundle PLUS the
-    //     XCH fee. Block before the update if the wallet is short on EITHER asset;
-    //     roots.log / staging are untouched on a block.
+    //     commit pays the resolved per-capsule DIG amount (the dynamic, USD-pegged
+    //     price fetched above, or an explicit override) embedded in the on-chain
+    //     bundle PLUS the XCH fee. Block before the update if the wallet is short on
+    //     EITHER asset; roots.log / staging are untouched on a block.
     let sp = ui.spinner("Scanning your wallet…");
     let w = block_on(anchor.scan(&mnemonic))??;
     let have_xch = block_on(anchor.balance(&w))??;
@@ -84,6 +88,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
             format_dig(dig_amount),
             format_xch(fee)
         ));
+        if let Some(note) = &price.note {
+            ui.line(format!("   {note}"));
+        }
         ui.line(format!(
             "   you have {} DIG and {} XCH.",
             format_dig(have_dig),
@@ -292,8 +299,9 @@ fn dry_run(
     ctx: &CliContext,
     ui: &crate::ui::Ui,
     root: &digstore_core::Bytes32,
-    dig_amount: u64,
+    price: &crate::ops::pricing::ResolvedCapsulePrice,
 ) -> Result<(), CliError> {
+    let dig_amount = price.base_units;
     let store_id = ctx.find_store_id()?;
     let capsule = format!("{}:{}", store_id.to_hex(), root.to_hex());
 
@@ -312,6 +320,9 @@ fn dry_run(
             "store_id": store_id.to_hex(),
             "cost_dig": dig_amount,
             "cost_dig_display": format_dig(dig_amount),
+            "price_source": price.source,
+            "dig_usd": price.dig_usd,
+            "price_is_fallback": price.is_fallback,
             "fee_xch_mojos": fee,
             "fee_xch_display": format_xch(fee),
             "spent": false,
@@ -324,6 +335,9 @@ fn dry_run(
             format_dig(dig_amount),
             format_xch(fee)
         ));
+        if let Some(note) = &price.note {
+            ui.line(format!("  {note}"));
+        }
         ui.hint("digstore commit -m \"<message>\"   # to actually publish");
     }
     Ok(())

@@ -16,7 +16,7 @@
 //! login steps REUSE the exact `seed`/`login` command paths (no duplicate logic),
 //! so behaviour stays identical to running them individually.
 
-use digstore_chain::dig::{self, format_dig, format_xch};
+use digstore_chain::dig::{format_dig, format_xch};
 use digstore_chain::{config as chain_config, seed as chain_seed, unlock};
 
 use crate::branding;
@@ -170,14 +170,22 @@ fn fund_check(ui: &Ui) -> Option<bool> {
     }
     match scan_balances(ui) {
         Ok((have_dig, have_xch, fee)) => {
-            let need_dig = dig::COMMIT_DIG;
-            let ok = have_dig >= need_dig && have_xch >= fee;
+            // The per-capsule price is dynamic + USD-pegged (#125): fetch the live
+            // figure best-effort. When unavailable, describe the cost neutrally and
+            // don't gate readiness on an unknown DIG amount (check XCH only).
+            let need_dig = crate::ops::pricing::current_capsule_price_quiet();
+            let need_dig_str = match need_dig {
+                Some(units) => format!("{} DIG", format_dig(units)),
+                None => "the dynamic per-capsule $DIG price".to_string(),
+            };
+            let dig_ok = need_dig.map(|n| have_dig >= n).unwrap_or(true);
+            let ok = dig_ok && have_xch >= fee;
             if !ui.json() {
                 ui.line(format!(
-                    "  you have {} DIG and {} XCH (need {} DIG + ~{} XCH per publish).",
+                    "  you have {} DIG and {} XCH (need {} + ~{} XCH per publish).",
                     format_dig(have_dig),
                     format_xch(have_xch),
-                    format_dig(need_dig),
+                    need_dig_str,
                     format_xch(fee),
                 ));
                 if !ok {

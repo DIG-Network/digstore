@@ -14,7 +14,7 @@
 //!   - the default remote is reachable,
 //!   - the content/output directory exists.
 
-use digstore_chain::dig::{self, format_dig, format_xch};
+use digstore_chain::dig::{format_dig, format_xch};
 use digstore_chain::{config as chain_config, seed as chain_seed, unlock};
 
 use crate::cli::DoctorArgs;
@@ -94,17 +94,26 @@ pub fn run(ctx: &CliContext, ui: &Ui, _args: DoctorArgs) -> Result<(), CliError>
 
     // 3. Funds vs the publish cost (the per-capsule DIG amount + the XCH fee). Only
     //    scan when the seed is unlocked, so `doctor` never blocks on a passphrase prompt.
-    let need_dig = dig::COMMIT_DIG;
+    //    The per-capsule price is dynamic + USD-pegged (#125): fetch the live figure
+    //    best-effort (never fail `doctor` on a flaky feed). When unavailable, describe
+    //    the cost neutrally rather than pinning a stale flat number.
+    let need_dig = crate::ops::pricing::current_capsule_price_quiet();
+    let need_dig_str = match need_dig {
+        Some(units) => format!("{} DIG", format_dig(units)),
+        None => "the dynamic per-capsule $DIG price".to_string(),
+    };
     if seed_present && seed_unlocked {
         match scan_balances(ui) {
             Ok((have_dig, have_xch, fee)) => {
-                let dig_ok = have_dig >= need_dig;
+                // Only enforce the DIG threshold when we know the live figure; if the
+                // feed was unavailable, don't fail on an unknown amount (check XCH only).
+                let dig_ok = need_dig.map(|n| have_dig >= n).unwrap_or(true);
                 let xch_ok = have_xch >= fee;
                 let detail = format!(
-                    "{} DIG / {} XCH (need {} DIG + ~{} XCH fee per publish)",
+                    "{} DIG / {} XCH (need {} + ~{} XCH fee per publish)",
                     format_dig(have_dig),
                     format_xch(have_xch),
-                    format_dig(need_dig),
+                    need_dig_str,
                     format_xch(fee),
                 );
                 if dig_ok && xch_ok {
@@ -125,8 +134,7 @@ pub fn run(ctx: &CliContext, ui: &Ui, _args: DoctorArgs) -> Result<(), CliError>
         checks.push(Check::skip(
             "funds",
             format!(
-                "unlock the seed to check funds (need {} DIG + an XCH fee per publish)",
-                format_dig(need_dig)
+                "unlock the seed to check funds (need {need_dig_str} + an XCH fee per publish)"
             ),
         ));
     }

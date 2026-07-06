@@ -1,17 +1,27 @@
 //! DIG-cost preflight + up-front cost disclosure for `init` and `commit`.
 //!
 //! Per #111, **minting a store (`init`) is FREE of $DIG** — it pays only the XCH
-//! network fee; the per-capsule $DIG price is charged on `commit` (a capsule). The
-//! per-capsule DIG amount is dynamic + USD-pegged (the hub computes it; the CLI accepts
-//! it via `--dig-amount`/`DIGSTORE_DIG_AMOUNT`/dig.toml `dig-amount`) with a 100 DIG
-//! protocol default. These tests prove (a) `init` does NOT charge $DIG (succeeds with
-//! zero DIG and discloses it is free of $DIG), (b) `commit` BLOCKS before any spend when
-//! short on DIG (exit 12, staging intact), (c) `commit` discloses the DIG cost UP FRONT,
-//! and (d) `commit` honors the configurable amount (flag/env). The mock anchor honors
+//! network fee; the per-capsule $DIG price is charged on `commit` (a capsule).
+//!
+//! The per-capsule price is **dynamic + USD-pegged** (#125): when no explicit amount
+//! is set, the CLI FETCHES the live price from the canonical hub `/v1/pricing`
+//! endpoint (`mint_dig`, base units) — the SAME number the hub charges — and DISPLAYS +
+//! SPENDS exactly that. An explicit amount (`--dig-amount` / `DIGSTORE_DIG_AMOUNT` /
+//! dig.toml `dig-amount`) wins and stays deterministic. There is NO silent flat-100
+//! fallback: if the price is unavailable and no override is set, commit FAILS LOUD.
+//!
+//! These tests prove (a) `init` does NOT charge $DIG, (b) `commit` BLOCKS before any
+//! spend when short on DIG (exit 12, staging intact), (c) `commit` discloses the DIG
+//! cost UP FRONT, (d) the FETCH path displays the live dynamic amount (never flat 100),
+//! (e) an unreachable price feed FAILS LOUD (no silent flat 100 on a real-money spend),
+//! and (f) an explicit amount overrides the fetch. The test harness pins
+//! `DIGSTORE_DIG_AMOUNT=20` so the offline suite is deterministic; pricing tests
+//! `.env_remove` it and point `DIGSTORE_PRICING_URL` at a local mock (or an unreachable
+//! address) to exercise the real fetch/fail-loud paths. The mock anchor honors
 //! `DIGSTORE_ANCHOR_MOCK_DIG` for the short-DIG cases.
 
 mod common;
-use common::{dig, tmp_dig};
+use common::{dig, spawn_pricing_server, tmp_dig, unreachable_pricing_url};
 use predicates::prelude::*;
 
 // --- init (minting is FREE of $DIG, #111) ---------------------------------
@@ -86,8 +96,10 @@ fn commit_insufficient_dig_exits_12_and_keeps_staging() {
         .stdout(predicate::str::contains("a"));
 }
 
-/// commit with default DIG → succeeds AND the human cost line is shown up front:
-/// "100" + "DIG" (the 100 DIG protocol default).
+/// commit discloses the per-capsule DIG cost UP FRONT (a DIG figure), and never a
+/// flat "100 DIG". Here the harness pins an explicit amount (20), so the disclosure
+/// shows that amount — proving the cost line is driven by the resolved amount, not a
+/// hardcoded 100.
 #[test]
 fn commit_human_discloses_dig_cost() {
     let dir = tmp_dig();
@@ -104,7 +116,79 @@ fn commit_human_discloses_dig_cost() {
         .args(["commit", "-m", "first"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("100.000").and(predicate::str::contains("DIG")));
+        // The pinned explicit amount (20.000) is disclosed; NEVER the flat 100.
+        .stdout(
+            predicate::str::contains("20.000")
+                .and(predicate::str::contains("DIG"))
+                .and(predicate::str::contains("100.000").not()),
+        );
+}
+
+/// The DYNAMIC-PRICE FETCH path: with no explicit amount, `commit --dry-run` fetches
+/// the live per-capsule price from the (mocked) hub pricing endpoint and shows/would
+/// spend EXACTLY `mint_dig` — proving digstore consumes the canonical source, not a
+/// flat 100. `cost_dig` is the same value the real commit embeds in the on-chain spend.
+#[test]
+fn commit_dry_run_fetches_dynamic_price_not_flat_100() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, b"alpha beta gamma").unwrap();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
+
+    // Mock the canonical endpoint: 1 DIG ≈ $0.03 → $1 capsule = 33.333 DIG = 33_333 base units.
+    let pricing_url = spawn_pricing_server(33_333);
+    let out = dig(&dir)
+        .env_remove("DIGSTORE_DIG_AMOUNT") // force the fetch path
+        .env("DIGSTORE_PRICING_URL", &pricing_url)
+        .args(["--json", "commit", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "dry-run should succeed via the live fetch"
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["cost_dig"].as_u64(),
+        Some(33_333),
+        "fetched dynamic amount, not flat 100"
+    );
+    assert_eq!(v["cost_dig_display"].as_str(), Some("33.333"));
+    assert_eq!(v["price_source"].as_str(), Some("dexie+coingecko"));
+    assert_eq!(v["price_is_fallback"].as_bool(), Some(false));
+}
+
+/// FAIL LOUD: with no explicit amount and the pricing endpoint UNREACHABLE, commit
+/// does NOT silently spend/show a flat 100 — it errors clearly and points the user at
+/// `--dig-amount`. (Even `--dry-run` fails, so the previewed cost is always honest.)
+#[test]
+fn commit_fails_loud_when_price_unavailable_and_no_override() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, b"alpha beta gamma").unwrap();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
+
+    dig(&dir)
+        .env_remove("DIGSTORE_DIG_AMOUNT")
+        .env("DIGSTORE_PRICING_URL", unreachable_pricing_url())
+        .args(["commit", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("--dig-amount").and(predicate::str::contains("100.000").not()),
+        );
 }
 
 // --- configurable DIG amount (dynamic, USD-pegged; passed in, not flat 100) ----
@@ -165,6 +249,36 @@ fn commit_dig_amount_env_sets_dry_run_cost() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["cost_dig"].as_u64(), Some(12_000));
+}
+
+/// An explicit `--dig-amount` SHORT-CIRCUITS the live fetch: even with the pricing
+/// endpoint unreachable, the override makes commit deterministic (no network) and uses
+/// exactly the pinned amount. This is how CI / the hub pass a pre-computed price.
+#[test]
+fn explicit_dig_amount_skips_fetch_even_when_endpoint_down() {
+    let dir = tmp_dig();
+    dig(&dir).arg("init").assert().success();
+    let f = dir.path().join("a.txt");
+    std::fs::write(&f, b"alpha beta gamma").unwrap();
+    dig(&dir)
+        .args(["add"])
+        .arg(&f)
+        .args(["--key", "a"])
+        .assert()
+        .success();
+
+    let out = dig(&dir)
+        .env("DIGSTORE_PRICING_URL", unreachable_pricing_url())
+        .args(["--json", "commit", "--dry-run", "--dig-amount", "42"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "explicit amount must not need the endpoint"
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["cost_dig"].as_u64(), Some(42_000));
+    assert_eq!(v["price_source"].as_str(), Some("override"));
 }
 
 /// A malformed `--dig-amount` is rejected at parse time (exit 2), never a panic.
