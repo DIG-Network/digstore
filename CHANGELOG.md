@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.7.2] - 2026-07-06
+
+### Bug Fixes
+- **remote:** Clear error when a remote returns non-JSON/CloudFront HTML (#4)
+
 ## [0.7.1] - 2026-07-06
 
 ### Bug Fixes
