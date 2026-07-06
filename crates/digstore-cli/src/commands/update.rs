@@ -518,13 +518,12 @@ fn perform_update(
         ui.verb("Installing", target.display().to_string());
         install_binary(&target, &binary)?;
 
-        ui.success(format!(
-            "updated to {} ({})",
-            latest,
-            target.display()
-        ));
+        ui.success(format!("updated to {} ({})", latest, target.display()));
         // Best-effort post-verify: run the freshly installed binary's --version.
-        if let Ok(out) = std::process::Command::new(&target).arg("--version").output() {
+        if let Ok(out) = std::process::Command::new(&target)
+            .arg("--version")
+            .output()
+        {
             let v = String::from_utf8_lossy(&out.stdout);
             let v = v.trim();
             if !v.is_empty() {
@@ -901,8 +900,14 @@ mod tests {
     fn native_binary_magic_recognized_per_os() {
         assert!(looks_like_native_binary(b"\x7fELF....", "linux"));
         assert!(!looks_like_native_binary(b"<!DOCTYPE html>", "linux"));
-        assert!(looks_like_native_binary(&[0xCF, 0xFA, 0xED, 0xFE, 0, 0], "macos")); // Mach-O 64 LE
-        assert!(looks_like_native_binary(&[0xCA, 0xFE, 0xBA, 0xBE, 0, 0], "macos")); // fat/universal
+        assert!(looks_like_native_binary(
+            &[0xCF, 0xFA, 0xED, 0xFE, 0, 0],
+            "macos"
+        )); // Mach-O 64 LE
+        assert!(looks_like_native_binary(
+            &[0xCA, 0xFE, 0xBA, 0xBE, 0, 0],
+            "macos"
+        )); // fat/universal
         assert!(!looks_like_native_binary(b"nope-not-macho", "macos"));
         assert!(looks_like_native_binary(b"MZ\x90\x00", "windows"));
         assert!(!looks_like_native_binary(b"", "linux"));
@@ -968,7 +973,10 @@ mod tests {
             .join("digstore");
         let err = install_binary(&bad, b"\x7fELFx").unwrap_err();
         assert!(matches!(err, CliError::UpdateFailed(_)));
-        assert!(err.to_string().contains("Manual update"), "gives manual steps");
+        assert!(
+            err.to_string().contains("Manual update"),
+            "gives manual steps"
+        );
     }
 
     /// Live-network smoke test, gated so CI/unit runs never hit GitHub.
