@@ -266,6 +266,9 @@ fn deploy_dry_run_previews_cost_without_spending() {
     let out = dig(&ci)
         .args(["deploy", "--dry-run", "--json"])
         .env("DIGSTORE_DEPLOY_KEY", "cd".repeat(32))
+        // Pin an explicit per-capsule amount so the preview is deterministic + offline
+        // (no live pricing fetch); the dry-run must display exactly this resolved amount.
+        .env("DIGSTORE_DIG_AMOUNT", "77")
         .output()
         .unwrap();
     assert!(
@@ -281,13 +284,53 @@ fn deploy_dry_run_previews_cost_without_spending() {
     let root = v["root"].as_str().expect("root in dry-run output");
     assert_eq!(root.len(), 64, "root is a 32-byte hex");
     assert_eq!(v["capsule"].as_str().unwrap(), format!("{store_id}:{root}"));
-    // `cost_dig` is raw mojos (1 DIG = 1000 mojos); the human display reads "100…".
-    assert!(
-        v["cost_dig_display"].as_str().unwrap().starts_with("100"),
-        "dig cost display should be 100 DIG, got {:?}",
-        v["cost_dig_display"]
+    // `cost_dig` is base units (1 DIG = 1000 base units) — the resolved per-capsule
+    // amount (here the pinned explicit 77 DIG), not a hardcoded flat 100.
+    assert_eq!(
+        v["cost_dig_display"].as_str(),
+        Some("77.000"),
+        "dig cost display should be the resolved amount"
     );
-    assert_eq!(v["cost_dig"].as_u64(), Some(100_000), "raw mojos = 100 DIG");
+    assert_eq!(v["cost_dig"].as_u64(), Some(77_000), "base units = 77 DIG");
+    assert_eq!(v["price_source"].as_str(), Some("override"));
+}
+
+/// `deploy --dry-run` with NO explicit amount FETCHES the live dynamic per-capsule
+/// price from the (mocked) hub endpoint and previews exactly that (never a flat 100).
+#[test]
+fn deploy_dry_run_fetches_dynamic_price() {
+    let ci = tmp_dig();
+    let store_id = "ab".repeat(32);
+    let dist = ci.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), b"<h1>preview</h1>").unwrap();
+    std::fs::write(
+        ci.path().join("dig.toml"),
+        format!("store-id = \"{store_id}\"\noutput-dir = \"dist\"\n"),
+    )
+    .unwrap();
+
+    let pricing_url = common::spawn_pricing_server(33_333);
+    let out = dig(&ci)
+        .args(["deploy", "--dry-run", "--json"])
+        .env("DIGSTORE_DEPLOY_KEY", "cd".repeat(32))
+        .env_remove("DIGSTORE_DIG_AMOUNT") // force the live fetch
+        .env("DIGSTORE_PRICING_URL", &pricing_url)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "dynamic-price dry-run failed: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["cost_dig"].as_u64(),
+        Some(33_333),
+        "fetched dynamic amount, not flat 100"
+    );
+    assert_eq!(v["price_source"].as_str(), Some("dexie+coingecko"));
 }
 
 /// `deploy --dry-run` leaves the source tree byte-identical even when `dig.toml`

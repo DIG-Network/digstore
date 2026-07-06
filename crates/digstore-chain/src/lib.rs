@@ -17,6 +17,7 @@ pub mod metadata;
 pub mod nft;
 pub mod offer;
 pub mod option;
+pub mod pricing;
 pub mod seed;
 pub mod send;
 pub mod singleton;
