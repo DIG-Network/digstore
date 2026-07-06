@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.8.0] - 2026-07-06
+
+### Features
+- **pricing:** Consume the canonical hub /v1/pricing for dynamic per-capsule $DIG (#5)
+
 ## [0.7.2] - 2026-07-06
 
 ### Bug Fixes
