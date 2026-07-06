@@ -58,6 +58,11 @@ pub(crate) fn map_remote_err(e: ClientError) -> CliError {
         }
         ClientError::Status(404) => CliError::NotFound("remote resource".into()),
         ClientError::Status(code) => CliError::Network(format!("remote status {code}")),
+        // A non-JSON / CDN (CloudFront) error page is a remote/edge misconfiguration, NOT an auth
+        // failure — surface the clean hint as a network error (never the raw HTML, never
+        // "unauthorized"). This is the #123 fix: a push blocked at the CloudFront edge no longer
+        // prints an HTML dump labelled "unauthorized".
+        ClientError::NonJsonResponse { hint, .. } => CliError::Network(hint),
         ClientError::Transport(msg) => CliError::Network(msg),
         ClientError::Verification(msg) => CliError::VerificationFailed(msg),
         ClientError::Decode(msg) => CliError::Network(format!("decode: {msg}")),

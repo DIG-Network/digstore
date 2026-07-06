@@ -29,44 +29,87 @@ fn verify_delta_integrity(delta: &DeltaResponse) -> Result<(), ClientError> {
     Ok(())
 }
 
-/// Extract a human-readable message from a server error response body.
-/// Tries `{"message": "…"}` (and `{"error": "…"}` as fallback), then raw body.
-async fn extract_server_message(resp: reqwest::Response) -> String {
-    match resp.text().await {
-        Ok(body) if !body.is_empty() => {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-                if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
-                    return msg.to_string();
-                }
-                if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
-                    return err.to_string();
-                }
-            }
-            body
+/// If `body` is a NON-JSON payload that looks like an HTML / CDN (CloudFront)
+/// error page, return a clean, actionable diagnostic — NEVER the raw markup.
+/// Returns `None` for JSON or short plain-text bodies (the caller keeps those as
+/// the human message). This is what turns a `403` CloudFront error page into a
+/// helpful "the edge rejected this method" instead of dumping HTML labelled
+/// "unauthorized".
+fn non_json_hint(status: u16, body: &str) -> Option<String> {
+    let lower = body.to_ascii_lowercase();
+    let looks_html = lower.trim_start().starts_with('<')
+        || lower.contains("<html")
+        || lower.contains("<!doctype");
+    let is_cloudfront = lower.contains("cloudfront");
+    if !looks_html && !is_cloudfront {
+        return None;
+    }
+    Some(if is_cloudfront {
+        format!(
+            "the request was answered by a CDN/edge (CloudFront), not the DIG RPC origin \
+             (HTTP {status}) — the remote's push/write endpoint or its allowed HTTP methods \
+             may be misconfigured"
+        )
+    } else {
+        format!(
+            "the remote returned an HTML page, not a DIG RPC reply (HTTP {status}) — the \
+             endpoint may be misconfigured or not a DIG remote"
+        )
+    })
+}
+
+/// Classify a failed remote response body into a typed [`ClientError`] (pure, so
+/// it is unit-testable without a live server):
+///   * a JSON `{"message":…}` / `{"error":…}` envelope → [`ClientError::Remote`]
+///     (a genuine RPC/origin error — 401/403 still surface as "unauthorized");
+///   * an HTML / CloudFront error page → [`ClientError::NonJsonResponse`] with a
+///     clean hint (the raw HTML is discarded, never shown to the user);
+///   * an empty body → a bare [`ClientError::Status`];
+///   * a short plain-text body → [`ClientError::Remote`] carrying that text.
+fn classify_remote_error(status: u16, body: &str) -> ClientError {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return ClientError::Status(status);
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+            return ClientError::Remote {
+                status,
+                message: msg.to_string(),
+            };
         }
-        _ => String::new(),
+        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+            return ClientError::Remote {
+                status,
+                message: err.to_string(),
+            };
+        }
+    }
+    if let Some(hint) = non_json_hint(status, trimmed) {
+        return ClientError::NonJsonResponse { status, hint };
+    }
+    ClientError::Remote {
+        status,
+        message: trimmed.to_string(),
     }
 }
 
-/// Map a push finalize HTTP response to a [`PushResult`], surfacing the server
-/// body on failure.
+/// Read a failed response body once and classify it via [`classify_remote_error`].
+async fn remote_error(resp: reqwest::Response) -> ClientError {
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    classify_remote_error(status, &body)
+}
+
+/// Map a push finalize HTTP response to a [`PushResult`], surfacing a clean,
+/// classified error on failure (never a raw CDN HTML dump — see
+/// [`classify_remote_error`]).
 async fn push_finalize_result(resp: reqwest::Response) -> Result<PushResult, ClientError> {
     match resp.status().as_u16() {
         200 | 201 => Ok(PushResult::Advanced),
         202 => Ok(PushResult::Pending),
         409 => Err(ClientError::NonFastForward),
-        status @ (401 | 403) => {
-            let message = extract_server_message(resp).await;
-            Err(ClientError::Remote { status, message })
-        }
-        status => {
-            let message = extract_server_message(resp).await;
-            if message.is_empty() {
-                Err(ClientError::Status(status))
-            } else {
-                Err(ClientError::Remote { status, message })
-            }
-        }
+        _ => Err(remote_error(resp).await),
     }
 }
 
@@ -430,18 +473,7 @@ impl DigClient {
         match iresp.status().as_u16() {
             200 => {}
             409 => return Err(ClientError::NonFastForward),
-            status @ (401 | 403) => {
-                let message = extract_server_message(iresp).await;
-                return Err(ClientError::Remote { status, message });
-            }
-            status => {
-                let message = extract_server_message(iresp).await;
-                return Err(if message.is_empty() {
-                    ClientError::Status(status)
-                } else {
-                    ClientError::Remote { status, message }
-                });
-            }
+            _ => return Err(remote_error(iresp).await),
         }
         let init: serde_json::Value = iresp
             .json()
@@ -581,18 +613,7 @@ impl DigClient {
             .map_err(|e| ClientError::Transport(e.to_string()))?;
         match resp.status().as_u16() {
             201 => Ok(()),
-            status @ (401 | 403) => {
-                let message = extract_server_message(resp).await;
-                Err(ClientError::Remote { status, message })
-            }
-            status => {
-                let message = extract_server_message(resp).await;
-                Err(if message.is_empty() {
-                    ClientError::Status(status)
-                } else {
-                    ClientError::Remote { status, message }
-                })
-            }
+            _ => Err(remote_error(resp).await),
         }
     }
 
@@ -894,6 +915,85 @@ async fn download_with_progress(
         }
     }
     Ok(buf)
+}
+
+#[cfg(test)]
+mod error_classify_tests {
+    use super::*;
+
+    // A real CloudFront method-not-allowed 403 body (the #123 live-user failure): the CLI must
+    // NOT dump this HTML nor label it "unauthorized" — it must classify as NonJsonResponse with a
+    // clean hint.
+    #[test]
+    fn cloudfront_html_403_is_non_json_not_unauthorized() {
+        let body = "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\">\n<HTML><HEAD>\
+            <TITLE>ERROR: The request could not be satisfied</TITLE></HEAD>\
+            <BODY>This distribution is not configured to allow the HTTP request method that was \
+            used for this request.\nGenerated by cloudfront (CloudFront)</BODY></HTML>";
+        match classify_remote_error(403, body) {
+            ClientError::NonJsonResponse { status, hint } => {
+                assert_eq!(status, 403);
+                assert!(
+                    hint.to_lowercase().contains("cloudfront"),
+                    "hint should name the edge: {hint}"
+                );
+                assert!(
+                    !hint.contains("<HTML>") && !hint.to_lowercase().contains("<!doctype"),
+                    "hint must NOT contain raw HTML: {hint}"
+                );
+            }
+            other => panic!("expected NonJsonResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generic_html_502_is_non_json() {
+        assert!(matches!(
+            classify_remote_error(502, "<html><body>502 Bad Gateway</body></html>"),
+            ClientError::NonJsonResponse { status: 502, .. }
+        ));
+    }
+
+    // A genuine JSON auth error from the ORIGIN must still surface as Remote{message} (→ mapped to
+    // Unauthorized upstream) — the clear-error change must not swallow real 401/403 reasons.
+    #[test]
+    fn json_message_403_maps_to_remote_message() {
+        match classify_remote_error(403, r#"{"message":"push not authorized: bad sig"}"#) {
+            ClientError::Remote { status, message } => {
+                assert_eq!(status, 403);
+                assert_eq!(message, "push not authorized: bad sig");
+            }
+            other => panic!("expected Remote, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_error_field_maps_to_remote_message() {
+        assert!(matches!(
+            classify_remote_error(400, r#"{"error":"invalid root"}"#),
+            ClientError::Remote { status: 400, message } if message == "invalid root"
+        ));
+    }
+
+    #[test]
+    fn empty_body_is_bare_status() {
+        assert!(matches!(
+            classify_remote_error(502, ""),
+            ClientError::Status(502)
+        ));
+        assert!(matches!(
+            classify_remote_error(500, "   \n  "),
+            ClientError::Status(500)
+        ));
+    }
+
+    #[test]
+    fn short_plaintext_error_kept_as_message() {
+        assert!(matches!(
+            classify_remote_error(400, "bad request"),
+            ClientError::Remote { status: 400, message } if message == "bad request"
+        ));
+    }
 }
 
 #[cfg(test)]
