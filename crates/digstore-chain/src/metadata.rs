@@ -56,13 +56,37 @@ pub enum MetadataError {
     Json(String),
 }
 
-/// A single CHIP-0007 attribute (trait) on an NFT.
+/// A single CHIP-0007 attribute (trait) on an NFT **item**.
+///
+/// Distinct from [`CollectionAttribute`] (issue #187): per CHIP-0007, an NFT item's `attributes`
+/// use the field name `trait_type`; a *collection's* `attributes` use `type`. Reusing one struct
+/// for both was the #187 bug (a conformant collection.json's `type` field was rejected because
+/// this struct demands `trait_type`). Keep item attributes on `trait_type` — do not merge the two
+/// shapes back together.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Attribute {
     /// The trait category (e.g. `"Background"`).
     pub trait_type: String,
     /// The trait value (e.g. `"Blue"`). Stored as a string for byte-stable hashing; numeric
     /// values are the caller's responsibility to stringify consistently.
+    pub value: String,
+}
+
+/// A single CHIP-0007 **collection-level** attribute (icon/banner/website/twitter/etc).
+///
+/// Per CHIP-0007, collection-level attributes use `type` as the field name — DISTINCT from an NFT
+/// item's `attributes`, which use `trait_type` ([`Attribute`]). Issue #187: a prior version of
+/// this codebase wrongly reused [`Attribute`] (with `trait_type`) for collection attributes too,
+/// rejecting every conformant collection.json. This type serializes with `type` going forward;
+/// on READ it also accepts the legacy `trait_type` spelling (`#[serde(alias)]`, §5.1 back-compat)
+/// so already-emitted DIG collection.json documents keep parsing.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CollectionAttribute {
+    /// The attribute category (e.g. `"icon"`, `"banner"`, `"website"`). Serializes as CHIP-0007's
+    /// `type`; also accepts the older, non-conformant `trait_type` spelling on read.
+    #[serde(rename = "type", alias = "trait_type")]
+    pub kind: String,
+    /// The attribute value (e.g. a URI).
     pub value: String,
 }
 
@@ -75,9 +99,10 @@ pub struct CollectionRef {
     pub id: String,
     /// The human-readable collection name.
     pub name: String,
-    /// Collection-level attributes (icon/banner/website/etc), as CHIP-0007 name/value pairs.
+    /// Collection-level attributes (icon/banner/website/etc), as CHIP-0007 `type`/`value` pairs
+    /// ([`CollectionAttribute`] — NOT [`Attribute`]; see #187).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attributes: Vec<Attribute>,
+    pub attributes: Vec<CollectionAttribute>,
 }
 
 /// A CHIP-0007 metadata document (the off-chain JSON an NFT's `metadata_uris` point at).
@@ -325,5 +350,59 @@ mod tests {
             err,
             MetadataError::HashMismatch { which: "data", .. }
         ));
+    }
+
+    // ---------- #187: collection attributes use `type`, item attributes use `trait_type` ----------
+
+    /// A CHIP-0007-conformant collection attribute (`"type"`, NOT `"trait_type"`) parses. This is
+    /// dkackman's exact failure reproduced at the struct level: before the #187 fix, `CollectionRef`
+    /// reused `Attribute` (which demands `trait_type`) and rejected this with "missing field
+    /// `trait_type`".
+    #[test]
+    fn collection_attribute_parses_chip0007_type_field() {
+        let attr: CollectionAttribute =
+            serde_json::from_str(r#"{"type":"icon","value":"https://dig.net/icon.png"}"#)
+                .expect("a conformant CHIP-0007 collection attribute must parse");
+        assert_eq!(attr.kind, "icon");
+        assert_eq!(attr.value, "https://dig.net/icon.png");
+    }
+
+    /// Back-compat (§5.1): a collection attribute written with the OLD, non-conformant
+    /// `trait_type` field (already-emitted DIG collection.json) still parses via the alias.
+    #[test]
+    fn collection_attribute_accepts_legacy_trait_type_alias() {
+        let attr: CollectionAttribute =
+            serde_json::from_str(r#"{"trait_type":"icon","value":"https://dig.net/icon.png"}"#)
+                .expect("the legacy trait_type spelling must still parse");
+        assert_eq!(attr.kind, "icon");
+    }
+
+    /// Going forward, a collection attribute always WRITES `type` (never `trait_type`), so newly
+    /// emitted collection.json documents are CHIP-0007 conformant.
+    #[test]
+    fn collection_attribute_serializes_as_type_not_trait_type() {
+        let attr = CollectionAttribute {
+            kind: "banner".into(),
+            value: "https://dig.net/banner.png".into(),
+        };
+        let json = serde_json::to_string(&attr).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"banner","value":"https://dig.net/banner.png"}"#
+        );
+    }
+
+    /// NFT **item** attributes are unaffected by #187: they still require `trait_type` and reject a
+    /// collection-style `type` field (the two shapes stay distinct).
+    #[test]
+    fn item_attribute_still_requires_trait_type_not_type() {
+        let err = serde_json::from_str::<Attribute>(r#"{"type":"icon","value":"x"}"#).unwrap_err();
+        assert!(
+            err.to_string().contains("trait_type"),
+            "item Attribute must still demand trait_type, got: {err}"
+        );
+        let ok: Attribute =
+            serde_json::from_str(r#"{"trait_type":"Background","value":"Blue"}"#).unwrap();
+        assert_eq!(ok.trait_type, "Background");
     }
 }

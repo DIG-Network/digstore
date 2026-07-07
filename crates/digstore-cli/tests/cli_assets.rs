@@ -279,6 +279,101 @@ fn collection_mint_refuses_multi_item() {
         .stderr(predicate::str::contains("single DID-attributed item"));
 }
 
+/// #187 (dkackman, live user): a CHIP-0007-conformant `collection.json` — whose collection-level
+/// attribute uses `"type"` (NOT `"trait_type"`) — must be ACCEPTED by `collection mint`. Before the
+/// fix this failed at parse time with `--collection is not a valid definition: missing field
+/// 'trait_type'` (exit 2), because `Collection::attributes` was wrongly typed as the NFT-item
+/// `Attribute` (which demands `trait_type`). After the fix, parsing succeeds and the command
+/// proceeds to the DID-ownership check, which fails under the offline mock (no real DID exists) —
+/// proving the parse itself is no longer the failure. The distinct exit code (4, NOT 2) and error
+/// text (no "trait_type"/"not a valid definition") is the regression guard.
+#[test]
+fn collection_mint_accepts_chip0007_type_attribute() {
+    let dir = tmp_dig();
+    let col = dir.path().join("col.json");
+    std::fs::write(
+        &col,
+        r#"{"id":"c","name":"C","attributes":[{"type":"icon","value":"https://dig.net/icon.png"}],"royalty_puzzle_hash":"0000000000000000000000000000000000000000000000000000000000000000","royalty_basis_points":0}"#,
+    )
+    .unwrap();
+    let items = dir.path().join("items.json");
+    std::fs::write(
+        &items,
+        r#"[{"name":"A","media":{"data_uris":["dig://s/a"],"data_hash":"1111111111111111111111111111111111111111111111111111111111111111"}}]"#,
+    )
+    .unwrap();
+    let out = dig(&dir)
+        .args([
+            "collection",
+            "mint",
+            "--collection",
+            col.to_str().unwrap(),
+            "--manifest",
+            items.to_str().unwrap(),
+            "--did",
+            &"ab".repeat(32),
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("trait_type") && !stderr.contains("not a valid definition"),
+        "a CHIP-0007 `type` collection attribute must parse (dkackman's #187 bug); stderr: {stderr}"
+    );
+    assert!(!out.status.success(), "no real DID exists under the mock");
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "must fail on DID ownership (NotFound=4), not on parsing (InvalidArgument=2); stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("does not own DID"),
+        "expected the parse to succeed and fail past it on DID ownership; stderr: {stderr}"
+    );
+}
+
+/// Back-compat (§5.1): a collection.json already emitted with the OLD, non-conformant
+/// `trait_type` field on its collection attributes must STILL parse (the `#[serde(alias)]`), so
+/// existing DIG collection definitions are not broken by the #187 fix.
+#[test]
+fn collection_mint_accepts_legacy_trait_type_collection_attribute() {
+    let dir = tmp_dig();
+    let col = dir.path().join("col.json");
+    std::fs::write(
+        &col,
+        r#"{"id":"c","name":"C","attributes":[{"trait_type":"icon","value":"https://dig.net/icon.png"}],"royalty_puzzle_hash":"0000000000000000000000000000000000000000000000000000000000000000","royalty_basis_points":0}"#,
+    )
+    .unwrap();
+    let items = dir.path().join("items.json");
+    std::fs::write(
+        &items,
+        r#"[{"name":"A","media":{"data_uris":["dig://s/a"],"data_hash":"1111111111111111111111111111111111111111111111111111111111111111"}}]"#,
+    )
+    .unwrap();
+    let out = dig(&dir)
+        .args([
+            "collection",
+            "mint",
+            "--collection",
+            col.to_str().unwrap(),
+            "--manifest",
+            items.to_str().unwrap(),
+            "--did",
+            &"ab".repeat(32),
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "the legacy trait_type collection attribute must still parse; stderr: {stderr}"
+    );
+    assert!(stderr.contains("does not own DID"));
+}
+
 /// #40 drop scaffold: `collection create` with drop flags records the drop model in
 /// the definition JSON (committed); enforcement is TODO. A plain create has no drop.
 #[test]
