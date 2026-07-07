@@ -241,3 +241,60 @@ The per-capsule price is **dynamic and USD-pegged**, NOT a fixed token amount:
   returns a usable `mint_dig`; digstore surfaces a note when `source` is `"fallback"`/`"… (stale)"`.)
 - The amount displayed to the user (and in `--dry-run`'s `cost_dig`) is byte-for-byte the amount
   built into the on-chain DIG-CAT payment (`digstore_chain::cat::build_dig_store_payment`).
+
+## 11. CHIP-0007 NFT & collection metadata (nft/collection commands)
+
+Scope note: like §9–10, this is a CLI/off-chain-JSON contract (`nft mint`/`nft bulk`/`collection
+create`/`collection mint`), not a `.dig` byte-format contract; it is normative for how a
+`digstore` reimplementation reads/writes CHIP-0007 documents so third-party tooling (and the
+`chip35_dl_coin` wasm) stays byte-compatible (see `SYSTEM.md` → CHIP-0007 metadata contract).
+
+CHIP-0007 defines **two distinct attribute shapes** that MUST NOT be confused (issue #187):
+
+- **NFT item `attributes`** (an individual NFT's traits, `Chip0007Metadata.attributes` /
+  `ManifestItem.attributes`) — each entry is `{"trait_type": "<category>", "value": "<value>"}`.
+  The field is `trait_type`.
+- **Collection `attributes`** (the collection-level block — icon/banner/website/twitter/etc,
+  `Collection.attributes` and the `collection` block embedded in each item's CHIP-0007 JSON,
+  `CollectionRef.attributes`) — each entry is `{"type": "<category>", "value": "<value>"}`. The
+  field is `type`, **NOT** `trait_type`.
+
+A `digstore` implementation:
+
+- MUST serialize collection-level attributes with the field name `type` (never `trait_type`).
+- MUST serialize NFT-item attributes with the field name `trait_type` (never `type`).
+- MUST, on READ, additionally accept `trait_type` as an alias for a collection attribute's `type`
+  field (back-compat, §5.2/format-compat discipline: an already-emitted DIG collection.json using
+  the old, non-conformant `trait_type` spelling still parses). This is a READ-only accommodation —
+  it MUST NOT change what is WRITTEN.
+- MUST NOT accept `type` in place of `trait_type` for an NFT item's attributes — the two shapes
+  stay distinct; item attributes are conformant CHIP-0007 as originally implemented and are not
+  part of this alias.
+
+Example collection.json fragment (conformant):
+
+```json
+{
+  "id": "dig-punks",
+  "name": "DIG Punks",
+  "attributes": [{ "type": "icon", "value": "https://dig.net/icon.png" }],
+  "royalty_puzzle_hash": "…",
+  "royalty_basis_points": 300
+}
+```
+
+Example per-item CHIP-0007 JSON fragment (conformant — note `trait_type` for the item's own
+attributes vs. `type` inside the embedded `collection` block):
+
+```json
+{
+  "format": "CHIP-0007",
+  "name": "DIG Punk #1",
+  "collection": {
+    "id": "dig-punks",
+    "name": "DIG Punks",
+    "attributes": [{ "type": "icon", "value": "https://dig.net/icon.png" }]
+  },
+  "attributes": [{ "trait_type": "Background", "value": "Blue" }]
+}
+```

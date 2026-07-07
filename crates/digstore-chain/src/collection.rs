@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
-use crate::metadata::{Attribute, Chip0007Metadata, CollectionRef};
+use crate::metadata::{Attribute, Chip0007Metadata, CollectionAttribute, CollectionRef};
 
 /// A CHIP-0007 collection definition: the shared identity + economics across every item.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,9 +42,10 @@ pub struct Collection {
     pub id: String,
     /// Human-readable collection name.
     pub name: String,
-    /// Collection-level attributes (icon/banner/website/twitter/etc) as CHIP-0007 name/value pairs.
+    /// Collection-level attributes (icon/banner/website/twitter/etc) as CHIP-0007 `type`/`value`
+    /// pairs ([`CollectionAttribute`] — NOT the NFT-item [`Attribute`]; see #187).
     #[serde(default)]
-    pub attributes: Vec<Attribute>,
+    pub attributes: Vec<CollectionAttribute>,
     /// Shared royalty recipient puzzle hash for every item.
     pub royalty_puzzle_hash: Bytes32,
     /// Shared royalty in basis points for every item (e.g. 300 = 3%).
@@ -347,8 +348,8 @@ mod tests {
         Collection {
             id: "dig-punks".into(),
             name: "DIG Punks".into(),
-            attributes: vec![Attribute {
-                trait_type: "Website".into(),
+            attributes: vec![CollectionAttribute {
+                kind: "website".into(),
                 value: "https://dig.net".into(),
             }],
             royalty_puzzle_hash: Bytes32::from([0x22; 32]),
@@ -446,13 +447,64 @@ mod tests {
 
     /// The first item's generated CHIP-0007 JSON must be EXACTLY this byte string — the cross-module
     /// parity guard for the collection path (it must match `chip35_dl_coin`'s output byte-for-byte).
+    /// #187: the embedded collection-level attribute renders with `"type"`, NOT `"trait_type"`
+    /// (CHIP-0007); the item-level attribute stays `"trait_type"`.
     #[test]
     fn generated_item_json_is_pinned() {
         let col = collection();
         let mds = generate_item_metadata(&col, &items());
         assert_eq!(
             mds[0].to_canonical_json().unwrap(),
-            r#"{"format":"CHIP-0007","name":"DIG Punk #1","description":"first","collection":{"id":"dig-punks","name":"DIG Punks","attributes":[{"trait_type":"Website","value":"https://dig.net"}]},"attributes":[{"trait_type":"Background","value":"Blue"}],"series_number":1,"series_total":2,"minting_tool":"DIG"}"#
+            r#"{"format":"CHIP-0007","name":"DIG Punk #1","description":"first","collection":{"id":"dig-punks","name":"DIG Punks","attributes":[{"type":"website","value":"https://dig.net"}]},"attributes":[{"trait_type":"Background","value":"Blue"}],"series_number":1,"series_total":2,"minting_tool":"DIG"}"#
+        );
+    }
+
+    // ---------- #187: collection.json parses CHIP-0007 `type` attributes (dkackman's bug) ----------
+
+    /// dkackman's exact bug reproduced at the `Collection` deserialization level: a CHIP-0007-
+    /// conformant collection.json using `"type"` for a collection attribute must parse. Before the
+    /// #187 fix this failed with "missing field `trait_type`" because `Collection::attributes` was
+    /// typed `Vec<Attribute>` (the NFT-item shape).
+    #[test]
+    fn collection_json_with_chip0007_type_attribute_parses() {
+        let raw = r#"{
+            "id": "dig-punks",
+            "name": "DIG Punks",
+            "attributes": [{"type": "icon", "value": "https://dig.net/icon.png"}],
+            "royalty_puzzle_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+            "royalty_basis_points": 300
+        }"#;
+        let col: Collection = serde_json::from_str(raw)
+            .expect("a CHIP-0007-conformant collection.json (attribute `type`) must parse");
+        assert_eq!(col.attributes[0].kind, "icon");
+        assert_eq!(col.attributes[0].value, "https://dig.net/icon.png");
+    }
+
+    /// Back-compat (§5.1): a collection.json already emitted with the OLD, non-conformant
+    /// `trait_type` field on its collection attributes still parses (the alias).
+    #[test]
+    fn collection_json_with_legacy_trait_type_attribute_still_parses() {
+        let raw = r#"{
+            "id": "dig-punks",
+            "name": "DIG Punks",
+            "attributes": [{"trait_type": "icon", "value": "https://dig.net/icon.png"}],
+            "royalty_puzzle_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+            "royalty_basis_points": 300
+        }"#;
+        let col: Collection = serde_json::from_str(raw)
+            .expect("the legacy trait_type collection attribute spelling must still parse");
+        assert_eq!(col.attributes[0].kind, "icon");
+    }
+
+    /// A parsed manifest item's own `attributes` are UNCHANGED by #187 — they still use
+    /// `trait_type`, and a collection-style `type` field is rejected (the two shapes stay distinct).
+    #[test]
+    fn manifest_item_attribute_still_requires_trait_type() {
+        let raw = r#"{"name":"A","attributes":[{"type":"Foo","value":"Bar"}],"media":{}}"#;
+        let err = serde_json::from_str::<ManifestItem>(raw).unwrap_err();
+        assert!(
+            err.to_string().contains("trait_type"),
+            "manifest item attributes must still demand trait_type, got: {err}"
         );
     }
 
