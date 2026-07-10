@@ -655,11 +655,14 @@ pub struct CheckoutArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "EXAMPLES:\n  digstore cat urn:dig:chia:<storeID>:<root>/readme\n  digstore cat urn:dig:chia:<storeID>/logo.png --out logo.png\n  digstore cat <64-hex-retrieval-key> --out blob.enc"
+    after_help = "EXAMPLES:\n  digstore cat urn:dig:chia:<storeID>:<root>/readme\n  digstore cat urn:dig:chia:<storeID>/logo.png --out logo.png\n  digstore cat <64-hex-retrieval-key> --out blob.enc\n\nA full `urn:dig:…` is self-contained (it carries the store id and, usually, a pinned root): it\nreads from your own local store when you already have it, and otherwise resolves via the\nclient->node ladder (--node/$DIG_NODE_URL/config -> dig.local -> localhost -> rpc.dig.net) — no\n`digstore init` required. A bare 64-hex retrieval key still resolves within the active store."
 )]
 pub struct CatArgs {
     /// A `urn:dig:…` (streamed out DECRYPTED) or a 64-char hex retrieval key
     /// (streamed out as RAW ENCRYPTED bytes, resolved within the active store).
+    /// A full URN is self-contained: it is read locally when you already have
+    /// it, else resolved via the client->node ladder (§5.3) — no local store
+    /// is required. The bare retrieval-key form still needs an active store.
     pub urn: String,
     /// Write output to this file instead of stdout.
     #[arg(long, short)]

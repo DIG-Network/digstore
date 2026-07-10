@@ -225,6 +225,39 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         _ => {}
     }
 
+    // `cat` needs a store-resolution rule DIFFERENT from every other store-scoped command: a
+    // full `urn:dig:…` argument is self-contained (§5.3 — it carries the store id and, usually,
+    // a pinned root) and MUST remain readable via the node ladder even when NO local store is
+    // registered at all (#227). The bare 64-hex retrieval-key form still legitimately requires
+    // the active local store, so it is unaffected — `cat::run` itself decides per-argument (see
+    // its doc comment); it also falls through to the network whenever a resolved local store
+    // does not match the URN's store id.
+    if let Command::Cat(a) = cli.command {
+        let ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
+        let ctx = match ws.resolve_store_name(cli.store_name.as_deref()) {
+            Ok(name) => {
+                let content_root = ws.content_root(&name);
+                CliContext::for_store_with_op(
+                    workspace_dir,
+                    &name,
+                    content_root,
+                    cli.cwd.clone(),
+                    cwd,
+                    cli.json,
+                    cli.verbose,
+                )
+            }
+            // No local store at all is fine for a full URN (network path) — but a genuine
+            // error for the bare retrieval-key form, which `cat::run` still enforces itself
+            // via `ctx.load_config()` inside `cat_by_retrieval_key`.
+            Err(CliError::NoStore(_)) => {
+                CliContext::workspace_only(workspace_dir, cli.json, cli.verbose)
+            }
+            Err(e) => return Err(e),
+        };
+        return cat::run(&ctx, &ui, a, cli.node.as_deref());
+    }
+
     // Store-scoped commands: resolve the workspace, the store name, and op_dir.
     let ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
     let name = ws.resolve_store_name(cli.store_name.as_deref())?;
@@ -246,7 +279,6 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Log(a) => log::run(&ctx, &ui, a),
         Command::Diff(a) => diff::run(&ctx, &ui, a),
         Command::Checkout(a) => checkout::run(&ctx, &ui, a),
-        Command::Cat(a) => cat::run(&ctx, &ui, a),
         Command::Keys(a) => keys::run(&ctx, &ui, a),
         Command::Manifest(a) => manifest::run(&ctx, &ui, a),
         Command::Dir(a) => dir::run(&ctx, &ui, a),
@@ -284,7 +316,8 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         | Command::Nft(_)
         | Command::Did(_)
         | Command::Offer(_)
-        | Command::Collection(_) => {
+        | Command::Collection(_)
+        | Command::Cat(_) => {
             unreachable!("handled above")
         }
     }
