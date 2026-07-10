@@ -23,7 +23,8 @@
 // TODO(#40 drop mechanics): delayed reveal, allowlist/claim gating, phased scheduling, lazy mint.
 
 use chia::puzzles::nft::NftMetadata;
-use chia_protocol::{Bytes32, CoinSpend, Program};
+use chia::puzzles::Memos;
+use chia_protocol::{Bytes32, Coin, CoinSpend, Program};
 use chia_wallet_sdk::driver::{
     Did, IntermediateLauncher, NftMint, SingletonInfo, SpendContext, StandardLayer,
 };
@@ -340,6 +341,90 @@ pub fn build_collection_mint_in(
     Ok(launcher_ids)
 }
 
+/// Build a MULTI-item DID-attributed collection mint FUNDED by a separate XCH coin (#199).
+///
+/// [`build_collection_mint_in`] is structurally correct for any `items.len()` — but a REAL on-chain
+/// mint of N>1 items needs more value than the DID singleton carries. Each item's
+/// [`IntermediateLauncher`] uses the standard Chia bulk-mint idiom: a 0-value "intermediate" coin
+/// whose OWN spend creates a 1-mojo singleton launcher coin — i.e. it prints 1 mojo per item that
+/// must be donated from elsewhere in the SAME spend bundle (Chia's coin-value conservation is
+/// bundle-wide, not per-coin). The DID's `update` spend conserves its OWN coin value exactly (it
+/// recreates itself at the same amount), so it cannot supply that extra value for more than the one
+/// mojo it might have been over-funded with at creation. `funding_coin` is that donor: it is spent
+/// through `funding_key`'s standard puzzle to contribute exactly `items.len()` mojos to the bundle,
+/// with any excess returned as change to `funding_key.owner_puzzle_hash` (a larger-than-needed coin
+/// is never silently burned as network fee).
+///
+/// `funding_key` may be a different HD address than `minter` (whichever address actually holds a
+/// sufficient XCH coin) — both keys are needed to sign the resulting bundle.
+///
+/// **Pure: does NOT sign or broadcast.** Errors if `funding_coin.amount < items.len() as u64`.
+pub fn build_collection_mint_funded(
+    minter: &IndexedKeys,
+    did: Did,
+    collection: &Collection,
+    items: &[ManifestItem],
+    recipient_ph: Bytes32,
+    funding_coin: Coin,
+    funding_key: &IndexedKeys,
+) -> Result<CollectionMint> {
+    let mut ctx = SpendContext::new();
+    let launcher_ids = build_collection_mint_funded_in(
+        &mut ctx,
+        minter,
+        did,
+        collection,
+        items,
+        recipient_ph,
+        funding_coin,
+        funding_key,
+    )?;
+    Ok(CollectionMint {
+        coin_spends: ctx.take(),
+        launcher_ids,
+    })
+}
+
+/// [`build_collection_mint_funded`] into a caller-provided `ctx` (see [`build_collection_mint_in`]'s
+/// docs for why a shared context matters when the DID was created/parsed in that same context).
+#[allow(clippy::too_many_arguments)]
+pub fn build_collection_mint_funded_in(
+    ctx: &mut SpendContext,
+    minter: &IndexedKeys,
+    did: Did,
+    collection: &Collection,
+    items: &[ManifestItem],
+    recipient_ph: Bytes32,
+    funding_coin: Coin,
+    funding_key: &IndexedKeys,
+) -> Result<Vec<Bytes32>> {
+    let needed = items.len() as u64;
+    if funding_coin.amount < needed {
+        return Err(ChainError::Chain(format!(
+            "funding coin has {} mojo but minting {} item(s) needs at least {needed} mojo (1 mojo \
+             per item — the DID's own value cannot fund the extra singleton launchers)",
+            funding_coin.amount,
+            items.len(),
+        )));
+    }
+
+    let launcher_ids = build_collection_mint_in(ctx, minter, did, collection, items, recipient_ph)?;
+
+    // Fund the `needed` mojos the intermediate-launcher trick prints per item (see docs above); any
+    // excess returns as change so a larger-than-needed coin is never silently burned as network fee.
+    let change = funding_coin.amount - needed;
+    let mut funding_conditions = Conditions::new();
+    if change > 0 {
+        funding_conditions =
+            funding_conditions.create_coin(funding_key.owner_puzzle_hash, change, Memos::None);
+    }
+    StandardLayer::new(funding_key.synthetic_pk)
+        .spend(ctx, funding_coin, funding_conditions)
+        .map_err(|e| ChainError::Chain(format!("spend funding coin: {e}")))?;
+
+    Ok(launcher_ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,6 +510,23 @@ mod tests {
                 },
             },
         ]
+    }
+
+    /// `n` distinct manifest items (each with a unique `data_hash`) — for the multi-item (N>1) funded
+    /// mint tests (#199), where `items()`'s fixed 2 aren't enough to prove an arbitrary N.
+    fn items_n(n: usize) -> Vec<ManifestItem> {
+        (0..n)
+            .map(|i| ManifestItem {
+                name: format!("DIG Punk #{i}"),
+                description: None,
+                attributes: vec![],
+                media: ManifestMedia {
+                    data_uris: vec![format!("dig://store/{i}.png")],
+                    data_hash: Some(Bytes32::from([i as u8; 32])),
+                    ..Default::default()
+                },
+            })
+            .collect()
     }
 
     #[test]
@@ -587,8 +689,8 @@ mod tests {
     /// pass consensus and that the minted NFT is assigned to the collection's DID.
     ///
     /// (One item, because the DID singleton carries 1 mojo and parents the launcher directly; a
-    /// MULTI-item DID-spent mint needs a separate XCH funding coin for the extra launchers — that
-    /// fuller funding path is scaffolded at the CLI layer, see `collection mint`'s TODO.)
+    /// MULTI-item DID-spent mint needs a separate XCH funding coin for the extra launchers — see
+    /// [`build_collection_mint_funded_in_validates_on_simulator`] for the funded N>1 path, #199.)
     #[test]
     fn build_collection_mint_in_validates_on_simulator() -> anyhow::Result<()> {
         use chia_sdk_test::Simulator;
@@ -625,6 +727,118 @@ mod tests {
         sim.new_transaction(chia_protocol::SpendBundle::new(spends, sig))?;
         // The launcher landed: its singleton coin exists and the DID acknowledged it.
         let _ = (did_launcher, launcher_ids);
+        Ok(())
+    }
+
+    // ---------- #199: multi-item (N>1) funded collection mint ----------
+
+    /// [`build_collection_mint_funded`] refuses a funding coin that is too small (1 mojo needed per
+    /// item), with a clear, actionable message — BEFORE building any spend.
+    #[test]
+    fn build_collection_mint_funded_rejects_underfunded_coin() {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::Launcher;
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+        let alice = sim.bls(2);
+        let alice_p2 = StandardLayer::new(alice.pk);
+        let (create_did, did) = Launcher::new(alice.coin.coin_id(), 1)
+            .create_simple_did(ctx, &alice_p2)
+            .unwrap();
+        alice_p2.spend(ctx, alice.coin, create_did).unwrap();
+
+        let alice_keys = crate::keys::IndexedKeys {
+            index: 0,
+            synthetic_sk: alice.sk.clone(),
+            synthetic_pk: alice.pk,
+            owner_puzzle_hash: alice.puzzle_hash,
+        };
+        let col = collection();
+        let three_items = items_n(3);
+        // A funding coin worth only 2 mojo can't cover 3 items (needs >= 3).
+        let underfunded = Coin::new(Bytes32::from([0x99; 32]), alice.puzzle_hash, 2);
+        let err = build_collection_mint_funded(
+            &alice_keys,
+            did,
+            &col,
+            &three_items,
+            alice.puzzle_hash,
+            underfunded,
+            &alice_keys,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ChainError::Chain(m) if m.contains("needs at least 3 mojo")),
+            "got: {err}"
+        );
+    }
+
+    /// THE #199 proof: a MULTI-item (N=3) DID-attributed collection mint, funded by a separate XCH
+    /// coin, VALIDATES on the in-process Chia simulator — every NFT mints, all attributed to the same
+    /// collection DID, and the whole bundle (DID create + funding-coin spend + 3 launchers) balances
+    /// under real consensus. This is the proof the pre-#199 code lacked (`build_collection_mint_in`
+    /// alone builds N>1 spends structurally, but they fail consensus for real value-conservation
+    /// reasons — see [`build_collection_mint_funded_in`]'s docs).
+    #[test]
+    fn build_collection_mint_funded_in_validates_on_simulator() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::Launcher;
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        // Create the DID (1-mojo singleton, no spare change) in the SAME context as the mint, exactly
+        // as the validated single-item test does.
+        let alice = sim.bls(1);
+        let alice_p2 = StandardLayer::new(alice.pk);
+        let (create_did, did) =
+            Launcher::new(alice.coin.coin_id(), 1).create_simple_did(ctx, &alice_p2)?;
+        alice_p2.spend(ctx, alice.coin, create_did)?;
+        let did_launcher = did.info.launcher_id;
+
+        let alice_keys = crate::keys::IndexedKeys {
+            index: 0,
+            synthetic_sk: alice.sk.clone(),
+            synthetic_pk: alice.pk,
+            owner_puzzle_hash: alice.puzzle_hash,
+        };
+        let col = collection();
+        let three_items = items_n(3);
+
+        // A SEPARATE XCH coin funds the 3 mojo the intermediate-launcher trick needs (more than
+        // exactly 3, to also prove change comes back rather than being burned as fee).
+        let funding = sim.new_coin(alice.puzzle_hash, 10);
+
+        let launcher_ids = build_collection_mint_funded_in(
+            ctx,
+            &alice_keys,
+            did,
+            &col,
+            &three_items,
+            alice.puzzle_hash,
+            funding,
+            &alice_keys,
+        )?;
+        assert_eq!(launcher_ids.len(), 3, "three NFTs produced");
+        let unique: std::collections::HashSet<_> = launcher_ids.iter().collect();
+        assert_eq!(unique.len(), 3, "launcher ids are distinct");
+
+        // Apply the whole bundle atomically; consensus validates the value conservation + every mint.
+        let spends = ctx.take();
+        let sig = crate::nft::sign_nft_spends(&spends, std::slice::from_ref(&alice.sk), true)?;
+        sim.new_transaction(chia_protocol::SpendBundle::new(spends, sig))?;
+
+        // The 7-mojo change (10 funded - 3 needed) landed back at alice's own address — proving the
+        // excess was NOT silently burned as network fee.
+        let change_coins: Vec<_> = sim
+            .children(funding.coin_id())
+            .into_iter()
+            .filter(|cs| cs.coin.puzzle_hash == alice.puzzle_hash && cs.coin.amount == 7)
+            .collect();
+        assert_eq!(change_coins.len(), 1, "7-mojo change coin should exist");
+
+        let _ = did_launcher;
         Ok(())
     }
 }

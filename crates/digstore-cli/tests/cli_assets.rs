@@ -245,10 +245,15 @@ fn collection_create_json() {
     }
 }
 
-/// `collection mint` refuses a multi-item manifest with a clear message (the multi-item DID-funded
-/// bulk path is scaffolded — single item per call for now).
+/// #199: `collection mint` no longer refuses a multi-item manifest on item count alone — a 203-item
+/// manifest (dkackman's exact real-world size) is parsed, the funding-coin selection for N launchers
+/// runs (the mock wallet has ample XCH — proving that new code path executes without error), and the
+/// command proceeds all the way to the SAME "does not own DID" failure (exit 4) the single-item path
+/// hits under the offline mock (no real DID exists there) — NOT the old "single DID-attributed item"
+/// refusal (exit 2). The real on-chain proof that the funded spend VALIDATES is the digstore-chain
+/// Simulator test (`build_collection_mint_funded_in_validates_on_simulator`).
 #[test]
-fn collection_mint_refuses_multi_item() {
+fn collection_mint_multi_item_no_longer_refused() {
     let dir = tmp_dig();
     let col = dir.path().join("col.json");
     std::fs::write(
@@ -256,27 +261,47 @@ fn collection_mint_refuses_multi_item() {
         r#"{"id":"c","name":"C","attributes":[],"royalty_puzzle_hash":"0000000000000000000000000000000000000000000000000000000000000000","royalty_basis_points":0}"#,
     )
     .unwrap();
-    let items = dir.path().join("items.json");
-    std::fs::write(
-        &items,
-        r#"[{"name":"A","media":{}},{"name":"B","media":{}}]"#,
-    )
-    .unwrap();
-    dig(&dir)
+    let items_json = dir.path().join("items.json");
+    let items: Vec<serde_json::Value> = (0..203)
+        .map(|i| {
+            serde_json::json!({
+                "name": format!("Item #{i}"),
+                "media": {
+                    "data_uris": [format!("dig://s/{i}.png")],
+                    "data_hash": format!("{:064x}", i + 1),
+                }
+            })
+        })
+        .collect();
+    std::fs::write(&items_json, serde_json::to_string(&items).unwrap()).unwrap();
+
+    let out = dig(&dir)
         .args([
             "collection",
             "mint",
             "--collection",
             col.to_str().unwrap(),
             "--manifest",
-            items.to_str().unwrap(),
+            items_json.to_str().unwrap(),
             "--did",
             &"ab".repeat(32),
+            "--dry-run",
         ])
-        .assert()
-        .failure()
-        .code(2)
-        .stderr(predicate::str::contains("single DID-attributed item"));
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("single DID-attributed item"),
+        "the >1-item refusal must be gone (#199); stderr: {stderr}"
+    );
+    assert!(!out.status.success(), "no real DID exists under the mock");
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "must fail on DID ownership (NotFound=4) — proving parsing + funding selection both \
+         succeeded and the SAME failure as the single-item path was reached; stderr: {stderr}"
+    );
+    assert!(stderr.contains("does not own DID"));
 }
 
 /// #187 (dkackman, live user): a CHIP-0007-conformant `collection.json` — whose collection-level
@@ -506,6 +531,44 @@ fn collection_show_empty_under_mock_json() {
     assert_eq!(v["action"], "collection.show");
     assert_eq!(v["did_launcher"].as_str().unwrap(), "ab".repeat(32));
     assert_eq!(v["items"].as_array().unwrap().len(), 0);
+}
+
+/// #198: `--did` accepts a `did:chia:1…` bech32m address (how Sage/CNI display DIDs), decoding it
+/// inline to the same launcher id a hex `--did` would — the exact ergonomics gap dkackman reported.
+#[test]
+fn collection_show_accepts_bech32_did() {
+    let dir = tmp_dig();
+    let out = dig(&dir)
+        .args([
+            "--json",
+            "collection",
+            "show",
+            "--did",
+            "did:chia:1s8j4pquxfu5mhlldzu357qfqkwa9r35mdx5a0p0ehn76dr4ut4tqs0n6kv",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "collection show --did <bech32> should succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    // Decodes to the SAME 64-hex launcher id a raw hex --did would carry.
+    assert_eq!(v["did_launcher"].as_str().unwrap().len(), 64);
+}
+
+/// A malformed bech32 `did:chia:` address is rejected with a clear invalid-argument error (exit 2),
+/// not a panic or a confusing hex-parse message.
+#[test]
+fn collection_show_rejects_malformed_bech32_did() {
+    let dir = tmp_dig();
+    dig(&dir)
+        .args(["collection", "show", "--did", "did:chia:not-valid"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("invalid --did address"));
 }
 
 // ---------- offer ----------
