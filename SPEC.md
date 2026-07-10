@@ -341,4 +341,40 @@ Consequently:
 
 The collection definition, per-item metadata, and royalty/attribution semantics are unaffected —
 only the coin-level funding differs between N=1 and N>1.
-```
+
+### 11.3 Large-collection auto-batching, resumability, and the oversized-bundle guard
+
+A single spend bundle for N items grows with N; once its total CLVM cost exceeds Chia's per-block
+cost ceiling the full node rejects the `push_tx`, so an arbitrarily large `collection mint` MUST be
+split into cost-bounded batches. A reimplementation:
+
+- **Cost-bounds each batch, computed — never a hard-coded count.** The per-block CLVM cost ceiling
+  is `MAX_BLOCK_COST_CLVM = 11_000_000_000` (Chia mainnet `ConsensusConstants::max_block_cost_clvm`).
+  A batch's estimated cost MUST stay at or under a conservative fraction of that ceiling
+  (digstore uses `1/4`) so that estimate error, block contention, and gateway request-size limits are
+  all absorbed. The estimate is `base + per_item * n` where the per-item constant is proven
+  conservative against the real Chia consensus cost model (`run_spendbundle` under
+  `MAINNET_CONSTANTS`): the measured marginal per-item cost MUST NOT exceed the constant. The default
+  batch size is the largest `n` whose estimate fits the budget (≥ 1). An explicit `--batch-size`
+  override is honoured but MUST be validated against the same budget; a too-large size is a **terminal**
+  error naming the maximum allowed size, never a retryable one.
+- **One batch = one self-contained bundle**, built, funded (§11.2 N-launcher funding — a separate XCH
+  coin contributing 1 mojo per item in the batch, change returned), signed, broadcast, and confirmed
+  before the next batch. Every batch is attributed to the SAME creator DID: each batch spends the DID
+  exactly once (advancing it one generation), and the next batch spends the DID coin the prior batch
+  recreated. The DID's acknowledgement of every item's attribution is preserved on every batch.
+- **Resumable (mainnet money).** Because each batch spends real XCH, a failure after batch K MUST NOT
+  re-mint or double-spend batches `0..=K` on re-run. Per-batch progress (item range, the DID coin
+  spent, the recreated DID coin as the deterministic confirmation target, the tx id, and the minted
+  launcher ids, each flagged confirmed once its landing is verified on chain) is persisted, keyed by a
+  stable fingerprint of the manifest bytes so a resume applies ONLY to the same collection + DID +
+  manifest + batch size. A re-run skips confirmed batches and reconciles a pushed-but-unconfirmed tail
+  against chain — if the tail's recreated DID coin already exists, the batch landed and is marked
+  confirmed. Correctness rests on the DID being single-use per generation: at most one mint can confirm
+  per DID generation, so a rebuilt batch can never double-mint.
+- **The oversized-bundle rejection is terminal, not transient.** A bundle whose serialized
+  generator-byte cost alone (`bytes * cost_per_byte`, `cost_per_byte = 12_000`) meets or exceeds
+  `MAX_BLOCK_COST_CLVM` is definitively too large; broadcast MUST refuse it up-front with an actionable
+  "transaction SIZE limit — split into smaller batches" error, and MUST NOT retry it or misreport it as
+  a coinset.org connectivity/`error decoding response body` problem (the transient-retry path is for
+  genuine transport hiccups only).

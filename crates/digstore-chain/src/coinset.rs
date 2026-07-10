@@ -24,6 +24,43 @@ use chia_sdk_coinset::ChiaRpcClient;
 use std::future::Future;
 use std::time::Duration;
 
+/// Chia's per-generator-byte CLVM cost (`ConsensusConstants::cost_per_byte`). The serialized coin
+/// spends of a bundle contribute this much cost per byte BEFORE any execution/condition cost, so it
+/// gives a cheap, decode-free lower bound on a bundle's total cost.
+const COST_PER_BYTE: u64 = 12_000;
+
+/// Serialized generator size (bytes) of a bundle's coin spends — the sum of every spend's puzzle
+/// reveal + solution. A cheap size proxy that needs no CLVM decode.
+fn bundle_generator_bytes(bundle: &SpendBundle) -> usize {
+    bundle
+        .coin_spends
+        .iter()
+        .map(|cs| cs.puzzle_reveal.as_slice().len() + cs.solution.as_slice().len())
+        .sum()
+}
+
+/// Returns `Some(reason)` when `bundle` is DEFINITIVELY too large to ever be accepted: its generator
+/// bytes ALONE (times [`COST_PER_BYTE`], before any execution/condition cost) meet or exceed the
+/// per-block CLVM cost ceiling [`crate::collection::MAX_BLOCK_COST_CLVM`]. Such a bundle is a
+/// terminal condition — no retry helps — so `push` refuses it up-front (#231). The message is
+/// actionable and explicitly disclaims the misleading "coinset.org connectivity" reading.
+fn oversize_reason(bundle: &SpendBundle) -> Option<String> {
+    let bytes = bundle_generator_bytes(bundle);
+    let byte_cost = (bytes as u64).saturating_mul(COST_PER_BYTE);
+    if byte_cost >= crate::collection::MAX_BLOCK_COST_CLVM {
+        Some(format!(
+            "the spend bundle is {bytes} generator bytes ({} spends), whose byte cost alone \
+             ({byte_cost}) exceeds Chia's per-block cost limit ({}) — this is a transaction SIZE \
+             limit, NOT a coinset.org connectivity problem. Split the operation into smaller \
+             batches (e.g. `collection mint --batch-size`).",
+            bundle.coin_spends.len(),
+            crate::collection::MAX_BLOCK_COST_CLVM,
+        ))
+    } else {
+        None
+    }
+}
+
 /// Retry policy for transient coinset RPC failures.
 ///
 /// Defaults are tuned for an interactive CLI: recover quickly from the common
@@ -638,6 +675,15 @@ impl ChainReads for Coinset {
     }
 
     async fn push(&self, bundle: SpendBundle) -> Result<()> {
+        // Pre-flight oversize guard (#231): a bundle whose generator bytes alone would blow the
+        // per-block CLVM cost limit is DEFINITIVELY too large — the full node rejects it and coinset
+        // returns an aborted/non-JSON body that `reqwest` surfaces as "error decoding response body"
+        // (a transient-looking symptom the #84 retry logic would otherwise retry + misreport as a
+        // coinset.org connectivity problem). Detect it up-front and fail TERMINALLY with an
+        // actionable message, before broadcasting or retrying.
+        if let Some(reason) = oversize_reason(&bundle) {
+            return Err(ChainError::BundleTooLarge(reason));
+        }
         // Retrying a transient transport error on push is SAFE: the tx id is
         // deterministic, so re-submitting the identical bundle is idempotent at the
         // mempool (a duplicate is accepted / already-present, never a second spend).
@@ -1304,5 +1350,60 @@ mod tests {
             .expect("confirm must survive a transient coinset error");
         assert_eq!(state, ConfirmState::Confirmed { height: 12345 });
         handle.join().unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // #231: oversized-bundle pre-flight guard. A bundle whose generator bytes
+    // alone exceed the per-block cost limit is TERMINAL — `push` must refuse it
+    // up-front (not broadcast, not retry, not misreport as a coinset hiccup).
+    // -----------------------------------------------------------------------
+
+    fn coin_spend_with_reveal_len(reveal_len: usize) -> CoinSpend {
+        use chia_protocol::Program;
+        CoinSpend::new(
+            Coin::new(Bytes32::default(), Bytes32::default(), 0),
+            Program::from(vec![0u8; reveal_len]),
+            Program::from(vec![0u8; 8]),
+        )
+    }
+
+    #[test]
+    fn oversize_reason_flags_only_bundles_over_the_block_limit() {
+        // A tiny bundle is fine.
+        let small = SpendBundle::new(
+            vec![coin_spend_with_reveal_len(500)],
+            chia::bls::Signature::default(),
+        );
+        assert!(oversize_reason(&small).is_none());
+        assert_eq!(bundle_generator_bytes(&small), 508);
+
+        // A bundle whose generator bytes * COST_PER_BYTE >= MAX_BLOCK_COST_CLVM is terminal.
+        // Threshold ≈ 11e9 / 12000 ≈ 916_667 bytes; one ~1 MB reveal clears it.
+        let big = SpendBundle::new(
+            vec![coin_spend_with_reveal_len(1_000_000)],
+            chia::bls::Signature::default(),
+        );
+        let reason = oversize_reason(&big).expect("a ~1 MB bundle must be flagged oversized");
+        assert!(
+            reason.contains("NOT a coinset.org connectivity problem")
+                && reason.contains("--batch-size"),
+            "the oversize message must be actionable and disclaim a connectivity cause: {reason}"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_refuses_oversized_bundle_terminally_without_network() {
+        // Point at an unroutable address: if the guard fires first, no connection is attempted, so
+        // the test returns instantly with the terminal BundleTooLarge (proving no retry / no network).
+        let cs = Coinset::with_url("http://127.0.0.1:9".into()).with_retry_config(fast_cfg(5));
+        let big = SpendBundle::new(
+            vec![coin_spend_with_reveal_len(1_000_000)],
+            chia::bls::Signature::default(),
+        );
+        let err = cs.push(big).await.unwrap_err();
+        assert!(
+            matches!(&err, ChainError::BundleTooLarge(m) if m.contains("SIZE limit")),
+            "oversized push must be terminal BundleTooLarge, got: {err}"
+        );
     }
 }

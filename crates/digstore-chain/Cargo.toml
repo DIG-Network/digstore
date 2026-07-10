@@ -46,4 +46,9 @@ clvm-traits = "0.26"
 # end-to-end in the in-process Chia simulator, validating the assembled spend bundle.
 chia-sdk-test = "0.30"
 chia-puzzles = "0.20"
+# #231 cost-bound proof: measure a batch's real CLVM cost via the Chia consensus cost model
+# (`chia::consensus::run_spendbundle`, available through the `chia` crate's default `consensus`
+# feature) against the canonical MAINNET_CONSTANTS, to assert the per-item cost estimate is
+# conservative. clvmr is already a dev-dep (the single locked version the consensus crate uses).
+chia-sdk-types = "0.30"
 anyhow = "1"

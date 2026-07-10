@@ -245,13 +245,14 @@ fn collection_create_json() {
     }
 }
 
-/// #199: `collection mint` no longer refuses a multi-item manifest on item count alone — a 203-item
-/// manifest (dkackman's exact real-world size) is parsed, the funding-coin selection for N launchers
-/// runs (the mock wallet has ample XCH — proving that new code path executes without error), and the
-/// command proceeds all the way to the SAME "does not own DID" failure (exit 4) the single-item path
-/// hits under the offline mock (no real DID exists there) — NOT the old "single DID-attributed item"
-/// refusal (exit 2). The real on-chain proof that the funded spend VALIDATES is the digstore-chain
-/// Simulator test (`build_collection_mint_funded_in_validates_on_simulator`).
+/// #199/#231: `collection mint` no longer refuses a multi-item manifest on item count alone — a
+/// 203-item manifest (dkackman's exact real-world size) is parsed and the cost-bounded batch plan is
+/// computed (proving the #231 auto-batching path executes without error), and the command proceeds
+/// all the way to the SAME "does not own DID" failure (exit 4) the single-item path hits under the
+/// offline mock (no real DID exists there) — NOT the old "single DID-attributed item" refusal
+/// (exit 2). The real on-chain proof that each funded batch VALIDATES under the block cost limit is
+/// the digstore-chain Simulator tests (`build_collection_mint_funded_in_validates_on_simulator` +
+/// `build_collection_batch_chains_across_batches_on_simulator`).
 #[test]
 fn collection_mint_multi_item_no_longer_refused() {
     let dir = tmp_dig();
