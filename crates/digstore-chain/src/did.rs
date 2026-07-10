@@ -64,6 +64,28 @@ impl OwnedDid {
     }
 }
 
+/// Decode a `did:chia:1…` bech32m DID identifier to its 32-byte launcher id (#198).
+///
+/// Chia's DID bech32m encoding uses the literal `"did:chia:"` (colon included) as the bech32
+/// human-readable part, so the FULL string is the bech32m payload — not a URI-style wrapper around a
+/// stripped suffix. Wallets like Sage and CNI display DIDs in exactly this form (e.g.
+/// `did:chia:1r00z5mnm8j77akw8mzp4talfzfffra86zasur2usvegftkxu0czqqynhn8`), which is otherwise a
+/// papercut to convert to the raw hex launcher id the mint commands take.
+///
+/// Errors on anything that isn't a valid bech32m `did:chia:` address (wrong checksum, wrong prefix,
+/// wrong length).
+pub fn decode_bech32_did(did_string: &str) -> Result<Bytes32> {
+    let addr = chia_wallet_sdk::utils::Address::decode(did_string)
+        .map_err(|e| ChainError::Chain(format!("invalid did:chia: address: {e}")))?;
+    if addr.prefix != "did:chia:" {
+        return Err(ChainError::Chain(format!(
+            "not a did:chia: bech32m address (got prefix {:?})",
+            addr.prefix
+        )));
+    }
+    Ok(addr.puzzle_hash)
+}
+
 /// Build the (UNSIGNED) coin spends that create a simple DID from `funding_coin` (an XCH
 /// coin the wallet controls at `creator.owner_puzzle_hash`), returning the spends and the
 /// created [`Did`].
@@ -351,6 +373,49 @@ mod tests {
 
     // Public BIP-39 test vector (NOT a real wallet). Matches the rest of the crate.
     const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+    // ---------- #198: bech32 `did:chia:` decode ----------
+
+    /// A real `did:chia:` bech32m string (from `datalayer-driver`'s own doc example) decodes to its
+    /// 32-byte launcher id, and re-encoding that id with the SAME prefix round-trips byte-identically.
+    #[test]
+    fn decode_bech32_did_round_trips() {
+        let s = "did:chia:1s8j4pquxfu5mhlldzu357qfqkwa9r35mdx5a0p0ehn76dr4ut4tqs0n6kv";
+        let launcher = decode_bech32_did(s).unwrap();
+        let addr = chia_wallet_sdk::utils::Address::new(launcher, "did:chia:".to_string());
+        assert_eq!(addr.encode().unwrap(), s);
+    }
+
+    /// dkackman's exact DID from the #198 report decodes cleanly (a real-world smoke test, not just a
+    /// synthetic vector).
+    #[test]
+    fn decode_bech32_did_dkackman_vector() {
+        let s = "did:chia:1r00z5mnm8j77akw8mzp4talfzfffra86zasur2usvegftkxu0czqqynhn8";
+        let launcher = decode_bech32_did(s).unwrap();
+        assert_eq!(launcher.to_vec().len(), 32);
+        // Re-encoding must round-trip (proves the decode didn't silently mangle bytes).
+        let addr = chia_wallet_sdk::utils::Address::new(launcher, "did:chia:".to_string());
+        assert_eq!(addr.encode().unwrap(), s);
+    }
+
+    /// A malformed bech32 string is rejected with a clear chain error, not a panic.
+    #[test]
+    fn decode_bech32_did_rejects_malformed() {
+        assert!(decode_bech32_did("not-a-bech32-string").is_err());
+        // Valid bech32m but the WRONG hrp (an xch address, not a DID) must also be rejected —
+        // the prefix carries semantic meaning (this is Sage's/CNI's example xch1... address style).
+        assert!(decode_bech32_did(
+            "xch1a0t57qn6uhe7tzjlxlhwy2qgmuxvvft8gnfzmg5detg0q9f3yc3s2apz0h"
+        )
+        .is_err());
+    }
+
+    /// Plain 64-hex (no `did:chia:` prefix) is NOT accepted by [`decode_bech32_did`] — that input
+    /// form is [`crate`]'s CLI-side `parse_launcher_id`'s job; this function is bech32-only.
+    #[test]
+    fn decode_bech32_did_rejects_plain_hex() {
+        assert!(decode_bech32_did(&"ab".repeat(32)).is_err());
+    }
 
     /// Seed a [`MockChain`] so `reconstruct_did`/`build_did_transfer` can rebuild the DID
     /// at `did_coin` from its parent spend, mirroring what coinset would return after the
