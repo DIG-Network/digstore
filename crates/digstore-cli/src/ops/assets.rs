@@ -189,6 +189,32 @@ pub async fn push_signed(chain: &dyn ChainReads, bundle: SpendBundle) -> Result<
     Ok(tx_id)
 }
 
+/// Poll `chain` until `coin_id` appears on chain (confirmed in a block) or `timeout_secs` elapses,
+/// returning whether it confirmed. Polls every 10 s; skips the sleep after the final check so a
+/// budget under 10 s does a single non-blocking poll. Used to gate one collection-mint batch on the
+/// prior batch landing (the next batch spends the DID the prior batch recreated — #231).
+pub async fn confirm_coin(
+    chain: &dyn ChainReads,
+    coin_id: Bytes32,
+    timeout_secs: u64,
+) -> Result<bool, CliError> {
+    let polls = (timeout_secs / 10).max(1);
+    for i in 0..polls {
+        if chain
+            .coin_record(coin_id)
+            .await
+            .map_err(CliError::from)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        if i + 1 < polls {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        }
+    }
+    Ok(false)
+}
+
 /// Parse a mainnet `xch1…` address into its 32-byte puzzle hash, with a CLI-friendly error.
 pub fn parse_xch_address(address: &str) -> Result<Bytes32, CliError> {
     digstore_chain::send::decode_xch_address(address)

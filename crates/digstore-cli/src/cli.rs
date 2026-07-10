@@ -330,6 +330,12 @@ pub struct CollectionMintArgs {
     /// mint is DID-attributed).
     #[arg(long)]
     pub did: String,
+    /// Items per on-chain batch. A large collection is auto-split into cost-bounded batches so no
+    /// single spend bundle exceeds Chia's per-block cost limit (the default is COMPUTED from the
+    /// CLVM cost model). Override only to force a smaller batch; a value whose batch would exceed the
+    /// cost budget is rejected.
+    #[arg(long = "batch-size")]
+    pub batch_size: Option<usize>,
     /// Build the bulk-mint spend and print the plan WITHOUT signing or pushing.
     #[arg(long = "dry-run")]
     pub dry_run: bool,

@@ -34,6 +34,8 @@ pub enum CliError {
     },
     #[error("chain error: {0}")]
     Chain(String),
+    #[error("operation too large: {0}")]
+    TooLarge(String),
     #[error("onchain confirmation timed out")]
     ConfirmTimeout,
     #[error("mint failed: {0}")]
@@ -65,6 +67,7 @@ impl CliError {
             CliError::ConfirmTimeout => 14,
             CliError::MintFailed(_) => 15,
             CliError::UpdateFailed(_) => 16,
+            CliError::TooLarge(_) => 17,
             CliError::Other(_) => 1,
         }
     }
@@ -91,6 +94,7 @@ impl CliError {
             CliError::ConfirmTimeout => "CONFIRM_TIMEOUT",
             CliError::MintFailed(_) => "MINT_FAILED",
             CliError::UpdateFailed(_) => "UPDATE_FAILED",
+            CliError::TooLarge(_) => "TOO_LARGE",
             CliError::Other(_) => "ERROR",
         }
     }
@@ -146,6 +150,11 @@ impl CliError {
             ),
             ("MINT_FAILED", 15, "the on-chain mint failed"),
             ("UPDATE_FAILED", 16, "the on-chain root update failed"),
+            (
+                "TOO_LARGE",
+                17,
+                "the operation is too large for one transaction; split it into smaller batches",
+            ),
         ]
     }
 
@@ -175,6 +184,10 @@ impl CliError {
             )),
             CliError::InsufficientFunds { address, asset, .. } => Some(format!("send {asset} to {address}, then retry")),
             CliError::Chain(_) => Some("check your connection to coinset.org and retry".into()),
+            // A size limit, NOT a connectivity problem — never suggest checking coinset.org (#231).
+            CliError::TooLarge(_) => Some(
+                "split the operation into smaller batches (e.g. `collection mint --batch-size <n>`)".into(),
+            ),
             CliError::ConfirmTimeout => Some("the transaction may still confirm; run `digstore anchor status`".into()),
             CliError::MintFailed(_) | CliError::UpdateFailed(_) => Some("retry; if it persists, check wallet funds and coinset.org".into()),
             _ => None,
@@ -203,6 +216,9 @@ impl From<digstore_chain::ChainError> for CliError {
             C::Decrypt => CliError::BadPassphrase,
             C::InvalidMnemonic(m) => CliError::InvalidMnemonic(m),
             C::Chain(m) => CliError::Chain(m),
+            // A terminal oversized-bundle rejection (#231) — surfaced as TooLarge, never Chain, so
+            // the hint points at batching instead of coinset.org connectivity.
+            C::BundleTooLarge(m) => CliError::TooLarge(m),
             other => CliError::Other(anyhow::anyhow!(other.to_string())),
         }
     }
@@ -235,6 +251,7 @@ mod tests {
             CliError::ConfirmTimeout,
             CliError::MintFailed("x".into()),
             CliError::UpdateFailed("x".into()),
+            CliError::TooLarge("x".into()),
         ];
         let mut codes: Vec<i32> = errs.iter().map(|e| e.exit_code()).collect();
         let n = codes.len();
@@ -273,6 +290,7 @@ mod tests {
             CliError::ConfirmTimeout,
             CliError::MintFailed("x".into()),
             CliError::UpdateFailed("x".into()),
+            CliError::TooLarge("x".into()),
         ];
         let mut codes: Vec<&str> = errs.iter().map(|e| e.code()).collect();
         let n = codes.len();

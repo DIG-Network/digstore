@@ -18,6 +18,12 @@ pub enum ChainError {
     Config(String),
     #[error("chain error: {0}")]
     Chain(String),
+    /// A spend bundle is too large to broadcast (its CLVM cost / generator size would exceed Chia's
+    /// per-block limit). This is a TERMINAL, actionable condition — retrying cannot help and it is
+    /// NOT a coinset.org connectivity problem (#231). The operation must be split into smaller
+    /// batches (e.g. `collection mint --batch-size`).
+    #[error("spend bundle too large: {0}")]
+    BundleTooLarge(String),
 }
 
 pub type Result<T> = std::result::Result<T, ChainError>;

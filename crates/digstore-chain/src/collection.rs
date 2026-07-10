@@ -291,6 +291,26 @@ pub fn build_collection_mint_in(
     items: &[ManifestItem],
     recipient_ph: Bytes32,
 ) -> Result<Vec<Bytes32>> {
+    Ok(build_collection_mint_core_in(ctx, minter, did, collection, items, recipient_ph)?.0)
+}
+
+/// The shared core of every collection-mint builder: emits each item's launcher/mint spends into
+/// `ctx` and spends the DID once to authorize them, returning BOTH the launcher ids AND the
+/// **recreated DID** — the DID's next generation left on chain by its `update` spend.
+///
+/// The recreated DID matters for BATCHING (#231): a large mint is split into cost-bounded batches
+/// (see [`plan_batches`]), and each batch spends the DID once, advancing it one generation. The
+/// next batch must spend that recreated DID — so this returns it, letting a caller chain batches
+/// (the CLI re-fetches the DID from chain between confirmed batches; the Simulator test chains the
+/// returned value directly). The public non-batch wrappers discard it (they build a single bundle).
+fn build_collection_mint_core_in(
+    ctx: &mut SpendContext,
+    minter: &IndexedKeys,
+    did: Did,
+    collection: &Collection,
+    items: &[ManifestItem],
+    recipient_ph: Bytes32,
+) -> Result<(Vec<Bytes32>, Did)> {
     if items.is_empty() {
         return Err(ChainError::Chain(
             "build_collection_mint: at least one item is required".into(),
@@ -333,12 +353,12 @@ pub fn build_collection_mint_in(
     }
 
     // Spend the DID once, authorizing all mints (it acknowledges every attribution). The recreated
-    // DID singleton is not needed here (the caller re-fetches it from chain to chain further mints).
-    let _recreated = did
+    // DID singleton is returned so a batched caller can chain the next batch onto it (#231).
+    let recreated = did
         .update(ctx, &p2, all_mint_conditions)
         .map_err(|e| ChainError::Chain(format!("spend did for collection mint: {e}")))?;
 
-    Ok(launcher_ids)
+    Ok((launcher_ids, recreated))
 }
 
 /// Build a MULTI-item DID-attributed collection mint FUNDED by a separate XCH coin (#199).
@@ -398,6 +418,32 @@ pub fn build_collection_mint_funded_in(
     funding_coin: Coin,
     funding_key: &IndexedKeys,
 ) -> Result<Vec<Bytes32>> {
+    Ok(build_collection_mint_funded_core_in(
+        ctx,
+        minter,
+        did,
+        collection,
+        items,
+        recipient_ph,
+        funding_coin,
+        funding_key,
+    )?
+    .0)
+}
+
+/// The funded core: [`build_collection_mint_core_in`] plus the XCH funding-coin spend, returning the
+/// launcher ids AND the recreated DID (for batch chaining, #231).
+#[allow(clippy::too_many_arguments)]
+fn build_collection_mint_funded_core_in(
+    ctx: &mut SpendContext,
+    minter: &IndexedKeys,
+    did: Did,
+    collection: &Collection,
+    items: &[ManifestItem],
+    recipient_ph: Bytes32,
+    funding_coin: Coin,
+    funding_key: &IndexedKeys,
+) -> Result<(Vec<Bytes32>, Did)> {
     let needed = items.len() as u64;
     if funding_coin.amount < needed {
         return Err(ChainError::Chain(format!(
@@ -408,7 +454,8 @@ pub fn build_collection_mint_funded_in(
         )));
     }
 
-    let launcher_ids = build_collection_mint_in(ctx, minter, did, collection, items, recipient_ph)?;
+    let (launcher_ids, recreated) =
+        build_collection_mint_core_in(ctx, minter, did, collection, items, recipient_ph)?;
 
     // Fund the `needed` mojos the intermediate-launcher trick prints per item (see docs above); any
     // excess returns as change so a larger-than-needed coin is never silently burned as network fee.
@@ -422,7 +469,325 @@ pub fn build_collection_mint_funded_in(
         .spend(ctx, funding_coin, funding_conditions)
         .map_err(|e| ChainError::Chain(format!("spend funding coin: {e}")))?;
 
-    Ok(launcher_ids)
+    Ok((launcher_ids, recreated))
+}
+
+// ===========================================================================
+// #231 — cost-bounded auto-batching for large collection mints
+//
+// A single spend bundle for N items exceeds Chia's per-block CLVM cost limit once N grows
+// (dkackman hit this at ~200 items: the full node rejected the oversized `push_tx` and coinset
+// returned an aborted body, misreported as a connectivity error). The fix splits a large mint
+// into COST-BOUNDED batches — each a self-contained bundle under the block limit — built, funded,
+// signed, broadcast, and confirmed sequentially, all attributed to the same collection DID.
+// ===========================================================================
+
+/// Chia mainnet per-block CLVM cost ceiling (`ConsensusConstants::max_block_cost_clvm`). A spend
+/// bundle whose total CLVM cost exceeds this is rejected by every full node, so a bulk mint MUST be
+/// split into bundles that each stay under it (with margin — see [`batch_cost_budget`]).
+pub const MAX_BLOCK_COST_CLVM: u64 = 11_000_000_000;
+
+/// The fraction (numerator/denominator) of [`MAX_BLOCK_COST_CLVM`] a single mint batch may occupy.
+/// A batch is packed so its ESTIMATED cost stays under `MAX_BLOCK_COST_CLVM * NUM / DEN`. The
+/// remaining margin absorbs (a) cost-estimate error, (b) other transactions competing for the same
+/// block, and (c) the practical request/response-size limits of the coinset.org gateway. `1/4` is
+/// deliberately conservative — a bulk mint is not latency-critical, and overshooting the block cost
+/// fails the entire batch on-chain (real XCH already committed to the earlier batches).
+pub const BATCH_COST_BUDGET_NUM: u64 = 1;
+/// Denominator of the per-batch cost budget fraction (see [`BATCH_COST_BUDGET_NUM`]).
+pub const BATCH_COST_BUDGET_DEN: u64 = 4;
+
+/// Estimated CLVM cost of ONE collection-mint item: its intermediate-launcher spend, the singleton
+/// launcher spend, the eve-NFT spend, their CREATE_COIN / AGG_SIG conditions, and the generator
+/// bytes of those puzzle reveals. Rounded UP from the measured cost so the estimate never
+/// UNDER-counts — an over-estimate only makes batches smaller, which is always safe. The test
+/// `est_cost_per_item_is_conservative` runs a real batch through the Chia consensus cost model
+/// (`run_spendbundle`) and fails if this constant drops below the measured marginal per-item cost.
+/// Measured marginal (mainnet cost model, chia-wallet-sdk 0.30): ~69.76M CLVM per item; this is set
+/// ~15% higher for margin against build/puzzle variation.
+pub const EST_COST_PER_ITEM_CLVM: u64 = 80_000_000;
+
+/// Estimated FIXED per-batch cost, independent of item count: the single DID `update` spend, the
+/// funding-coin spend, and base generator framing. Kept conservative for the same reason as
+/// [`EST_COST_PER_ITEM_CLVM`] (`est_cost_per_item_is_conservative` also guards this — measured fixed
+/// overhead is ~100–150M CLVM; this is set well above it).
+pub const EST_BATCH_BASE_COST_CLVM: u64 = 300_000_000;
+
+/// Estimated total CLVM cost of a batch of `n_items` collection-mint items.
+pub fn estimate_batch_cost(n_items: usize) -> u64 {
+    EST_BATCH_BASE_COST_CLVM.saturating_add(EST_COST_PER_ITEM_CLVM.saturating_mul(n_items as u64))
+}
+
+/// The per-batch CLVM-cost budget: the block ceiling times the safety fraction. Every batch's
+/// [`estimate_batch_cost`] must stay at or under this.
+pub fn batch_cost_budget() -> u64 {
+    MAX_BLOCK_COST_CLVM / BATCH_COST_BUDGET_DEN * BATCH_COST_BUDGET_NUM
+}
+
+/// The default cost-bounded number of items per batch: the largest N whose [`estimate_batch_cost`]
+/// stays within [`batch_cost_budget`] (at least 1). This is what `collection mint` uses when
+/// `--batch-size` is not given — COMPUTED from the cost model, never a hard-coded count.
+pub fn default_batch_size() -> usize {
+    let usable = batch_cost_budget().saturating_sub(EST_BATCH_BASE_COST_CLVM);
+    (usable / EST_COST_PER_ITEM_CLVM.max(1)).max(1) as usize
+}
+
+/// Validate an explicit `--batch-size`: it must be at least 1 and a batch of that many items must
+/// fit within [`batch_cost_budget`]. On a too-large size the error is a terminal
+/// [`ChainError::BundleTooLarge`] naming the maximum allowed size, so the CLI can surface an
+/// actionable message (never the misleading "check your connection to coinset.org").
+pub fn validate_batch_size(size: usize) -> Result<()> {
+    if size == 0 {
+        return Err(ChainError::Chain("--batch-size must be at least 1".into()));
+    }
+    if estimate_batch_cost(size) > batch_cost_budget() {
+        return Err(ChainError::BundleTooLarge(format!(
+            "--batch-size {size} is too large: its estimated CLVM cost ({}) exceeds the safe \
+             per-batch budget ({}). Use --batch-size {} or lower.",
+            estimate_batch_cost(size),
+            batch_cost_budget(),
+            default_batch_size(),
+        )));
+    }
+    Ok(())
+}
+
+/// Split `total` items into contiguous, cost-bounded batch ranges. With `batch_size == None` the
+/// [`default_batch_size`] is used; an explicit size is [`validate_batch_size`]-checked. Every
+/// returned range has length `<=` the chosen size, the ranges are contiguous and cover `0..total`
+/// exactly, and each stays within [`batch_cost_budget`].
+pub fn plan_batches(
+    total: usize,
+    batch_size: Option<usize>,
+) -> Result<Vec<std::ops::Range<usize>>> {
+    if total == 0 {
+        return Err(ChainError::Chain(
+            "plan_batches: at least one item is required".into(),
+        ));
+    }
+    let size = match batch_size {
+        Some(s) => {
+            validate_batch_size(s)?;
+            s
+        }
+        None => default_batch_size(),
+    };
+    let mut batches = Vec::new();
+    let mut start = 0;
+    while start < total {
+        let end = (start + size).min(total);
+        batches.push(start..end);
+        start = end;
+    }
+    Ok(batches)
+}
+
+/// A built collection-mint BATCH: the coin spends (unsigned) to broadcast, the launcher ids minted,
+/// and the **recreated DID** the batch leaves on chain. Batching advances the DID one generation per
+/// batch — the NEXT batch spends [`CollectionBatch::next_did`] (the CLI re-fetches it from chain
+/// after confirmation; a same-process caller can chain the returned value directly). The recreated
+/// DID's coin id is also the deterministic confirmation target for the batch (its appearance on
+/// chain proves the batch landed).
+#[derive(Clone, Debug)]
+pub struct CollectionBatch {
+    /// Coin spends to sign + broadcast (the DID spend + funding-coin spend + every item's mint).
+    pub coin_spends: Vec<CoinSpend>,
+    /// The minted NFTs' launcher ids, in item order.
+    pub launcher_ids: Vec<Bytes32>,
+    /// The DID's next generation, recreated by this batch's DID spend (spend it for the next batch).
+    pub next_did: Did,
+}
+
+/// Build ONE funded, DID-attributed collection-mint batch (a fresh [`SpendContext`]), returning the
+/// coin spends, launcher ids, AND the recreated DID for chaining the next batch (#231). This is the
+/// batch primitive `collection mint` loops over for a large collection; it is
+/// [`build_collection_mint_funded`] plus the recreated-DID return.
+#[allow(clippy::too_many_arguments)]
+pub fn build_collection_batch(
+    minter: &IndexedKeys,
+    did: Did,
+    collection: &Collection,
+    items: &[ManifestItem],
+    recipient_ph: Bytes32,
+    funding_coin: Coin,
+    funding_key: &IndexedKeys,
+) -> Result<CollectionBatch> {
+    let mut ctx = SpendContext::new();
+    let (launcher_ids, next_did) = build_collection_mint_funded_core_in(
+        &mut ctx,
+        minter,
+        did,
+        collection,
+        items,
+        recipient_ph,
+        funding_coin,
+        funding_key,
+    )?;
+    Ok(CollectionBatch {
+        coin_spends: ctx.take(),
+        launcher_ids,
+        next_did,
+    })
+}
+
+/// A stable fingerprint of a manifest's raw bytes (SHA-256, hex) — the resume key component that
+/// ties a [`MintProgress`] record to the EXACT manifest it was started for, so a re-run against a
+/// different manifest never resumes onto the wrong items.
+pub fn manifest_fingerprint(manifest_bytes: &[u8]) -> String {
+    use chia_sha2::Sha256;
+    let mut h = Sha256::new();
+    h.update(manifest_bytes);
+    hex::encode(h.finalize())
+}
+
+/// Persisted progress of a resumable multi-batch collection mint (#231).
+///
+/// A large mint spends real XCH one batch at a time. This record lets a re-run SKIP batches that
+/// already landed on chain, so an interruption after batch K never re-mints or double-spends batches
+/// `0..=K`. Correctness rests on the DID being a single-use coin per generation: each batch spends
+/// the DID exactly once, so at most one mint can confirm per DID generation — the mint can never
+/// double-mint a batch even if a re-run rebuilds it. Each [`BatchRecord`] additionally captures the
+/// DID coin it spent (for chain reconciliation of a pushed-but-unconfirmed tail), the recreated DID
+/// coin (the confirmation target), the tx id, and the launcher ids, for progress display + auditing.
+///
+/// The type is pure serializable data; the CLI owns the file path (`~/.dig/collection-mints/…`) and
+/// the chain reconciliation queries.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MintProgress {
+    /// The collection id being minted.
+    pub collection_id: String,
+    /// The creator DID launcher id (hex) the mint is attributed to.
+    pub did: String,
+    /// [`manifest_fingerprint`] of the manifest bytes — resume applies only to the SAME manifest.
+    pub manifest_hash: String,
+    /// Total items in the manifest.
+    pub total_items: usize,
+    /// The batch size in effect (so a resume keeps identical batch boundaries).
+    pub batch_size: usize,
+    /// Recorded batches, in item order. A batch appears here once broadcast (unconfirmed) and is
+    /// flipped to `confirmed` once its landing is verified on chain.
+    pub batches: Vec<BatchRecord>,
+}
+
+/// One batch's record within a [`MintProgress`].
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BatchRecord {
+    /// Half-open item range `[start, end)` this batch mints.
+    pub start: usize,
+    /// End (exclusive) of the batch's item range.
+    pub end: usize,
+    /// The DID coin id (hex) this batch's DID spend consumed — its generation. On resume, if this
+    /// coin is already SPENT on chain, the batch landed even if we never recorded its confirmation.
+    pub did_coin_id: String,
+    /// The recreated DID coin id (hex) this batch produces — the deterministic confirmation target
+    /// (its presence on chain proves the batch landed).
+    pub next_did_coin_id: String,
+    /// The broadcast tx id (hex).
+    pub tx_id: String,
+    /// The launcher ids (hex) minted in this batch, in item order.
+    pub launcher_ids: Vec<String>,
+    /// True once the batch's landing is confirmed on chain.
+    pub confirmed: bool,
+}
+
+impl MintProgress {
+    /// A fresh, empty progress record for a mint of `total_items` at `batch_size`.
+    pub fn new(
+        collection_id: impl Into<String>,
+        did: impl Into<String>,
+        manifest_hash: impl Into<String>,
+        total_items: usize,
+        batch_size: usize,
+    ) -> Self {
+        Self {
+            collection_id: collection_id.into(),
+            did: did.into(),
+            manifest_hash: manifest_hash.into(),
+            total_items,
+            batch_size,
+            batches: Vec::new(),
+        }
+    }
+
+    /// Whether a stored record matches the current mint parameters. A mismatch means the stored
+    /// record is stale/foreign (different collection, DID, or manifest) and MUST NOT be resumed.
+    pub fn matches(&self, collection_id: &str, did: &str, manifest_hash: &str) -> bool {
+        self.collection_id == collection_id
+            && self.did == did
+            && self.manifest_hash == manifest_hash
+    }
+
+    /// The number of items confirmed minted so far (sum of confirmed batch lengths).
+    pub fn minted_count(&self) -> usize {
+        self.batches
+            .iter()
+            .filter(|b| b.confirmed)
+            .map(|b| b.end - b.start)
+            .sum()
+    }
+
+    /// Whether the batch covering `[start, end)` is recorded AND confirmed.
+    pub fn is_confirmed(&self, start: usize, end: usize) -> bool {
+        self.batches
+            .iter()
+            .any(|b| b.start == start && b.end == end && b.confirmed)
+    }
+
+    /// The recorded batch covering `[start, end)`, if any (confirmed or not).
+    pub fn record(&self, start: usize, end: usize) -> Option<&BatchRecord> {
+        self.batches
+            .iter()
+            .find(|b| b.start == start && b.end == end)
+    }
+
+    /// The last recorded batch that is NOT yet confirmed. Because batches are broadcast strictly in
+    /// order (each spends the DID recreated by the prior), at most one such "in-flight" batch can
+    /// exist — the tail — and it is the one a resume must reconcile against chain.
+    pub fn pending_tail(&self) -> Option<&BatchRecord> {
+        self.batches.last().filter(|b| !b.confirmed)
+    }
+
+    /// Record a batch as broadcast-but-unconfirmed (idempotent: re-recording the same range updates
+    /// it in place rather than appending a duplicate).
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_pending(
+        &mut self,
+        start: usize,
+        end: usize,
+        did_coin_id: String,
+        next_did_coin_id: String,
+        tx_id: String,
+        launcher_ids: Vec<String>,
+    ) {
+        let rec = BatchRecord {
+            start,
+            end,
+            did_coin_id,
+            next_did_coin_id,
+            tx_id,
+            launcher_ids,
+            confirmed: false,
+        };
+        match self
+            .batches
+            .iter_mut()
+            .find(|b| b.start == start && b.end == end)
+        {
+            Some(existing) => *existing = rec,
+            None => self.batches.push(rec),
+        }
+    }
+
+    /// Mark the batch covering `[start, end)` confirmed. No-op if there is no such record.
+    pub fn confirm(&mut self, start: usize, end: usize) {
+        if let Some(b) = self
+            .batches
+            .iter_mut()
+            .find(|b| b.start == start && b.end == end)
+        {
+            b.confirmed = true;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -840,5 +1205,379 @@ mod tests {
 
         let _ = did_launcher;
         Ok(())
+    }
+
+    // ---------- #231: cost-bounded auto-batching ----------
+
+    /// The cost budget is a strict fraction of the block ceiling, the default batch size is derived
+    /// from the cost model (never a hard-coded 25), and a default-sized batch's estimate stays within
+    /// budget while a hugely-oversized size does not.
+    #[test]
+    fn cost_model_default_batch_size_fits_budget() {
+        assert_eq!(batch_cost_budget(), MAX_BLOCK_COST_CLVM / 4);
+        let n = default_batch_size();
+        assert!(n >= 1, "at least one item per batch");
+        assert!(
+            estimate_batch_cost(n) <= batch_cost_budget(),
+            "a default-sized batch ({n}) must fit the budget: est {} > budget {}",
+            estimate_batch_cost(n),
+            batch_cost_budget()
+        );
+        // One more item than the default would exceed the budget (the default is the LARGEST that fits).
+        assert!(
+            estimate_batch_cost(n + 1) > batch_cost_budget(),
+            "default batch size {n} must be the largest that fits the budget"
+        );
+        // Sanity: the computed default is in a realistic range (dkackman's prior tooling used ~25).
+        assert!(
+            (10..=80).contains(&n),
+            "computed default batch size {n} out of the expected realistic range"
+        );
+    }
+
+    /// `estimate_batch_cost` is monotone and the base+per-item model composes as documented.
+    #[test]
+    fn estimate_batch_cost_is_monotone() {
+        assert_eq!(estimate_batch_cost(0), EST_BATCH_BASE_COST_CLVM);
+        assert_eq!(
+            estimate_batch_cost(10),
+            EST_BATCH_BASE_COST_CLVM + 10 * EST_COST_PER_ITEM_CLVM
+        );
+        assert!(estimate_batch_cost(50) > estimate_batch_cost(49));
+    }
+
+    /// `plan_batches` splits N items into contiguous ranges that cover `0..N` exactly, none larger
+    /// than the chosen size, using the cost-derived default when no override is given.
+    #[test]
+    fn plan_batches_covers_all_items_contiguously() {
+        // Default size: a 200-item mint splits into >1 batch, each <= default_batch_size.
+        let n = 200usize;
+        let plan = plan_batches(n, None).unwrap();
+        assert!(plan.len() > 1, "200 items must need more than one batch");
+        let size = default_batch_size();
+        // Contiguous, gapless, covering exactly 0..n.
+        let mut expected_start = 0;
+        for r in &plan {
+            assert_eq!(r.start, expected_start, "ranges must be contiguous");
+            assert!(
+                r.end > r.start && r.end - r.start <= size,
+                "range within batch size"
+            );
+            expected_start = r.end;
+        }
+        assert_eq!(expected_start, n, "ranges must cover every item");
+        let total: usize = plan.iter().map(|r| r.end - r.start).sum();
+        assert_eq!(total, n);
+
+        // Explicit override is honoured.
+        let plan = plan_batches(10, Some(4)).unwrap();
+        assert_eq!(
+            plan,
+            vec![0..4, 4..8, 8..10],
+            "explicit --batch-size 4 splits 10 into 4+4+2"
+        );
+
+        // A single item is one batch.
+        assert_eq!(plan_batches(1, None).unwrap(), vec![0..1]);
+        // Zero items is an error.
+        assert!(plan_batches(0, None).is_err());
+    }
+
+    /// `validate_batch_size` rejects 0 and a size whose estimated cost exceeds the budget, the latter
+    /// with the terminal [`ChainError::BundleTooLarge`] (so the CLI never mislabels it a coinset
+    /// connectivity problem).
+    #[test]
+    fn validate_batch_size_rejects_zero_and_oversized() {
+        assert!(validate_batch_size(0).is_err());
+        assert!(validate_batch_size(default_batch_size()).is_ok());
+        let huge = default_batch_size() * 100;
+        let err = validate_batch_size(huge).unwrap_err();
+        assert!(
+            matches!(&err, ChainError::BundleTooLarge(m) if m.contains("too large")),
+            "oversized --batch-size must be terminal BundleTooLarge, got: {err}"
+        );
+    }
+
+    /// THE #231 cost-bound PROOF: `EST_COST_PER_ITEM_CLVM` / `EST_BATCH_BASE_COST_CLVM` are
+    /// CONSERVATIVE — the real CLVM cost of a batch (measured with the Chia consensus cost model,
+    /// `run_spendbundle`, against MAINNET_CONSTANTS) never exceeds our estimate, for two batch sizes.
+    /// This is what lets us pack batches under the block limit by ESTIMATE alone (no per-build CLVM
+    /// run at mint time). If a future change makes an item more expensive than the constant assumes,
+    /// this test fails, forcing the constant back up.
+    #[test]
+    fn est_cost_per_item_is_conservative() -> anyhow::Result<()> {
+        use chia::consensus::owned_conditions::OwnedSpendBundleConditions;
+        use chia::consensus::spendbundle_conditions::run_spendbundle;
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::Launcher;
+
+        // A recent mainnet height so run_spendbundle applies the CURRENT (post-softfork) cost flags.
+        const HEIGHT: u32 = 6_000_000;
+
+        // Measure a bundle's real total CLVM cost under the mainnet consensus cost model.
+        let measure = |bundle: &chia_protocol::SpendBundle| -> u64 {
+            let mut a = clvmr::Allocator::new();
+            let (sbc, _pk) = run_spendbundle(
+                &mut a,
+                bundle,
+                MAX_BLOCK_COST_CLVM,
+                HEIGHT,
+                0,
+                &chia_sdk_types::MAINNET_CONSTANTS,
+            )
+            .expect("batch bundle must validate under the consensus cost model");
+            OwnedSpendBundleConditions::from(&a, sbc).cost
+        };
+
+        // Create + apply a DID so we can build real batches against its eve generation.
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+        let alice = sim.bls(1);
+        let alice_p2 = StandardLayer::new(alice.pk);
+        let (create_did, did) =
+            Launcher::new(alice.coin.coin_id(), 1).create_simple_did(ctx, &alice_p2)?;
+        alice_p2.spend(ctx, alice.coin, create_did)?;
+        let create_spends = ctx.take();
+        let sig =
+            crate::nft::sign_nft_spends(&create_spends, std::slice::from_ref(&alice.sk), true)?;
+        sim.new_transaction(chia_protocol::SpendBundle::new(create_spends, sig))?;
+
+        let keys = crate::keys::IndexedKeys {
+            index: 0,
+            synthetic_sk: alice.sk.clone(),
+            synthetic_pk: alice.pk,
+            owner_puzzle_hash: alice.puzzle_hash,
+        };
+        let col = collection();
+
+        // Build two batch sizes against the SAME eve DID (not applied — we only measure cost).
+        let mut build_cost = |n: usize| -> anyhow::Result<u64> {
+            let funding = sim.new_coin(alice.puzzle_hash, 1_000);
+            let batch = build_collection_batch(
+                &keys,
+                did,
+                &col,
+                &items_n(n),
+                alice.puzzle_hash,
+                funding,
+                &keys,
+            )?;
+            let sig = crate::nft::sign_nft_spends(
+                &batch.coin_spends,
+                std::slice::from_ref(&alice.sk),
+                true,
+            )?;
+            Ok(measure(&chia_protocol::SpendBundle::new(
+                batch.coin_spends,
+                sig,
+            )))
+        };
+
+        let (n1, n2) = (5usize, 20usize);
+        let cost1 = build_cost(n1)?;
+        let cost2 = build_cost(n2)?;
+
+        // Our whole-batch estimate must bound the measured cost at both sizes.
+        assert!(
+            estimate_batch_cost(n1) >= cost1,
+            "estimate for {n1} items ({}) must be >= measured ({cost1})",
+            estimate_batch_cost(n1)
+        );
+        assert!(
+            estimate_batch_cost(n2) >= cost2,
+            "estimate for {n2} items ({}) must be >= measured ({cost2})",
+            estimate_batch_cost(n2)
+        );
+
+        // The measured MARGINAL per-item cost must not exceed our per-item constant.
+        let marginal = (cost2 - cost1) / (n2 - n1) as u64;
+        assert!(
+            EST_COST_PER_ITEM_CLVM >= marginal,
+            "EST_COST_PER_ITEM_CLVM ({EST_COST_PER_ITEM_CLVM}) must be >= measured marginal \
+             per-item cost ({marginal}); raise the constant"
+        );
+
+        // And a default-sized batch's measured cost stays under the mainnet block limit with margin.
+        assert!(
+            estimate_batch_cost(default_batch_size()) < MAX_BLOCK_COST_CLVM,
+            "a default-sized batch must be under the block limit"
+        );
+        Ok(())
+    }
+
+    /// THE #231 batching PROOF: a multi-batch collection mint chains across batches on the Simulator
+    /// — each batch is a SEPARATE, self-contained, cost-bounded bundle that validates under consensus
+    /// (cost + value conservation), the DID advances one generation per batch (the next batch spends
+    /// the recreated DID), and EVERY item across all batches is minted with a distinct launcher id.
+    /// A small `--batch-size` forces several batches from a modest item set (a real cost-bounded
+    /// 200-item run would take far longer on the sim; the chaining logic is identical).
+    #[test]
+    fn build_collection_batch_chains_across_batches_on_simulator() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::Launcher;
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        // Create + apply the DID; each batch below is its own transaction against the current DID.
+        let alice = sim.bls(1);
+        let alice_p2 = StandardLayer::new(alice.pk);
+        let (create_did, mut did) =
+            Launcher::new(alice.coin.coin_id(), 1).create_simple_did(ctx, &alice_p2)?;
+        alice_p2.spend(ctx, alice.coin, create_did)?;
+        let create_spends = ctx.take();
+        let sig =
+            crate::nft::sign_nft_spends(&create_spends, std::slice::from_ref(&alice.sk), true)?;
+        sim.new_transaction(chia_protocol::SpendBundle::new(create_spends, sig))?;
+
+        let keys = crate::keys::IndexedKeys {
+            index: 0,
+            synthetic_sk: alice.sk.clone(),
+            synthetic_pk: alice.pk,
+            owner_puzzle_hash: alice.puzzle_hash,
+        };
+        let col = collection();
+
+        let total = 7usize;
+        let batch_size = 3usize;
+        let items = items_n(total);
+        let plan = plan_batches(total, Some(batch_size))?;
+        assert!(
+            plan.len() >= 3,
+            "a batch size of 3 over 7 items yields >= 3 batches"
+        );
+
+        let mut all_launchers: Vec<Bytes32> = Vec::new();
+        for range in plan {
+            let n = range.len();
+            // On chain this is the wallet's next/change coin; on the sim we mint a fresh funding coin.
+            let funding = sim.new_coin(alice.puzzle_hash, 1_000);
+            let batch = build_collection_batch(
+                &keys,
+                did,
+                &col,
+                &items[range.clone()],
+                alice.puzzle_hash,
+                funding,
+                &keys,
+            )?;
+            assert_eq!(
+                batch.launcher_ids.len(),
+                n,
+                "batch mints every item in its range"
+            );
+            // Apply the batch as its OWN bundle — consensus validates its cost + value conservation.
+            let sig = crate::nft::sign_nft_spends(
+                &batch.coin_spends,
+                std::slice::from_ref(&alice.sk),
+                true,
+            )?;
+            sim.new_transaction(chia_protocol::SpendBundle::new(
+                batch.coin_spends.clone(),
+                sig,
+            ))?;
+            all_launchers.extend(batch.launcher_ids);
+            // Chain: the next batch spends the DID this batch recreated.
+            did = batch.next_did;
+        }
+
+        assert_eq!(
+            all_launchers.len(),
+            total,
+            "every item minted across the batches"
+        );
+        let uniq: std::collections::HashSet<_> = all_launchers.iter().collect();
+        assert_eq!(
+            uniq.len(),
+            total,
+            "all launcher ids are distinct across batches"
+        );
+        Ok(())
+    }
+
+    // ---------- #231: resumable mint progress ----------
+
+    fn progress_with(n_batches_confirmed: usize) -> MintProgress {
+        let mut p = MintProgress::new("c", "ab".repeat(32), "deadbeef", 30, 10);
+        for i in 0..3 {
+            let (start, end) = (i * 10, i * 10 + 10);
+            p.record_pending(
+                start,
+                end,
+                format!("{:064x}", i),
+                format!("{:064x}", i + 100),
+                format!("{:064x}", i + 200),
+                vec![format!("{:064x}", i + 300)],
+            );
+            if i < n_batches_confirmed {
+                p.confirm(start, end);
+            }
+        }
+        p
+    }
+
+    #[test]
+    fn mint_progress_tracks_confirmed_and_pending() {
+        let p = progress_with(2);
+        assert_eq!(p.minted_count(), 20, "two confirmed 10-item batches");
+        assert!(p.is_confirmed(0, 10) && p.is_confirmed(10, 20));
+        assert!(!p.is_confirmed(20, 30), "third batch is still pending");
+        // Only the tail (last, unconfirmed) batch is in-flight.
+        let tail = p.pending_tail().expect("a pending tail exists");
+        assert_eq!((tail.start, tail.end), (20, 30));
+        // A fully-confirmed record has no pending tail.
+        let done = progress_with(3);
+        assert!(done.pending_tail().is_none());
+        assert_eq!(done.minted_count(), 30);
+    }
+
+    #[test]
+    fn mint_progress_record_pending_is_idempotent() {
+        let mut p = MintProgress::new("c", "did", "mh", 20, 10);
+        p.record_pending(
+            0,
+            10,
+            "d0".into(),
+            "n0".into(),
+            "t0".into(),
+            vec!["l0".into()],
+        );
+        p.record_pending(
+            0,
+            10,
+            "d0".into(),
+            "n0".into(),
+            "t0b".into(),
+            vec!["l0".into()],
+        );
+        assert_eq!(p.batches.len(), 1, "re-recording a range updates in place");
+        assert_eq!(
+            p.batches[0].tx_id, "t0b",
+            "the record is updated, not duplicated"
+        );
+        p.confirm(0, 10);
+        assert!(p.is_confirmed(0, 10));
+    }
+
+    #[test]
+    fn mint_progress_matches_guards_stale_records() {
+        let p = MintProgress::new("dig-punks", "abcd", "hash1", 5, 2);
+        assert!(p.matches("dig-punks", "abcd", "hash1"));
+        assert!(!p.matches("other", "abcd", "hash1"), "different collection");
+        assert!(!p.matches("dig-punks", "ffff", "hash1"), "different DID");
+        assert!(
+            !p.matches("dig-punks", "abcd", "hash2"),
+            "different manifest"
+        );
+    }
+
+    #[test]
+    fn manifest_fingerprint_is_stable_and_content_addressed() {
+        let a = manifest_fingerprint(b"[{\"name\":\"A\"}]");
+        let b = manifest_fingerprint(b"[{\"name\":\"A\"}]");
+        let c = manifest_fingerprint(b"[{\"name\":\"B\"}]");
+        assert_eq!(a, b, "same bytes -> same fingerprint");
+        assert_ne!(a, c, "different bytes -> different fingerprint");
+        assert_eq!(a.len(), 64, "sha256 hex is 64 chars");
     }
 }

@@ -28,9 +28,10 @@ use crate::runtime::block_on;
 use crate::ui::Ui;
 
 use digstore_chain::collection::{
-    build_collection_mint, build_collection_mint_funded, Collection, Drop, DropPhase, ManifestItem,
+    build_collection_batch, build_collection_mint, default_batch_size, manifest_fingerprint,
+    plan_batches, Collection, Drop, DropPhase, ManifestItem, MintProgress,
 };
-use digstore_chain::did::list_owned_dids;
+use digstore_chain::did::{list_owned_dids, OwnedDid};
 use digstore_chain::nft::{list_collections, read_collection, sign_nft_spends, CollectionView};
 
 pub fn run(ui: &Ui, args: CollectionArgs) -> Result<(), CliError> {
@@ -279,6 +280,7 @@ fn create(ui: &Ui, args: CollectionCreateArgs) -> Result<(), CliError> {
 
 fn mint(ui: &Ui, args: CollectionMintArgs) -> Result<(), CliError> {
     let did_launcher = assets::parse_did_arg(&args.did)?;
+    let did_hex = hex::encode(did_launcher);
 
     let col_raw = std::fs::read_to_string(&args.collection).map_err(|e| {
         CliError::InvalidArgument(format!(
@@ -306,84 +308,268 @@ fn mint(ui: &Ui, args: CollectionMintArgs) -> Result<(), CliError> {
     let (chain, mocked) = assets::chain_reads();
     assets::warn_if_mocked(ui, mocked);
 
-    // A MULTI-item mint needs a separate XCH funding coin: the DID singleton alone can fund at most
-    // one singleton launcher, but each item's intermediate-launcher trick needs 1 extra mojo (#199 —
-    // see `digstore_chain::collection::build_collection_mint_funded`'s docs for the coin-conservation
-    // reasoning). Select it FIRST so an underfunded wallet is reported before any DID/chain work.
-    let funding = if items.len() > 1 {
-        Some(block_on(assets::scan_and_select_funding(
-            chain.as_ref(),
-            &mnemonic,
-            items.len() as u64,
-        ))??)
-    } else {
-        None
-    };
-
-    // Reconstruct the creator DID the wallet owns (its current coin is what the mint spends).
-    let owner_phs = scan_owner_phs(&mnemonic)?;
-    let dids = block_on(list_owned_dids(chain.as_ref(), &owner_phs))??;
-    let owned = dids
-        .into_iter()
-        .find(|d| d.launcher_id == did_launcher)
-        .ok_or_else(|| {
-            CliError::NotFound(format!(
-                "the wallet does not own DID {}",
-                hex::encode(did_launcher)
-            ))
-        })?;
-
     // The minter key is the wallet's primary (index 0); TODO(#35) map the DID p2 to its exact index.
     let keys = digstore_chain::keys::derive_indexed_keys(&mnemonic, 0..1)
         .map_err(CliError::from)?
         .into_iter()
         .next()
         .ok_or_else(|| CliError::Chain("could not derive wallet key".into()))?;
-
     let recipient = keys.owner_puzzle_hash;
-    let out = if let Some((funding_keys, funding_coin)) = &funding {
-        build_collection_mint_funded(
+
+    // SINGLE item: the DID's own coin funds the one launcher — no separate funding, no batching,
+    // no resume state (a single bundle can never be oversized). Preserves the original path (#199).
+    if items.len() == 1 {
+        let owned = resolve_owned_did(chain.as_ref(), &mnemonic, did_launcher)?;
+        let out = build_collection_mint(&keys, owned.did, &collection, &items, recipient)
+            .map_err(CliError::from)?;
+        let launcher_ids: Vec<String> = out.launcher_ids.iter().map(hex::encode).collect();
+        if args.dry_run {
+            emit_single(ui, &collection.id, &launcher_ids, None);
+            return Ok(());
+        }
+        let sig = sign_nft_spends(
+            &out.coin_spends,
+            std::slice::from_ref(&keys.synthetic_sk),
+            false,
+        )
+        .map_err(CliError::from)?;
+        let tx_id = block_on(assets::push_signed(
+            chain.as_ref(),
+            SpendBundle::new(out.coin_spends, sig),
+        ))??;
+        emit_single(ui, &collection.id, &launcher_ids, Some(tx_id));
+        return Ok(());
+    }
+
+    // MULTI item: auto-split into cost-bounded batches so no single spend bundle exceeds Chia's
+    // per-block CLVM cost limit (#231 — dkackman's 200-item mint died as one oversized bundle). The
+    // batch size is COMPUTED from the cost model unless `--batch-size` overrides it; a too-large
+    // override is a terminal `TooLarge` error (never a coinset-connectivity misread).
+    let effective_size = args.batch_size.unwrap_or_else(default_batch_size);
+    let plan = plan_batches(items.len(), args.batch_size).map_err(CliError::from)?;
+
+    // Resolve the creator DID the wallet owns. (Kept before the dry-run preview so an unowned DID is
+    // reported here, as it always has been.)
+    let _owned = resolve_owned_did(chain.as_ref(), &mnemonic, did_launcher)?;
+
+    if args.dry_run {
+        emit_plan(
+            ui,
+            &collection.id,
+            items.len(),
+            effective_size,
+            &plan,
+            mocked,
+        );
+        return Ok(());
+    }
+
+    // --- real run: resume-aware, one confirmed batch at a time ---
+    let manifest_hash = manifest_fingerprint(items_raw.as_bytes());
+    let progress_path = progress_file_path(&manifest_hash)?;
+    let mut progress = load_progress(&progress_path)
+        .filter(|p| {
+            p.matches(&collection.id, &did_hex, &manifest_hash)
+                && p.batch_size == effective_size
+                && p.total_items == items.len()
+        })
+        .unwrap_or_else(|| {
+            MintProgress::new(
+                &collection.id,
+                &did_hex,
+                &manifest_hash,
+                items.len(),
+                effective_size,
+            )
+        });
+
+    // Reconcile a pushed-but-unconfirmed tail against chain: if its recreated DID coin already
+    // exists, the batch landed (the DID advanced) even though we never recorded its confirmation —
+    // mark it confirmed so we never re-mint it. (Correctness also rests on the DID being single-use:
+    // at most one mint can confirm per DID generation, so a re-run can never double-mint.)
+    reconcile_tail(chain.as_ref(), &mut progress)?;
+
+    let batch_count = plan.len();
+    let mut minted_total = 0usize;
+    for (bi, range) in plan.iter().enumerate() {
+        let n = range.len();
+        if progress.is_confirmed(range.start, range.end) {
+            ui.line(format!(
+                "batch {}/{batch_count}: already minted ({n} item(s)) — resuming past it",
+                bi + 1
+            ));
+            minted_total += n;
+            continue;
+        }
+
+        // Re-fetch the CURRENT unspent DID (reflects every confirmed batch so far) and select an XCH
+        // coin covering this batch's launchers (1 mojo/item). Both are re-selected per batch because
+        // each batch spends fresh coins (the DID's next generation + a fresh/change funding coin).
+        let owned = resolve_owned_did(chain.as_ref(), &mnemonic, did_launcher)?;
+        let did_coin_id = owned.coin_id;
+        let (funding_keys, funding_coin) = block_on(assets::scan_and_select_funding(
+            chain.as_ref(),
+            &mnemonic,
+            n as u64,
+        ))??;
+
+        let batch = build_collection_batch(
             &keys,
             owned.did,
             &collection,
-            &items,
+            &items[range.clone()],
             recipient,
-            *funding_coin,
-            funding_keys,
+            funding_coin,
+            &funding_keys,
         )
-        .map_err(CliError::from)?
-    } else {
-        build_collection_mint(&keys, owned.did, &collection, &items, recipient)
-            .map_err(CliError::from)?
-    };
-    let launcher_ids: Vec<String> = out.launcher_ids.iter().map(hex::encode).collect();
+        .map_err(CliError::from)?;
+        let launcher_ids: Vec<String> = batch.launcher_ids.iter().map(hex::encode).collect();
+        let next_did_coin = batch.next_did.coin.coin_id();
 
-    if args.dry_run {
-        emit(ui, &collection.id, &launcher_ids, None, true);
-        return Ok(());
+        // Sign with the minter key + the funding coin's key (dedup by pubkey when identical).
+        let signing_keys = vec![keys.synthetic_sk.clone(), funding_keys.synthetic_sk.clone()];
+        let sig =
+            sign_nft_spends(&batch.coin_spends, &signing_keys, false).map_err(CliError::from)?;
+        let bundle = SpendBundle::new(batch.coin_spends, sig);
+
+        // WRITE-AHEAD the attempt BEFORE broadcasting. The tx id and the recreated-DID coin are both
+        // deterministic from the bundle, so they are known pre-broadcast. If the process died in the
+        // window between a successful broadcast and this write, the batch could land yet be left
+        // unrecorded — and a resume, re-fetching the now-advanced DID, would re-mint this batch's
+        // items against the next generation (a real double-spend). Recording first lets
+        // `reconcile_tail` detect a landed-but-unrecorded batch (its recreated DID coin on chain) and
+        // skip it. Re-broadcasting the identical bundle on resume is idempotent at the mempool.
+        let tx_id = bundle.name();
+        progress.record_pending(
+            range.start,
+            range.end,
+            hex::encode(did_coin_id),
+            hex::encode(next_did_coin),
+            hex::encode(tx_id),
+            launcher_ids,
+        );
+        save_progress(&progress_path, &progress)?;
+
+        block_on(assets::push_signed(chain.as_ref(), bundle))??;
+        ui.line(format!(
+            "batch {}/{batch_count}: broadcast {n} item(s) — tx {}",
+            bi + 1,
+            hex::encode(tx_id)
+        ));
+
+        // Wait for the recreated DID coin to appear on chain (proves the batch landed) before the
+        // next batch, which must spend that recreated DID.
+        let confirmed = block_on(assets::confirm_coin(chain.as_ref(), next_did_coin, 600))??;
+        if !confirmed {
+            save_progress(&progress_path, &progress)?;
+            ui.line(format!(
+                "batch {}/{batch_count} broadcast but not yet confirmed — re-run `digstore collection \
+                 mint` to resume from here (already-minted batches are skipped)",
+                bi + 1
+            ));
+            return Err(CliError::ConfirmTimeout);
+        }
+        progress.confirm(range.start, range.end);
+        save_progress(&progress_path, &progress)?;
+        minted_total += n;
+        ui.line(format!("batch {}/{batch_count}: confirmed", bi + 1));
     }
-    // Sign with the minter's key, plus the funding coin's key when it's a different HD address
-    // (harmless when it's the same key — signing dedupes by public key).
-    let mut signing_keys = vec![keys.synthetic_sk.clone()];
-    if let Some((funding_keys, _)) = &funding {
-        signing_keys.push(funding_keys.synthetic_sk.clone());
-    }
-    let sig = sign_nft_spends(&out.coin_spends, &signing_keys, false).map_err(CliError::from)?;
-    let tx_id = block_on(assets::push_signed(
-        chain.as_ref(),
-        SpendBundle::new(out.coin_spends, sig),
-    ))??;
-    emit(ui, &collection.id, &launcher_ids, Some(tx_id), false);
+
+    // Mint complete — remove the resume file and report every launcher id.
+    let _ = std::fs::remove_file(&progress_path);
+    let all_launchers: Vec<String> = progress
+        .batches
+        .iter()
+        .flat_map(|b| b.launcher_ids.clone())
+        .collect();
+    emit_multi(
+        ui,
+        &collection.id,
+        &all_launchers,
+        minted_total,
+        batch_count,
+        mocked,
+    );
     Ok(())
 }
 
-fn emit(
+/// Reconstruct the creator DID the wallet owns; errors [`CliError::NotFound`] (exit 4) when the
+/// wallet does not own `did_launcher`.
+fn resolve_owned_did(
+    chain: &dyn digstore_chain::coinset::ChainReads,
+    mnemonic: &str,
+    did_launcher: chia_protocol::Bytes32,
+) -> Result<OwnedDid, CliError> {
+    let owner_phs = scan_owner_phs(mnemonic)?;
+    let dids = block_on(list_owned_dids(chain, &owner_phs))??;
+    dids.into_iter()
+        .find(|d| d.launcher_id == did_launcher)
+        .ok_or_else(|| {
+            CliError::NotFound(format!(
+                "the wallet does not own DID {}",
+                hex::encode(did_launcher)
+            ))
+        })
+}
+
+/// Path of the resume-progress file for a mint, content-addressed by the manifest fingerprint under
+/// `~/.dig/collection-mints/`.
+fn progress_file_path(manifest_hash: &str) -> Result<std::path::PathBuf, CliError> {
+    let home = digstore_chain::config::dig_home().map_err(CliError::from)?;
+    Ok(home
+        .join("collection-mints")
+        .join(format!("{manifest_hash}.json")))
+}
+
+/// Load a saved [`MintProgress`], or `None` if the file is absent/unreadable/corrupt (a corrupt or
+/// stale record is simply ignored — the caller starts fresh).
+fn load_progress(path: &std::path::Path) -> Option<MintProgress> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Persist [`MintProgress`] atomically enough for a CLI (create the dir, write the JSON).
+fn save_progress(path: &std::path::Path, progress: &MintProgress) -> Result<(), CliError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| CliError::Other(e.into()))?;
+    }
+    let json = serde_json::to_string_pretty(progress)
+        .map_err(|e| CliError::Other(anyhow::anyhow!("serialize mint progress: {e}")))?;
+    std::fs::write(path, json.as_bytes()).map_err(|e| CliError::Other(e.into()))?;
+    Ok(())
+}
+
+/// Reconcile a pushed-but-unconfirmed tail batch: if its recreated DID coin is already on chain, the
+/// batch landed — mark it confirmed so a resume never re-mints it.
+fn reconcile_tail(
+    chain: &dyn digstore_chain::coinset::ChainReads,
+    progress: &mut MintProgress,
+) -> Result<(), CliError> {
+    let Some(tail) = progress.pending_tail() else {
+        return Ok(());
+    };
+    let (start, end) = (tail.start, tail.end);
+    let next_coin = match hex::decode(&tail.next_did_coin_id)
+        .ok()
+        .and_then(|b| <[u8; 32]>::try_from(b).ok())
+    {
+        Some(arr) => chia_protocol::Bytes32::new(arr),
+        None => return Ok(()),
+    };
+    if block_on(chain.coin_record(next_coin))??.is_some() {
+        progress.confirm(start, end);
+    }
+    Ok(())
+}
+
+/// JSON/pretty output for a single-item mint (the DID-funded, non-batched path).
+fn emit_single(
     ui: &Ui,
     collection_id: &str,
     launcher_ids: &[String],
     tx_id: Option<chia_protocol::Bytes32>,
-    dry: bool,
 ) {
+    let dry = tx_id.is_none();
     if ui.json() {
         ui.emit_json(&serde_json::json!({
             "action": "collection.mint",
@@ -405,6 +591,61 @@ fn emit(
         if let Some(t) = tx_id {
             ui.line(format!("tx {}", hex::encode(t)));
         }
+    }
+}
+
+/// Dry-run preview of the batch plan for a large mint (no chain spend).
+fn emit_plan(
+    ui: &Ui,
+    collection_id: &str,
+    total_items: usize,
+    batch_size: usize,
+    plan: &[std::ops::Range<usize>],
+    mocked: bool,
+) {
+    if ui.json() {
+        ui.emit_json(&serde_json::json!({
+            "action": "collection.mint",
+            "collection_id": collection_id,
+            "dry_run": true,
+            "mocked": mocked,
+            "total_items": total_items,
+            "batch_size": batch_size,
+            "batch_count": plan.len(),
+            "batches": plan.iter().map(|r| [r.start, r.end]).collect::<Vec<_>>(),
+        }));
+    } else {
+        ui.line(format!(
+            "would mint {total_items} item(s) into collection `{collection_id}` in {} cost-bounded \
+             batch(es) of up to {batch_size} (dry-run; nothing spent)",
+            plan.len()
+        ));
+    }
+}
+
+/// Final summary for a completed multi-batch mint.
+fn emit_multi(
+    ui: &Ui,
+    collection_id: &str,
+    launcher_ids: &[String],
+    minted: usize,
+    batch_count: usize,
+    mocked: bool,
+) {
+    if ui.json() {
+        ui.emit_json(&serde_json::json!({
+            "action": "collection.mint",
+            "collection_id": collection_id,
+            "dry_run": false,
+            "mocked": mocked,
+            "minted": minted,
+            "batch_count": batch_count,
+            "launcher_ids": launcher_ids,
+        }));
+    } else {
+        ui.success(format!(
+            "minted {minted} item(s) into collection `{collection_id}` across {batch_count} batch(es)"
+        ));
     }
 }
 
