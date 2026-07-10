@@ -41,7 +41,10 @@ fn route(arg: &str) -> Result<PullRoute, CliError> {
 /// Reduce a resolved remote URL (which may carry a `/stores/<id>` path) to its RPC host base
 /// (`scheme://host[:port]`) — the dig RPC `dig.getContent` POST is rooted at the host, not under
 /// `/stores/…`. Any path/userinfo is dropped. A non-URL value passes through unchanged.
-fn rpc_base(url: &str) -> String {
+///
+/// `pub(crate)` so `commands::cat`'s network path (#227) can reduce a resolved node ladder
+/// endpoint the same way, rather than duplicating this logic.
+pub(crate) fn rpc_base(url: &str) -> String {
     let Some((scheme, rest)) = url.split_once("://") else {
         return url.trim_end_matches('/').to_string();
     };
