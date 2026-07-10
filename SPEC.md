@@ -298,3 +298,47 @@ attributes vs. `type` inside the embedded `collection` block):
   "attributes": [{ "trait_type": "Background", "value": "Blue" }]
 }
 ```
+
+### 11.1 DID identifiers on `--did` (bech32m + hex)
+
+Every `--did` flag (`collection mint`, `collection show`, `nft mint --did`) accepts EITHER form:
+
+- a 64-hex launcher id (a leading `0x` is tolerated), or
+- a `did:chia:1…` bech32m address — the form Sage and CNI display DIDs in. Chia's DID bech32m
+  encoding uses the literal `"did:chia:"` (colon included) as the bech32 human-readable part, so
+  the FULL string (not a stripped suffix) is the bech32m payload; a `digstore` reimplementation
+  decodes it the same way it would decode an `xch1…`/`nft1…` bech32m address, then checks the
+  decoded prefix is exactly `"did:chia:"`.
+
+A malformed bech32m string, or one whose decoded prefix isn't `"did:chia:"`, is rejected with a
+clear argument error — never silently treated as hex.
+
+### 11.2 Multi-item collection mint funding (coin conservation)
+
+`collection mint` bulk-mints every item in a manifest into a collection, attributed to a creator
+DID, in ONE atomic bundle authorized by a single DID spend (§11 above covers the metadata shape;
+this subsection covers the on-chain funding a reimplementation must replicate).
+
+Each item's NFT launcher is created via the standard Chia bulk-mint idiom: a 0-value
+"intermediate" coin parented off the DID's current coin, whose own spend creates a 1-mojo
+singleton launcher coin. Chia's coin-value conservation is **bundle-wide, not per-coin** — that
+0→1 mojo creation must be balanced by an equal-or-greater deficit elsewhere in the SAME spend
+bundle. The DID's own spend (`did.update`) recreates its coin at EXACTLY its current amount, so it
+cannot supply more than one item's worth of that value on its own.
+
+Consequently:
+
+- **N = 1 item:** the DID's own coin funds the single launcher directly; no separate funding coin
+  is required (this is the original, on-chain-validated single-item path).
+- **N > 1 items:** a separate XCH coin MUST be spent in the same bundle, contributing at least
+  `N` mojos (1 per item) via the wallet's standard puzzle. A reimplementation:
+  1. selects an XCH coin (or several) covering at least `N` mojos from the minter's wallet, erroring
+     with a clear, actionable "insufficient funds — need `N`, have `<balance>`" message otherwise;
+  2. spends it through the standard layer, returning any amount over `N` as CHANGE to the funding
+     coin's own address — the excess MUST NOT be left to silently become network fee;
+  3. includes that spend in the SAME `SpendBundle` as the DID spend and every item's
+     launcher/mint spends, signed together.
+
+The collection definition, per-item metadata, and royalty/attribution semantics are unaffected —
+only the coin-level funding differs between N=1 and N>1.
+```

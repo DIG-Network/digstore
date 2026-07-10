@@ -198,13 +198,27 @@ pub fn parse_xch_address(address: &str) -> Result<Bytes32, CliError> {
 /// Parse a 64-hex launcher/coin id (a leading `0x` is tolerated) into a chain [`Bytes32`].
 /// `nft1…`/`did:chia:…` bech32 ids are NOT yet decoded here — pass the hex launcher id (see TODO).
 pub fn parse_launcher_id(s: &str) -> Result<Bytes32, CliError> {
-    // TODO(#35): accept `nft1…`/`did:chia:…` bech32m ids (decode to launcher id) in addition to hex.
+    // TODO(#35): accept `nft1…` bech32m ids (decode to launcher id) in addition to hex. `did:chia:…`
+    // is handled by `parse_did_arg` below (#198) at the DID-specific call sites.
     let raw = hex::decode(s.trim().trim_start_matches("0x"))
         .map_err(|e| CliError::InvalidArgument(format!("not a 64-hex launcher id: {e}")))?;
     let arr: [u8; 32] = raw
         .try_into()
         .map_err(|_| CliError::InvalidArgument("launcher id must be exactly 32 bytes".into()))?;
     Ok(Bytes32::new(arr))
+}
+
+/// Parse a DID identifier that is EITHER a 64-hex launcher id OR a `did:chia:1…` bech32m address —
+/// the form Sage and CNI display DIDs in (#198) — decoding the bech32m form to its 32-byte launcher
+/// id via [`digstore_chain::did::decode_bech32_did`]. Use this at every `--did` call site instead of
+/// [`parse_launcher_id`] (which stays hex-only — it is also used for non-DID ids like `--nft`).
+pub fn parse_did_arg(s: &str) -> Result<Bytes32, CliError> {
+    let trimmed = s.trim();
+    if trimmed.starts_with("did:chia:") {
+        return digstore_chain::did::decode_bech32_did(trimmed)
+            .map_err(|e| CliError::InvalidArgument(format!("invalid --did address: {e}")));
+    }
+    parse_launcher_id(trimmed)
 }
 
 /// The permanent `dig://` URI for a resource in a capsule — the PRIMARY media URI (#33).
@@ -282,5 +296,36 @@ mod tests {
     #[test]
     fn parse_launcher_id_rejects_non_hex() {
         assert!(parse_launcher_id("not-hex").is_err());
+    }
+
+    // ---------- #198: parse_did_arg (bech32 did:chia: + hex fallback) ----------
+
+    #[test]
+    fn parse_did_arg_accepts_plain_hex_and_0x() {
+        let plain = "ab".repeat(32);
+        let with0x = format!("0x{plain}");
+        assert_eq!(
+            parse_did_arg(&plain).unwrap(),
+            parse_did_arg(&with0x).unwrap()
+        );
+    }
+
+    /// dkackman's real bech32m DID (#198) decodes to the same launcher id whether or not it's
+    /// wrapped in surrounding whitespace (a shell copy-paste footgun).
+    #[test]
+    fn parse_did_arg_decodes_bech32_did() {
+        let bech32 = "did:chia:1r00z5mnm8j77akw8mzp4talfzfffra86zasur2usvegftkxu0czqqynhn8";
+        let launcher = parse_did_arg(bech32).unwrap();
+        assert_eq!(launcher, parse_did_arg(&format!("  {bech32}  ")).unwrap());
+        // Cross-check against the underlying chain-crate decoder directly.
+        assert_eq!(
+            launcher,
+            digstore_chain::did::decode_bech32_did(bech32).unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_did_arg_rejects_malformed_bech32_did() {
+        assert!(parse_did_arg("did:chia:not-valid-bech32").is_err());
     }
 }

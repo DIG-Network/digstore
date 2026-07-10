@@ -177,7 +177,7 @@ fn mint(ctx: &CliContext, ui: &Ui, args: NftMintArgs) -> Result<(), CliError> {
     //    (b) PLAIN: fund the 1-mojo launcher from an XCH coin (no attribution).
     let (spends, launcher_id, signer_sk) = match &args.did {
         Some(did_hex) => {
-            let did_launcher = assets::parse_launcher_id(did_hex)?;
+            let did_launcher = assets::parse_did_arg(did_hex)?;
             // The minter key is the wallet's primary (index 0); the DID is reconstructed
             // over chain (its current coin is what the mint spends to acknowledge).
             // TODO(#35): map the DID's p2 puzzle hash back to its exact HD index.

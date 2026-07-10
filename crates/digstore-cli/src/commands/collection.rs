@@ -3,17 +3,18 @@
 //! * `create` — define a collection (shared id/name/royalty) and write its definition JSON. No chain,
 //!   no spend; the definition is the input to `mint` (and is itself capsule-storable).
 //! * `mint`   — bulk-mint every item in a parsed traits manifest into the collection, attributed to a
-//!   creator DID, via [`digstore_chain::collection::build_collection_mint`] (the DID is spent once and
-//!   authorizes all the mints). `--dry-run` builds the spend WITHOUT signing/pushing.
+//!   creator DID, via [`digstore_chain::collection::build_collection_mint`] (single item — the DID's
+//!   own value funds the one launcher) or
+//!   [`digstore_chain::collection::build_collection_mint_funded`] (N>1 items — a separate XCH funding
+//!   coin, selected via [`assets::scan_and_select_funding`], supplies the extra launchers; #199). The
+//!   DID is spent once either way and authorizes every mint. `--dry-run` builds the spend WITHOUT
+//!   signing/pushing. `--did` accepts a 64-hex launcher id OR a `did:chia:1…` bech32m address (#198).
 //!
 //! ## Scaffolded (clear TODO, not faked)
 //! - The traits-manifest at SCALE (CSV ingest, generative trait composition, per-item capsule packing)
 //!   is the toolkit's job — `mint` consumes an already-parsed items-array JSON (the same shape
 //!   `nft bulk` takes), and the chain builder takes parsed items. See the TODO in
 //!   `digstore_chain::collection`.
-//! - A MULTI-item DID-spent mint needs a separate XCH funding coin for the extra singleton launchers
-//!   (the DID singleton alone carries 1 mojo). The single-item attributed mint is validated on-chain;
-//!   the multi-item funded path is scaffolded here with a clear error rather than a silent bad spend.
 
 use chia_protocol::SpendBundle;
 
@@ -27,7 +28,7 @@ use crate::runtime::block_on;
 use crate::ui::Ui;
 
 use digstore_chain::collection::{
-    build_collection_mint, Collection, Drop, DropPhase, ManifestItem,
+    build_collection_mint, build_collection_mint_funded, Collection, Drop, DropPhase, ManifestItem,
 };
 use digstore_chain::did::list_owned_dids;
 use digstore_chain::nft::{list_collections, read_collection, sign_nft_spends, CollectionView};
@@ -52,7 +53,7 @@ fn scan_owner_phs(mnemonic: &str) -> Result<Vec<chia_protocol::Bytes32>, CliErro
 /// from coinset (NO third-party indexer). Enumerates the wallet's NFTs attributed to
 /// the DID and reports each item's launcher id + current owner + the shared royalty.
 fn show(ui: &Ui, args: CollectionShowArgs) -> Result<(), CliError> {
-    let did_launcher = assets::parse_launcher_id(&args.did)?;
+    let did_launcher = assets::parse_did_arg(&args.did)?;
     let mnemonic = assets::unlock_mnemonic(ui)?;
     let (chain, mocked) = assets::chain_reads();
     assets::warn_if_mocked(ui, mocked);
@@ -277,7 +278,7 @@ fn create(ui: &Ui, args: CollectionCreateArgs) -> Result<(), CliError> {
 }
 
 fn mint(ui: &Ui, args: CollectionMintArgs) -> Result<(), CliError> {
-    let did_launcher = assets::parse_launcher_id(&args.did)?;
+    let did_launcher = assets::parse_did_arg(&args.did)?;
 
     let col_raw = std::fs::read_to_string(&args.collection).map_err(|e| {
         CliError::InvalidArgument(format!(
@@ -300,21 +301,24 @@ fn mint(ui: &Ui, args: CollectionMintArgs) -> Result<(), CliError> {
             "--manifest must contain at least one item".into(),
         ));
     }
-    // TODO(#34 at scale): a MULTI-item DID-spent mint needs a separate XCH funding coin for the extra
-    // launchers (the DID singleton carries 1 mojo). Until that funding path is wired, refuse >1 item
-    // with a clear message rather than build an underfunded (failing) spend.
-    if items.len() > 1 {
-        return Err(CliError::InvalidArgument(format!(
-            "collection mint currently supports a single DID-attributed item per call ({} given); \
-             multi-item DID-funded bulk mint is scaffolded (needs a separate XCH funding coin for the \
-             extra launchers — roadmap #34). Mint items individually for now.",
-            items.len()
-        )));
-    }
 
     let mnemonic = assets::unlock_mnemonic(ui)?;
     let (chain, mocked) = assets::chain_reads();
     assets::warn_if_mocked(ui, mocked);
+
+    // A MULTI-item mint needs a separate XCH funding coin: the DID singleton alone can fund at most
+    // one singleton launcher, but each item's intermediate-launcher trick needs 1 extra mojo (#199 —
+    // see `digstore_chain::collection::build_collection_mint_funded`'s docs for the coin-conservation
+    // reasoning). Select it FIRST so an underfunded wallet is reported before any DID/chain work.
+    let funding = if items.len() > 1 {
+        Some(block_on(assets::scan_and_select_funding(
+            chain.as_ref(),
+            &mnemonic,
+            items.len() as u64,
+        ))??)
+    } else {
+        None
+    };
 
     // Reconstruct the creator DID the wallet owns (its current coin is what the mint spends).
     let owner_phs = scan_owner_phs(&mnemonic)?;
@@ -337,20 +341,34 @@ fn mint(ui: &Ui, args: CollectionMintArgs) -> Result<(), CliError> {
         .ok_or_else(|| CliError::Chain("could not derive wallet key".into()))?;
 
     let recipient = keys.owner_puzzle_hash;
-    let out = build_collection_mint(&keys, owned.did, &collection, &items, recipient)
-        .map_err(CliError::from)?;
+    let out = if let Some((funding_keys, funding_coin)) = &funding {
+        build_collection_mint_funded(
+            &keys,
+            owned.did,
+            &collection,
+            &items,
+            recipient,
+            *funding_coin,
+            funding_keys,
+        )
+        .map_err(CliError::from)?
+    } else {
+        build_collection_mint(&keys, owned.did, &collection, &items, recipient)
+            .map_err(CliError::from)?
+    };
     let launcher_ids: Vec<String> = out.launcher_ids.iter().map(hex::encode).collect();
 
     if args.dry_run {
         emit(ui, &collection.id, &launcher_ids, None, true);
         return Ok(());
     }
-    let sig = sign_nft_spends(
-        &out.coin_spends,
-        std::slice::from_ref(&keys.synthetic_sk),
-        false,
-    )
-    .map_err(CliError::from)?;
+    // Sign with the minter's key, plus the funding coin's key when it's a different HD address
+    // (harmless when it's the same key — signing dedupes by public key).
+    let mut signing_keys = vec![keys.synthetic_sk.clone()];
+    if let Some((funding_keys, _)) = &funding {
+        signing_keys.push(funding_keys.synthetic_sk.clone());
+    }
+    let sig = sign_nft_spends(&out.coin_spends, &signing_keys, false).map_err(CliError::from)?;
     let tx_id = block_on(assets::push_signed(
         chain.as_ref(),
         SpendBundle::new(out.coin_spends, sig),
