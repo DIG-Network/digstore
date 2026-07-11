@@ -181,6 +181,139 @@ pub fn build_xch_send(
     Ok((bundle, plan))
 }
 
+/// The unsigned plan for an XCH CONSOLIDATION: the coin spends plus the value
+/// breakdown. `inputs == merged + fee` always holds.
+pub struct ConsolidationPlan {
+    pub coin_spends: Vec<CoinSpend>,
+    /// Number of input coins merged into one.
+    pub input_count: usize,
+    /// Total mojos of the merged input coins.
+    pub inputs: u64,
+    /// Mojos reserved as the network fee for the consolidation.
+    pub fee: u64,
+    /// Mojos of the single merged output coin (`inputs - fee`).
+    pub merged: u64,
+    /// Owner puzzle hash the merged coin is created at (the lead coin's address).
+    pub output_ph: Bytes32,
+    /// Coin id of the single merged output coin — the caller polls THIS to confirm
+    /// the consolidation landed before retrying the original spend.
+    pub output_coin_id: Bytes32,
+    /// Synthetic secret keys of exactly the merged input coins (the signing set).
+    signing_keys: Vec<SecretKey>,
+}
+
+/// Build the UNSIGNED coin spends that CONSOLIDATE the wallet's XCH: merge the
+/// highest-value coins — chosen by the shared capped selector
+/// ([`crate::selection::select_xch_for_consolidation`], at most `cap`) — into a
+/// SINGLE coin back to the wallet, reserving `fee`. This un-fragments a wallet whose
+/// largest `cap` coins cannot cover a spend (the coin-management `NeedsConsolidation`
+/// path, epic #410): merging the largest coins concentrates the most value into one
+/// output, so the follow-up capped spend selection is most likely to succeed.
+///
+/// Requires ≥2 XCH coins (a single coin cannot be consolidated). The merged coin
+/// carries all the output and reserves the fee (the LEAD, the largest chosen coin);
+/// every other chosen coin is spent under its own key asserting concurrent spend with
+/// the lead, so the whole merge is atomic. Pure build — NEVER broadcasts (a push
+/// spends a real XCH fee; that is the caller's explicit decision).
+pub fn build_xch_consolidation_unsigned(
+    wallet: &ScannedWallet,
+    fee: u64,
+    cap: usize,
+) -> Result<ConsolidationPlan> {
+    // Flatten every spendable XCH coin, each tagged with its address's keys.
+    let keyed: Vec<KeyedCoin> = wallet
+        .addrs
+        .iter()
+        .flat_map(|a| {
+            a.xch.iter().map(move |c| KeyedCoin {
+                coin: *c,
+                sk: a.keys.synthetic_sk.clone(),
+                pk: a.keys.synthetic_pk,
+                owner_ph: a.keys.owner_puzzle_hash,
+            })
+        })
+        .collect();
+
+    let all_coins: Vec<Coin> = keyed.iter().map(|k| k.coin).collect();
+    // Pick the highest-value coins to merge (the shared selector requires ≥2).
+    let picked = crate::selection::select_xch_for_consolidation(&all_coins, cap)?;
+    let picked_ids: HashSet<Bytes32> = picked.iter().map(|c| c.coin_id()).collect();
+    let chosen: Vec<&KeyedCoin> = keyed
+        .iter()
+        .filter(|k| picked_ids.contains(&k.coin.coin_id()))
+        .collect();
+
+    let inputs: u64 = chosen.iter().map(|k| k.coin.amount).sum();
+    let merged = inputs.checked_sub(fee).ok_or_else(|| {
+        ChainError::Chain(format!(
+            "consolidation fee {fee} exceeds merged coin value {inputs}"
+        ))
+    })?;
+    if merged == 0 {
+        return Err(ChainError::Chain(
+            "consolidation would produce a zero-value coin".into(),
+        ));
+    }
+
+    // Lead = the largest chosen coin: it creates the single merged output + reserves
+    // the fee. Picking by max amount makes the output's parent deterministic.
+    let lead = *chosen
+        .iter()
+        .max_by_key(|k| k.coin.amount)
+        .ok_or_else(|| ChainError::Chain("consolidation selected no coins".into()))?;
+    let output_ph = lead.owner_ph;
+
+    let mut ctx = SpendContext::new();
+    let mut lead_conditions = Conditions::new().create_coin(output_ph, merged, Memos::None);
+    if fee > 0 {
+        lead_conditions = lead_conditions.reserve_fee(fee);
+    }
+    StandardLayer::new(lead.pk)
+        .spend(&mut ctx, lead.coin, lead_conditions)
+        .map_err(|e| ChainError::Chain(format!("consolidation lead spend: {e}")))?;
+
+    // Every other chosen coin: spent under its own key, bound to the lead.
+    let lead_id = lead.coin.coin_id();
+    for k in chosen.iter().filter(|k| k.coin.coin_id() != lead_id) {
+        StandardLayer::new(k.pk)
+            .spend(
+                &mut ctx,
+                k.coin,
+                Conditions::new().assert_concurrent_spend(lead_id),
+            )
+            .map_err(|e| ChainError::Chain(format!("consolidation coin spend: {e}")))?;
+    }
+
+    // The single merged output coin: (parent = lead coin id, puzzle = owner, merged).
+    let output_coin_id = Coin::new(lead_id, output_ph, merged).coin_id();
+
+    Ok(ConsolidationPlan {
+        coin_spends: ctx.take(),
+        input_count: chosen.len(),
+        inputs,
+        fee,
+        merged,
+        output_ph,
+        output_coin_id,
+        signing_keys: chosen.iter().map(|k| k.sk.clone()).collect(),
+    })
+}
+
+/// Build AND sign an XCH consolidation into a ready-to-broadcast [`SpendBundle`].
+/// Pure: does NOT push — broadcasting is the caller's decision. Returns the bundle
+/// and the value plan (including [`ConsolidationPlan::output_coin_id`] to confirm).
+pub fn build_xch_consolidation(
+    wallet: &ScannedWallet,
+    fee: u64,
+    cap: usize,
+) -> Result<(SpendBundle, ConsolidationPlan)> {
+    let plan = build_xch_consolidation_unsigned(wallet, fee, cap)?;
+    let signature = sign_coin_spends(&plan.coin_spends, &plan.signing_keys, false)
+        .map_err(|e| ChainError::Chain(format!("sign consolidation: {e}")))?;
+    let bundle = SpendBundle::new(plan.coin_spends.clone(), signature);
+    Ok((bundle, plan))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +469,110 @@ mod tests {
         assert!(
             pays_recipient,
             "lead spend must CREATE_COIN(recipient, amount)"
+        );
+    }
+
+    #[test]
+    fn consolidation_merges_all_coins_and_balances() {
+        // Four coins across two addresses; cap covers all four → merge into ONE coin.
+        // The plan balances exactly: inputs == merged + fee.
+        let wallet = wallet_with(&[&[1_000, 2_000], &[3_000, 4_000]]);
+        let plan =
+            build_xch_consolidation_unsigned(&wallet, 500, crate::selection::COIN_CAP).unwrap();
+        assert_eq!(plan.input_count, 4);
+        assert_eq!(plan.inputs, 10_000);
+        assert_eq!(plan.fee, 500);
+        assert_eq!(plan.merged, 10_000 - 500);
+        assert_eq!(plan.inputs, plan.merged + plan.fee);
+        // One spend per merged coin.
+        assert_eq!(plan.coin_spends.len(), 4);
+        // The merged coin returns to a wallet-owned address.
+        let owned: Vec<Bytes32> = wallet
+            .addrs
+            .iter()
+            .map(|a| a.keys.owner_puzzle_hash)
+            .collect();
+        assert!(owned.contains(&plan.output_ph));
+    }
+
+    #[test]
+    fn consolidation_lead_creates_single_merged_output() {
+        // Decode the lead spend's conditions: exactly ONE CREATE_COIN, for `merged`.
+        use chia_wallet_sdk::types::{run_puzzle, Condition};
+        use clvm_traits::{FromClvm, ToClvm};
+        use clvmr::Allocator;
+
+        let wallet = wallet_with(&[&[5_000, 6_000, 7_000]]);
+        let plan =
+            build_xch_consolidation_unsigned(&wallet, 100, crate::selection::COIN_CAP).unwrap();
+
+        // The lead is the largest coin (7_000); find its spend by coin id.
+        let lead_id = wallet.addrs[0]
+            .xch
+            .iter()
+            .max_by_key(|c| c.amount)
+            .unwrap()
+            .coin_id();
+        let lead_spend = plan
+            .coin_spends
+            .iter()
+            .find(|cs| cs.coin.coin_id() == lead_id)
+            .expect("lead spend present");
+
+        let mut a = Allocator::new();
+        let puzzle = lead_spend.puzzle_reveal.to_clvm(&mut a).unwrap();
+        let solution = lead_spend.solution.to_clvm(&mut a).unwrap();
+        let output = run_puzzle(&mut a, puzzle, solution).unwrap();
+        let conditions = Vec::<Condition>::from_clvm(&a, output).unwrap();
+
+        let create_coins: Vec<_> = conditions
+            .iter()
+            .filter_map(|c| match c {
+                Condition::CreateCoin(cc) => Some(cc),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(create_coins.len(), 1, "exactly one merged output");
+        assert_eq!(create_coins[0].amount, plan.merged);
+        assert_eq!(create_coins[0].puzzle_hash, plan.output_ph);
+    }
+
+    #[test]
+    fn consolidation_respects_the_cap() {
+        // Six coins, cap 3 → only the 3 largest are merged.
+        let wallet = wallet_with(&[&[1, 2, 3, 4, 5, 6]]);
+        let plan = build_xch_consolidation_unsigned(&wallet, 0, 3).unwrap();
+        assert_eq!(plan.input_count, 3);
+        assert_eq!(plan.inputs, 6 + 5 + 4); // top 3 by value
+        assert_eq!(plan.merged, 15);
+    }
+
+    #[test]
+    fn consolidation_requires_two_coins() {
+        let wallet = wallet_with(&[&[1_000]]);
+        assert!(
+            build_xch_consolidation_unsigned(&wallet, 0, crate::selection::COIN_CAP).is_err(),
+            "a single coin cannot be consolidated"
+        );
+    }
+
+    #[test]
+    fn consolidation_rejects_fee_exceeding_value() {
+        let wallet = wallet_with(&[&[100, 200]]);
+        // fee 1000 > merged inputs 300 → error, never an underflow.
+        assert!(build_xch_consolidation_unsigned(&wallet, 1_000, crate::selection::COIN_CAP).is_err());
+    }
+
+    #[test]
+    fn consolidation_signs_deterministically() {
+        let wallet = wallet_with(&[&[10_000, 20_000]]);
+        let (bundle, _plan) =
+            build_xch_consolidation(&wallet, 500, crate::selection::COIN_CAP).unwrap();
+        assert_eq!(bundle.aggregated_signature.to_bytes().len(), 96);
+        assert_ne!(
+            bundle.aggregated_signature.to_bytes(),
+            datalayer_driver::Signature::default().to_bytes(),
+            "a real signature must be produced"
         );
     }
 }

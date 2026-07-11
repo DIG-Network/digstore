@@ -156,6 +156,41 @@ pub fn select_xch(coins: &[Coin], target: u64, cap: usize) -> Result<XchSelectio
     })
 }
 
+/// Select the XCH coins to spend to cover `target`, or fail with the discriminated
+/// [`ChainError`] the mint/update builders + CLI act on.
+///
+/// This is the drop-in replacement for `datalayer_driver::select_coins` in every
+/// XCH-funding spend builder — it fronts the datalayer_driver bundle construction
+/// with the shared capped selector (cap [`COIN_CAP`]), so the coins the builder
+/// consumes are always the largest, at most 50, high-value-first:
+/// - `Ok(coins)` — spend exactly these.
+/// - `Err(ChainError::NeedsConsolidation { .. })` — enough value, too many coins;
+///   the CLI consolidates + retries.
+/// - `Err(ChainError::Chain(..))` — a genuine XCH shortfall (clear message).
+pub fn select_xch_coins(coins: &[Coin], target: u64) -> Result<Vec<Coin>> {
+    match select_xch(coins, target, COIN_CAP)? {
+        XchSelection::Selected { coins, .. } => Ok(coins),
+        XchSelection::NeedsConsolidation {
+            available_coin_count,
+            available_total,
+            required,
+            cap,
+        } => Err(ChainError::NeedsConsolidation {
+            asset: "XCH".to_string(),
+            available_coin_count,
+            available_total,
+            required,
+            cap,
+        }),
+        XchSelection::InsufficientFunds {
+            available_total,
+            required,
+        } => Err(ChainError::Chain(format!(
+            "insufficient XCH: have {available_total} mojos, need {required}"
+        ))),
+    }
+}
+
 /// Select up to `cap` XCH coins to merge into a single coin during consolidation
 /// (highest-value first, deterministic). Requires at least 2 coins.
 ///
