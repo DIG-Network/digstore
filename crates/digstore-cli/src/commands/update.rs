@@ -87,41 +87,6 @@ pub fn current_version() -> &'static str {
 // Asset selection.
 // ---------------------------------------------------------------------------
 
-/// Pick the best installer asset for the current platform from a release's
-/// asset list.
-///
-/// On Windows we prefer an NSIS `*-setup.exe` and fall back to an `.msi`. On
-/// other platforms there is no bundled installer yet, so this returns `None`
-/// and the caller prints manual-download instructions.
-#[cfg(target_os = "windows")]
-pub fn select_installer_asset(assets: &[Asset]) -> Option<&Asset> {
-    select_windows_installer(assets)
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn select_installer_asset(_assets: &[Asset]) -> Option<&Asset> {
-    None
-}
-
-/// Windows installer selection, factored out so it is unit-testable on any host.
-pub fn select_windows_installer(assets: &[Asset]) -> Option<&Asset> {
-    // Prefer the setup installer (it can update an existing install in place).
-    // The release asset is named `DigStore-Setup-<ver>-windows-x64.exe`, so we
-    // match any `.exe` whose name carries the "setup" marker rather than a fixed
-    // `-setup.exe` suffix (the version/arch tail comes after "Setup").
-    let nsis = assets.iter().find(|a| {
-        let n = a.name.to_ascii_lowercase();
-        n.ends_with(".exe") && n.contains("setup")
-    });
-    if nsis.is_some() {
-        return nsis;
-    }
-    // Fall back to any `.msi`.
-    assets
-        .iter()
-        .find(|a| a.name.to_ascii_lowercase().ends_with(".msi"))
-}
-
 /// A human-friendly hint for the asset a non-Windows user should download.
 /// Picks an asset whose name mentions the OS/arch when possible.
 pub fn suggest_manual_asset(assets: &[Asset]) -> Option<&Asset> {
@@ -134,7 +99,8 @@ pub fn suggest_manual_asset(assets: &[Asset]) -> Option<&Asset> {
 }
 
 // ---------------------------------------------------------------------------
-// Platform binary-asset selection (macOS / Linux self-install path).
+// Platform binary-asset selection (self-install path, every OS including
+// Windows — #303: there is no separate GUI-installer asset/path anymore).
 // ---------------------------------------------------------------------------
 
 /// The release asset that carries the `digstore` binary for a platform, plus whether
@@ -435,7 +401,13 @@ fn display_version(v: &str) -> String {
     }
 }
 
-/// Carry out the platform-specific update once we know a newer release exists.
+/// Carry out the update once we know a newer release exists.
+///
+/// One unified path on EVERY platform (Windows included, #303): `digstore`
+/// updates ITS OWN binary in place — resolve the raw per-OS/arch `digstore`
+/// binary asset via [`select_binary_asset`], download it, sanity-check it,
+/// then atomically self-replace via [`install_binary`]. There is no GUI
+/// installer step here; the bundled installer moved to dig-installer.
 fn perform_update(
     _ctx: &CliContext,
     ui: &crate::ui::Ui,
@@ -444,94 +416,64 @@ fn perform_update(
     latest: &str,
     yes: bool,
 ) -> Result<(), CliError> {
-    #[cfg(target_os = "windows")]
-    {
-        let asset = select_installer_asset(&release.assets).ok_or_else(|| {
-            CliError::NotFound(format!(
-                "no Windows installer (*-setup.exe / .msi) in release {latest}"
-            ))
-        })?;
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
 
-        ui.line(format!(
-            "update available: {} -> {}",
-            display_version(current),
-            latest
-        ));
-        ui.line(format!("installer: {}", asset.name));
+    ui.line(format!(
+        "update available: {} -> {}",
+        display_version(current),
+        latest
+    ));
 
-        if !yes && !confirm("Download and run the installer now?") {
-            ui.line("aborted; run `digstore update --yes` to skip this prompt");
-            return Ok(());
+    // Pick the correct raw-binary (or tarball) asset for this OS+arch.
+    let Some(sel) = select_binary_asset(&release.assets, os, arch) else {
+        if !release.html_url.is_empty() {
+            ui.line(format!("release: {}", release.html_url));
         }
+        return Err(CliError::NotFound(format!(
+            "no digstore binary asset for {os}/{arch} in release {latest}; \
+             download it from the release page above and place it on your PATH"
+        )));
+    };
+    ui.line(format!("asset: {}", sel.name));
 
-        let dest = download_asset(asset, ui)?;
-        ui.verb("Launching", asset.name.clone());
-        launch_installer(&dest)?;
-        ui.success("installer launched; it will update your DigStore install");
-        Ok(())
+    if !yes && !confirm("Download it and replace the current binary now?") {
+        ui.line("aborted; run `digstore update --yes` to skip this prompt");
+        return Ok(());
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let os = std::env::consts::OS;
-        let arch = std::env::consts::ARCH;
-
-        ui.line(format!(
-            "update available: {} -> {}",
-            display_version(current),
-            latest
+    // Download -> (extract if tarball) -> sanity-check -> atomic self-replace.
+    ui.verb("Downloading", sel.name.clone());
+    let payload = fetch_bytes(&sel.url)?;
+    let binary = if sel.is_tarball {
+        extract_digstore_from_targz(&payload)?
+    } else {
+        payload
+    };
+    if !looks_like_native_binary(&binary, os) {
+        return Err(CliError::UpdateFailed(
+            "the downloaded asset is not a valid digstore binary (aborting; nothing changed)"
+                .to_string(),
         ));
-
-        // Pick the correct raw-binary (or tarball) asset for this OS+arch.
-        let Some(sel) = select_binary_asset(&release.assets, os, arch) else {
-            if !release.html_url.is_empty() {
-                ui.line(format!("release: {}", release.html_url));
-            }
-            return Err(CliError::NotFound(format!(
-                "no digstore binary asset for {os}/{arch} in release {latest}; \
-                 download it from the release page above and place it on your PATH"
-            )));
-        };
-        ui.line(format!("asset: {}", sel.name));
-
-        if !yes && !confirm("Download it and replace the current binary now?") {
-            ui.line("aborted; run `digstore update --yes` to skip this prompt");
-            return Ok(());
-        }
-
-        // Download -> (extract if tarball) -> sanity-check -> atomic self-replace.
-        ui.verb("Downloading", sel.name.clone());
-        let payload = fetch_bytes(&sel.url)?;
-        let binary = if sel.is_tarball {
-            extract_digstore_from_targz(&payload)?
-        } else {
-            payload
-        };
-        if !looks_like_native_binary(&binary, os) {
-            return Err(CliError::UpdateFailed(
-                "the downloaded asset is not a valid digstore binary (aborting; nothing changed)"
-                    .to_string(),
-            ));
-        }
-
-        let target = resolve_self_path()?;
-        ui.verb("Installing", target.display().to_string());
-        install_binary(&target, &binary)?;
-
-        ui.success(format!("updated to {} ({})", latest, target.display()));
-        // Best-effort post-verify: run the freshly installed binary's --version.
-        if let Ok(out) = std::process::Command::new(&target)
-            .arg("--version")
-            .output()
-        {
-            let v = String::from_utf8_lossy(&out.stdout);
-            let v = v.trim();
-            if !v.is_empty() {
-                ui.line(format!("now: {v}"));
-            }
-        }
-        Ok(())
     }
+
+    let target = resolve_self_path()?;
+    ui.verb("Installing", target.display().to_string());
+    install_binary(&target, &binary)?;
+
+    ui.success(format!("updated to {} ({})", latest, target.display()));
+    // Best-effort post-verify: run the freshly installed binary's --version.
+    if let Ok(out) = std::process::Command::new(&target)
+        .arg("--version")
+        .output()
+    {
+        let v = String::from_utf8_lossy(&out.stdout);
+        let v = v.trim();
+        if !v.is_empty() {
+            ui.line(format!("now: {v}"));
+        }
+    }
+    Ok(())
 }
 
 fn confirm(prompt: &str) -> bool {
@@ -546,13 +488,13 @@ fn confirm(prompt: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Self-install (macOS / Linux): download -> verify -> chmod -> de-quarantine ->
-// atomic rename over the running binary.
+// Self-install (every platform): download -> verify -> (chmod/de-quarantine on
+// Unix) -> atomic rename over the running binary.
 // ---------------------------------------------------------------------------
 
 /// Download an asset URL into memory. Used verbatim from `browser_download_url`.
-/// (The Windows update path uses the bundled installer, not this raw-binary download.)
-#[cfg(not(target_os = "windows"))]
+/// Shared by every platform's self-replace path (#303: Windows has no separate
+/// GUI-installer download anymore — it self-replaces its own binary too).
 fn fetch_bytes(url: &str) -> Result<Vec<u8>, CliError> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -594,10 +536,9 @@ pub fn resolve_self_path() -> Result<std::path::PathBuf, CliError> {
 
 /// Atomically replace the executable at `target` with `new_bytes`.
 ///
-/// Writes to a temp file in the SAME directory (so the final rename is atomic on one
+/// Writes to a temp file in the SAME directory (so the final move is atomic on one
 /// filesystem), sets the exec bit (Unix), clears the macOS Gatekeeper quarantine
-/// best-effort, then renames over `target`. On Unix renaming over the running binary
-/// is safe — the live process keeps the old inode until it exits. Returns a clear
+/// best-effort, then moves it into place via [`rename_into_place`]. Returns a clear
 /// [`CliError::UpdateFailed`] with manual steps if the destination is not writable.
 pub fn install_binary(target: &std::path::Path, new_bytes: &[u8]) -> Result<(), CliError> {
     let dir = target.parent().unwrap_or_else(|| std::path::Path::new("."));
@@ -623,10 +564,7 @@ pub fn install_binary(target: &std::path::Path, new_bytes: &[u8]) -> Result<(), 
         .arg(&tmp)
         .output();
 
-    if let Err(e) = std::fs::rename(&tmp, target) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(not_writable(target, &e));
-    }
+    rename_into_place(&tmp, target)?;
 
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("xattr")
@@ -634,6 +572,47 @@ pub fn install_binary(target: &std::path::Path, new_bytes: &[u8]) -> Result<(), 
         .arg(target)
         .output();
 
+    Ok(())
+}
+
+/// Move `tmp` into `target`'s place, replacing any existing file there (`target`
+/// is typically the CURRENTLY RUNNING `digstore` process's own binary).
+///
+/// Unix: a plain rename over `target` is atomic and safe even while it is
+/// executing — the live process keeps its old inode open until it exits.
+///
+/// Windows (#303): the destination is the image file backing this very
+/// process. Windows' loader opens a running image with share-delete
+/// permission, so RENAMING it aside succeeds even while it executes, but a
+/// direct one-step overwrite does not (verified: it fails with "Access is
+/// denied", os error 5). So: rename the current binary aside, rename the new
+/// one into place, then best-effort delete the old one — a failure there is
+/// harmless, it just leaves a stray `.old` file for a future update to
+/// overwrite/ignore (it is never the active `target` path).
+fn rename_into_place(tmp: &std::path::Path, target: &std::path::Path) -> Result<(), CliError> {
+    #[cfg(target_os = "windows")]
+    {
+        if target.exists() {
+            let dir = target.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let aside = dir.join(format!(".digstore-old-{}.tmp", std::process::id()));
+            if let Err(e) = std::fs::rename(target, &aside) {
+                let _ = std::fs::remove_file(tmp);
+                return Err(not_writable(target, &e));
+            }
+            if let Err(e) = std::fs::rename(tmp, target) {
+                // Restore the original binary so a failed update never leaves
+                // the user with no `digstore` at all.
+                let _ = std::fs::rename(&aside, target);
+                return Err(not_writable(target, &e));
+            }
+            let _ = std::fs::remove_file(&aside);
+            return Ok(());
+        }
+    }
+    if let Err(e) = std::fs::rename(tmp, target) {
+        let _ = std::fs::remove_file(tmp);
+        return Err(not_writable(target, &e));
+    }
     Ok(())
 }
 
@@ -651,66 +630,6 @@ fn not_writable(target: &std::path::Path, e: &std::io::Error) -> CliError {
         target.display(),
         target.display(),
     ))
-}
-
-/// Download `asset` into a temp directory and return the on-disk path.
-#[cfg(target_os = "windows")]
-fn download_asset(asset: &Asset, ui: &crate::ui::Ui) -> Result<std::path::PathBuf, CliError> {
-    ui.verb("Downloading", asset.name.clone());
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| CliError::Other(e.into()))?;
-    let bytes = rt.block_on(async {
-        let client = reqwest::Client::builder()
-            .timeout(UPDATE_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .build()
-            .map_err(|e| CliError::Network(format!("http client: {e}")))?;
-        let resp = client
-            .get(&asset.browser_download_url)
-            .header(reqwest::header::USER_AGENT, USER_AGENT)
-            .send()
-            .await
-            .map_err(|e| CliError::Network(format!("download: {e}")))?;
-        if !resp.status().is_success() {
-            return Err(CliError::Network(format!(
-                "download returned status {}",
-                resp.status().as_u16()
-            )));
-        }
-        resp.bytes()
-            .await
-            .map_err(|e| CliError::Network(format!("read body: {e}")))
-    })?;
-
-    let dir = std::env::temp_dir().join("digstore-update");
-    std::fs::create_dir_all(&dir).map_err(|e| CliError::Other(e.into()))?;
-    let dest = dir.join(&asset.name);
-    std::fs::write(&dest, &bytes).map_err(|e| CliError::Other(e.into()))?;
-    Ok(dest)
-}
-
-/// Launch the downloaded installer and return immediately (the installer takes
-/// over the actual update). `.msi` files are run via `msiexec /i`.
-#[cfg(target_os = "windows")]
-fn launch_installer(path: &std::path::Path) -> Result<(), CliError> {
-    let is_msi = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("msi"))
-        .unwrap_or(false);
-    let result = if is_msi {
-        std::process::Command::new("msiexec")
-            .arg("/i")
-            .arg(path)
-            .spawn()
-    } else {
-        std::process::Command::new(path).spawn()
-    };
-    result
-        .map(|_| ())
-        .map_err(|e| CliError::Other(anyhow::anyhow!("launch installer: {e}")))
 }
 
 #[cfg(test)]
@@ -749,48 +668,6 @@ mod tests {
         // unparsable -> never claims an update
         assert!(!is_newer("0.3.0", "garbage"));
         assert!(!is_newer("garbage", "0.4.0"));
-    }
-
-    #[test]
-    fn windows_installer_prefers_setup_exe_over_msi() {
-        let assets = vec![
-            asset("digstore-0.4.0-x86_64.msi"),
-            asset("digstore-0.4.0-x86_64-setup.exe"),
-            asset("digstore-0.4.0-linux.tar.gz"),
-        ];
-        let picked = select_windows_installer(&assets).unwrap();
-        assert_eq!(picked.name, "digstore-0.4.0-x86_64-setup.exe");
-    }
-
-    #[test]
-    fn windows_installer_matches_release_asset_name() {
-        // The actual release asset (Setup mid-name, version/arch tail after).
-        let assets = vec![
-            asset("DigStore-Setup-0.4.4-linux-x86_64.AppImage"),
-            asset("DigStore-Setup-0.4.4-macos.dmg"),
-            asset("DigStore-Setup-0.4.4-windows-x64.exe"),
-        ];
-        let picked = select_windows_installer(&assets).unwrap();
-        assert_eq!(picked.name, "DigStore-Setup-0.4.4-windows-x64.exe");
-    }
-
-    #[test]
-    fn windows_installer_falls_back_to_msi() {
-        let assets = vec![
-            asset("digstore-0.4.0-x86_64.msi"),
-            asset("digstore-0.4.0-linux.tar.gz"),
-        ];
-        let picked = select_windows_installer(&assets).unwrap();
-        assert_eq!(picked.name, "digstore-0.4.0-x86_64.msi");
-    }
-
-    #[test]
-    fn windows_installer_none_when_absent() {
-        let assets = vec![
-            asset("digstore-0.4.0-linux.tar.gz"),
-            asset("digstore-0.4.0-darwin.tar.gz"),
-        ];
-        assert!(select_windows_installer(&assets).is_none());
     }
 
     #[test]
@@ -869,6 +746,18 @@ mod tests {
         let a = select_binary_asset(&real_release_assets(), "linux", "aarch64").unwrap();
         assert_eq!(a.name, "digstore-0.7.2-aarch64-unknown-linux-gnu.tar.gz");
         assert!(a.is_tarball);
+    }
+
+    #[test]
+    fn selects_windows_x64_raw_binary() {
+        // #303: the Windows self-update path must resolve the raw
+        // `digstore-<ver>-windows-x64.exe` binary — never a `*-setup.exe`/`.msi`
+        // GUI installer (that moved to dig-installer; digstore's own releases no
+        // longer publish one, so the old installer-only path always found
+        // nothing and `digstore update` returned NotFound on Windows).
+        let a = select_binary_asset(&real_release_assets(), "windows", "x86_64").unwrap();
+        assert_eq!(a.name, "digstore-0.7.2-windows-x64.exe");
+        assert!(!a.is_tarball);
     }
 
     #[test]
@@ -977,6 +866,47 @@ mod tests {
             err.to_string().contains("Manual update"),
             "gives manual steps"
         );
+    }
+
+    /// #303 regression: `digstore update` self-replaces the binary of the
+    /// CURRENTLY RUNNING `digstore` process. On Windows, a plain one-step
+    /// `rename(tmp, target)` fails while `target` is the image of a running
+    /// process (the OS denies the overwrite even though the running image was
+    /// opened with share-delete). Prove `install_binary` handles this by
+    /// literally spawning a copy of a system executable and replacing it
+    /// while the child process is executing it — the exact scenario `digstore
+    /// update` faces in the field.
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn install_binary_replaces_a_currently_executing_file_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("locked-target.exe");
+        std::fs::copy(r"C:\Windows\System32\ping.exe", &target)
+            .expect("copy a real system exe to act as the locked target");
+
+        // Keep the copied exe running for a few seconds so Windows has its file
+        // open/mapped for execution, exactly like the running `digstore` process.
+        let mut child = std::process::Command::new(&target)
+            .args(["-n", "5", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the locked target");
+
+        // Give it a moment to actually start executing (file becomes locked).
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let new_bytes = b"\x7fELF fake-updated-binary-contents".to_vec();
+        let result = install_binary(&target, &new_bytes);
+
+        let _ = child.kill();
+        let _ = child.wait();
+        // Let Windows release its handle on the (renamed-aside) old file before
+        // the tempdir is cleaned up.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        result.expect("install_binary must replace a currently-executing exe on Windows");
+        assert_eq!(std::fs::read(&target).unwrap(), new_bytes);
     }
 
     /// Live-network smoke test, gated so CI/unit runs never hit GitHub.
