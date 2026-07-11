@@ -428,6 +428,10 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             // dynamic price); pass it explicitly so commit does not re-fetch/re-resolve
             // from a different op_dir.
             dig_amount: Some(price.base_units),
+            // Thread the deploy's `--consolidate` down: if the CI wallet is too
+            // coin-fragmented to advance the root within the 50-coin cap, merge the
+            // coins first (an extra XCH fee) rather than failing the deploy (#410).
+            consolidate: args.consolidate,
         },
     )?;
 

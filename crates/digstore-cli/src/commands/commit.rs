@@ -137,40 +137,59 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
     let coin_id = if resume {
         parse_bytes32(&state.coin_id, "coin_id")?
     } else {
-        let sp = ui.spinner("Building & signing the update…");
-        let upd = block_on(async {
-            match &writer_keys {
-                Some(writer) => {
-                    anchor
-                        .update_root_writer(
-                            launcher_id,
-                            new_root_b32,
-                            label.clone(),
-                            description.clone(),
-                            writer,
-                            &w,
-                            fee,
-                            dig_amount,
-                        )
-                        .await
-                }
-                None => {
-                    anchor
-                        .update_root(
-                            launcher_id,
-                            new_root_b32,
-                            label.clone(),
-                            description.clone(),
-                            &w,
-                            fee,
-                            dig_amount,
-                        )
-                        .await
-                }
-            }
-        })
-        .and_then(|r| r.map_err(|e| CliError::UpdateFailed(e.to_string())))?;
-        sp.finish();
+        // Coin selection for the XCH fee is capped at 50 (high-value-first). If the
+        // wallet is too fragmented to advance the root within the cap,
+        // `with_consolidation` merges the coins first (with consent — `--consolidate`
+        // / `--yes` / an interactive yes), waits for confirmation, re-scans, and
+        // retries the update (coin-management epic #410).
+        use crate::ops::consolidate::{map_spend_error, with_consolidation, SpendKind};
+        let anchor_ref = anchor.as_ref();
+        let (upd, _w) = with_consolidation(
+            ui,
+            anchor_ref,
+            &mnemonic,
+            fee,
+            args.consolidate,
+            args.wait_timeout,
+            w,
+            |w| {
+                let sp = ui.spinner("Building & signing the update…");
+                let r = block_on(async {
+                    match &writer_keys {
+                        Some(writer) => {
+                            anchor_ref
+                                .update_root_writer(
+                                    launcher_id,
+                                    new_root_b32,
+                                    label.clone(),
+                                    description.clone(),
+                                    writer,
+                                    w,
+                                    fee,
+                                    dig_amount,
+                                )
+                                .await
+                        }
+                        None => {
+                            anchor_ref
+                                .update_root(
+                                    launcher_id,
+                                    new_root_b32,
+                                    label.clone(),
+                                    description.clone(),
+                                    w,
+                                    fee,
+                                    dig_amount,
+                                )
+                                .await
+                        }
+                    }
+                })?
+                .map_err(|e| map_spend_error(e, SpendKind::Update));
+                sp.finish();
+                r
+            },
+        )?;
         let coin_hex = hex::encode(upd.new_coin_id.as_ref());
         anchor_ux::report_submitted(ui, "update", &coin_hex, ui.json());
 
