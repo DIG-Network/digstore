@@ -19,6 +19,7 @@ pub mod offer;
 pub mod option;
 pub mod pricing;
 pub mod seed;
+pub mod selection;
 pub mod send;
 pub mod singleton;
 pub mod streaming;
