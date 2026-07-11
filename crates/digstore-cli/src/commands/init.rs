@@ -158,13 +158,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
         w,
         |w| {
             let sp = ui.spinner("Building & signing the mint…");
-            let r = block_on(anchor_ref.mint_empty_store(
-                w,
-                label.clone(),
-                description.clone(),
-                fee,
-            ))?
-            .map_err(|e| map_spend_error(e, SpendKind::Mint));
+            let r =
+                block_on(anchor_ref.mint_empty_store(w, label.clone(), description.clone(), fee))?
+                    .map_err(|e| map_spend_error(e, SpendKind::Mint));
             sp.finish();
             r
         },

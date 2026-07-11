@@ -255,7 +255,10 @@ mod tests {
                 let input_ids: std::collections::HashSet<Bytes32> =
                     inputs.iter().map(|c| c.coin_id()).collect();
                 for c in &coins {
-                    assert!(input_ids.contains(&c.coin_id()), "selected coin is an input");
+                    assert!(
+                        input_ids.contains(&c.coin_id()),
+                        "selected coin is an input"
+                    );
                 }
             }
             other => panic!("expected Selected, got {other:?}"),

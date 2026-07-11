@@ -488,6 +488,8 @@ Every failure maps to a distinct, stable exit code (and the matching `code` in t
 | 14 | `CONFIRM_TIMEOUT` | on-chain confirmation timed out (resumable) |
 | 15 | `MINT_FAILED` | the on-chain mint failed |
 | 16 | `UPDATE_FAILED` | the on-chain root update failed |
+| 17 | `TOO_LARGE` | the operation is too large for one transaction; split it into smaller batches |
+| 18 | `NEEDS_CONSOLIDATION` | the wallet is spendable but too fragmented; consolidate coins (or pass `--consolidate`) first |
 
 `digstore --help-json` emits this same table under `exit_codes` (generated from the
 source, so it never drifts).

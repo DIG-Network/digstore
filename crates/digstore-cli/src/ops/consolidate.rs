@@ -175,7 +175,9 @@ mod tests {
     }
 
     fn wallet() -> ScannedWallet {
-        block_on(MockAnchor::default().scan(ABANDON)).unwrap().unwrap()
+        block_on(MockAnchor::default().scan(ABANDON))
+            .unwrap()
+            .unwrap()
     }
 
     #[test]
@@ -211,7 +213,10 @@ mod tests {
         })
         .unwrap();
         assert_eq!(v, 7);
-        assert_eq!(attempts, 2, "one NeedsConsolidation round then a successful retry");
+        assert_eq!(
+            attempts, 2,
+            "one NeedsConsolidation round then a successful retry"
+        );
     }
 
     #[test]
@@ -221,13 +226,17 @@ mod tests {
             fragmented_rounds: AtomicUsize::new(1),
             ..MockAnchor::default()
         };
-        let err = with_consolidation(&ui(), &anchor, ABANDON, 0, false, 1, wallet(), |_w| {
+        let result = with_consolidation(&ui(), &anchor, ABANDON, 0, false, 1, wallet(), |_w| {
             block_on(anchor.mint_empty_store(&wallet(), None, None, 0))
                 .unwrap()
                 .map(|_| 0u32)
                 .map_err(|e| map_spend_error(e, SpendKind::Mint))
-        })
-        .unwrap_err();
+        });
+        // `ScannedWallet` isn't `Debug`, so match rather than `unwrap_err()`.
+        let err = match result {
+            Ok(_) => panic!("expected NeedsConsolidation when consolidation is declined"),
+            Err(e) => e,
+        };
         assert!(matches!(err, CliError::NeedsConsolidation { .. }));
         assert_eq!(err.exit_code(), 18);
     }

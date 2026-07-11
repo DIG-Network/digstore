@@ -9,8 +9,8 @@ use chia_wallet_sdk::driver::{DriverError, Launcher, SpendContext, StandardLayer
 use chia_wallet_sdk::types::{conditions::CreateCoin, Condition, Conditions};
 use datalayer_driver::{
     add_fee, admin_delegated_puzzle_from_key, melt_store, oracle_delegated_puzzle as dl_oracle_dp,
-    sign_coin_spends, update_store_metadata, update_store_ownership, Bytes32, Coin,
-    CoinSpend, DataStoreInnerSpend, DataStoreMetadata, SpendBundle, SuccessResponse,
+    sign_coin_spends, update_store_metadata, update_store_ownership, Bytes32, Coin, CoinSpend,
+    DataStoreInnerSpend, DataStoreMetadata, SpendBundle, SuccessResponse,
 };
 
 /// Re-export the datalayer types that appear in this module's public builder

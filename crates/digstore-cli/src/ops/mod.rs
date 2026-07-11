@@ -3,9 +3,9 @@
 pub mod anchor_backend;
 pub mod anchor_state;
 pub mod anchor_ux;
-pub mod consolidate;
 pub mod assets;
 pub mod client_crypto;
+pub mod consolidate;
 pub mod dighub;
 pub mod discovery;
 pub mod identity;

@@ -242,6 +242,46 @@ The per-capsule price is **dynamic and USD-pegged**, NOT a fixed token amount:
 - The amount displayed to the user (and in `--dry-run`'s `cost_dig`) is byte-for-byte the amount
   built into the on-chain DIG-CAT payment (`digstore_chain::cat::build_dig_store_payment`).
 
+### 10.1 XCH coin selection & consolidation (init / commit / deploy)
+
+Scope note: a CLI/economic contract (not a `.dig` byte-format contract) governing how the money
+commands choose which XCH coins fund a spend, so a coin-fragmented wallet is never silently unable
+to publish. This is digstore's expression of the ecosystem-wide **coin-management contract**
+(`SYSTEM.md` → coin-management; the shared primitive is `dig-l1-wallet`). A `digstore`
+reimplementation MUST replicate it and MUST NOT hand-roll its own selection heuristic.
+
+Every XCH-funding spend built by `init` (mint fee), `commit` and `deploy` (root-advance XCH fee):
+
+- **Selects high-value-first** — candidate XCH coins are ordered by amount DESCENDING, tie-broken by
+  coin id (deterministic regardless of the order the chain returned them). The largest coins are
+  taken greedily until the target (`fee` for a root advance, `fee + 1` for a mint) is met. This
+  minimizes the number of inputs, keeping the bundle's CLVM cost well under Chia's per-block ceiling
+  (§11.3).
+- **Caps the attempt at 50 coins** (the shared `DEFAULT_COIN_CAP`; the boundary the browser/JS spend
+  layer uses too). Only the largest 50 coins are eligible for a single spend.
+- **Distinguishes three outcomes** — never a flat failure that hides the counts:
+  1. **selectable** — the largest ≤ 50 coins cover the target; the bundle is built from exactly those.
+  2. **needs consolidation** — the wallet's TOTAL XCH covers the target, but the largest 50 coins do
+     not; the spend cannot be built within the cap.
+  3. **insufficient funds** — the wallet's total XCH is below the target. DISTINCT from (2):
+     consolidation cannot create value, so "not enough money" is never reported as "too fragmented".
+- **On "needs consolidation", runs an auto-consolidate loop** (with the user's consent): build a
+  CONSOLIDATION spend that merges the highest-value coins (≤ 50) into a SINGLE coin back to the
+  wallet, reserving a fee; broadcast it; WAIT for the merged coin to confirm on-chain; re-scan the
+  wallet; then re-attempt the original spend. Repeat until the spend is selectable, the user
+  declines, or a bounded round limit. Consent is required because consolidation spends a real XCH
+  fee: `--consolidate` (or the global `--yes`) proceeds without prompting; an interactive run asks
+  (`[y/N]`, default No); a non-interactive run without the flag fails with a clear
+  `NEEDS_CONSOLIDATION` error (exit 18) rather than spending unprompted. `--json` emits a
+  `{"event":"consolidated", asset, merged_coins, merged_mojos, output_coin_id, tx_id}` record per
+  round.
+- **Never hand-rolls the selection or the merge** — both are the `dig-l1-wallet` primitives
+  (`select_for_spend` / `select_for_consolidation`); only the bundle construction (the datalayer_driver
+  / `chia-wallet-sdk` builder) stays digstore's.
+
+The per-capsule $DIG (CAT) payment (§10) rides in the same commit/deploy bundle; its selection is
+largest-first. (Capping + consolidating the $DIG-CAT side under the same contract is a follow-up.)
+
 ## 11. CHIP-0007 NFT & collection metadata (nft/collection commands)
 
 Scope note: like §9–10, this is a CLI/off-chain-JSON contract (`nft mint`/`nft bulk`/`collection

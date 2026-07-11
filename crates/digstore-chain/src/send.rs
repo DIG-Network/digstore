@@ -560,7 +560,9 @@ mod tests {
     fn consolidation_rejects_fee_exceeding_value() {
         let wallet = wallet_with(&[&[100, 200]]);
         // fee 1000 > merged inputs 300 → error, never an underflow.
-        assert!(build_xch_consolidation_unsigned(&wallet, 1_000, crate::selection::COIN_CAP).is_err());
+        assert!(
+            build_xch_consolidation_unsigned(&wallet, 1_000, crate::selection::COIN_CAP).is_err()
+        );
     }
 
     #[test]
