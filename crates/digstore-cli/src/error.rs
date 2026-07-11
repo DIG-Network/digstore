@@ -42,6 +42,21 @@ pub enum CliError {
     MintFailed(String),
     #[error("update failed: {0}")]
     UpdateFailed(String),
+    /// The wallet is spendable but too coin-fragmented, and consolidation was NOT
+    /// authorized (no `--consolidate`/`--yes`, and either non-interactive or the user
+    /// declined). Distinct from INSUFFICIENT_FUNDS (there IS enough value) — the fix
+    /// is to consolidate, not to add funds (coin-management epic #410).
+    #[error(
+        "{asset} is spendable but too fragmented: {coin_count} coins cannot cover \
+         {required} mojos within the {cap}-coin cap — consolidate first"
+    )]
+    NeedsConsolidation {
+        asset: String,
+        coin_count: u32,
+        available: u64,
+        required: u64,
+        cap: usize,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -68,6 +83,7 @@ impl CliError {
             CliError::MintFailed(_) => 15,
             CliError::UpdateFailed(_) => 16,
             CliError::TooLarge(_) => 17,
+            CliError::NeedsConsolidation { .. } => 18,
             CliError::Other(_) => 1,
         }
     }
@@ -95,6 +111,7 @@ impl CliError {
             CliError::MintFailed(_) => "MINT_FAILED",
             CliError::UpdateFailed(_) => "UPDATE_FAILED",
             CliError::TooLarge(_) => "TOO_LARGE",
+            CliError::NeedsConsolidation { .. } => "NEEDS_CONSOLIDATION",
             CliError::Other(_) => "ERROR",
         }
     }
@@ -155,6 +172,11 @@ impl CliError {
                 17,
                 "the operation is too large for one transaction; split it into smaller batches",
             ),
+            (
+                "NEEDS_CONSOLIDATION",
+                18,
+                "the wallet is spendable but too fragmented; consolidate coins (or pass --consolidate) first",
+            ),
         ]
     }
 
@@ -190,6 +212,9 @@ impl CliError {
             ),
             CliError::ConfirmTimeout => Some("the transaction may still confirm; run `digstore anchor status`".into()),
             CliError::MintFailed(_) | CliError::UpdateFailed(_) => Some("retry; if it persists, check wallet funds and coinset.org".into()),
+            CliError::NeedsConsolidation { .. } => Some(
+                "re-run with `--consolidate` (or `--yes`) to merge the coins first (costs one extra XCH fee)".into(),
+            ),
             _ => None,
         }
     }
@@ -219,6 +244,21 @@ impl From<digstore_chain::ChainError> for CliError {
             // A terminal oversized-bundle rejection (#231) — surfaced as TooLarge, never Chain, so
             // the hint points at batching instead of coinset.org connectivity.
             C::BundleTooLarge(m) => CliError::TooLarge(m),
+            // Too many coins (coin-management #410) — the wallet is spendable but must
+            // consolidate first; preserve the counts so the CLI can offer/run the merge.
+            C::NeedsConsolidation {
+                asset,
+                available_coin_count,
+                available_total,
+                required,
+                cap,
+            } => CliError::NeedsConsolidation {
+                asset,
+                coin_count: available_coin_count,
+                available: available_total,
+                required,
+                cap,
+            },
             other => CliError::Other(anyhow::anyhow!(other.to_string())),
         }
     }
@@ -252,6 +292,13 @@ mod tests {
             CliError::MintFailed("x".into()),
             CliError::UpdateFailed("x".into()),
             CliError::TooLarge("x".into()),
+            CliError::NeedsConsolidation {
+                asset: "XCH".into(),
+                coin_count: 60,
+                available: 100,
+                required: 50,
+                cap: 50,
+            },
         ];
         let mut codes: Vec<i32> = errs.iter().map(|e| e.exit_code()).collect();
         let n = codes.len();
@@ -291,6 +338,13 @@ mod tests {
             CliError::MintFailed("x".into()),
             CliError::UpdateFailed("x".into()),
             CliError::TooLarge("x".into()),
+            CliError::NeedsConsolidation {
+                asset: "XCH".into(),
+                coin_count: 60,
+                available: 100,
+                required: 50,
+                cap: 50,
+            },
         ];
         let mut codes: Vec<&str> = errs.iter().map(|e| e.code()).collect();
         let n = codes.len();

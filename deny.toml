@@ -82,6 +82,11 @@ allow-git = [
     "https://github.com/DIG-Network/dig-pex",
     "https://github.com/DIG-Network/dig-download",
     "https://github.com/DIG-Network/dig-peer-selector",
+    # dig-l1-wallet supplies the capped coin selector (`select_for_spend` /
+    # `select_for_consolidation`) the money commands front their bundle builders with
+    # (#410/#420). Its selection API lands at v0.3.0, which is not yet on crates.io (only
+    # v0.1.0 is), so it is pinned to the git tag until a crates.io v0.3.x ships (#216).
+    "https://github.com/DIG-Network/dig-l1-wallet",
 ]
 
 # Not currently gated in CI (see header). Kept for when license compliance is

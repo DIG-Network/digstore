@@ -26,6 +26,20 @@ pub struct UpdateOutcome {
     pub tx_id: Bytes32,       // SpendBundle::name() — conventional tx id of the update
 }
 
+/// A broadcast XCH consolidation awaiting confirmation (coin-management epic #410).
+#[derive(Clone, Debug)]
+pub struct ConsolidationOutcome {
+    /// The single merged output coin to poll for confirmation before retrying the
+    /// original spend.
+    pub output_coin_id: Bytes32,
+    /// Number of coins merged into one.
+    pub input_count: usize,
+    /// Mojos of the merged output coin.
+    pub merged: u64,
+    /// SpendBundle::name() — the conventional tx id of the consolidation.
+    pub tx_id: Bytes32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConfirmState {
     Confirmed { height: u32 },
@@ -92,6 +106,17 @@ pub trait ChainAnchor: Send + Sync {
     ) -> Result<UpdateOutcome>;
     /// Poll until `coin_id` is confirmed (present in a block) or `timeout_secs` elapses.
     async fn confirm(&self, coin_id: Bytes32, timeout_secs: u64) -> Result<ConfirmState>;
+    /// Consolidate the wallet's XCH: merge the highest-value coins (at most `cap`,
+    /// chosen by the shared selector) into a SINGLE coin, reserving `fee`, and
+    /// BROADCAST it. Returns the merged coin id to confirm. The CLI calls this when a
+    /// spend hits [`ChainError::NeedsConsolidation`](crate::error::ChainError::NeedsConsolidation),
+    /// then waits for confirmation and retries the spend (coin-management epic #410).
+    async fn consolidate_xch(
+        &self,
+        w: &ScannedWallet,
+        fee: u64,
+        cap: usize,
+    ) -> Result<ConsolidationOutcome>;
 }
 
 /// Production anchor over coinset.
@@ -205,6 +230,25 @@ impl<C: ChainReads> ChainAnchor for CoinsetAnchor<C> {
         self.chain.push(built.bundle).await?;
         Ok(UpdateOutcome {
             new_coin_id: built.new_coin_id,
+            tx_id,
+        })
+    }
+
+    async fn consolidate_xch(
+        &self,
+        w: &ScannedWallet,
+        fee: u64,
+        cap: usize,
+    ) -> Result<ConsolidationOutcome> {
+        // Build + sign the cap-aware combine (merge the largest coins → 1), then push.
+        // Real XCH fee is spent — the CLI has already obtained consent (§7).
+        let (bundle, plan) = crate::send::build_xch_consolidation(w, fee, cap)?;
+        let tx_id = bundle.name();
+        self.chain.push(bundle).await?;
+        Ok(ConsolidationOutcome {
+            output_coin_id: plan.output_coin_id,
+            input_count: plan.input_count,
+            merged: plan.merged,
             tx_id,
         })
     }

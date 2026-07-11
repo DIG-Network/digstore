@@ -141,11 +141,30 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: InitArgs) -> Result<(), C
     }
 
     // 4. Mint the empty store singleton (free of $DIG). The launcher id becomes the
-    //    store_id. Pass the full scanned wallet so the mint gathers XCH from all addresses.
-    let sp = ui.spinner("Building & signing the mint…");
-    let mint = block_on(anchor.mint_empty_store(&w, label.clone(), description.clone(), fee))
-        .and_then(|r| r.map_err(|e| CliError::MintFailed(e.to_string())))?;
-    sp.finish();
+    //    store_id. Pass the full scanned wallet so the mint gathers XCH from all
+    //    addresses. Coin selection is capped at 50 (high-value-first); if the wallet is
+    //    too fragmented to mint within the cap, `with_consolidation` merges the coins
+    //    first (with consent), waits for confirmation, re-scans, and retries the mint
+    //    (coin-management epic #410).
+    use crate::ops::consolidate::{map_spend_error, with_consolidation, SpendKind};
+    let anchor_ref = anchor.as_ref();
+    let (mint, _w) = with_consolidation(
+        ui,
+        anchor_ref,
+        &mnemonic,
+        fee,
+        args.consolidate,
+        args.wait_timeout,
+        w,
+        |w| {
+            let sp = ui.spinner("Building & signing the mint…");
+            let r =
+                block_on(anchor_ref.mint_empty_store(w, label.clone(), description.clone(), fee))?
+                    .map_err(|e| map_spend_error(e, SpendKind::Mint));
+            sp.finish();
+            r
+        },
+    )?;
     let store_id = {
         let mut a = [0u8; 32];
         a.copy_from_slice(mint.launcher_id.as_ref());

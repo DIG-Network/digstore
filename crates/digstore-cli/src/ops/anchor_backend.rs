@@ -5,10 +5,12 @@
 //! touches the network — and any command using a mock prints a LOUD warning so
 //! a mocked run can never be mistaken for real anchoring on Chia mainnet.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use async_trait::async_trait;
 use chia_protocol::Bytes32;
 use digstore_chain::anchor::{
-    ChainAnchor, CoinsetAnchor, ConfirmState, MintOutcome, UpdateOutcome,
+    ChainAnchor, CoinsetAnchor, ConfirmState, ConsolidationOutcome, MintOutcome, UpdateOutcome,
 };
 use digstore_chain::error::ChainError;
 use digstore_chain::keys::WalletKeys;
@@ -30,6 +32,12 @@ pub struct MockAnchor {
     pub fail_mint: Option<String>,
     /// `Some(msg)` makes `update_root` fail with a chain error carrying `msg`.
     pub fail_update: Option<String>,
+    /// Number of mint/update attempts that report `NeedsConsolidation` before
+    /// succeeding — simulates a coin-fragmented wallet so the CLI consolidation loop
+    /// can be exercised deterministically without a real chain. Each failing attempt
+    /// decrements it; a `consolidate_xch` call does NOT (the count models "rounds of
+    /// fragmentation the retry must clear").
+    pub fragmented_rounds: AtomicUsize,
 }
 
 impl Default for MockAnchor {
@@ -40,6 +48,33 @@ impl Default for MockAnchor {
             confirm_pending: false,
             fail_mint: None,
             fail_update: None,
+            fragmented_rounds: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl MockAnchor {
+    /// Report `NeedsConsolidation` while `fragmented_rounds` remains, decrementing it.
+    /// Returns the error to yield, or `None` once the wallet is "consolidated enough".
+    fn fragmented_error(&self, fee: u64) -> Option<ChainError> {
+        loop {
+            let n = self.fragmented_rounds.load(Ordering::SeqCst);
+            if n == 0 {
+                return None;
+            }
+            if self
+                .fragmented_rounds
+                .compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return Some(ChainError::NeedsConsolidation {
+                    asset: "XCH".to_string(),
+                    available_coin_count: 60,
+                    available_total: self.balance_mojos,
+                    required: fee + 1,
+                    cap: 50,
+                });
+            }
         }
     }
 }
@@ -72,12 +107,19 @@ impl MockAnchor {
             .map(|v| v == "1")
             .unwrap_or(false);
         let fail_mint = std::env::var("DIGSTORE_ANCHOR_MOCK_FAIL_MINT").ok();
+        // Simulate a coin-fragmented wallet: N mint/update attempts report
+        // NeedsConsolidation before succeeding, so the CLI consolidation loop runs.
+        let fragmented_rounds = std::env::var("DIGSTORE_ANCHOR_MOCK_FRAGMENTED")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
         MockAnchor {
             balance_mojos,
             dig_base_units,
             confirm_pending,
             fail_mint,
             fail_update: None,
+            fragmented_rounds: AtomicUsize::new(fragmented_rounds),
         }
     }
 }
@@ -143,8 +185,11 @@ impl ChainAnchor for MockAnchor {
         _w: &ScannedWallet,
         _label: Option<String>,
         _description: Option<String>,
-        _fee: u64,
+        fee: u64,
     ) -> ChainResult<MintOutcome> {
+        if let Some(e) = self.fragmented_error(fee) {
+            return Err(e);
+        }
         if let Some(msg) = &self.fail_mint {
             return Err(ChainError::Chain(msg.clone()));
         }
@@ -163,9 +208,12 @@ impl ChainAnchor for MockAnchor {
         _label: Option<String>,
         _description: Option<String>,
         _w: &ScannedWallet,
-        _fee: u64,
+        fee: u64,
         _dig_amount: u64,
     ) -> ChainResult<UpdateOutcome> {
+        if let Some(e) = self.fragmented_error(fee) {
+            return Err(e);
+        }
         if let Some(msg) = &self.fail_update {
             return Err(ChainError::Chain(msg.clone()));
         }
@@ -184,12 +232,15 @@ impl ChainAnchor for MockAnchor {
         _description: Option<String>,
         _writer: &digstore_chain::keys::WalletKeys,
         _w: &ScannedWallet,
-        _fee: u64,
+        fee: u64,
         _dig_amount: u64,
     ) -> ChainResult<UpdateOutcome> {
         // The mock treats a writer-authorized advance like an owner one (it does no
         // on-chain validation); the writer authorization itself is proven on the
         // Simulator in `digstore_chain::singleton` tests.
+        if let Some(e) = self.fragmented_error(fee) {
+            return Err(e);
+        }
         if let Some(msg) = &self.fail_update {
             return Err(ChainError::Chain(msg.clone()));
         }
@@ -205,6 +256,23 @@ impl ChainAnchor for MockAnchor {
         } else {
             Ok(ConfirmState::Confirmed { height: 1 })
         }
+    }
+
+    async fn consolidate_xch(
+        &self,
+        _w: &ScannedWallet,
+        _fee: u64,
+        _cap: usize,
+    ) -> ChainResult<ConsolidationOutcome> {
+        // The mock does not build a real bundle (its synthetic wallet has a single
+        // coin); it just reports a merge so the CLI loop can proceed to the retry,
+        // which succeeds once `fragmented_rounds` is exhausted.
+        Ok(ConsolidationOutcome {
+            output_coin_id: random_bytes32(),
+            input_count: 60,
+            merged: self.balance_mojos,
+            tx_id: random_bytes32(),
+        })
     }
 }
 

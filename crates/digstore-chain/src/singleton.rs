@@ -9,8 +9,8 @@ use chia_wallet_sdk::driver::{DriverError, Launcher, SpendContext, StandardLayer
 use chia_wallet_sdk::types::{conditions::CreateCoin, Condition, Conditions};
 use datalayer_driver::{
     add_fee, admin_delegated_puzzle_from_key, melt_store, oracle_delegated_puzzle as dl_oracle_dp,
-    select_coins, sign_coin_spends, update_store_metadata, update_store_ownership, Bytes32, Coin,
-    CoinSpend, DataStoreInnerSpend, DataStoreMetadata, SpendBundle, SuccessResponse,
+    sign_coin_spends, update_store_metadata, update_store_ownership, Bytes32, Coin, CoinSpend,
+    DataStoreInnerSpend, DataStoreMetadata, SpendBundle, SuccessResponse,
 };
 
 /// Re-export the datalayer types that appear in this module's public builder
@@ -279,8 +279,7 @@ pub fn build_mint_unsigned(
     description: Option<String>,
     fee: u64,
 ) -> Result<MintUnsigned> {
-    let selected = select_coins(unspent, fee + 1)
-        .map_err(|e| ChainError::Chain(format!("select_coins: {e}")))?;
+    let selected = crate::selection::select_xch_coins(unspent, fee + 1)?;
     let SuccessResponse {
         coin_spends,
         new_datastore,
@@ -306,11 +305,15 @@ pub fn build_mint_unsigned(
 /// Multi-address variant of [`build_mint_unsigned`].
 ///
 /// `all_coins` contains ALL XCH coins across scanned HD addresses, each tagged with
-/// the address's `synthetic_pk` and `owner_puzzle_hash`. This function greedily
-/// selects enough coins to cover `fee + 1` mojos (using `select_coins` on the flat
-/// coin list), tags the selected set with their per-address keys, and builds the
-/// unsigned mint spends. Change consolidates to `change_ph` (index 0's
-/// `owner_puzzle_hash`). The store owner (in DataStore metadata) is also `change_ph`.
+/// the address's `synthetic_pk` and `owner_puzzle_hash`. This function selects enough
+/// coins to cover `fee + 1` mojos via the shared capped selector
+/// ([`crate::selection::select_xch_coins`] — high-value-first, at most
+/// [`crate::selection::COIN_CAP`] inputs), tags the selected set with their
+/// per-address keys, and builds the unsigned mint spends. When the wallet is too
+/// fragmented to cover the mint within the cap it returns
+/// [`ChainError::NeedsConsolidation`] (the CLI consolidates + retries). Change
+/// consolidates to `change_ph` (index 0's `owner_puzzle_hash`). The store owner (in
+/// DataStore metadata) is also `change_ph`.
 pub fn build_mint_unsigned_multi(
     all_coins: &[CoinWithKey],
     change_ph: Bytes32,
@@ -321,8 +324,7 @@ pub fn build_mint_unsigned_multi(
 ) -> Result<MintUnsigned> {
     // Flatten to bare Coin slice for coin selection.
     let flat: Vec<Coin> = all_coins.iter().map(|c| c.coin).collect();
-    let selected_flat = select_coins(&flat, fee + 1)
-        .map_err(|e| ChainError::Chain(format!("select_coins: {e}")))?;
+    let selected_flat = crate::selection::select_xch_coins(&flat, fee + 1)?;
 
     // Re-attach per-address keys to the selected coins.
     // Build a lookup: coin_id -> CoinWithKey (parent+ph identify a coin uniquely).
@@ -336,7 +338,7 @@ pub fn build_mint_unsigned_multi(
 
     if selected.is_empty() {
         return Err(ChainError::Chain(
-            "select_coins returned empty set for multi-address mint".into(),
+            "coin selection returned empty set for multi-address mint".into(),
         ));
     }
 
@@ -453,8 +455,7 @@ pub fn build_update_unsigned(
     )
     .map_err(|e| ChainError::Chain(format!("update_store_metadata: {e}")))?;
 
-    let selected = select_coins(fee_coins, fee)
-        .map_err(|e| ChainError::Chain(format!("select_coins (fee): {e}")))?;
+    let selected = crate::selection::select_xch_coins(fee_coins, fee)?;
     let coin_ids: Vec<Bytes32> = selected.iter().map(|c| c.coin_id()).collect();
     let mut coin_spends = add_fee(&keys.synthetic_pk, &selected, &coin_ids, fee)
         .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
@@ -502,8 +503,7 @@ pub fn build_update_unsigned_multi(
     let mut coin_spends = Vec::new();
     if fee > 0 {
         let flat: Vec<Coin> = all_fee_coins.iter().map(|c| c.coin).collect();
-        let selected_flat = select_coins(&flat, fee)
-            .map_err(|e| ChainError::Chain(format!("select_coins (fee): {e}")))?;
+        let selected_flat = crate::selection::select_xch_coins(&flat, fee)?;
         let selected_ids: std::collections::HashSet<Bytes32> =
             selected_flat.iter().map(|c| c.coin_id()).collect();
         let selected: Vec<CoinWithKey> = all_fee_coins
@@ -643,8 +643,7 @@ pub fn build_update_unsigned_writer(
 
     let mut coin_spends = Vec::new();
     if fee > 0 {
-        let selected = select_coins(fee_coins, fee)
-            .map_err(|e| ChainError::Chain(format!("select_coins (fee): {e}")))?;
+        let selected = crate::selection::select_xch_coins(fee_coins, fee)?;
         let coin_ids: Vec<Bytes32> = selected.iter().map(|c| c.coin_id()).collect();
         let fee_spends = add_fee(&fee_keys.synthetic_pk, &selected, &coin_ids, fee)
             .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;
@@ -782,8 +781,7 @@ pub fn build_update_ownership_unsigned(
 
     let mut coin_spends = Vec::new();
     if fee > 0 {
-        let selected = select_coins(fee_coins, fee)
-            .map_err(|e| ChainError::Chain(format!("select_coins (fee): {e}")))?;
+        let selected = crate::selection::select_xch_coins(fee_coins, fee)?;
         let coin_ids: Vec<Bytes32> = selected.iter().map(|c| c.coin_id()).collect();
         let fee_spends = add_fee(&keys.synthetic_pk, &selected, &coin_ids, fee)
             .map_err(|e| ChainError::Chain(format!("add_fee: {e}")))?;

@@ -263,6 +263,55 @@ fn init_rerun_after_pending_mint_resumes_without_reminting() {
     );
 }
 
+/// Coin-management (#410/#420): a coin-fragmented wallet (the largest 50 coins can't
+/// cover the mint) with `--consolidate` merges the coins first, waits for confirmation,
+/// then mints — the whole loop end-to-end against the installed binary + the mock. The
+/// mock's `DIGSTORE_ANCHOR_MOCK_FRAGMENTED=1` reports NeedsConsolidation once, then the
+/// retry succeeds. `--json` emits a `consolidated` event before the final init object.
+#[test]
+fn init_consolidates_fragmented_wallet_then_mints() {
+    let dir = tmp_dig();
+    let out = dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_FRAGMENTED", "1")
+        .args(["--json", "init", "--consolidate"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "init should consolidate then mint; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("consolidated"),
+        "a consolidation event should be emitted; got:\n{stdout}"
+    );
+    // The store is created + confirmed after the retry.
+    let anchor = common::store_dir(&dir).join("anchor.toml");
+    assert!(anchor.exists(), "store minted after consolidation");
+    assert!(std::fs::read_to_string(&anchor)
+        .unwrap()
+        .contains("status = \"confirmed\""));
+}
+
+/// A fragmented wallet WITHOUT `--consolidate`, run non-interactively (no TTY, no
+/// `--yes`), must NOT spend a consolidation fee unprompted — it fails with the
+/// dedicated NEEDS_CONSOLIDATION exit code (18) and creates no store.
+#[test]
+fn init_fragmented_without_consolidate_exits_18() {
+    let dir = tmp_dig();
+    dig(&dir)
+        .env("DIGSTORE_ANCHOR_MOCK_FRAGMENTED", "1")
+        .arg("init")
+        .assert()
+        .failure()
+        .code(18);
+    assert!(
+        !common::store_dir(&dir).exists(),
+        "no store dir when consolidation is needed but not authorized"
+    );
+}
+
 #[test]
 fn init_without_seed_exits_9() {
     // A bare DIGSTORE_HOME with NO session → unlock yields NoSeed (exit 9).

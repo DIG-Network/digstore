@@ -503,6 +503,12 @@ pub struct InitArgs {
     /// `digstore anchor` to resume.
     #[arg(long, default_value_t = 300)]
     pub wait_timeout: u64,
+    /// If the wallet is too coin-fragmented to mint within the 50-coin cap, MERGE the
+    /// coins first (an extra XCH fee), wait for confirmation, then mint — without
+    /// prompting. For scripts/CI. Interactive runs ask before consolidating; a
+    /// non-interactive run without this (or `--yes`) fails with NEEDS_CONSOLIDATION.
+    #[arg(long)]
+    pub consolidate: bool,
 }
 
 #[derive(Debug, Args)]
@@ -585,6 +591,13 @@ pub struct CommitArgs {
     /// `--writer-key`. See `digstore deploy --help` for the writer-vs-publisher contrast.
     #[arg(long = "writer-key", alias = "deploy-key", value_name = "WRITER_SEED")]
     pub writer_key: Option<String>,
+    /// If the wallet is too coin-fragmented to advance the root within the 50-coin
+    /// cap, MERGE the coins first (an extra XCH fee), wait for confirmation, then
+    /// commit — without prompting. For scripts/CI. Interactive runs ask before
+    /// consolidating; a non-interactive run without this (or `--yes`) fails with
+    /// NEEDS_CONSOLIDATION.
+    #[arg(long)]
+    pub consolidate: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1024,6 +1037,12 @@ pub struct DeployArgs {
     /// `<output-dir>/../.dig-preview/<root>.dig`.
     #[arg(long = "preview-out")]
     pub preview_out: Option<PathBuf>,
+    /// If the wallet is too coin-fragmented to advance the root within the 50-coin
+    /// cap, MERGE the coins first (an extra XCH fee), wait for confirmation, then
+    /// deploy — without prompting. Recommended for CI. Without it (or `--yes`) a
+    /// fragmented wallet fails the deploy with NEEDS_CONSOLIDATION.
+    #[arg(long)]
+    pub consolidate: bool,
 }
 
 #[derive(Debug, Args)]
