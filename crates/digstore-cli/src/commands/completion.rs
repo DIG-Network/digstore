@@ -19,9 +19,13 @@ use crate::error::CliError;
 use crate::ui::Ui;
 
 /// `digstore completion <shell>`: write the completion script to stdout.
+///
+/// The script is generated for the ACTUAL invoked binary name ([`crate::invoked_bin_name`])
+/// — so `digs completion bash` emits completions bound to `digs`, not `digstore`
+/// (issue #434: the alias is first-class).
 pub fn run(_ui: &Ui, shell: Shell) -> Result<(), CliError> {
     let mut cmd = Cli::command();
-    let name = cmd.get_name().to_string();
+    let name = crate::invoked_bin_name();
     clap_complete::generate(shell, &mut cmd, name, &mut io::stdout());
     Ok(())
 }
@@ -49,7 +53,9 @@ pub fn print_help_json() {
         })
         .collect();
     let json = serde_json::json!({
-        "name": cmd.get_name(),
+        // The invoked binary name (`digstore` or the `digs` alias, #434) — not the
+        // static clap `name` — so an agent reading `digs --help-json` sees `digs`.
+        "name": crate::invoked_bin_name(),
         "version": env!("CARGO_PKG_VERSION"),
         "about": cmd.get_about().map(|s| s.to_string()),
         "globals": globals,
