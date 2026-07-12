@@ -101,21 +101,24 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
       # cargo-nextest natively detects+reports flaky tests (retried-but-passed
       # surfaces as "FLAKY" in the run summary, not silently green) instead of
-      # papering over intermittent failures with a bare re-run (#489). Run it
-      # through `cargo llvm-cov nextest` (NOT a bare `cargo nextest run`) so
-      # coverage instrumentation still wraps the run and the >=80% line-coverage
-      # gate keeps enforcing (a separate/bare nextest step collects zero
-      # coverage and silently drops the gate).
-      - name: Test (nextest, flaky-aware, coverage-gated)
-        run: cargo llvm-cov nextest --workspace --locked --fail-under-lines 80 --retries 2
+      # papering over intermittent failures with a bare re-run (#489).
+      #
+      # Intentionally a bare `cargo nextest run`, NOT `cargo llvm-cov nextest`:
+      # main has no coverage measurement/gate today, so this PR (flaky-test
+      # management only) must not introduce one. Coverage instrumentation also
+      # measurably slows the instrumented `digstore` binary that CLI
+      # integration tests spawn as a child process (e.g. `cli_dev`'s dev-server
+      # startup poll), which blew existing CI-tuned timeouts under nextest's
+      # parallelism and made an otherwise-passing test fail consistently. A
+      # future PR can add `cargo llvm-cov` + an explicit `--fail-under-lines`
+      # gate as its own, reviewable change.
+      - name: Test (nextest, flaky-aware)
+        run: cargo nextest run --workspace --locked --retries 2
 
       # nextest does not execute doctests (https://github.com/nextest-rs/nextest/issues/16) —
-      # run them separately so doc-test coverage is preserved.
+      # run them separately so they still gate CI.
       - name: Doctests
         run: cargo test --doc --workspace --locked
 
@@ -155,17 +158,17 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      # This crate is excluded from the `--workspace` coverage-gated job above
-      # (it must resolve without chia-bls/blst for wasm32) and its own-file
-      # coverage isn't meaningful here — the thin wasm-bindgen glue in
-      # src/lib.rs is exercised end-to-end by the "Verify assembled package"
-      # step below, not by these native parity tests. No coverage gate on
-      # this job; just flaky-aware nextest.
+      # This crate is excluded from the `--workspace` job above (it must
+      # resolve without chia-bls/blst for wasm32); its thin wasm-bindgen glue
+      # in src/lib.rs is exercised end-to-end by the "Verify assembled
+      # package" step below, not by these native parity tests. Flaky-aware
+      # nextest only (no coverage gate anywhere in this workflow — see the
+      # note on the workspace job's Test step).
       - name: Parity tests (native, vs digstore-crypto; flaky-aware)
         working-directory: crates/dig-client-wasm
         run: cargo nextest run --locked --retries 2
 
-      # nextest does not execute doctests — run separately to preserve coverage.
+      # nextest does not execute doctests — run separately so they still gate CI.
       - name: Parity doctests
         working-directory: crates/dig-client-wasm
         run: cargo test --doc --locked
