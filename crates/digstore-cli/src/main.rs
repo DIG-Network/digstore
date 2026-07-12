@@ -1,52 +1,8 @@
-use clap::Parser;
-use digstore_cli::beacon;
-use digstore_cli::cli::{Cli, Command};
-use digstore_cli::commands;
+//! The `digstore` binary — a thin shim over the shared entrypoint
+//! [`digstore_cli::run`]. The `digs` alias binary (`src/bin/digs.rs`, issue #434)
+//! shares this exact codepath, so the two binaries are identical modulo the
+//! invoked program name (which clap derives from arg0).
 
 fn main() {
-    // `--help-json`: print the machine-readable CLI schema and exit, BEFORE clap
-    // parses (so it works with no subcommand: `digstore --help-json`). Mirrors how
-    // clap itself intercepts `--help`/`--version`. Agents/docs read the whole
-    // command surface from this instead of scraping `--help`.
-    if std::env::args().any(|a| a == "--help-json") {
-        commands::completion::print_help_json();
-        std::process::exit(0);
-    }
-    let cli = Cli::parse();
-    if cli.verbose {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "digstore=debug".into()),
-            )
-            .try_init();
-    }
-    // Capture the flags the post-command beacon needs before `cli` is consumed.
-    // Skip the beacon for `update` itself (it already talks to GitHub).
-    let (json, quiet) = (cli.json, cli.quiet);
-    let is_update = matches!(cli.command, Command::Update(_));
-
-    let ui = digstore_cli::ui::Ui::from_flags(
-        cli.color,
-        cli.json,
-        cli.quiet,
-        cli.non_interactive,
-        cli.yes,
-    );
-    match commands::dispatch(cli) {
-        Ok(()) => {
-            // Best-effort, throttled, fail-safe update notice. Runs only after a
-            // successful command and never affects this command's behavior.
-            if !is_update {
-                beacon::maybe_notify(json, quiet);
-            }
-            std::process::exit(0);
-        }
-        Err(e) => {
-            // Honor --json: emit a structured {ok:false,error:{code,exit_code,
-            // message,hint}} object to stdout for agents; human lines otherwise.
-            ui.emit_error(&e);
-            std::process::exit(e.exit_code());
-        }
-    }
+    digstore_cli::run()
 }

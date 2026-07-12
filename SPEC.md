@@ -8,6 +8,13 @@ truth in code is `digstore-core` (`datasection`, `merkle`, `crypto`, `urn`,
 `public_manifest`); this spec MUST agree with it and with the ecosystem contracts in
 the superproject `SYSTEM.md` and the user-facing protocol pages under `docs.dig.net`.
 
+**CLI binaries.** The `digstore-cli` crate ships TWO binaries, `digstore` and `digs`.
+`digs` is a first-class alias: `digs <args>` behaves IDENTICALLY to `digstore <args>`
+(same subcommands, flags, `--json`, and exit codes). Both share ONE codepath
+(`digstore_cli::run()`) and each reflects its own invoked name (arg0) in
+`--help`/`--version`/`completion`/`--help-json`. Both binaries MUST be shipped together
+everywhere `digstore` ships (cargo-install, the universal installer, the apt `.deb`).
+
 All multi-byte integers are **big-endian** (Chia streamable framing). The shared codec
 (`digstore_core::codec`) frames: `uN` as `N/8` BE bytes; `String` as `u32` byte length
 + UTF-8 bytes; `Vec<T>` as `u32` count + each `T`; `Bytes32`/`Bytes48` as raw fixed
