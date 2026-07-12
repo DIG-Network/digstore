@@ -20,7 +20,7 @@ pub const DIGHUB: &str = "DIGHUb";
 pub const DIG_TOKEN: &str = "$DIG";
 
 /// Canonical community/support link (SYSTEM.md "Canonical Discord").
-pub const DISCORD_URL: &str = "https://discord.gg/dignetwork";
+pub const DISCORD_URL: &str = "https://discord.gg/v78aygUZt";
 
 /// The user-facing scheme a person types/clicks to OPEN verified DIG content —
 /// what the DIG Browser/extension register. Distinct from the §21 remote scheme
