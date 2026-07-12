@@ -98,8 +98,19 @@ jobs:
       - name: Build
         run: cargo build --workspace --locked
 
-      - name: Test
-        run: cargo test --workspace --locked
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # cargo-nextest natively detects+reports flaky tests (retried-but-passed
+      # surfaces as "FLAKY" in the run summary, not silently green) instead of
+      # papering over intermittent failures with a bare re-run (#489).
+      - name: Test (nextest, flaky-aware)
+        run: cargo nextest run --workspace --locked --retries 2
+
+      # nextest does not execute doctests (https://github.com/nextest-rs/nextest/issues/16) —
+      # run them separately so doc-test coverage is preserved.
+      - name: Doctests
+        run: cargo test --doc --workspace --locked
 
   # The read-crypto wasm crate (crates/dig-client-wasm) is EXCLUDED from the
   # workspace (it must resolve without chia-bls/blst, which don't build for
@@ -134,9 +145,17 @@ jobs:
         working-directory: crates/dig-client-wasm
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Parity tests (native, vs digstore-crypto)
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Parity tests (native, vs digstore-crypto; flaky-aware)
         working-directory: crates/dig-client-wasm
-        run: cargo test --locked
+        run: cargo nextest run --locked --retries 2
+
+      # nextest does not execute doctests — run separately to preserve coverage.
+      - name: Parity doctests
+        working-directory: crates/dig-client-wasm
+        run: cargo test --doc --locked
 
       - name: Build + assemble package (web + node -> pkg/)
         working-directory: crates/dig-client-wasm
