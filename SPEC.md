@@ -425,3 +425,83 @@ split into cost-bounded batches. A reimplementation:
   "transaction SIZE limit — split into smaller batches" error, and MUST NOT retry it or misreport it as
   a coinset.org connectivity/`error decoding response body` problem (the transient-retry path is for
   genuine transport hiccups only).
+
+## 12. Release pipeline — nightly cron + manual dispatch
+
+How the `digstore` CLI binary + its `digs` alias are built and released. The shape is copied from
+the ecosystem's reference nightlies implementation (`dig-updater`); the ops runbook is
+`runbooks/release.md`.
+
+Releases are **batched to a nightly cron plus manual dispatch** — NOT cut on every merge to `main`.
+Two channels ship from one orchestrator (`.github/workflows/nightly-release.yml`):
+
+### 12.1 Trigger
+
+The orchestrator triggers ONLY on:
+
+- `schedule: cron '0 0 * * *'` — **midnight UTC** (GitHub Actions cron is always UTC; a top-of-hour
+  cron MAY be delayed under load — acceptable, since both channels are idempotent), and
+- `workflow_dispatch` with two inputs: `channel` (`both` | `stable` | `nightly`, default `both`) and
+  `force` (boolean, default `false`).
+
+It MUST NOT trigger on `push` to `main`. A schedule run exercises BOTH channels; a dispatch runs the
+selected channel(s).
+
+**60-day auto-disable caveat.** GitHub auto-disables a `schedule:` trigger after 60 days with no
+repo activity on a public repo, with no auto-re-enable — and since this cron is the ONLY automatic
+release trigger, a quiet repo can silently stop releasing with no error. Detect it with
+`gh api repos/DIG-Network/digstore/actions/workflows/nightly-release.yml --jq .state` (a value of
+`disabled_inactivity` means it was auto-disabled) and recover with `gh workflow enable
+nightly-release.yml` (see `runbooks/release.md`). Any repo activity resets the 60-day counter.
+
+### 12.2 Stable channel
+
+Cuts a semver `vX.Y.Z` **stable** release when — and only when — the `[workspace.package].version`
+in the root `Cargo.toml` has advanced beyond the newest `vX.Y.Z` tag (the skip-if-already-tagged
+check IS the version-changed check). Cutting a release means: `git-cliff` regenerates
+`CHANGELOG.md`, commits it to `main` as `chore(release): vX.Y.Z`, tags THAT commit (so the changelog
+is inside the tag), and pushes commit + tag with `RELEASE_TOKEN`. The pushed `v*` tag fires
+`release.yml`, which builds every OS/arch (both asset shapes) and publishes the GitHub Release. It
+ALSO uploads the Linux x86_64 binary to the dighub S3 artifact bucket for the hub compile-worker
+(tag-only — a nightly never moves the `latest` binary the worker reads).
+
+`force: true` on a manual dispatch bypasses the skip-if-tagged guard and re-cuts the current version
+(moving the tag onto a fresh changelog commit — `main` is never force-pushed).
+
+**Force is guarded against mutating a published release (supply-chain invariant).** A force re-cut
+MUST be refused — non-zero exit, clear error — when BOTH: (a) a PUBLISHED (non-draft) GitHub Release
+already exists at the version's `vX.Y.Z` tag, AND (b) that tag currently points at a commit
+DIFFERENT from the commit this run would build. Force MAY proceed when either is false: a
+same-commit re-cut (a failed-build retry) or a tag with no published release (a tag repair). A
+version that needs new code released MUST bump `Cargo.toml`, not force-move a tag.
+
+### 12.3 Nightly channel
+
+Every night (and on demand) builds `main` HEAD for every OS/arch and publishes a GitHub
+**pre-release** — so a fresh nightly always exists regardless of a version bump. It:
+
+- **Synthesizes the version at build time** (nothing is committed): `X.Y.Z-nightly.YYYYMMDD.<shortsha>`.
+  As a semver prerelease it sorts BELOW the plain `X.Y.Z`.
+- Publishes under a **dated tag `nightly-YYYYMMDD`** AND force-moves a **rolling `nightly` tag**,
+  with `prerelease: true` and **never** `latest`. Idempotent: a same-day re-run refreshes today's
+  dated release + the rolling pointer.
+- **Retention:** keeps the newest **14** dated nightlies plus the rolling `nightly`, pruning older
+  dated pre-releases AND their tags together (`gh release delete --cleanup-tag`). `v*` stable
+  tags/releases and the rolling `nightly` are NEVER pruned. (The nightly channel does NOT run the S3
+  publish — that stays stable-only.)
+
+### 12.4 Reusable build
+
+The cross-OS build lives once in `.github/workflows/build-binaries.yml` (`on: workflow_call`, inputs
+`version` + `ref`). Both `release.yml` (stable) and the nightly channel call it, so the two paths
+can never diverge. It builds `digstore` + the `digs` alias for `windows-x64`, `linux-x64`,
+`linux-arm64` (native `ubuntu-24.04-arm` runner), `macos-arm64`, and `macos-x64`, in the two asset
+shapes (bare per-OS binaries + apt `.tar.gz`). BUILD PREREQ (§3.5 / BINDING contract D6): the
+`digstore-guest` wasm is built for `wasm32-unknown-unknown` BEFORE the CLI on every leg, because
+`digstore-cli`'s `build.rs` embeds it.
+
+### 12.5 RELEASE_TOKEN posture
+
+Releasing uses the `RELEASE_TOKEN` org PAT, not `GITHUB_TOKEN`. If `RELEASE_TOKEN` is absent, EVERY
+channel NO-OPS with a clear `::warning::` — never a half-release. A `concurrency: nightly-release`
+group (cancel-in-progress `false`) serializes runs so an overlapping cron + dispatch cannot race.
