@@ -14,3 +14,4 @@
 # Rendered whitepaper HTML intermediate (the .md source and .pdf are kept).
 /docs/whitepaper/digstore-whitepaper.html
 .testcredentials
+.claude/worktrees/
