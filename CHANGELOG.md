@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.13.3] - 2026-07-15
+
+### CI
+- **release:** Nightlies system (cron + dispatch, nightly channel) (#592) (#19)- **release:** Nightlies polish (#20)
+
 ## [0.13.1] - 2026-07-12
 
 ### Bug Fixes
