@@ -525,7 +525,7 @@ maintainer rather than opening a public issue.
 ## Help & community
 
 - **Docs:** [docs.dig.net](https://docs.dig.net)
-- **Discord:** [discord.gg/dignetwork](https://discord.gg/dignetwork) — questions, help, and project chat.
+- **Discord:** [discord.gg/v78aygUZt](https://discord.gg/v78aygUZt) — questions, help, and project chat.
 
 ## Contributing
 
