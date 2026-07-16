@@ -26,7 +26,11 @@ use std::time::{Duration, Instant};
 fn http_get(port: u16, path: &str) -> Option<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
     stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        // Generous per-request read timeout: on a CPU-saturated CI runner the
+        // child's tokio serve loop can be slow to get scheduled to answer, and a
+        // single poll attempt must outlast that scheduling delay rather than give
+        // up early and force a fresh connection.
+        .set_read_timeout(Some(Duration::from_secs(30)))
         .ok()?;
     let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).ok()?;
@@ -96,7 +100,10 @@ fn http_get_retry(port: u16, path: &str) -> Option<String> {
 
 /// Poll until the dev server answers `/` (or time out).
 fn wait_for_server(port: u16) -> Option<String> {
-    let deadline = Instant::now() + Duration::from_secs(40);
+    // Generous overall window: under nextest the child competes with the rest of
+    // the suite for CPU, so it may take considerably longer than on an idle
+    // machine before its serve loop is scheduled to answer `/`.
+    let deadline = Instant::now() + Duration::from_secs(90);
     while Instant::now() < deadline {
         if let Some(body) = http_get(port, "/") {
             if !body.is_empty() {

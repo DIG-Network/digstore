@@ -1,0 +1,32 @@
+# cargo-nextest configuration.
+#
+# CI runs the suite under `cargo nextest run` (flaky-test management, #489)
+# instead of `cargo test`. The two runners parallelize differently, and that
+# difference broke one test:
+#
+#   The heavy integration tests in digstore-cli AND digstore-compiler exercise
+#   the real chia:// read/compile path, which JIT-compiles the guest wasm in
+#   wasmtime — many seconds of CPU per test (nextest even marks several SLOW,
+#   >60s). `cargo test` runs test BINARIES one at a time, so only one such heavy
+#   test compiles at a time. nextest instead runs num-cpus tests from a single
+#   global pool, so on the 4-vCPU CI runners several of these fully saturate the
+#   runner at once. cli_dev's `dev` child process (a separate process, not a
+#   nextest thread) then can't get its tokio serve loop scheduled to accept `/`
+#   within the test's readiness poll — failing
+#   `dev_serves_real_read_path_with_injected_shims` ("dev server did not come
+#   up") deterministically on both ubuntu-latest and windows-latest.
+#
+# Cap ALL of these heavy integration tests (across both crates) to 2 concurrent
+# via one shared group, so the runner always keeps scheduler slack for the dev
+# child while the fast in-process unit tests keep full parallelism. This mirrors
+# why `cargo test` was green (a local `--test-threads 2` full-suite run
+# reproduces green) without giving up nextest's flaky-run detection.
+
+[test-groups]
+heavy-integration = { max-threads = 2 }
+
+[[profile.default.overrides]]
+# `kind(test)` selects the integration tests under tests/ (not the crates'
+# in-process unit tests), scoped to the two wasmtime-heavy crates.
+filter = 'kind(test) & (package(digstore-cli) | package(digstore-compiler))'
+test-group = 'heavy-integration'
