@@ -3,6 +3,11 @@ name = "digstore-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Core read-crypto and format primitives for the DIG Network store (.dig) format: capsules, manifests, merkle proofs, URN grammar, and the AES-256-GCM-SIV chunk seal."
+repository = "https://github.com/DIG-Network/digstore"
+readme = "README.md"
+keywords = ["dig", "chia", "content-addressed", "merkle", "storage"]
+categories = ["cryptography", "encoding", "data-structures"]
 
 [lib]
 name = "digstore_core"

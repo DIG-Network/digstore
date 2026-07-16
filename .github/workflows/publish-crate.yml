@@ -1,0 +1,103 @@
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Publish the `digstore-core` LIBRARY crate to crates.io (dig_ecosystem #680, WU1).
+#
+# `digstore-core` is the store-format read-crypto crate downstream crates (e.g. dig-urn-resolver)
+# want to depend on BY VERSION — crates.io forbids the git deps they use today, so the root fix is
+# to publish digstore-core by-version. This crate has NO path/git dependencies (all deps are
+# crates.io-versioned), so it publishes standalone.
+#
+# TRIGGER — deliberately NOT the `v*` tag and NOT the nightly cron:
+#   • `v*` tags fire the BINARY release (release.yml) and are cut by nightly-release.yml. Reusing
+#     `v*` here would re-attempt a crate publish on every binary release; crates.io rejects a
+#     duplicate version, spamming red runs. So the crate publish rides its OWN tag namespace,
+#     `digstore-core-v*` (e.g. `digstore-core-v0.13.4`), plus manual `workflow_dispatch`.
+#   • The publish is IDEMPOTENT: it queries crates.io for the version first and NO-OPS if that
+#     version is already published (skip-if-exists, mirroring the nightlies stable skip-if-tagged
+#     posture), so a re-run or an accidental duplicate tag never fails red.
+#
+# The version published is the workspace version (digstore-core inherits `version.workspace = true`),
+# so bump the workspace `[workspace.package].version`, merge, then push `digstore-core-vX.Y.Z`
+# (or run this workflow via dispatch) to publish that version.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+name: Publish digstore-core to crates.io
+
+on:
+  push:
+    tags:
+      - 'digstore-core-v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CRATE: digstore-core
+
+jobs:
+  test:
+    name: Test digstore-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt -p digstore-core -- --check
+      - name: Clippy (warnings are errors)
+        run: cargo clippy -p digstore-core --all-features -- -D warnings
+      - name: Run tests
+        run: cargo test -p digstore-core --all-features
+      - name: Check documentation
+        run: cargo doc -p digstore-core --no-deps --all-features
+
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Package first — proves metadata is complete and no path/git dep leaks, without publishing.
+      - name: Package (dry check)
+        run: cargo package -p digstore-core --allow-dirty
+
+      # Read the version cargo will publish (the resolved workspace version).
+      - name: Resolve crate version
+        id: ver
+        run: |
+          V=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import sys,json; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="digstore-core"))')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "digstore-core version to publish: $V"
+
+      # Skip-if-exists: crates.io rejects duplicate versions, so a re-run / stray tag must NO-OP,
+      # never fail red. Query the crate's versions and stop cleanly if this version is already up.
+      - name: Skip if version already published
+        id: exists
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          # crates.io requires a descriptive User-Agent; 404 => crate not yet published at all.
+          BODY=$(curl -sS -A "dig-ecosystem-ci (help@dig.net)" \
+            "https://crates.io/api/v1/crates/digstore-core/versions" || echo '{}')
+          if echo "$BODY" | python3 -c 'import sys,json; d=json.load(sys.stdin); vs=[v["num"] for v in d.get("versions",[])]; sys.exit(0 if sys.argv[1] in vs else 1)' "$V"; then
+            echo "digstore-core@$V already on crates.io — skipping publish (no-op)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "digstore-core@$V not on crates.io — will publish."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check CARGO_REGISTRY_TOKEN is available
+        if: steps.exists.outputs.skip == 'false'
+        run: |
+          if [ -z "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not available (repo or org secret)."
+            echo "Add a crates.io API token as CARGO_REGISTRY_TOKEN (org secret preferred) and re-run."
+            exit 1
+          fi
+
+      - name: Publish to crates.io
+        if: steps.exists.outputs.skip == 'false'
+        run: cargo publish -p digstore-core --allow-dirty --token "$CARGO_REGISTRY_TOKEN"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
