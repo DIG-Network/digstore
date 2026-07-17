@@ -15,7 +15,7 @@ fn help_json_is_a_complete_contract() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
 
     // Top-level shape.
-    assert_eq!(v["name"].as_str(), Some("digstore"));
+    assert_eq!(v["name"].as_str(), Some("dig-store"));
     assert!(v["version"].is_string());
 
     // Globals are documented once at the root and include the headline flags.

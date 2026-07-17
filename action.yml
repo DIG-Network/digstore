@@ -1,4 +1,4 @@
-name: "Deploy to DIG (digstore)"
+name: "Deploy to DIG (dig-store)"
 description: >-
   Auto-deploy a built site/dapp to your existing DIG store on every push — a new
   capsule, published to DIGHUb — git-push-to-deploy. Advances an
@@ -26,7 +26,7 @@ inputs:
     required: true
   deploy-key:
     description: >-
-      The store's publisher deploy key (64-hex), from `digstore deploy-key export`
+      The store's publisher deploy key (64-hex), from `dig-store deploy-key export`
       run once on the machine that created the store. Authorizes publishing new
       capsules to DIGHUb. It has NO spend authority, but it is still a credential —
       pass it as a repository secret.
@@ -123,7 +123,7 @@ runs:
     - name: Checkout digstore (${{ inputs.digstore-ref }})
       uses: actions/checkout@v4
       with:
-        repository: DIG-Network/digstore
+        repository: DIG-Network/dig-store
         ref: ${{ inputs.digstore-ref }}
         path: .digstore-src
         persist-credentials: false
@@ -146,9 +146,11 @@ runs:
       working-directory: .digstore-src
       run: |
         # BINDING contract D6: the guest wasm must exist before the CLI build.
+        # `cargo install` on the digstore-cli package produces the renamed `dig-store`
+        # binary (+ the `digs` alias) on PATH (package name unchanged; #703).
         cargo build -p digstore-guest --target wasm32-unknown-unknown --release
         cargo install --path crates/digstore-cli --force --locked
-        digstore --version
+        dig-store --version
 
     # 2. Import the funded wallet seed non-interactively. The mnemonic +
     #    passphrase are masked and never printed; the seed lives in a throwaway
@@ -169,7 +171,7 @@ runs:
         echo "::add-mask::$PASS"
         echo "DIGSTORE_PASSPHRASE=$PASS" >> "$GITHUB_ENV"
         DIGSTORE_HOME="$DIGSTORE_HOME" DIGSTORE_PASSPHRASE="$PASS" \
-          digstore seed import --mnemonic "$DIG_MNEMONIC"
+          dig-store seed import --mnemonic "$DIG_MNEMONIC"
 
     # 3. Deploy: reconstruct the store locally with the deploy key, stage the
     #    output, advance the on-chain root, and push the new capsule to DIGHUb.
@@ -200,7 +202,7 @@ runs:
         args+=(--message "$msg")
 
         # Run the deploy, capturing the machine-readable JSON result.
-        out="$(digstore "${args[@]}")"
+        out="$(dig-store "${args[@]}")"
         echo "$out"
 
         capsule="$(printf '%s' "$out" | jq -r '.capsule // empty')"

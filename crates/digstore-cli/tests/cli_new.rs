@@ -15,7 +15,7 @@ use predicates::prelude::*;
 fn new_static_site_scaffolds_without_minting() {
     let td = tmp_dig();
     let target = td.path().join("site");
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .args(["new", "static-site"])
         .arg(&target)
@@ -37,7 +37,7 @@ fn new_static_site_scaffolds_without_minting() {
 fn new_dapp_includes_window_chia_example() {
     let td = tmp_dig();
     let target = td.path().join("dapp");
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .args(["new", "dapp-window-chia"])
         .arg(&target)
@@ -50,7 +50,7 @@ fn new_dapp_includes_window_chia_example() {
 /// `--list` prints the catalog and exits 0 (works as JSON too).
 #[test]
 fn new_list_shows_all_templates() {
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .args(["new", "x", "--list"])
         .assert()
@@ -68,7 +68,7 @@ fn new_list_shows_all_templates() {
 #[test]
 fn new_unknown_template_errors() {
     let td = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .args(["new", "not-a-template"])
         .arg(td.path().join("out"))
@@ -82,7 +82,7 @@ fn new_unknown_template_errors() {
 fn new_refuses_nonempty_dir_without_force() {
     let td = tmp_dig();
     std::fs::write(td.path().join("keep.txt"), b"hi").unwrap();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(td.path())
         .args(["new", "static-site"])
@@ -97,7 +97,7 @@ fn new_refuses_nonempty_dir_without_force() {
 fn new_vite_react_is_build_ready() {
     let td = tmp_dig();
     let target = td.path().join("app");
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .args(["new", "vite-react"])
         .arg(&target)

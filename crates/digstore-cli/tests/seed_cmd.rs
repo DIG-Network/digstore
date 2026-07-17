@@ -6,7 +6,7 @@ use assert_cmd::Command;
 use predicates::str::contains;
 
 fn digstore(home: &std::path::Path) -> Command {
-    let mut cmd = Command::cargo_bin("digstore").unwrap();
+    let mut cmd = Command::cargo_bin("dig-store").unwrap();
     cmd.env("DIGSTORE_HOME", home);
     cmd.env("DIGSTORE_PASSPHRASE", "test-pass");
     cmd

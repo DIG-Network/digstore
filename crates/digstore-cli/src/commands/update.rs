@@ -15,8 +15,8 @@ use crate::cli::UpdateArgs;
 use crate::context::CliContext;
 use crate::error::CliError;
 
-/// Upstream repository whose releases drive `digstore update`.
-pub const RELEASES_API: &str = "https://api.github.com/repos/DIG-Network/digstore/releases/latest";
+/// Upstream repository whose releases drive `dig-store update`.
+pub const RELEASES_API: &str = "https://api.github.com/repos/DIG-Network/dig-store/releases/latest";
 
 /// GitHub requires a non-empty User-Agent on every API request.
 pub const USER_AGENT: &str = concat!("digstore-cli/", env!("CARGO_PKG_VERSION"));
@@ -152,15 +152,35 @@ fn is_installer_name(name: &str) -> bool {
         || (n.ends_with(".exe") && n.contains("setup"))
 }
 
-/// Select the release asset carrying the `digstore` binary for `os`/`arch` (from
+/// Rank a release asset by which CLI binary it carries, LOWEST first. A release ships
+/// several assets per OS/arch: the primary `dig-store-*`, the transitional legacy
+/// `digstore-*` (dual-published for one cycle, rename epic #703), and the `digs-*`
+/// alias — all three share the OS+arch tokens the filter below matches on, so the
+/// self-updater must deterministically prefer the primary `dig-store` binary and never
+/// accidentally replace itself with the short `digs` alias. Unknown stems sort last.
+fn binary_stem_rank(name: &str) -> u8 {
+    let n = name.to_ascii_lowercase();
+    if n.starts_with("dig-store") {
+        0
+    } else if n.starts_with("digstore") {
+        1
+    } else if n.starts_with("digs") {
+        2
+    } else {
+        3
+    }
+}
+
+/// Select the release asset carrying the `dig-store` binary for `os`/`arch` (from
 /// `std::env::consts`). Matches an asset whose name mentions BOTH an OS token and an
-/// arch token, excluding GUI installers/disk-images. Prefers a raw executable; falls
-/// back to a tarball when that is the only match (e.g. Linux aarch64 ships only a
-/// `.tar.gz`). Returns `None` when nothing matches (caller fails loud with manual steps).
+/// arch token, excluding GUI installers/disk-images. Prefers the primary `dig-store`
+/// stem over the transitional `digstore`/`digs` assets, then a raw executable over a
+/// tarball (e.g. Linux aarch64 ships only a `.tar.gz`). Returns `None` when nothing
+/// matches (caller fails loud with manual steps).
 pub fn select_binary_asset(assets: &[Asset], os: &str, arch: &str) -> Option<PlatformAsset> {
     let oss = os_tokens(os);
     let ars = arch_tokens(arch);
-    let matches: Vec<&Asset> = assets
+    let mut matches: Vec<&Asset> = assets
         .iter()
         .filter(|a| {
             let n = a.name.to_ascii_lowercase();
@@ -169,11 +189,10 @@ pub fn select_binary_asset(assets: &[Asset], os: &str, arch: &str) -> Option<Pla
                 && ars.iter().any(|t| n.contains(t))
         })
         .collect();
-    // Prefer a raw (non-archive) binary; otherwise take the (tarball) match.
-    let chosen = matches
-        .iter()
-        .find(|a| !is_archive_name(&a.name))
-        .or_else(|| matches.first())?;
+    // Sort so the best candidate is first: primary stem before alias, then raw binary
+    // before tarball. A stable sort keeps GitHub's asset order as the final tiebreak.
+    matches.sort_by_key(|a| (binary_stem_rank(&a.name), is_archive_name(&a.name)));
+    let chosen = matches.first()?;
     Some(PlatformAsset {
         name: chosen.name.clone(),
         url: chosen.browser_download_url.clone(),
@@ -207,10 +226,19 @@ pub fn looks_like_native_binary(bytes: &[u8], os: &str) -> bool {
     }
 }
 
-/// Extract the `digstore` executable from a gzip-compressed tarball's raw bytes.
-/// Returns the binary's bytes, or an error if the archive holds no `digstore` entry.
+/// Extract the CLI executable from a gzip-compressed tarball's raw bytes. Returns the
+/// binary's bytes, or an error if the archive holds no CLI entry.
+///
+/// The release tarball's primary entry is `dig-store` (rename epic #703); for one
+/// transition cycle it ALSO carries a `digstore` -> `dig-store` compat symlink, so this
+/// only accepts a REGULAR FILE (never the symlink) and prefers the primary `dig-store`
+/// name, falling back to the legacy `digstore` name so a `dig-store` binary can still
+/// self-update from an older, pre-rename release tarball.
 pub fn extract_digstore_from_targz(bytes: &[u8]) -> Result<Vec<u8>, CliError> {
     use std::io::Read;
+    // Collect regular-file entries keyed by basename, so the primary `dig-store` can be
+    // preferred over the legacy `digstore` regardless of their order in the archive.
+    let mut by_name: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
     let entries = archive
         .entries()
@@ -218,22 +246,34 @@ pub fn extract_digstore_from_targz(bytes: &[u8]) -> Result<Vec<u8>, CliError> {
     for entry in entries {
         let mut entry =
             entry.map_err(|e| CliError::UpdateFailed(format!("read release archive: {e}")))?;
-        let is_digstore = entry
+        // Skip the transitional `digstore` -> `dig-store` symlink (and any non-file).
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let name = entry
             .path()
             .ok()
-            .and_then(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_owned))
-            .map(|n| n == "digstore" || n == "digstore.exe")
-            .unwrap_or(false);
-        if is_digstore {
+            .and_then(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_owned));
+        let Some(name) = name else { continue };
+        if matches!(
+            name.as_str(),
+            "dig-store" | "dig-store.exe" | "digstore" | "digstore.exe"
+        ) {
             let mut buf = Vec::new();
             entry
                 .read_to_end(&mut buf)
-                .map_err(|e| CliError::UpdateFailed(format!("extract digstore: {e}")))?;
-            return Ok(buf);
+                .map_err(|e| CliError::UpdateFailed(format!("extract {name}: {e}")))?;
+            by_name.insert(name, buf);
+        }
+    }
+    // Prefer the primary `dig-store` entry; fall back to the legacy `digstore` name.
+    for key in ["dig-store", "dig-store.exe", "digstore", "digstore.exe"] {
+        if let Some(bytes) = by_name.remove(key) {
+            return Ok(bytes);
         }
     }
     Err(CliError::UpdateFailed(
-        "the release archive contains no `digstore` executable".to_string(),
+        "the release archive contains no `dig-store` executable".to_string(),
     ))
 }
 
@@ -403,8 +443,8 @@ fn display_version(v: &str) -> String {
 
 /// Carry out the update once we know a newer release exists.
 ///
-/// One unified path on EVERY platform (Windows included, #303): `digstore`
-/// updates ITS OWN binary in place — resolve the raw per-OS/arch `digstore`
+/// One unified path on EVERY platform (Windows included, #303): `dig-store`
+/// updates ITS OWN binary in place — resolve the raw per-OS/arch `dig-store`
 /// binary asset via [`select_binary_asset`], download it, sanity-check it,
 /// then atomically self-replace via [`install_binary`]. There is no GUI
 /// installer step here; the bundled installer moved to dig-installer.
@@ -431,7 +471,7 @@ fn perform_update(
             ui.line(format!("release: {}", release.html_url));
         }
         return Err(CliError::NotFound(format!(
-            "no digstore binary asset for {os}/{arch} in release {latest}; \
+            "no dig-store binary asset for {os}/{arch} in release {latest}; \
              download it from the release page above and place it on your PATH"
         )));
     };
@@ -452,7 +492,7 @@ fn perform_update(
     };
     if !looks_like_native_binary(&binary, os) {
         return Err(CliError::UpdateFailed(
-            "the downloaded asset is not a valid digstore binary (aborting; nothing changed)"
+            "the downloaded asset is not a valid dig-store binary (aborting; nothing changed)"
                 .to_string(),
         ));
     }
@@ -622,11 +662,11 @@ fn not_writable(target: &std::path::Path, e: &std::io::Error) -> CliError {
     CliError::UpdateFailed(format!(
         "cannot write {} ({e}).\n\
          Manual update:\n  \
-         1. Download the digstore binary for your OS/arch from \
-         https://github.com/DIG-Network/digstore/releases/latest\n  \
-         2. chmod +x ./digstore\n  \
-         3. (macOS) xattr -d com.apple.quarantine ./digstore\n  \
-         4. mv ./digstore \"{}\"   # or re-run with write permission / the installer",
+         1. Download the dig-store binary for your OS/arch from \
+         https://github.com/DIG-Network/dig-store/releases/latest\n  \
+         2. chmod +x ./dig-store\n  \
+         3. (macOS) xattr -d com.apple.quarantine ./dig-store\n  \
+         4. mv ./dig-store \"{}\"   # or re-run with write permission / the installer",
         target.display(),
         target.display(),
     ))
@@ -783,6 +823,28 @@ mod tests {
         assert!(select_binary_asset(&assets, "macos", "aarch64").is_none());
     }
 
+    /// rename epic #703: a dual-published release ships the primary `dig-store-*`, the
+    /// transitional legacy `digstore-*`, AND the `digs-*` alias for the SAME OS/arch —
+    /// all three match the OS+arch filter. The selector must deterministically pick the
+    /// primary `dig-store` binary, never the short `digs` alias or the legacy name.
+    #[test]
+    fn prefers_dig_store_over_legacy_and_digs_alias() {
+        // Deliberately listed with `digs` + `digstore` BEFORE `dig-store` so a naive
+        // "first match" would pick the wrong one.
+        let assets = vec![
+            asset("digs-0.14.0-linux-x64"),
+            asset("digstore-0.14.0-linux-x64"),
+            asset("dig-store-0.14.0-linux-x64"),
+            asset("dig-store-0.14.0-x86_64-unknown-linux-gnu.tar.gz"),
+        ];
+        let a = select_binary_asset(&assets, "linux", "x86_64").unwrap();
+        assert_eq!(a.name, "dig-store-0.14.0-linux-x64");
+        assert!(
+            !a.is_tarball,
+            "prefer the raw primary binary over the tarball"
+        );
+    }
+
     // --- #127: downloaded-binary sanity check ---------------------------------
 
     #[test]
@@ -826,6 +888,39 @@ mod tests {
     fn extract_errors_when_no_digstore_entry() {
         let gz = targz_with("README.txt", b"not the binary");
         assert!(extract_digstore_from_targz(&gz).is_err());
+    }
+
+    /// rename epic #703: the primary tarball entry is `dig-store`; a `dig-store` binary
+    /// self-updating from a NEW release must extract it.
+    #[test]
+    fn extracts_dig_store_from_a_targz() {
+        let payload = b"\x7fELF this-is-the-dig-store-binary";
+        let gz = targz_with("dig-store", payload);
+        assert_eq!(extract_digstore_from_targz(&gz).unwrap(), payload);
+    }
+
+    /// The transition tarball carries BOTH the real `dig-store` file AND a `digstore`
+    /// -> `dig-store` compat symlink. Extraction must return the REAL `dig-store`
+    /// bytes and never the (empty) symlink entry.
+    #[test]
+    fn extracts_dig_store_and_skips_the_compat_symlink() {
+        let payload = b"\x7fELF real-dig-store";
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut tb = tar::Builder::new(enc);
+        // A `digstore` -> `dig-store` symlink (no content), then the real `dig-store`.
+        let mut link = tar::Header::new_gnu();
+        link.set_entry_type(tar::EntryType::Symlink);
+        link.set_size(0);
+        link.set_mode(0o777);
+        tb.append_link(&mut link, "digstore", "dig-store").unwrap();
+        let mut file = tar::Header::new_gnu();
+        file.set_size(payload.len() as u64);
+        file.set_mode(0o755);
+        file.set_cksum();
+        tb.append_data(&mut file, "dig-store", &payload[..])
+            .unwrap();
+        let gz = tb.into_inner().unwrap().finish().unwrap();
+        assert_eq!(extract_digstore_from_targz(&gz).unwrap(), payload);
     }
 
     // --- #127: atomic self-replace (against a TEMP file, NEVER the live binary) --

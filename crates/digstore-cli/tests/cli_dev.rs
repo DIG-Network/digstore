@@ -167,7 +167,7 @@ fn spawn_port_reader(child: &mut Child) -> std::sync::mpsc::Receiver<u16> {
 fn dev_serves_real_read_path_with_injected_shims() {
     let td = tmp_dir();
     // Scaffold a static site to serve.
-    Command::new(cargo_bin("digstore"))
+    Command::new(cargo_bin("dig-store"))
         .args(["new", "static-site"])
         .arg(td.path())
         .arg("--force")
@@ -177,7 +177,7 @@ fn dev_serves_real_read_path_with_injected_shims() {
     // `--port 0` => the OS assigns a free port; `--json` makes `dev` print the
     // real bound port once it is accepting connections. This removes both the
     // fixed-port collision and the startup race that made this test flaky in CI.
-    let mut child = Command::new(cargo_bin("digstore"))
+    let mut child = Command::new(cargo_bin("dig-store"))
         .current_dir(td.path())
         .args(["--json", "dev", "--port", "0"])
         .stdout(Stdio::piped())

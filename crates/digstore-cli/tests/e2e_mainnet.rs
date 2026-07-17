@@ -52,7 +52,7 @@ fn mainnet_init_add_commit_anchor_status() {
     // A `digstore` invocation in the throwaway project + home. Crucially this
     // does NOT set DIGSTORE_ANCHOR_MOCK — it is the real on-chain path.
     let dig = || {
-        let mut cmd = Command::cargo_bin("digstore").unwrap();
+        let mut cmd = Command::cargo_bin("dig-store").unwrap();
         cmd.arg("--dig-dir")
             .arg(project.path().join(".dig"))
             .current_dir(project.path())

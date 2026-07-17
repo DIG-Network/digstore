@@ -75,7 +75,7 @@ pub fn seed_mock_env(cmd: &mut Command, dir: &std::path::Path) {
 /// Transparently carries the seeded mock anchoring env (see [`seed_mock_env`]) so
 /// `init` mints against the in-memory mock instead of Chia mainnet.
 pub fn dig(dir: &TempDir) -> Command {
-    let mut cmd = Command::cargo_bin("digstore").unwrap();
+    let mut cmd = Command::cargo_bin("dig-store").unwrap();
     cmd.arg("--dig-dir")
         .arg(dir.path().join(".dig"))
         .current_dir(dir.path());

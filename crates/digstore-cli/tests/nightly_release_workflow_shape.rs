@@ -239,17 +239,69 @@ fn reusable_build_workflow_is_workflow_call_and_shared() {
 }
 
 /// `digs` is a first-class alias binary (issue #434): the reusable build MUST compile + stage it
-/// beside `digstore` so every release (stable AND nightly) carries the `digs-<ver>-<os_arch>`
+/// beside `dig-store` so every release (stable AND nightly) carries the `digs-<ver>-<os_arch>`
 /// asset — the producer-side counterpart to the dig-installer's `digs` matcher.
 #[test]
 fn reusable_build_ships_the_digs_alias() {
     let build = workflow("build-binaries.yml");
     assert!(
-        build.contains("--bin digstore --bin digs"),
-        "build-binaries.yml must `cargo build … --bin digstore --bin digs` so the alias ships"
+        build.contains("--bin dig-store --bin digs"),
+        "build-binaries.yml must `cargo build … --bin dig-store --bin digs` so the alias ships"
     );
     assert!(
         build.contains("dist/digs-${VERSION}-${{ matrix.out_name }}"),
         "build-binaries.yml must stage a `digs-<ver>-<os_arch>` release asset"
+    );
+}
+
+/// Rename epic #703: the primary binary is `dig-store`, but for one transition cycle every asset
+/// is DUAL-PUBLISHED under BOTH the new `dig-store-*` stem AND the legacy `digstore-*` stem so the
+/// two installers (apt.dig.net + dig-installer) stay green until they cut over. This guards the
+/// dual-publish (both stems staged, both tarballs cut) and the transitional compat symlink.
+#[test]
+fn reusable_build_dual_publishes_new_and_legacy_stems() {
+    let build = workflow("build-binaries.yml");
+    // Bare per-OS binaries: both stems.
+    assert!(
+        build.contains("dist/dig-store-${VERSION}-${{ matrix.out_name }}"),
+        "build-binaries.yml must stage the new `dig-store-<ver>-<os_arch>` bare binary"
+    );
+    assert!(
+        build.contains("dist/digstore-${VERSION}-${{ matrix.out_name }}"),
+        "build-binaries.yml must ALSO stage the legacy `digstore-<ver>-<os_arch>` bare binary \
+         (transitional dual-publish) until dig-installer cuts over"
+    );
+    // Tarballs: both stems.
+    assert!(
+        build.contains("dist/dig-store-${VERSION}-${ARCH}.tar.gz"),
+        "build-binaries.yml must cut the new `dig-store-<ver>-<arch>.tar.gz` for apt"
+    );
+    assert!(
+        build.contains("dist/digstore-${VERSION}-${ARCH}.tar.gz"),
+        "build-binaries.yml must ALSO cut the legacy `digstore-<ver>-<arch>.tar.gz` (transitional) \
+         until apt.dig.net cuts over"
+    );
+    // Transitional compat symlink inside the tarball.
+    assert!(
+        build.contains("ln -s dig-store"),
+        "the tarball must ship a `digstore` -> `dig-store` compat symlink for one transition cycle"
+    );
+}
+
+/// The `digs` asset name must be derived INDEPENDENTLY, never by a `dig-store`->`digs` substring
+/// replacement on the primary bin: after the #703 rename `dig-store` contains no `digs` substring,
+/// so the old `${DIGS_BIN/digstore/digs}` trick would silently produce a wrong/empty name. This
+/// pins the explicit derivation so a careless revert to the substring hack fails loudly.
+#[test]
+fn digs_asset_name_is_derived_independently_not_by_substring() {
+    let build = workflow("build-binaries.yml");
+    assert!(
+        !build.contains("/digstore/digs}") && !build.contains("/dig-store/digs}"),
+        "build-binaries.yml must NOT derive the `digs` name by substring replacement on the \
+         primary bin (broken after the #703 rename); derive it independently"
+    );
+    assert!(
+        build.contains("DIGS_SRC=\"$REL/digs${EXE}\""),
+        "the `digs` binary path must be built independently as `digs` + the OS exe suffix"
     );
 }

@@ -3,7 +3,7 @@ use assert_cmd::Command;
 use common::tmp_dig;
 
 fn dig_in(dir: &std::path::Path) -> Command {
-    let mut c = Command::cargo_bin("digstore").unwrap();
+    let mut c = Command::cargo_bin("dig-store").unwrap();
     c.current_dir(dir);
     common::seed_mock_env(&mut c, dir);
     c

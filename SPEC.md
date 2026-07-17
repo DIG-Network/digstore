@@ -1,6 +1,6 @@
-# digstore — `.dig` store format & manifest specification
+# dig-store — `.dig` store format & manifest specification
 
-This is the NORMATIVE contract for the digstore `.dig` store format: the byte-exact
+This is the NORMATIVE contract for the dig-store `.dig` store format: the byte-exact
 data-section blob, the capsule/generation model, per-resource crypto and merkle
 commitment, and the normalized public manifest. An independent implementation that
 reads or writes `.dig` modules MUST conform to this document. The single source of
@@ -8,12 +8,12 @@ truth in code is `digstore-core` (`datasection`, `merkle`, `crypto`, `urn`,
 `public_manifest`); this spec MUST agree with it and with the ecosystem contracts in
 the superproject `SYSTEM.md` and the user-facing protocol pages under `docs.dig.net`.
 
-**CLI binaries.** The `digstore-cli` crate ships TWO binaries, `digstore` and `digs`.
-`digs` is a first-class alias: `digs <args>` behaves IDENTICALLY to `digstore <args>`
+**CLI binaries.** The `digstore-cli` crate ships TWO binaries, `dig-store` and `digs`.
+`digs` is a first-class alias: `digs <args>` behaves IDENTICALLY to `dig-store <args>`
 (same subcommands, flags, `--json`, and exit codes). Both share ONE codepath
 (`digstore_cli::run()`) and each reflects its own invoked name (arg0) in
 `--help`/`--version`/`completion`/`--help-json`. Both binaries MUST be shipped together
-everywhere `digstore` ships (cargo-install, the universal installer, the apt `.deb`).
+everywhere `dig-store` ships (cargo-install, the universal installer, the apt `.deb`).
 
 All multi-byte integers are **big-endian** (Chia streamable framing). The shared codec
 (`digstore_core::codec`) frames: `uN` as `N/8` BE bytes; `String` as `u32` byte length
@@ -156,7 +156,7 @@ Entries are ordered **ascending by `path`** (UTF-8 byte order); the encoding is 
 `schema_version` starts at `1`; future fields are only APPENDED, so a reader dispatches on
 the version and older bodies remain readable.
 
-**JSON surface.** The CLI `digstore manifest --json`, the JSON-RPC `dig.getManifest`, and the
+**JSON surface.** The CLI `dig-store manifest --json`, the JSON-RPC `dig.getManifest`, and the
 browser reader `readPublicManifest` all emit the SAME shape with the byte fields as 64-char
 lowercase hex:
 
@@ -178,7 +178,7 @@ lowercase hex:
 - **Blob reader** — `digstore_core::datasection::read_public_manifest(blob)` returns
   `Option<PublicManifest>` (None when absent). `dig-client-wasm::readPublicManifest(blob)`
   exposes it to the browser as JSON.
-- **CLI** — `digstore manifest [--json]` prints the normalized manifest.
+- **CLI** — `dig-store manifest [--json]` prints the normalized manifest.
 
 ## 8. Conformance
 
@@ -194,9 +194,9 @@ lowercase hex:
 
 Scope note: unlike §1–8, this section is a CLI/on-chain-authority contract, not a `.dig`
 byte-format contract — it is kept here because it is a public surface an independent
-`digstore` reimplementation must also expose.
+`dig-store` reimplementation must also expose.
 
-- `digstore authorize-origin-as-writer <origin> [--pubkey <hex>] [--dry-run] [--fee <mojos>]`
+- `dig-store authorize-origin-as-writer <origin> [--pubkey <hex>] [--dry-run] [--fee <mojos>]`
   authorizes an origin's DIG identity as a CHIP-0035 **writer** delegate on the active store's
   on-chain singleton, using the existing `digstore_chain::singleton` delegation primitive
   (`writer_delegated_puzzle` + `update_store_ownership`) — never a hand-rolled puzzle.
@@ -205,7 +205,7 @@ byte-format contract — it is kept here because it is a public surface an indep
   contract for this endpoint (path, method, response shape, failure semantics) is normative in
   the superproject `SYSTEM.md` → Shared contracts → "Well-known origin pubkey discovery"; this
   repo is a CONSUMER (discovery client) only — the endpoint's SERVING side is implemented by
-  whichever origin is being authorized (e.g. a hub), not by digstore.
+  whichever origin is being authorized (e.g. a hub), not by dig-store.
 - **Merge semantics**: `update_store_ownership`'s delegated-puzzle set is a REPLACE, not an
   append, so the command reads the store's CURRENT delegated puzzles first and re-sends every
   existing delegate plus the new writer — an existing admin/writer/oracle delegate is never
@@ -218,7 +218,7 @@ byte-format contract — it is kept here because it is a public surface an indep
 ## 10. Per-capsule $DIG price (commit / deploy)
 
 Scope note: like §9, this is a CLI/economic contract, not a `.dig` byte-format contract; it is
-normative for how a `digstore` reimplementation prices a capsule.
+normative for how a `dig-store` reimplementation prices a capsule.
 
 Minting a store (`init`) is **FREE of $DIG** (XCH network fee only). The $DIG payment is
 attached ONLY to a `commit` / root-advance (a capsule), atomic with the singleton update in one
@@ -231,7 +231,7 @@ The per-capsule price is **dynamic and USD-pegged**, NOT a fixed token amount:
   is the same fixed size, so size-varying pricing is FORBIDDEN — it would re-leak content size).
 - **ONE canonical source.** The price is computed on the DIGHub server (the pure formula +
   USD-target constants; a live DIG→USD oracle) and served at **`GET https://hub.dig.net/v1/pricing`**
-  as `mint_dig` (the capsule price in DIG **base units**; 1 DIG = 1000 base units). A `digstore`
+  as `mint_dig` (the capsule price in DIG **base units**; 1 DIG = 1000 base units). A `dig-store`
   implementation MUST consume this SAME source so it never diverges from what DIGHub charges — it
   MUST NOT hard-code a fixed price or reimplement the formula/oracle. The response is additive-only
   (`{dig_usd, computed_at, source, mint_dig, mint_usd, subdomain_dig, subdomain_usd, cert_dig,
@@ -245,7 +245,7 @@ The per-capsule price is **dynamic and USD-pegged**, NOT a fixed token amount:
   unreachable/undecodable/omits a valid `mint_dig`, the command MUST error clearly (pointing the
   user at `--dig-amount`) and spend NOTHING — it MUST NOT silently fall back to a stale flat
   amount. (The endpoint has its own server-side fallback price, so a reachable endpoint always
-  returns a usable `mint_dig`; digstore surfaces a note when `source` is `"fallback"`/`"… (stale)"`.)
+  returns a usable `mint_dig`; dig-store surfaces a note when `source` is `"fallback"`/`"… (stale)"`.)
 - The amount displayed to the user (and in `--dry-run`'s `cost_dig`) is byte-for-byte the amount
   built into the on-chain DIG-CAT payment (`digstore_chain::cat::build_dig_store_payment`).
 
@@ -253,8 +253,8 @@ The per-capsule price is **dynamic and USD-pegged**, NOT a fixed token amount:
 
 Scope note: a CLI/economic contract (not a `.dig` byte-format contract) governing how the money
 commands choose which XCH coins fund a spend, so a coin-fragmented wallet is never silently unable
-to publish. This is digstore's expression of the ecosystem-wide **coin-management contract**
-(`SYSTEM.md` → coin-management; the shared primitive is `dig-l1-wallet`). A `digstore`
+to publish. This is dig-store's expression of the ecosystem-wide **coin-management contract**
+(`SYSTEM.md` → coin-management; the shared primitive is `dig-l1-wallet`). A `dig-store`
 reimplementation MUST replicate it and MUST NOT hand-roll its own selection heuristic.
 
 Every XCH-funding spend built by `init` (mint fee), `commit` and `deploy` (root-advance XCH fee):
@@ -284,7 +284,7 @@ Every XCH-funding spend built by `init` (mint fee), `commit` and `deploy` (root-
   round.
 - **Never hand-rolls the selection or the merge** — both are the `dig-l1-wallet` primitives
   (`select_for_spend` / `select_for_consolidation`); only the bundle construction (the datalayer_driver
-  / `chia-wallet-sdk` builder) stays digstore's.
+  / `chia-wallet-sdk` builder) stays dig-store's.
 
 The per-capsule $DIG (CAT) payment (§10) rides in the same commit/deploy bundle; its selection is
 largest-first. (Capping + consolidating the $DIG-CAT side under the same contract is a follow-up.)
@@ -293,7 +293,7 @@ largest-first. (Capping + consolidating the $DIG-CAT side under the same contrac
 
 Scope note: like §9–10, this is a CLI/off-chain-JSON contract (`nft mint`/`nft bulk`/`collection
 create`/`collection mint`), not a `.dig` byte-format contract; it is normative for how a
-`digstore` reimplementation reads/writes CHIP-0007 documents so third-party tooling (and the
+`dig-store` reimplementation reads/writes CHIP-0007 documents so third-party tooling (and the
 `chip35_dl_coin` wasm) stays byte-compatible (see `SYSTEM.md` → CHIP-0007 metadata contract).
 
 CHIP-0007 defines **two distinct attribute shapes** that MUST NOT be confused (issue #187):
@@ -306,7 +306,7 @@ CHIP-0007 defines **two distinct attribute shapes** that MUST NOT be confused (i
   `CollectionRef.attributes`) — each entry is `{"type": "<category>", "value": "<value>"}`. The
   field is `type`, **NOT** `trait_type`.
 
-A `digstore` implementation:
+A `dig-store` implementation:
 
 - MUST serialize collection-level attributes with the field name `type` (never `trait_type`).
 - MUST serialize NFT-item attributes with the field name `trait_type` (never `type`).
@@ -353,7 +353,7 @@ Every `--did` flag (`collection mint`, `collection show`, `nft mint --did`) acce
 - a 64-hex launcher id (a leading `0x` is tolerated), or
 - a `did:chia:1…` bech32m address — the form Sage and CNI display DIDs in. Chia's DID bech32m
   encoding uses the literal `"did:chia:"` (colon included) as the bech32 human-readable part, so
-  the FULL string (not a stripped suffix) is the bech32m payload; a `digstore` reimplementation
+  the FULL string (not a stripped suffix) is the bech32m payload; a `dig-store` reimplementation
   decodes it the same way it would decode an `xch1…`/`nft1…` bech32m address, then checks the
   decoded prefix is exactly `"did:chia:"`.
 
@@ -398,7 +398,7 @@ split into cost-bounded batches. A reimplementation:
 - **Cost-bounds each batch, computed — never a hard-coded count.** The per-block CLVM cost ceiling
   is `MAX_BLOCK_COST_CLVM = 11_000_000_000` (Chia mainnet `ConsensusConstants::max_block_cost_clvm`).
   A batch's estimated cost MUST stay at or under a conservative fraction of that ceiling
-  (digstore uses `1/4`) so that estimate error, block contention, and gateway request-size limits are
+  (dig-store uses `1/4`) so that estimate error, block contention, and gateway request-size limits are
   all absorbed. The estimate is `base + per_item * n` where the per-item constant is proven
   conservative against the real Chia consensus cost model (`run_spendbundle` under
   `MAINNET_CONSTANTS`): the measured marginal per-item cost MUST NOT exceed the constant. The default
@@ -428,7 +428,7 @@ split into cost-bounded batches. A reimplementation:
 
 ## 12. Release pipeline — nightly cron + manual dispatch
 
-How the `digstore` CLI binary + its `digs` alias are built and released. The shape is copied from
+How the `dig-store` CLI binary + its `digs` alias are built and released. The shape is copied from
 the ecosystem's reference nightlies implementation (`dig-updater`); the ops runbook is
 `runbooks/release.md`.
 
@@ -450,7 +450,7 @@ selected channel(s).
 **60-day auto-disable caveat.** GitHub auto-disables a `schedule:` trigger after 60 days with no
 repo activity on a public repo, with no auto-re-enable — and since this cron is the ONLY automatic
 release trigger, a quiet repo can silently stop releasing with no error. Detect it with
-`gh api repos/DIG-Network/digstore/actions/workflows/nightly-release.yml --jq .state` (a value of
+`gh api repos/DIG-Network/dig-store/actions/workflows/nightly-release.yml --jq .state` (a value of
 `disabled_inactivity` means it was auto-disabled) and recover with `gh workflow enable
 nightly-release.yml` (see `runbooks/release.md`). Any repo activity resets the 60-day counter.
 
@@ -494,11 +494,20 @@ Every night (and on demand) builds `main` HEAD for every OS/arch and publishes a
 
 The cross-OS build lives once in `.github/workflows/build-binaries.yml` (`on: workflow_call`, inputs
 `version` + `ref`). Both `release.yml` (stable) and the nightly channel call it, so the two paths
-can never diverge. It builds `digstore` + the `digs` alias for `windows-x64`, `linux-x64`,
+can never diverge. It builds `dig-store` + the `digs` alias for `windows-x64`, `linux-x64`,
 `linux-arm64` (native `ubuntu-24.04-arm` runner), `macos-arm64`, and `macos-x64`, in the two asset
 shapes (bare per-OS binaries + apt `.tar.gz`). BUILD PREREQ (§3.5 / BINDING contract D6): the
 `digstore-guest` wasm is built for `wasm32-unknown-unknown` BEFORE the CLI on every leg, because
 `digstore-cli`'s `build.rs` embeds it.
+
+TRANSITIONAL DUAL-PUBLISH (rename epic #703): the primary binary was renamed `digstore` ->
+`dig-store` (the Cargo package name `digstore-cli` and all library crate names are UNCHANGED). For
+one transition cycle every asset is published under BOTH the new `dig-store-<ver>-<os_arch>` stem
+AND the legacy `digstore-<ver>-<os_arch>` stem (bare binaries + apt `.tar.gz`), and each apt tarball
+ships a `digstore` -> `dig-store` compat symlink at its root, so apt.dig.net + dig-installer stay
+green until they cut over. The `digs` alias asset name is derived independently (there is no
+`dig-store` -> `digs` substring). The legacy stem + symlink drop in a later release once both
+installers have cut over.
 
 ### 12.5 RELEASE_TOKEN posture
 

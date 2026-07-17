@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a problem with digstore
+about: Report a problem with dig-store
 title: "[bug] "
 labels: bug
 ---
@@ -17,7 +17,7 @@ A clear description of the bug.
 What you expected instead.
 
 **Environment**
-- `digstore --version`:
+- `dig-store --version`:
 - OS / arch:
 - Install method (installer / from source):
 

@@ -32,7 +32,7 @@
 # 60-day auto-disable (GitHub platform behavior, not this workflow's): GitHub disables a
 # `schedule:` trigger after 60 days with NO repo activity on a public repo, with no auto-re-enable
 # — and since #590 removed the push-to-main trigger, this cron is the ONLY automatic release
-# path. If nightlies silently stop, check `gh api repos/DIG-Network/digstore/actions/workflows/
+# path. If nightlies silently stop, check `gh api repos/DIG-Network/dig-store/actions/workflows/
 # nightly-release.yml --jq .state` and re-enable with `gh workflow enable nightly-release.yml`
 # (see runbooks/release.md + SPEC.md §12.1).
 # ─────────────────────────────────────────────────────────────────────────────────────────────

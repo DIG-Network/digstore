@@ -107,7 +107,7 @@ fn init_json_emits_store_id() {
 use assert_cmd::Command;
 
 fn init_in(dir: &std::path::Path) -> assert_cmd::assert::Assert {
-    let mut cmd = Command::cargo_bin("digstore").unwrap();
+    let mut cmd = Command::cargo_bin("dig-store").unwrap();
     cmd.current_dir(dir);
     common::seed_mock_env(&mut cmd, dir);
     cmd.arg("init").assert()
@@ -317,7 +317,7 @@ fn init_without_seed_exits_9() {
     // A bare DIGSTORE_HOME with NO session → unlock yields NoSeed (exit 9).
     let dir = tmp_dig();
     let home = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .arg("--dig-dir")
         .arg(dir.path().join(".dig"))

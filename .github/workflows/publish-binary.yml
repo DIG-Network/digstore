@@ -76,14 +76,16 @@ jobs:
       - name: Contract gate (producer <-> verifier)
         run: cargo test -p digstore-host --test dighost_serve
 
-      - name: Build static-musl digstore
-        run: cargo build --release --target x86_64-unknown-linux-musl -p digstore-cli --bin digstore
+      - name: Build static-musl dig-store
+        run: cargo build --release --target x86_64-unknown-linux-musl -p digstore-cli --bin dig-store
 
       - name: Stage + hash
         id: stage
         shell: bash
         run: |
-          BIN=target/x86_64-unknown-linux-musl/release/digstore
+          # The binary was renamed `digstore` -> `dig-store` (#703); the dighub S3 layout
+          # (`digstore/<ver>/digstore`) is the compile-worker contract and stays UNCHANGED.
+          BIN=target/x86_64-unknown-linux-musl/release/dig-store
           test -f "$BIN" || { echo "binary not produced"; exit 1; }
           file "$BIN"
           VER="g$(git rev-parse --short HEAD)"
@@ -106,7 +108,7 @@ jobs:
         shell: bash
         run: |
           KEY="digstore/${VER}/digstore"
-          aws s3 cp "target/x86_64-unknown-linux-musl/release/digstore" "s3://${BUCKET}/${KEY}"
+          aws s3 cp "target/x86_64-unknown-linux-musl/release/dig-store" "s3://${BUCKET}/${KEY}"
           printf '{"version":"%s","key":"%s","sha256":"%s"}\n' "$VER" "$KEY" "$SHA" > latest.json
           cat latest.json
           aws s3 cp latest.json "s3://${BUCKET}/digstore/latest.json"

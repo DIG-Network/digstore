@@ -4,13 +4,16 @@ license = "GPL-2.0-only"
 version.workspace = true
 edition = "2021"
 
+# The primary CLI binary. Renamed `digstore` -> `dig-store` (rename epic #703) to
+# match the repo's canonical name; a transitional `digstore` -> `dig-store` symlink
+# ships in the release tarball + .deb for one cycle so existing scripts keep working.
 [[bin]]
-name = "digstore"
+name = "dig-store"
 path = "src/main.rs"
 
-# `digs` — a FIRST-CLASS alias binary for `digstore` (issue #434). It shares the
+# `digs` — a FIRST-CLASS alias binary for `dig-store` (issue #434). It shares the
 # SINGLE entrypoint `digstore_cli::run()` (see src/bin/digs.rs) so there is no
-# duplicated logic; `cargo install` produces BOTH `digstore` and `digs`, and each
+# duplicated logic; `cargo install` produces BOTH `dig-store` and `digs`, and each
 # reflects its own invoked name in --help/--version/completions.
 [[bin]]
 name = "digs"
@@ -51,7 +54,7 @@ dirs = "5"
 hex = "0.4"
 base64 = "0.22"
 getrandom = "0.2"
-# `digstore update` self-updater: extract the `digstore` binary from a release
+# `dig-store update` self-updater: extract the `dig-store` binary from a release
 # `.tar.gz` asset (Linux aarch64 ships only a tarball). Pure-Rust (miniz_oxide).
 flate2 = "1"
 tar = "0.4"
