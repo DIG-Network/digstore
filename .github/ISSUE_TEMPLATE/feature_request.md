@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for digstore
+about: Suggest an idea for dig-store
 title: "[feat] "
 labels: enhancement
 ---

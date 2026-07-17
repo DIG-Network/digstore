@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const SCOPED_NAME = "@dignetwork/dig-client";
-const REPO_URL = "https://github.com/DIG-Network/digstore";
+const REPO_URL = "https://github.com/DIG-Network/dig-store";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");

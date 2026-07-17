@@ -118,7 +118,7 @@ fn auth_alias_runs_setup() {
         .success();
 }
 
-/// `digstore completion bash` prints a usable bash completion script naming the binary.
+/// `dig-store completion bash` prints a usable bash completion script naming the binary.
 #[test]
 fn completion_bash_prints_script() {
     let d = tmp_dig();
@@ -126,7 +126,7 @@ fn completion_bash_prints_script() {
         .args(["completion", "bash"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("digstore").and(predicate::str::contains("complete")));
+        .stdout(predicate::str::contains("dig-store").and(predicate::str::contains("complete")));
 }
 
 /// Every supported shell produces a non-empty script.
@@ -152,7 +152,7 @@ fn help_json_prints_command_schema() {
         String::from_utf8_lossy(&out.stderr)
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["name"].as_str(), Some("digstore"));
+    assert_eq!(v["name"].as_str(), Some("dig-store"));
     let cmds = v["commands"].as_array().unwrap();
     let names: Vec<&str> = cmds.iter().filter_map(|c| c["name"].as_str()).collect();
     for expected in [

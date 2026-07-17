@@ -6,7 +6,7 @@ use predicates::prelude::*;
 #[test]
 fn missing_store_shows_help_hint() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["status"]) // no store here

@@ -1,12 +1,12 @@
-<h1 align="center">digstore</h1>
+<h1 align="center">dig-store</h1>
 
 <p align="center">
   <strong>A Git-shaped, encrypted, content-addressable store that compiles to a single self-defending WebAssembly module.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/DIG-Network/digstore/actions/workflows/ci.yml"><img src="https://github.com/DIG-Network/digstore/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/DIG-Network/digstore/releases"><img src="https://img.shields.io/github/v/release/DIG-Network/digstore?sort=semver" alt="Release"></a>
+  <a href="https://github.com/DIG-Network/dig-store/actions/workflows/ci.yml"><img src="https://github.com/DIG-Network/dig-store/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/DIG-Network/dig-store/releases"><img src="https://img.shields.io/github/v/release/DIG-Network/dig-store?sort=semver" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0-blue.svg" alt="License: GPL-2.0"></a>
   <img src="https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-555" alt="Platforms">
   <img src="https://img.shields.io/badge/rust-1.94.1-orange.svg" alt="Rust 1.94.1">
@@ -14,7 +14,7 @@
 
 ---
 
-`digstore` gives you Git-style commands — `init`, `add`, `commit`, `log`, `clone`,
+`dig-store` gives you Git-style commands — `init`, `add`, `commit`, `log`, `clone`,
 `push`, `pull` — for a store that is **encrypted at rest** and compiles into a
 **single `.wasm` file**. That one file is both your data and the server that gates
 access to it. A host that stores or relays it sees only ciphertext addressed by
@@ -24,7 +24,7 @@ You address content with a URN, and the URN *is* the key: it both locates and
 decrypts. Hand someone a URN and they can read that resource; without it they
 can't, and there's no separate password or access list to manage.
 
-Unlike Git, digstore is built for **build output**, not repo source — you point a
+Unlike Git, dig-store is built for **build output**, not repo source — you point a
 store at a directory like `dist/` and it captures what's there.
 
 > New here? The full design is in the whitepaper:
@@ -36,7 +36,7 @@ store at a directory like `dist/` and it captures what's there.
 
 ### Universal installer (recommended)
 
-The DIG installer downloads the right `digstore` binary for your OS and adds it
+The DIG installer downloads the right `dig-store` binary for your OS and adds it
 to your `PATH`. It lives in its own repo,
 [**DIG-Network/dig-installer**](https://github.com/DIG-Network/dig-installer)
 (the GUI desktop installer — the single-file `DigStore-Setup-*` — lives there
@@ -55,22 +55,22 @@ irm https://raw.githubusercontent.com/DIG-Network/dig-installer/main/install.ps1
 Then open a **new** terminal and check it works:
 
 ```sh
-digstore --version
+dig-store --version
 ```
 
 Already installed? Keep it current with the built-in self-updater:
 
 ```sh
-digstore update          # download + install the latest release, in place
-digstore update --check  # just report whether a newer release exists
+dig-store update          # download + install the latest release, in place
+dig-store update --check  # just report whether a newer release exists
 ```
 
 ### Raw binary (macOS / Linux)
 
 Prefer the installer above. If you grab the raw per-OS binary from the
-[Releases](https://github.com/DIG-Network/digstore/releases) page instead, pick
-the file for your CPU — **`digstore-<ver>-macos-arm64`** (Apple Silicon: M1/M2/M3)
-or **`digstore-<ver>-macos-x64`** (Intel Mac); **`digstore-<ver>-linux-x64`** (or
+[Releases](https://github.com/DIG-Network/dig-store/releases) page instead, pick
+the file for your CPU — **`dig-store-<ver>-macos-arm64`** (Apple Silicon: M1/M2/M3)
+or **`dig-store-<ver>-macos-x64`** (Intel Mac); **`dig-store-<ver>-linux-x64`** (or
 the `aarch64-unknown-linux-gnu.tar.gz` for ARM Linux). A macOS/Linux binary has
 **no file extension — that's normal**, not a broken download.
 
@@ -78,12 +78,12 @@ Downloaded binaries lose their exec bit, and macOS quarantines an unsigned
 download (Gatekeeper). Two commands fix both — **no `sudo` needed**:
 
 ```sh
-chmod +x digstore-<ver>-macos-arm64                 # make it executable
-xattr -d com.apple.quarantine digstore-<ver>-macos-arm64   # macOS only: clear Gatekeeper
+chmod +x dig-store-<ver>-macos-arm64                 # make it executable
+xattr -d com.apple.quarantine dig-store-<ver>-macos-arm64   # macOS only: clear Gatekeeper
 
-# then put it on your PATH under the name `digstore` (Apple Silicon: no sudo):
-mv digstore-<ver>-macos-arm64 /opt/homebrew/bin/digstore   # Intel mac / Linux: /usr/local/bin
-digstore --version
+# then put it on your PATH under the name `dig-store` (Apple Silicon: no sudo):
+mv dig-store-<ver>-macos-arm64 /opt/homebrew/bin/dig-store   # Intel mac / Linux: /usr/local/bin
+dig-store --version
 ```
 
 If you hit **`permission denied`**, it's the exec bit or quarantine above — not
@@ -100,7 +100,7 @@ cargo build -p digstore-guest --target wasm32-unknown-unknown --release
 cargo build -p digstore-cli --release
 ```
 
-The binary is at `target/release/digstore` (`digstore.exe` on Windows). Copy it
+The binary is at `target/release/dig-store` (`dig-store.exe` on Windows). Copy it
 somewhere on your `PATH`.
 
 ---
@@ -112,9 +112,9 @@ Start **free** — scaffold a store from a template and preview it over the real
 `init`/`deploy` touch mainnet (and cost `$DIG`).
 
 ```sh
-digstore new static-site my-store   # scaffold a working store — FREE, no wallet/chain
+dig-store new static-site my-store   # scaffold a working store — FREE, no wallet/chain
 cd my-store
-digstore dev                        # live local preview over the real chia:// read path — FREE
+dig-store dev                        # live local preview over the real chia:// read path — FREE
 ```
 
 When it's ready, publish it on Chia. This is the canonical publish flow — run it
@@ -122,21 +122,21 @@ top-to-bottom from inside your project (it spends the dynamic per-capsule `$DIG`
 price + a small XCH fee, fetched live so you always pay the same as DIGHub):
 
 ```sh
-digstore init                       # create the on-chain store (mints on Chia; store id = launcher id)
-digstore add -A                     # stage every file under the store root
-digstore add --discovery            # publish the public /.well-known discovery manifest
-digstore commit -m "v3"             # anchor a new capsule on-chain (dynamic per-capsule $DIG price + XCH fee)
-digstore push origin                # push the deployment to DIGHub (rpc.dig.net)
+dig-store init                       # create the on-chain store (mints on Chia; store id = launcher id)
+dig-store add -A                     # stage every file under the store root
+dig-store add --discovery            # publish the public /.well-known discovery manifest
+dig-store commit -m "v3"             # anchor a new capsule on-chain (dynamic per-capsule $DIG price + XCH fee)
+dig-store push origin                # push the deployment to DIGHub (rpc.dig.net)
 ```
 
 Then inspect and read it back:
 
 ```sh
-digstore log                        # list published capsules (each root hash = one capsule)
-digstore urn index.html             # preview the URN a file will have — no guessing
+dig-store log                        # list published capsules (each root hash = one capsule)
+dig-store urn index.html             # preview the URN a file will have — no guessing
 
-# read a resource back (store id + root come from `digstore log --json`):
-digstore cat urn:dig:chia:<storeID>:<rootHash>/index.html
+# read a resource back (store id + root come from `dig-store log --json`):
+dig-store cat urn:dig:chia:<storeID>:<rootHash>/index.html
 ```
 
 > Prefer JS? `npm create dig-app` scaffolds the same `static-site` template (and
@@ -156,25 +156,25 @@ A single `.dig/` workspace can hold many stores, each with its own content,
 keys, and history (a store accrues a series of **capsules** as you commit).
 
 ```sh
-digstore init site --dir dist      # a store named "site" that captures ./dist
-digstore init docs --dir build/docs
-digstore stores                    # list stores; * marks the active one + capacity
-digstore use site                  # switch the active store
+dig-store init site --dir dist      # a store named "site" that captures ./dist
+dig-store init docs --dir build/docs
+dig-store stores                    # list stores; * marks the active one + capacity
+dig-store use site                  # switch the active store
 
-digstore --store site add -A       # stage everything under dist/ into "site"
-digstore staged                    # what's staged + size + remaining headroom
-digstore unstage                   # clear staging
-digstore commit -m "v1"            # seal a deployment; writes a local urns.json index
+dig-store --store site add -A       # stage everything under dist/ into "site"
+dig-store staged                    # what's staged + size + remaining headroom
+dig-store unstage                   # clear staging
+dig-store commit -m "v1"            # seal a deployment; writes a local urns.json index
 ```
 
 - **Store selection:** `--store <name>` > the active store (`use`) > the single
   store if there's only one. (`--project` is a hidden, deprecated alias of `--store`.)
 - **Content root:** each store captures a build directory (default: the current
-  dir; set with `--dir` at `init` or `digstore dir <path>`). `-C/--cwd <path>`
+  dir; set with `--dir` at `init` or `dig-store dir <path>`). `-C/--cwd <path>`
   overrides it for one command.
 - **Per-store cap:** each store is capped at **128 MB** of staged content,
   enforced at `add` (and defensively at `commit`); remaining capacity is shown by
-  `add`, `status`, `staged`, and `digstore stores`.
+  `add`, `status`, `staged`, and `dig-store stores`.
 - **URN manifest:** `commit` writes a local `urns.json` / `urns.txt` — the
   publisher's index of every shareable URN for that deployment.
 
@@ -195,7 +195,7 @@ urn:dig:<chain>:<storeID>[:<rootHash>][/<resourceKey>]
 | `<rootHash>` | Optional: pin a specific deployment root; omit for the current one |
 | `<resourceKey>` | Optional: which resource (content-root-relative path) |
 
-`digstore urn [PATHS]` previews the exact URN (and retrieval key) a file *will*
+`dig-store urn [PATHS]` previews the exact URN (and retrieval key) a file *will*
 have against the active store — so you can check before you commit instead of
 guessing.
 
@@ -204,8 +204,8 @@ guessing.
 ## Public vs private stores
 
 ```sh
-digstore init             # public:  anyone with the URN can read
-digstore init --private   # private: URN locates, but reading also needs a secret salt
+dig-store init             # public:  anyone with the URN can read
+dig-store init --private   # private: URN locates, but reading also needs a secret salt
 ```
 
 - **Public** — the URN is sufficient to decrypt.
@@ -220,13 +220,13 @@ A remote is an HTTPS endpoint that hosts and serves your `.wasm` module.
 
 ```sh
 # publisher
-digstore remote add origin https://example.com/stores/<storeID>
-digstore push origin
+dig-store remote add origin https://example.com/stores/<storeID>
+dig-store push origin
 
 # consumer (fresh directory)
-digstore clone https://example.com/stores/<storeID>
-digstore cat   urn:dig:chia:<storeID>:<rootHash>/readme
-digstore pull  origin          # later: fetch the publisher's newer deployment
+dig-store clone https://example.com/stores/<storeID>
+dig-store cat   urn:dig:chia:<storeID>:<rootHash>/readme
+dig-store pull  origin          # later: fetch the publisher's newer deployment
 ```
 
 `clone`/`pull` **verify** what they download before installing it: the module must
@@ -241,13 +241,13 @@ for `localhost`).
 
 Auto-publish your built site/dapp to your existing store on every push — a new
 capsule, git-push-to-deploy. The store must already exist (you ran
-`digstore init` once); CI only **advances** it (it never mints).
+`dig-store init` once); CI only **advances** it (it never mints).
 
 One-time setup, on the machine that created the store:
 
 ```sh
-digstore log --json          # copy the store_id
-digstore deploy-key export   # copy the 64-hex publisher deploy key
+dig-store log --json          # copy the store_id
+dig-store deploy-key export   # copy the 64-hex publisher deploy key
 ```
 
 Add two repository **secrets** — `DIG_MNEMONIC` (your funded deploy wallet) and
@@ -256,7 +256,7 @@ then add the workflow ([`examples/github-actions-deploy.yml`](examples/github-ac
 
 ```yaml
 - name: Deploy to DIG
-  uses: DIG-Network/digstore@v0.5.29   # pin to a release tag
+  uses: DIG-Network/dig-store@v0.5.29   # pin to a release tag
   with:
     mnemonic: ${{ secrets.DIG_MNEMONIC }}
     deploy-key: ${{ secrets.DIG_DEPLOY_KEY }}
@@ -272,13 +272,13 @@ then add the workflow ([`examples/github-actions-deploy.yml`](examples/github-ac
 > below) so the owner key never enters CI; the funded wallet is still needed to pay
 > the DIG + XCH fee.
 
-`digstore deploy` reconstructs the store locally from the deploy key + the
+`dig-store deploy` reconstructs the store locally from the deploy key + the
 on-chain root, stages your `output-dir`, advances the root, and pushes the new
-capsule — all non-interactively. See `digstore deploy --help`.
+capsule — all non-interactively. See `dig-store deploy --help`.
 
 ### Preview a build without spending (free)
 
-`digstore deploy --preview` builds a **free preview capsule** — it runs the real
+`dig-store deploy --preview` builds a **free preview capsule** — it runs the real
 compile → verify → decrypt read path on your `output-dir`, writes a local `.dig`
 artifact, and prints its content address (`storeId:rootHash` + `dig://` URN).
 **No chain, no wallet, no deploy key, nothing spent** — the preview store id is a
@@ -286,8 +286,8 @@ fresh ephemeral id, so a preview never touches (or impersonates) your real store
 Use it to verify a build, or to serve a shareable preview from CI:
 
 ```sh
-digstore deploy --preview                       # → <output-dir>/../.dig-preview/<root>.dig
-digstore deploy --preview --preview-out p.dig   # explicit artifact path
+dig-store deploy --preview                       # → <output-dir>/../.dig-preview/<root>.dig
+dig-store deploy --preview --preview-out p.dig   # explicit artifact path
 ```
 
 ### Writer deploy tokens — advance the root without the owner seed
@@ -299,8 +299,8 @@ delegate the owner pre-authorizes (the hub Teams "Deployer" flow / on-chain
 never change ownership or melt the store, and the owner revokes it at any time.
 
 ```sh
-digstore commit -m "deploy" --writer-key $DIGSTORE_WRITER_KEY   # writer-signed root advance
-digstore deploy --writer-key $DIGSTORE_WRITER_KEY               # same, in the CI deploy flow
+dig-store commit -m "deploy" --writer-key $DIGSTORE_WRITER_KEY   # writer-signed root advance
+dig-store deploy --writer-key $DIGSTORE_WRITER_KEY               # same, in the CI deploy flow
 ```
 
 Prefer the `DIGSTORE_WRITER_KEY` env var so the key isn't visible in the process
@@ -313,9 +313,9 @@ capsule.)
 
 ## On-chain anchoring (Chia mainnet)
 
-Every store is **anchored on Chia mainnet**. `digstore init` mints an empty store
+Every store is **anchored on Chia mainnet**. `dig-store init` mints an empty store
 singleton on-chain, and the singleton's **launcher id becomes the store id**.
-Every `digstore commit` then pushes the new deployment's root to that singleton
+Every `dig-store commit` then pushes the new deployment's root to that singleton
 with an on-chain update and **blocks until the update confirms** before finalizing
 the deployment locally.
 
@@ -336,19 +336,19 @@ the deployment locally.
 > `dig.toml` (precedence: flag > env > dig.toml > default). Before submitting, each
 > command prints the cost and your current balance; if the wallet is short on XCH
 > **or** `$DIG` the command blocks and tells you what's missing. Need `$DIG`? Get it
-> on TibetSwap, dexie.space, or xch.9mm.pro. Use `digstore balance` to check your
+> on TibetSwap, dexie.space, or xch.9mm.pro. Use `dig-store balance` to check your
 > spendable XCH (mojos) and DIG at any time.
 
 ### 1. Set up a wallet seed
 
-digstore keeps an encrypted BIP-39 seed in `~/.dig/seed.enc`.
+dig-store keeps an encrypted BIP-39 seed in `~/.dig/seed.enc`.
 
 ```sh
-digstore seed generate          # create a new mnemonic (shown once — back it up)
+dig-store seed generate          # create a new mnemonic (shown once — back it up)
 # or
-digstore seed import            # import an existing mnemonic
-digstore seed status            # is a seed present / unlocked?
-digstore lock                   # clear the cached-unlock session
+dig-store seed import            # import an existing mnemonic
+dig-store seed status            # is a seed present / unlocked?
+dig-store lock                   # clear the cached-unlock session
 ```
 
 The seed is encrypted with a passphrase (Argon2id + AES-256-GCM). After unlock it
@@ -359,7 +359,7 @@ non-interactively (for CI/scripts). Global settings live in `~/.dig/config.toml`
 ### 2. Fund the wallet
 
 Minting and updates cost both XCH (the transaction fee) and DIG (the DIG token, a
-Chia CAT). The wallet derived from your seed needs **both**. Run `digstore balance`
+Chia CAT). The wallet derived from your seed needs **both**. Run `dig-store balance`
 to see your current spendable XCH (mojos), DIG (3-decimal display), and the wallet
 receive address. If either is short, `init`/`commit` block, disclose the exact cost
 up front, and print the **receive address** to fund:
@@ -378,11 +378,11 @@ CAT is `a406d3a9…832f81`. Get XCH from any Chia exchange or wallet.
 ### 3. Init mints, commit anchors
 
 ```sh
-digstore init                   # mints the store singleton; store id = launcher id
+dig-store init                   # mints the store singleton; store id = launcher id
                                 # blocks until the mint confirms on mainnet
 
-digstore add readme.txt --key readme
-digstore commit -m "first deployment"
+dig-store add readme.txt --key readme
+dig-store commit -m "first deployment"
                                 # pushes the new root on-chain; blocks until
                                 # confirmed, then finalizes the deployment locally
 ```
@@ -394,10 +394,10 @@ deployment is *not* finalized) — it is resumable, not lost.
 ### 4. Resume / inspect an anchor
 
 ```sh
-digstore anchor                 # resume a pending anchor: confirm the chain coin
+dig-store anchor                 # resume a pending anchor: confirm the chain coin
                                 # and flip the store to confirmed (idempotent)
-digstore anchor status          # read-only: show the store's anchor state
-digstore anchor status --json   # machine-readable state
+dig-store anchor status          # read-only: show the store's anchor state
+dig-store anchor status --json   # machine-readable state
 ```
 
 Per-store anchor state (network, store id / launcher, coin id, status, last root,
@@ -405,8 +405,8 @@ last tx id, confirmed height) is recorded in the store's `anchor.toml`.
 
 The compiled `.dig` module also embeds the on-chain pointer (network, launcher/store id,
 current coin id, confirmed height, and a coinset endpoint hint) directly in its data
-section. `digstore anchor status` surfaces this alongside the local `anchor.toml` state
-(use `--json` for machine-readable output); `digstore anchor inspect <module.dig>` dumps
+section. `dig-store anchor status` surfaces this alongside the local `anchor.toml` state
+(use `--json` for machine-readable output); `dig-store anchor inspect <module.dig>` dumps
 the pointer from any module file without a local workspace. The embedded coinset URL is
 a hint only — local config and flags always take precedence.
 
@@ -423,28 +423,28 @@ a hint only — local config and flags always take precedence.
 
 | Command | What it does |
 |---|---|
-| `digstore init [name] [--dir <path>] [--private] [--wait-timeout <s>]` | Create a store (default name `default`); mints its singleton on mainnet (store id = launcher id); `--dir` sets its content root |
-| `digstore stores` | List stores with active marker, root, content root, capacity (the `projects` alias is hidden/deprecated) |
-| `digstore use <name>` | Set the active store |
-| `digstore dir [<path>]` | Show or set the active store's content root |
-| `digstore add <path…> [-A] [--key <name>]` | Stage files (`-A` = the whole content root) |
-| `digstore staged` / `digstore unstage` | List the staging area / clear it |
-| `digstore commit [-m <msg>] [--wait-timeout <s>] [--writer-key <writer-seed>]` | Seal a new deployment, anchor its root on mainnet (blocks until confirmed), compile the module, write the URN manifest. `--writer-key` advances the root with a revocable **writer deploy token** instead of the owner seed (the deprecated `--deploy-key` alias still works) |
-| `digstore status` | Show staged/modified/untracked + capacity |
-| `digstore log [--limit N]` / `digstore diff <a> <b>` | List / compare deployments |
-| `digstore urn [PATHS…] [--root <hex>]` | Preview the URN(s) files will have |
-| `digstore cat <urn> [--salt <hex>] [--verify-proof]` | Read a resource by URN |
-| `digstore checkout <root> --out <dir> [--salt <hex>]` | Write a whole deployment to a directory |
-| `digstore remote add\|list\|remove …` | Manage remotes |
-| `digstore clone <url>` / `push [remote]` / `pull [remote]` | Sync with a remote (verified) |
-| `digstore deploy [--store-id <hex>] [--output-dir <dir>] [--build-command <cmd>] [-m <msg>] [--writer-key <seed>]` | CI auto-deploy: advance an EXISTING store from a fresh checkout (reads `dig.toml`); never mints. `--writer-key` advances the root with a revocable writer deploy token (owner seed stays out of CI) |
-| `digstore deploy --preview [--preview-out <file>]` | Build a **free** preview capsule via the real read path (writes a local `.dig` artifact + content address); no chain, no wallet, nothing spent |
-| `digstore deploy-key export [--out <file>]` | Export the store's publisher deploy key (for a CI secret) |
-| `digstore anchor [--wait-timeout <s>]` | Resume a pending on-chain anchor (confirm the coin, flip to confirmed) |
-| `digstore anchor status [--json]` | Show the active store's anchor state + embedded module chain pointer (read-only) |
-| `digstore anchor inspect <module.dig> [--json]` | Dump the on-chain pointer embedded in any module file (read-only, no workspace needed) |
-| `digstore balance [--json]` | Show spendable XCH (mojos) and DIG (3-decimal) + the wallet receive address (read-only) |
-| `digstore seed generate\|import\|status` / `digstore lock` | Manage the encrypted wallet seed used for anchoring |
+| `dig-store init [name] [--dir <path>] [--private] [--wait-timeout <s>]` | Create a store (default name `default`); mints its singleton on mainnet (store id = launcher id); `--dir` sets its content root |
+| `dig-store stores` | List stores with active marker, root, content root, capacity (the `projects` alias is hidden/deprecated) |
+| `dig-store use <name>` | Set the active store |
+| `dig-store dir [<path>]` | Show or set the active store's content root |
+| `dig-store add <path…> [-A] [--key <name>]` | Stage files (`-A` = the whole content root) |
+| `dig-store staged` / `dig-store unstage` | List the staging area / clear it |
+| `dig-store commit [-m <msg>] [--wait-timeout <s>] [--writer-key <writer-seed>]` | Seal a new deployment, anchor its root on mainnet (blocks until confirmed), compile the module, write the URN manifest. `--writer-key` advances the root with a revocable **writer deploy token** instead of the owner seed (the deprecated `--deploy-key` alias still works) |
+| `dig-store status` | Show staged/modified/untracked + capacity |
+| `dig-store log [--limit N]` / `dig-store diff <a> <b>` | List / compare deployments |
+| `dig-store urn [PATHS…] [--root <hex>]` | Preview the URN(s) files will have |
+| `dig-store cat <urn> [--salt <hex>] [--verify-proof]` | Read a resource by URN |
+| `dig-store checkout <root> --out <dir> [--salt <hex>]` | Write a whole deployment to a directory |
+| `dig-store remote add\|list\|remove …` | Manage remotes |
+| `dig-store clone <url>` / `push [remote]` / `pull [remote]` | Sync with a remote (verified) |
+| `dig-store deploy [--store-id <hex>] [--output-dir <dir>] [--build-command <cmd>] [-m <msg>] [--writer-key <seed>]` | CI auto-deploy: advance an EXISTING store from a fresh checkout (reads `dig.toml`); never mints. `--writer-key` advances the root with a revocable writer deploy token (owner seed stays out of CI) |
+| `dig-store deploy --preview [--preview-out <file>]` | Build a **free** preview capsule via the real read path (writes a local `.dig` artifact + content address); no chain, no wallet, nothing spent |
+| `dig-store deploy-key export [--out <file>]` | Export the store's publisher deploy key (for a CI secret) |
+| `dig-store anchor [--wait-timeout <s>]` | Resume a pending on-chain anchor (confirm the coin, flip to confirmed) |
+| `dig-store anchor status [--json]` | Show the active store's anchor state + embedded module chain pointer (read-only) |
+| `dig-store anchor inspect <module.dig> [--json]` | Dump the on-chain pointer embedded in any module file (read-only, no workspace needed) |
+| `dig-store balance [--json]` | Show spendable XCH (mojos) and DIG (3-decimal) + the wallet receive address (read-only) |
+| `dig-store seed generate\|import\|status` / `dig-store lock` | Manage the encrypted wallet seed used for anchoring |
 
 Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`
 (operating directory for this command), `--dig-dir <path>` (workspace location),
@@ -452,17 +452,17 @@ Global flags: `--store <name>` (target a specific store), `-C/--cwd <path>`
 
 ### Agent-friendly surface (scripting / CI)
 
-digstore is built to be driven by scripts and agents as well as humans:
+dig-store is built to be driven by scripts and agents as well as humans:
 
 - **`--json`** — every command emits ONE structured object to stdout (human prose
   goes to stderr). On **failure**, `--json` emits a structured error envelope to
   stdout instead of prose: `{"ok":false,"error":{"code","exit_code","message","hint"}}`
   — branch on `error.code` (a stable UPPER_SNAKE string) or the exit code, never on
   the message text.
-- **`digstore --help-json`** — the whole invocation contract as one JSON object:
+- **`dig-store --help-json`** — the whole invocation contract as one JSON object:
   the command tree, the global flags, each arg's `choices`/`default`/`value_name`,
   and the exit-code table below. One call yields everything needed to invoke the CLI.
-- **`digstore completion <bash|zsh|fish|powershell|elvish>`** — shell completions.
+- **`dig-store completion <bash|zsh|fish|powershell|elvish>`** — shell completions.
 
 #### Exit codes
 
@@ -474,7 +474,7 @@ Every failure maps to a distinct, stable exit code (and the matching `code` in t
 | 0 | `OK` | success |
 | 1 | `ERROR` | an unclassified error |
 | 2 | `INVALID_ARGUMENT` | a bad/missing argument or flag value |
-| 3 | `NO_STORE` | no digstore workspace/store found here |
+| 3 | `NO_STORE` | no dig-store workspace/store found here |
 | 4 | `NOT_FOUND` | the requested resource/root/key was not found |
 | 5 | `VERIFICATION_FAILED` | content failed verification (tamper, wrong salt/key) |
 | 6 | `NETWORK` | a network/remote error |
@@ -491,12 +491,12 @@ Every failure maps to a distinct, stable exit code (and the matching `code` in t
 | 17 | `TOO_LARGE` | the operation is too large for one transaction; split it into smaller batches |
 | 18 | `NEEDS_CONSOLIDATION` | the wallet is spendable but too fragmented; consolidate coins (or pass `--consolidate`) first |
 
-`digstore --help-json` emits this same table under `exit_codes` (generated from the
+`dig-store --help-json` emits this same table under `exit_codes` (generated from the
 source, so it never drifts).
 
 ### Wallet seed
 
-`digstore seed generate|import|status` and `digstore lock` manage the encrypted
+`dig-store seed generate|import|status` and `dig-store lock` manage the encrypted
 BIP-39 wallet seed used for on-chain anchoring — see
 [On-chain anchoring](#on-chain-anchoring-chia-mainnet) above for details.
 

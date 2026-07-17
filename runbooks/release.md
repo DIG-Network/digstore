@@ -1,6 +1,6 @@
-# Runbook — releasing digstore (nightly cron + manual dispatch)
+# Runbook — releasing dig-store (nightly cron + manual dispatch)
 
-How this repo's `digstore` CLI (+ the `digs` alias) is built and released. The shape is copied from
+How this repo's `dig-store` CLI (+ the `digs` alias) is built and released. The shape is copied from
 the ecosystem's **reference nightlies system** (`dig-updater`, dig_ecosystem #590/#592); the
 normative contract is `SPEC.md` §12.
 
@@ -31,9 +31,9 @@ GitHub disables a `schedule:` trigger after **60 days of no repo activity** on a
 repo can go dark with no error. If nightlies (or a long-overdue stable release) stop appearing:
 
 ```bash
-gh api repos/DIG-Network/digstore/actions/workflows/nightly-release.yml --jq .state
+gh api repos/DIG-Network/dig-store/actions/workflows/nightly-release.yml --jq .state
 # "disabled_inactivity" means GitHub turned it off — re-enable it:
-gh workflow enable nightly-release.yml --repo DIG-Network/digstore
+gh workflow enable nightly-release.yml --repo DIG-Network/dig-store
 ```
 
 Any repo activity (a merged PR, a manual dispatch) resets the 60-day counter.
@@ -49,6 +49,14 @@ Any repo activity (a merged PR, a manual dispatch) resets the 60-day counter.
    publishes the GitHub Release (bare binaries + `digs` + apt tarballs), and uploads the Linux
    binary to S3.
 
+> TRANSITIONAL (rename epic #703): the primary binary was renamed `digstore` -> `dig-store`. For one
+> transition cycle every asset is DUAL-PUBLISHED under BOTH the new `dig-store-*` stem AND the legacy
+> `digstore-*` stem (bare binaries + apt `.tar.gz`), and each apt tarball ships a `digstore` ->
+> `dig-store` compat symlink at its root, so apt.dig.net + dig-installer stay green until they cut
+> over to `dig-store-*`. The dighub S3 hub-worker layout (`digstore/<ver>/digstore`) is UNCHANGED
+> (it is the compile-worker's contract). Drop the legacy stem + symlink in a later release once both
+> installers have cut over.
+
 ### Cut a stable release NOW / re-cut
 
 - Now: Actions → **Nightly + stable release** → **Run workflow** → `channel: stable` (or `both`).
@@ -63,9 +71,9 @@ Actions → **Nightly + stable release** → **Run workflow** → `channel: nigh
 
 ## Verify a release went live
 
-- **Stable:** `gh release view vX.Y.Z --repo DIG-Network/digstore` — bare per-OS binaries + `digs` +
+- **Stable:** `gh release view vX.Y.Z --repo DIG-Network/dig-store` — bare per-OS binaries + `digs` +
   apt `.tar.gz` (x86_64 + aarch64). Watch: `gh run watch <id>`.
-- **Nightly:** `gh release view nightly --repo DIG-Network/digstore` (rolling) or
+- **Nightly:** `gh release view nightly --repo DIG-Network/dig-store` (rolling) or
   `gh release view nightly-YYYYMMDD` — `prerelease: true`.
 
 ## Workflows

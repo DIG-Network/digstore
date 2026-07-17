@@ -6,7 +6,7 @@ use predicates::prelude::*;
 #[test]
 fn add_help_shows_examples() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["add", "--help"])
@@ -22,7 +22,7 @@ fn add_help_shows_examples() {
 #[test]
 fn log_help_uses_capsule_vocabulary() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["log", "--help"])
@@ -40,7 +40,7 @@ fn log_help_uses_capsule_vocabulary() {
 #[test]
 fn checkout_help_uses_capsule_vocabulary() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["checkout", "--help"])
@@ -55,7 +55,7 @@ fn checkout_help_uses_capsule_vocabulary() {
 #[test]
 fn top_level_help_is_task_first() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["--help"])
@@ -75,7 +75,7 @@ fn top_level_help_is_task_first() {
 #[test]
 fn new_help_lists_templates_and_says_free() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["new", "--help"])
@@ -93,7 +93,7 @@ fn new_help_lists_templates_and_says_free() {
 #[test]
 fn new_help_cross_links_create_dig_app() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["new", "--help"])
@@ -109,7 +109,7 @@ fn new_help_cross_links_create_dig_app() {
 #[test]
 fn dev_help_describes_free_local_loop() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["dev", "--help"])
@@ -122,7 +122,7 @@ fn dev_help_describes_free_local_loop() {
 #[test]
 fn commit_help_documents_dry_run() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["commit", "--help"])
@@ -138,13 +138,13 @@ fn commit_help_documents_dry_run() {
 #[test]
 fn projects_alias_help_resolves() {
     let d = tmp_dig();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["projects", "--help"])
         .assert()
         .success();
-    Command::cargo_bin("digstore")
+    Command::cargo_bin("dig-store")
         .unwrap()
         .current_dir(d.path())
         .args(["stores", "--help"])

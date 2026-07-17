@@ -1,6 +1,6 @@
 # STABLE binary release. On a `vX.Y.Z` tag (cut by the nightly-release orchestrator's stable job
 # — nightly-release.yml — either from the midnight cron detecting a version bump or from a manual
-# `workflow_dispatch`), this workflow builds the raw `digstore` CLI + its `digs` alias for every
+# `workflow_dispatch`), this workflow builds the raw `dig-store` CLI + its `digs` alias for every
 # OS/arch, in the two asset shapes both installers consume (bare per-OS binaries + apt tarballs, via
 # the reusable build workflow), and publishes them to a STABLE GitHub Release. It ALSO uploads the
 # Linux x86_64 binary to the dighub S3 artifact bucket for the hub compile-worker. The changelog is
@@ -87,7 +87,7 @@ jobs:
           mkdir -p dist-all
           find dist -type f -exec cp {} dist-all/ \;
           ls -la dist-all
-          gh release create "${GITHUB_REF_NAME}" --repo "$GH_REPO" --title "digstore ${GITHUB_REF_NAME}" --generate-notes || echo "release already exists"
+          gh release create "${GITHUB_REF_NAME}" --repo "$GH_REPO" --title "dig-store ${GITHUB_REF_NAME}" --generate-notes || echo "release already exists"
           gh release upload "${GITHUB_REF_NAME}" --repo "$GH_REPO" dist-all/* --clobber
 
   # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
 
-      - name: Build digstore CLI (Linux x86_64, release)
+      - name: Build dig-store CLI (Linux x86_64, release)
         if: steps.gate.outputs.enabled == 'true'
         run: cargo build -p digstore-cli --release --locked
 
@@ -151,7 +151,10 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          BIN=target/release/digstore
+          # The binary was renamed `digstore` -> `dig-store` (#703). The dighub S3 layout
+          # (`digstore/<ver>/digstore` + `digstore/latest.json`) is the hub compile-worker's
+          # contract and is UNCHANGED here — only the local build artifact name changed.
+          BIN=target/release/dig-store
           test -f "$BIN" || { echo "missing $BIN"; exit 1; }
           SHA=$(sha256sum "$BIN" | cut -d' ' -f1)
           KEY="digstore/${VERSION}/digstore"

@@ -18,7 +18,7 @@ use tempfile::TempDir;
 /// A `digstore` invocation whose CWD is the temp project root. Workspace
 /// discovery then anchors at `<project>/.dig`, exactly like a real checkout.
 fn dig_at(project: &Path) -> Command {
-    let mut c = Command::cargo_bin("digstore").unwrap();
+    let mut c = Command::cargo_bin("dig-store").unwrap();
     c.current_dir(project);
     common::seed_mock_env(&mut c, project);
     c

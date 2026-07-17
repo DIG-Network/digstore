@@ -27,7 +27,7 @@ fn digs(dir: &TempDir) -> Command {
 /// OWN program name (clap prints "<bin> <semver>"): `digs 0.x.y` vs `digstore 0.x.y`.
 #[test]
 fn digs_and_digstore_report_the_same_version() {
-    let ds_out = Command::cargo_bin("digstore")
+    let ds_out = Command::cargo_bin("dig-store")
         .unwrap()
         .arg("--version")
         .output()
@@ -45,8 +45,8 @@ fn digs_and_digstore_report_the_same_version() {
     let dg_ver = dg.split_whitespace().last().unwrap();
     assert_eq!(ds_ver, dg_ver, "same version: `{ds}` vs `{dg}`");
     assert!(
-        ds.starts_with("digstore "),
-        "digstore leads with its name: {ds}"
+        ds.starts_with("dig-store "),
+        "dig-store leads with its name: {ds}"
     );
     assert!(
         dg.starts_with("digs "),
@@ -70,7 +70,7 @@ fn digs_help_usage_shows_digs() {
 /// each reporting its own invoked binary name.
 #[test]
 fn digs_and_digstore_share_the_same_command_surface() {
-    let ds = Command::cargo_bin("digstore")
+    let ds = Command::cargo_bin("dig-store")
         .unwrap()
         .arg("--help-json")
         .output()
@@ -84,7 +84,7 @@ fn digs_and_digstore_share_the_same_command_surface() {
     let dsv: serde_json::Value = serde_json::from_slice(&ds.stdout).unwrap();
     let dgv: serde_json::Value = serde_json::from_slice(&dg.stdout).unwrap();
     // Each reports its own invoked name.
-    assert_eq!(dsv["name"].as_str(), Some("digstore"));
+    assert_eq!(dsv["name"].as_str(), Some("dig-store"));
     assert_eq!(dgv["name"].as_str(), Some("digs"));
     // Everything else is identical — the SAME CLI, byte-for-byte.
     assert_eq!(dsv["commands"], dgv["commands"], "identical command tree");

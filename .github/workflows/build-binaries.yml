@@ -1,4 +1,4 @@
-# The ONE place digstore's cross-OS binary build lives. It is a REUSABLE workflow
+# The ONE place dig-store's cross-OS binary build lives. It is a REUSABLE workflow
 # (`on: workflow_call` only — it never fires on its own): both release paths call it, so the
 # OS/arch matrix + the guest-wasm build prereq are defined exactly once (DRY, CLAUDE.md §2.5):
 #
@@ -6,15 +6,26 @@
 #   * nightly-release.yml   — the NIGHTLY pre-release channel.
 #
 # The caller passes the version string stamped into each artifact's filename and, optionally, the
-# git ref to build. The job builds the raw `digstore` CLI binary AND its first-class `digs` alias
-# (issue #434) for every supported OS/arch, in TWO asset shapes (two installers consume them with
-# different naming conventions, each verified by that installer's own repo):
+# git ref to build. The job builds the primary `dig-store` CLI binary AND its first-class `digs`
+# alias (issue #434) for every supported OS/arch.
+#
+# RENAME (rename epic #703): the primary binary was renamed `digstore` -> `dig-store`. For ONE
+# transition cycle every asset is DUAL-PUBLISHED under BOTH the new `dig-store-*` stem AND the
+# legacy `digstore-*` stem, so the two installers (apt.dig.net + dig-installer) stay green until
+# they cut over to `dig-store-*`. The Linux tarball ALSO ships a `digstore` -> `dig-store` compat
+# symlink at its root so existing scripts that call `digstore` directly keep working (the `digs`
+# alias already shields interactive users). Both are transitional and drop in a later release.
+#
+# Assets produced, in TWO shapes (two installers consume them with different naming conventions,
+# each verified by that installer's own repo):
 #
 #   1. Bare per-OS binaries for the universal installer (dig-installer's RawBinary matcher):
-#        digstore-<ver>-<os_arch>[.exe]  + digs-<ver>-<os_arch>[.exe]
-#   2. Linux .tar.gz tarballs for the APT repository (apt.dig.net's build-deb.sh ASSET_TEMPLATE
-#      `digstore-{ver}-{arch}-unknown-linux-gnu.tar.gz`) — each archive holds BOTH bare binaries at
-#      its root, unpacked to /usr/bin/digstore + /usr/bin/digs.
+#        dig-store-<ver>-<os_arch>[.exe]  +  digstore-<ver>-<os_arch>[.exe] (legacy)  +
+#        digs-<ver>-<os_arch>[.exe]
+#   2. Linux .tar.gz tarballs for the APT repository (apt.dig.net's build-deb.sh ASSET_TEMPLATE) —
+#      published under BOTH `dig-store-<ver>-<arch>-unknown-linux-gnu.tar.gz` AND the legacy
+#      `digstore-<ver>-<arch>-unknown-linux-gnu.tar.gz`. Each archive holds `dig-store` + `digs` at
+#      its root, PLUS a `digstore` -> `dig-store` compat symlink, unpacked to /usr/bin.
 #
 # BUILD PREREQ (CLAUDE.md §3.5 / BINDING contract D6): `digstore-cli`'s build.rs embeds the real
 # guest wasm, so `digstore-guest` MUST be built for `wasm32-unknown-unknown` BEFORE the CLI, or the
@@ -44,40 +55,40 @@ env:
 
 jobs:
   build:
-    name: Build digstore CLI (${{ matrix.out_name || matrix.target }})
+    name: Build dig-store CLI (${{ matrix.out_name || matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            bin: digstore.exe
+            bin: dig-store.exe
             # Bare binary for the universal installer (Windows RawBinary = .exe).
             out_name: windows-x64.exe
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            bin: digstore
+            bin: dig-store
             # Bare binary for the universal installer (Linux RawBinary = no ext)…
             out_name: linux-x64
-            # …PLUS a .tar.gz for apt, named to apt.dig.net's ASSET_TEMPLATE.
-            tarball: digstore-{ver}-x86_64-unknown-linux-gnu.tar.gz
+            # …PLUS a .tar.gz for apt, named to apt.dig.net's ASSET_TEMPLATE arch triple.
+            tarball_arch: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm # native arm64 Linux runner
             target: aarch64-unknown-linux-gnu
-            bin: digstore
+            bin: dig-store
             # apt builds an arm64 .deb from this; the universal installer does not
             # resolve a linux-arm64 RawBinary today, so only the tarball is needed.
-            tarball: digstore-{ver}-aarch64-unknown-linux-gnu.tar.gz
+            tarball_arch: aarch64-unknown-linux-gnu
           # Both macOS arches build on the fast Apple-silicon macos-14 runner; the Intel binary is
           # CROSS-COMPILED there (host arm64 → target x86_64-apple-darwin). The one native C dep in
           # the macOS graph is vendored OpenSSL (openssl-src builds it via `cc`), which the Apple
           # toolchain compiles for x86_64 from the arm host — no system openssl to cross-link.
           - os: macos-14 # Apple silicon (arm64)
             target: aarch64-apple-darwin
-            bin: digstore
+            bin: dig-store
             out_name: macos-arm64
           - os: macos-14 # Apple silicon — cross-compiles the Intel binary
             target: x86_64-apple-darwin
-            bin: digstore
+            bin: dig-store
             out_name: macos-x64
     runs-on: ${{ matrix.os }}
     steps:
@@ -109,10 +120,10 @@ jobs:
       - name: Build guest wasm
         run: cargo build -p digstore-guest --target wasm32-unknown-unknown --release --locked
 
-      - name: Build digstore + digs CLI (release)
+      - name: Build dig-store + digs CLI (release)
         # Build BOTH bins — `digs` is the first-class alias (issue #434), shipped alongside
-        # `digstore` in every asset below.
-        run: cargo build -p digstore-cli --release --locked --target ${{ matrix.target }} --bin digstore --bin digs
+        # `dig-store` in every asset below.
+        run: cargo build -p digstore-cli --release --locked --target ${{ matrix.target }} --bin dig-store --bin digs
 
       # The caller's `version` is stamped into filenames verbatim: a plain `1.2.3` for a stable
       # tag, or the synthesized `1.2.3-nightly.YYYYMMDD.<shortsha>` for a nightly.
@@ -125,31 +136,39 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          SRC="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          REL="target/${{ matrix.target }}/release"
+          SRC="$REL/${{ matrix.bin }}"
           test -f "$SRC" || { echo "binary not produced: $SRC"; exit 1; }
-          # The `digs` alias binary sits beside `digstore` (bin name differs only by the
-          # `digstore`->`digs` substring, incl. the `.exe` suffix on Windows).
-          DIGS_BIN="${{ matrix.bin }}"; DIGS_BIN="${DIGS_BIN/digstore/digs}"
-          DIGS_SRC="target/${{ matrix.target }}/release/${DIGS_BIN}"
+          # The `digs` alias sits beside `dig-store`. Its filename is derived INDEPENDENTLY (not by
+          # a `dig-store`->`digs` substring — after the #703 rename there is no such substring to
+          # replace); the only variation is the Windows `.exe` suffix.
+          EXE=""
+          case "${{ matrix.bin }}" in *.exe) EXE=".exe";; esac
+          DIGS_SRC="$REL/digs${EXE}"
           test -f "$DIGS_SRC" || { echo "digs binary not produced: $DIGS_SRC"; exit 1; }
 
           # (1) Bare per-OS binaries for the universal installer, when this target declares an
-          #     out_name. BOTH digstore and its first-class alias digs (issue #434).
+          #     out_name. The primary `dig-store`, the transitional legacy `digstore` (same bytes,
+          #     dual-published for one cycle), and the first-class `digs` alias (issue #434).
           if [ -n "${{ matrix.out_name }}" ]; then
-            cp "$SRC" "dist/digstore-${VERSION}-${{ matrix.out_name }}"
+            cp "$SRC"      "dist/dig-store-${VERSION}-${{ matrix.out_name }}"
+            cp "$SRC"      "dist/digstore-${VERSION}-${{ matrix.out_name }}"
             cp "$DIGS_SRC" "dist/digs-${VERSION}-${{ matrix.out_name }}"
           fi
 
-          # (2) .tar.gz (binaries at archive root, named `digstore` + `digs`) for apt, when this
-          #     target declares a tarball template.
-          if [ -n "${{ matrix.tarball }}" ]; then
-            TARBALL="${{ matrix.tarball }}"
-            TARBALL="${TARBALL/\{ver\}/$VERSION}"
+          # (2) .tar.gz for apt, when this target declares a tarball arch. The archive root holds
+          #     `dig-store` + `digs`, PLUS a `digstore` -> `dig-store` compat symlink (transitional,
+          #     rename epic #703). Published under BOTH the new `dig-store-*` stem AND the legacy
+          #     `digstore-*` stem so apt.dig.net stays green until it cuts over.
+          if [ -n "${{ matrix.tarball_arch }}" ]; then
+            ARCH="${{ matrix.tarball_arch }}"
             STAGE="$(mktemp -d)"
-            cp "$SRC" "$STAGE/digstore"
+            cp "$SRC"      "$STAGE/dig-store"
             cp "$DIGS_SRC" "$STAGE/digs"
-            chmod 0755 "$STAGE/digstore" "$STAGE/digs"
-            tar -czf "dist/${TARBALL}" -C "$STAGE" digstore digs
+            chmod 0755 "$STAGE/dig-store" "$STAGE/digs"
+            ln -s dig-store "$STAGE/digstore"   # transitional compat symlink
+            tar -czf "dist/dig-store-${VERSION}-${ARCH}.tar.gz" -C "$STAGE" dig-store digs digstore
+            tar -czf "dist/digstore-${VERSION}-${ARCH}.tar.gz"  -C "$STAGE" dig-store digs digstore
             rm -rf "$STAGE"
           fi
           ls -la dist
@@ -157,6 +176,6 @@ jobs:
       - name: Upload assets as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: digstore-assets-${{ matrix.target }}
+          name: dig-store-assets-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
