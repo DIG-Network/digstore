@@ -11,7 +11,8 @@
 //! * [`scan_and_select_funding`] — scan the HD wallet and pick an XCH coin to fund a mint/create;
 //! * [`push_signed`] — push a signed [`SpendBundle`] and return its tx id;
 //! * [`parse_xch_address`] / [`parse_launcher_id`] — input parsing with CLI-friendly errors;
-//! * [`dig_uri`] / [`gateway_uri`] — the dig:// + https-fallback URI pair for capsule media (#33).
+//! * [`urn`] / [`gateway_uri`] / [`media_uris`] — the canonical URN + https-fallback URI pair for
+//!   capsule media (#33/#663): [`media_uris`] returns `[bare root-pinned URN, https gateway url]`.
 //!
 //! The backend is mock-gated by `DIGSTORE_ANCHOR_MOCK` (the same gate `init`/`commit` use), so the
 //! offline integration suite drives the asset BUILD paths (`--dry-run`) and the capsule-media path
@@ -25,7 +26,7 @@ use digstore_chain::coinset::{ChainReads, CoinInfo, Coinset};
 use digstore_chain::keys::IndexedKeys;
 use digstore_chain::wallet::scan_wallet;
 use digstore_chain::Result as ChainResult;
-use digstore_core::Bytes32 as CoreBytes32;
+use digstore_core::{Bytes32 as CoreBytes32, Urn, CHAIN};
 use zeroize::Zeroizing;
 
 use crate::error::CliError;
@@ -247,19 +248,23 @@ pub fn parse_did_arg(s: &str) -> Result<Bytes32, CliError> {
     parse_launcher_id(trimmed)
 }
 
-/// The permanent `dig://` URI for a resource in a capsule — the PRIMARY media URI (#33).
+/// The canonical **bare root-pinned URN** for a resource in a capsule — the PRIMARY media URI
+/// (#663/#686).
 ///
-/// `dig://<storeId>:<rootHash>/<resource>` is the rootless-friendly capsule form the DIG Browser /
-/// resolver understand. This is the URI a verifier should prefer; [`gateway_uri`] is the https
-/// fallback. The capsule identity is a `digstore_core::Bytes32` (the store/root types digstore-core
-/// emits).
-pub fn dig_uri(store_id: CoreBytes32, root_hash: CoreBytes32, resource: &str) -> String {
-    format!(
-        "dig://{}:{}/{}",
-        store_id.to_hex(),
-        root_hash.to_hex(),
-        resource
-    )
+/// Emits `urn:dig:chia:<storeId>:<root>/<resource>`, the single normative resource-identifier form
+/// (`digstore_core::Urn::canonical`). It is root-PINNED because NFT media is immutable content —
+/// the URN names the exact capsule generation the on-chain hashes are pinned to. DIG-aware wallets
+/// resolve this URN natively (via dig-node / rpc.dig.net); [`gateway_uri`] is the https fallback for
+/// legacy wallets. NEVER a `dig://`-prefixed URN (`dig://` is the §21 remote-transport locator, not a
+/// resource scheme — the #686 double-scheme bug).
+pub fn urn(store_id: CoreBytes32, root_hash: CoreBytes32, resource: &str) -> String {
+    Urn {
+        chain: CHAIN.to_string(),
+        store_id,
+        root_hash: Some(root_hash),
+        resource_key: Some(resource.to_string()),
+    }
+    .canonical()
 }
 
 /// The https gateway fallback URI for a capsule resource (#33): `<gateway>/urn:dig:chia:…/<resource>`.
@@ -279,6 +284,26 @@ pub fn gateway_uri(
     )
 }
 
+/// The NFT1 multi-url backup pair for a capsule resource (#663): the canonical **bare root-pinned
+/// URN first** (the primary, DIG-native entry) followed by the **https gateway url** (the fallback
+/// for legacy wallets like Sage).
+///
+/// NFT1 `data_uris`/`metadata_uris` are LISTS that accept multiple backup urls; a minted NFT carries
+/// BOTH so a DIG-aware wallet resolves the URN while a legacy wallet uses the https url — the same
+/// URN-first ordering chip35/hub/create-dig-app emit. The list stays additive (§5.1): an old reader
+/// simply reads whichever entry it understands.
+pub fn media_uris(
+    store_id: CoreBytes32,
+    root_hash: CoreBytes32,
+    resource: &str,
+    gateway_base: &str,
+) -> Vec<String> {
+    vec![
+        urn(store_id, root_hash, resource),
+        gateway_uri(gateway_base, store_id, root_hash, resource),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,12 +313,32 @@ mod tests {
     }
 
     #[test]
-    fn dig_uri_is_capsule_form() {
-        let u = dig_uri(b(0xaa), b(0xbb), "art.png");
-        assert!(u.starts_with("dig://"));
-        assert!(u.contains(&b(0xaa).to_hex()));
-        assert!(u.contains(&b(0xbb).to_hex()));
-        assert!(u.ends_with("/art.png"));
+    fn urn_is_bare_canonical_root_pinned() {
+        let u = urn(b(0xaa), b(0xbb), "art.png");
+        // Canonical bare root-pinned URN (#686) — NEVER a `dig://`-prefixed URN.
+        assert_eq!(
+            u,
+            format!(
+                "urn:dig:chia:{}:{}/art.png",
+                b(0xaa).to_hex(),
+                b(0xbb).to_hex()
+            )
+        );
+        assert!(!u.starts_with("dig://"), "must not be dig://-prefixed");
+    }
+
+    #[test]
+    fn media_uris_are_urn_first_then_https() {
+        let uris = media_uris(b(0x11), b(0x22), "art.png", "https://rpc.dig.net");
+        // The NFT1 multi-url backup: canonical URN first (primary), https second (fallback).
+        assert_eq!(uris.len(), 2, "both the URN and the https url are present");
+        assert_eq!(uris[0], urn(b(0x11), b(0x22), "art.png"));
+        assert!(uris[0].starts_with("urn:dig:chia:"), "URN is first");
+        assert_eq!(
+            uris[1],
+            gateway_uri("https://rpc.dig.net", b(0x11), b(0x22), "art.png")
+        );
+        assert!(uris[1].starts_with("https://"), "https gateway is second");
     }
 
     #[test]

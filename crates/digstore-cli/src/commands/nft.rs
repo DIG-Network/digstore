@@ -3,8 +3,8 @@
 //! `mint` is the headline path (#33, "truly permanent NFTs"): it WRITES the art + the generated
 //! CHIP-0007 metadata JSON into a real DIG capsule, COMPUTES `data_hash`/`metadata_hash` from the
 //! REAL bytes (via [`digstore_chain::metadata`]), and sets the on-chain `data_uris`/`metadata_uris`
-//! to the capsule's `dig://` URN (primary) + an optional https gateway URI (fallback) BEFORE building
-//! the mint spend ([`digstore_chain::nft::build_nft_mint`]). The media lives on DIG, not a
+//! to the capsule's canonical bare root-pinned URN (primary) + an https gateway URI (fallback) BEFORE
+//! building the mint spend ([`digstore_chain::nft::build_nft_mint`]). The media lives on DIG, not a
 //! centralized host, and the on-chain hashes are pinned to what the URIs actually serve.
 //!
 //! `bulk`/`transfer`/`list` surface the matching `digstore-chain` builders. `--dry-run` (on
@@ -33,6 +33,10 @@ use digstore_chain::nft::{
 const SINGLETON_MOJO: u64 = 1;
 /// The canonical resource key for the NFT's media inside its capsule.
 const ART_RESOURCE: &str = "art";
+/// The default https gateway base for the fallback media url when `--gateway` is not given — the
+/// public read gateway (§5.3 terminal fallback), so a minted NFT always carries a working https url
+/// beside its canonical URN.
+const DEFAULT_GATEWAY_BASE: &str = "https://rpc.dig.net";
 
 pub fn run(ctx: &CliContext, ui: &Ui, args: NftArgs) -> Result<(), CliError> {
     match args.action {
@@ -61,7 +65,7 @@ struct CapsuleMedia {
 /// Write the art + generated CHIP-0007 metadata into a fresh capsule and compute the on-chain media
 /// fields (#33). The capsule is a real DIG store built in `ctx`'s (ephemeral) dig dir: it stages the
 /// art under `ART_RESOURCE` and the metadata under `metadata.json`, commits a generation, and returns
-/// the resulting `storeId:rootHash` plus the byte-computed hashes + the dig://(+gateway) URIs.
+/// the resulting `storeId:rootHash` plus the byte-computed hashes + the URN(+gateway) URIs.
 fn build_media_capsule(
     ctx: &CliContext,
     art_path: &Path,
@@ -112,18 +116,12 @@ fn build_media_capsule(
     let root_hash = outcome.roothash;
     let store_id = ctx.find_store_id()?;
 
-    // The dig:// URN is the PRIMARY URI; the https gateway (if given) is the fallback.
-    let mut data_uris = vec![assets::dig_uri(store_id, root_hash, ART_RESOURCE)];
-    let mut metadata_uris = vec![assets::dig_uri(store_id, root_hash, "metadata.json")];
-    if let Some(gw) = gateway {
-        data_uris.push(assets::gateway_uri(gw, store_id, root_hash, ART_RESOURCE));
-        metadata_uris.push(assets::gateway_uri(
-            gw,
-            store_id,
-            root_hash,
-            "metadata.json",
-        ));
-    }
+    // NFT1 multi-url backup (#663): the canonical bare root-pinned URN is the PRIMARY entry and the
+    // https gateway url is the fallback, so a DIG-aware wallet resolves the URN while a legacy wallet
+    // (Sage) uses the https url. Both are always emitted; `--gateway` overrides the fallback host.
+    let gateway_base = gateway.unwrap_or(DEFAULT_GATEWAY_BASE);
+    let data_uris = assets::media_uris(store_id, root_hash, ART_RESOURCE, gateway_base);
+    let metadata_uris = assets::media_uris(store_id, root_hash, "metadata.json", gateway_base);
 
     Ok(CapsuleMedia {
         store_id,
@@ -148,7 +146,7 @@ fn mint(ctx: &CliContext, ui: &Ui, args: NftMintArgs) -> Result<(), CliError> {
         args.gateway.as_deref(),
     )?;
 
-    // 2. Build the on-chain NFT metadata program from the capsule media (dig:// + hashes).
+    // 2. Build the on-chain NFT metadata program from the capsule media (URN + https + hashes).
     let item = ManifestItem {
         name: args.name.clone(),
         description: args.description.clone(),
