@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.14.0] - 2026-07-17
+
+### Refactor
+- **cli:** Rename binary digstore -> dig-store with transitional dual-publish (#23)
+
+### CI
+- **digstore-core:** Publish the library crate to crates.io (#22)- Add flaky-test management (#489) (#17)
+
 ## [0.13.3] - 2026-07-15
 
 ### CI
