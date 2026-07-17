@@ -426,6 +426,24 @@ split into cost-bounded batches. A reimplementation:
   a coinset.org connectivity/`error decoding response body` problem (the transient-retry path is for
   genuine transport hiccups only).
 
+### 11.4 On-chain NFT media URIs — canonical URN + https backup (NFT1 multi-url)
+
+`nft mint` writes the art + generated CHIP-0007 metadata into a real capsule and sets the minted
+NFT's on-chain NFT1 `data_uris` / `metadata_uris` to TWO entries each, in this fixed order:
+
+1. the canonical **bare root-pinned URN** `urn:dig:chia:<storeId>:<rootHash>/<resourceKey>` (the
+   data resource key is `art`; the metadata resource key is `metadata.json`) — the PRIMARY entry;
+2. an **https gateway url** `<gateway>/urn:dig:chia:<storeId>:<rootHash>/<resourceKey>` — the
+   FALLBACK (`<gateway>` defaults to `https://rpc.dig.net`; `--gateway <base>` overrides the host).
+
+NFT1 `uris`/`meta_uris` are lists that accept multiple backup urls, so both are emitted: a DIG-aware
+wallet resolves the URN natively (dig-node / rpc.dig.net) while a legacy wallet (Sage) uses the https
+url. The URN is root-PINNED because NFT media is immutable content — it names the exact capsule
+generation the on-chain `data_hash`/`metadata_hash` are pinned to. A conforming reimplementation MUST
+emit the canonical bare `urn:dig:chia:…` form (the single resource-identifier grammar, §URN) —
+**never** a `dig://`-prefixed URN — and MUST keep the URN first. The list is additive: an old reader
+simply reads whichever entry it understands.
+
 ## 12. Release pipeline — nightly cron + manual dispatch
 
 How the `dig-store` CLI binary + its `digs` alias are built and released. The shape is copied from

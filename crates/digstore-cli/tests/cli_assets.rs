@@ -36,7 +36,8 @@ fn did_create_dry_run_json() {
 /// spending and proves the #33 capsule-media contract:
 ///   * the art is written into a capsule (storeId:rootHash present),
 ///   * `data_hash` == sha256(art bytes) and `metadata_hash` == sha256(canonical CHIP-0007 JSON),
-///   * the primary `data_uris[0]` / `metadata_uris[0]` are the capsule's `dig://` URN,
+///   * the primary `data_uris[0]` / `metadata_uris[0]` are the capsule's canonical bare root-pinned
+///     URN and the fallback `[1]` is the https gateway url (#663 NFT1 multi-url backup),
 ///   * the embedded metadata JSON is canonical CHIP-0007 (`"format":"CHIP-0007"`).
 #[test]
 fn nft_mint_capsule_media_dry_run_json() {
@@ -100,19 +101,70 @@ fn nft_mint_capsule_media_dry_run_json() {
         "on-chain metadata_hash must be sha256 of the canonical metadata JSON"
     );
 
-    // The PRIMARY data/metadata URIs are the capsule's dig:// URN; the https gateway is the fallback.
-    let data_uris = cap["data_uris"].as_array().unwrap();
-    assert!(data_uris[0]
+    // #663 NFT1 multi-url backup: the PRIMARY entry is the canonical BARE root-pinned URN
+    // `urn:dig:chia:<store>:<root>/<key>` (never a `dig://`-prefixed URN — the #686 bug), and the
+    // fallback is the https gateway url. Both are always present, URN first.
+    for uris_key in ["data_uris", "metadata_uris"] {
+        let uris = cap[uris_key].as_array().unwrap();
+        assert_eq!(uris.len(), 2, "{uris_key} carries the URN + the https url");
+        let primary = uris[0].as_str().unwrap();
+        assert_eq!(
+            primary,
+            format!(
+                "urn:dig:chia:{store_id}:{root_hash}/{}",
+                if uris_key == "data_uris" {
+                    "art"
+                } else {
+                    "metadata.json"
+                }
+            ),
+            "{uris_key}[0] is the canonical bare root-pinned URN"
+        );
+        assert!(
+            !primary.starts_with("dig://"),
+            "URN must not be dig://-prefixed (#686)"
+        );
+        assert!(
+            uris[1]
+                .as_str()
+                .unwrap()
+                .starts_with("https://rpc.dig.net/urn:dig:chia:"),
+            "{uris_key}[1] is the https gateway fallback"
+        );
+    }
+}
+
+/// #663: WITHOUT `--gateway`, the mint still emits BOTH uris — the canonical URN first and the
+/// DEFAULT https gateway (`https://rpc.dig.net`) as the fallback — so a minted NFT is never
+/// URN-only (a legacy wallet always has a working https url).
+#[test]
+fn nft_mint_defaults_gateway_when_omitted() {
+    let dir = tmp_dig();
+    let art = dir.path().join("art.png");
+    std::fs::write(&art, b"fake-png").unwrap();
+
+    let out = dig(&dir)
+        .args([
+            "--json",
+            "nft",
+            "mint",
+            "--art",
+            art.to_str().unwrap(),
+            "--name",
+            "X",
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let uris = v["capsule"]["data_uris"].as_array().unwrap();
+    assert_eq!(uris.len(), 2, "both uris present even without --gateway");
+    assert!(uris[0].as_str().unwrap().starts_with("urn:dig:chia:"));
+    assert!(uris[1]
         .as_str()
         .unwrap()
-        .starts_with(&format!("dig://{store_id}:{root_hash}/")));
-    assert!(
-        data_uris[1]
-            .as_str()
-            .unwrap()
-            .starts_with("https://rpc.dig.net/urn:dig:chia:"),
-        "second data uri is the https gateway fallback"
-    );
+        .starts_with("https://rpc.dig.net/urn:dig:chia:"));
 }
 
 /// An empty `--art` file is rejected with a clear invalid-argument error (exit 2).
