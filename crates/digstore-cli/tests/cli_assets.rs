@@ -112,11 +112,18 @@ fn nft_mint_capsule_media_dry_run_json() {
             primary,
             format!(
                 "urn:dig:chia:{store_id}:{root_hash}/{}",
-                if uris_key == "data_uris" { "art" } else { "metadata.json" }
+                if uris_key == "data_uris" {
+                    "art"
+                } else {
+                    "metadata.json"
+                }
             ),
             "{uris_key}[0] is the canonical bare root-pinned URN"
         );
-        assert!(!primary.starts_with("dig://"), "URN must not be dig://-prefixed (#686)");
+        assert!(
+            !primary.starts_with("dig://"),
+            "URN must not be dig://-prefixed (#686)"
+        );
         assert!(
             uris[1]
                 .as_str()
@@ -138,7 +145,14 @@ fn nft_mint_defaults_gateway_when_omitted() {
 
     let out = dig(&dir)
         .args([
-            "--json", "nft", "mint", "--art", art.to_str().unwrap(), "--name", "X", "--dry-run",
+            "--json",
+            "nft",
+            "mint",
+            "--art",
+            art.to_str().unwrap(),
+            "--name",
+            "X",
+            "--dry-run",
         ])
         .output()
         .unwrap();
