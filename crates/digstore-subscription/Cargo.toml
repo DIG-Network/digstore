@@ -27,3 +27,4 @@ tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+hex = "0.4"
