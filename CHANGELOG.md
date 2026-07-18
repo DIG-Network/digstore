@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.15.0] - 2026-07-18
+
+### Features
+- **nft:** Emit canonical URN alongside https url in NFT mint uris (#24)
+
 ## [0.14.0] - 2026-07-17
 
 ### Refactor
