@@ -5,26 +5,13 @@ exclude = ["crates/digstore-prover/guest", "crates/dig-client-wasm"]
 
 [workspace.package]
 edition = "2021"
-version = "0.16.0"
+version = "0.17.0"
 license = "GPL-2.0-only"
 
 [workspace.dependencies]
 sha2 = "0.10"
 proptest = "1"
 hex = "0.4"
-
-# dig-l1-wallet (the canonical Rust coin-selection + consolidation primitive, T0b
-# of coin-management epic #410) is consumed by `digstore-chain` as a GIT dependency
-# pinned to tag v0.3.0 — v0.3.0 (with the `select_for_spend`/`select_for_consolidation`
-# API) is NOT on crates.io (only v0.1.0 is). The crate's manifest declares
-# `dig-keystore = { version = "0.1", path = "../dig-keystore" }`; when dig-l1-wallet is
-# pulled via git, cargo resolves that path dep WITHIN the git source and fails to find
-# dig-keystore (the #216 git-consumability seam). This `[patch]` redirects that
-# transitive dig-keystore to crates.io v0.1.3 (which satisfies its `^0.1` pin), so the
-# git dependency resolves cleanly. Remove this patch once dig-l1-wallet publishes a
-# git-consumable / crates.io release.
-[patch."https://github.com/DIG-Network/dig-l1-wallet"]
-dig-keystore = "=0.1.3"
 
 # Release hardening: keep integer-overflow checks ON in release builds. This
 # code parses untrusted serialized input and does offset/length arithmetic;
