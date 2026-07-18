@@ -45,6 +45,8 @@ hex-literal = "0.4"
 indexmap = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+# Canonical `DIG_ASSET_ID` source (#969) — never a local hex-literal copy (Appendix B).
+dig-constants = "0.5"
 
 [dev-dependencies]
 tempfile = "3"

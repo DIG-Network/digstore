@@ -31,9 +31,11 @@ use crate::error::{ChainError, Result};
 use chia_protocol::Bytes32;
 
 /// DIG CAT asset id (mainnet). Matches DataLayer-Driver `DIG_ASSET_ID`.
-pub const DIG_ASSET_ID: Bytes32 = Bytes32::new(hex_literal::hex!(
-    "a406d3a9de984d03c9591c10d917593b434d5263cabe2b42f6b367df16832f81"
-));
+///
+/// Re-exported from `dig-constants` (the ecosystem's canonical source, #969) at
+/// this same path so existing importers of `digstore_chain::dig::DIG_ASSET_ID`
+/// are unaffected.
+pub use dig_constants::DIG_ASSET_ID;
 
 /// DIG treasury recipient (bech32 `xch1…`); DIG is sent to this address's CAT ph.
 pub const TREASURY_ADDRESS: &str = "xch1a37rq3cgcl2ecpudttsf35x75qzdan68lgw2l6ajvmqs44jxdn5qv6pk3y";
