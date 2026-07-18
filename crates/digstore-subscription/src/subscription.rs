@@ -22,8 +22,11 @@ pub enum TipSync {
     Held,
     /// The `.dig` is not held and no fetch has been attempted yet — a backfill worklist item.
     Missing,
-    /// A fetch is in flight this tick.
-    Pending,
+    /// A fetch is in flight this tick. Carries the count of failed attempts SO FAR (before
+    /// this in-flight one) so the retry count accrues across ticks even though the
+    /// [`Pending`](TipSync::Pending) transition sits between [`Failed`](TipSync::Failed)
+    /// records in the real reconcile flow.
+    Pending { attempts: u32 },
     /// The last fetch failed; retried on a later tick. Carries the attempt count + last error.
     Failed { attempts: u32, last_error: String },
 }
@@ -114,7 +117,19 @@ impl Subscription {
     /// seeded [`TipSync::Held`] or [`TipSync::Missing`] from the held check; an entry already
     /// recorded as [`TipSync::Failed`] is left intact (so its retry count survives) unless the
     /// `.dig` is now held.
+    ///
+    /// Rejects a lineage for a DIFFERENT store (a buggy [`ChainWatch`](crate::ChainWatch)
+    /// returning another store's walk): a foreign lineage is ignored rather than repointing
+    /// this subscription's history — the subscription is bound to exactly one store id.
     pub fn observe_lineage(&mut self, lineage: &Lineage, held: &dyn HeldCheck) {
+        if lineage.store_id() != self.store_id {
+            tracing::warn!(
+                subscription = %self.store_id.to_hex(),
+                lineage = %lineage.store_id().to_hex(),
+                "observe_lineage: ignoring a foreign store's lineage (ChainWatch bug)"
+            );
+            return;
+        }
         let new_roots: Vec<String> = lineage
             .capsules()
             .iter()
@@ -138,7 +153,7 @@ impl Subscription {
             } else {
                 match self.status.get(&key) {
                     // Preserve an in-flight retry record; only downgrade to Missing if unknown.
-                    Some(TipSync::Failed { .. }) | Some(TipSync::Pending) => {}
+                    Some(TipSync::Failed { .. }) | Some(TipSync::Pending { .. }) => {}
                     _ => {
                         self.status.insert(key, TipSync::Missing);
                     }
@@ -149,14 +164,29 @@ impl Subscription {
         self.history = lineage.capsules().to_vec();
     }
 
-    /// Mark the capsule's fetch as in-flight this tick.
+    /// Mark the capsule's fetch as in-flight this tick, carrying the count of prior FAILED
+    /// attempts into the [`TipSync::Pending`] record so the retry count accrues across ticks
+    /// (the real reconcile flow marks pending immediately before recording the result, so the
+    /// prior `Failed` count must survive the transition).
     pub fn mark_pending(&mut self, capsule: &Capsule) {
+        let attempts = self.attempts_so_far(&capsule.root_hash.to_hex());
         self.status
-            .insert(capsule.root_hash.to_hex(), TipSync::Pending);
+            .insert(capsule.root_hash.to_hex(), TipSync::Pending { attempts });
+    }
+
+    /// The count of failed attempts recorded so far for a root, across a `Failed` OR an
+    /// in-flight `Pending` record (0 for a first attempt / unknown root).
+    fn attempts_so_far(&self, key: &str) -> u32 {
+        match self.status.get(key) {
+            Some(TipSync::Failed { attempts, .. }) => *attempts,
+            Some(TipSync::Pending { attempts }) => *attempts,
+            _ => 0,
+        }
     }
 
     /// Record the outcome of a fetch: [`TipSync::Held`] on success, else [`TipSync::Failed`]
-    /// with an incremented attempt count (so retries accumulate across ticks).
+    /// with an incremented attempt count (so retries accumulate across ticks — the prior count
+    /// is read from either the in-flight `Pending` record or a persisted `Failed` record).
     pub fn record_fetch_result(&mut self, capsule: &Capsule, result: Result<(), String>) {
         let key = capsule.root_hash.to_hex();
         match result {
@@ -164,10 +194,7 @@ impl Subscription {
                 self.status.insert(key, TipSync::Held);
             }
             Err(e) => {
-                let attempts = match self.status.get(&key) {
-                    Some(TipSync::Failed { attempts, .. }) => attempts + 1,
-                    _ => 1,
-                };
+                let attempts = self.attempts_so_far(&key) + 1;
                 self.status.insert(
                     key,
                     TipSync::Failed {
@@ -300,5 +327,23 @@ mod tests {
     fn plan_empty_before_first_observe() {
         let sub = Subscription::new(Bytes32([1; 32]));
         assert!(sub.plan(&Held(vec![])).is_empty());
+    }
+
+    /// **Proves:** a lineage for a DIFFERENT store is ignored — a buggy ChainWatch can't
+    /// repoint this subscription's history to another store's walk.
+    /// **Catches:** an `observe_lineage` that folds a foreign store's lineage.
+    #[test]
+    fn ignores_foreign_store_lineage() {
+        let mut sub = Subscription::new(Bytes32([1; 32]));
+        // A lineage for store 9 (not this subscription's store 1).
+        let foreign = Lineage::try_new(vec![Capsule {
+            store_id: Bytes32([9; 32]),
+            root_hash: Bytes32([99; 32]),
+        }])
+        .unwrap();
+        sub.observe_lineage(&foreign, &Held(vec![]));
+        assert!(sub.current_tip().is_none(), "foreign lineage not folded");
+        assert!(sub.history().is_empty());
+        assert!(sub.tip_status(&Bytes32([99; 32])).is_none());
     }
 }

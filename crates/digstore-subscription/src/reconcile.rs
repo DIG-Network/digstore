@@ -307,10 +307,16 @@ mod tests {
         );
     }
 
-    /// **Proves interruption-retry (best-effort):** a failed fetch is retried next tick and
-    /// its attempt count accrues.
+    /// **Proves interruption-retry accrual through the REAL reconcile flow:** across three
+    /// failing ticks — each of which calls `mark_pending` immediately before
+    /// `record_fetch_result`, exactly as production does — the capsule's recorded attempt count
+    /// accrues 1 → 2 → 3 (it does NOT reset to 1 each tick), then a success flips it to `Held`.
+    /// **Catches:** the masked bug where `mark_pending` set `Pending` before the record, so the
+    /// prior `Failed` count was lost and `attempts` reset to 1 every tick.
     #[tokio::test]
-    async fn failed_fetch_retries_next_tick() {
+    async fn failed_fetch_retry_attempts_accrue_across_real_ticks() {
+        use crate::subscription::TipSync;
+        let root = Bytes32([10; 32]);
         let lineage = Lineage::try_new(vec![cap(1, 10)]).unwrap();
         let mut chain = BTreeMap::new();
         chain.insert(Bytes32([1; 32]).to_hex(), Ok(Some(lineage)));
@@ -321,24 +327,36 @@ mod tests {
         let d = deps(MockChain(chain), Held(vec![]), fetcher.clone());
         let mut sub = Subscription::new(Bytes32([1; 32]));
 
-        let t1 = reconcile_tick(&mut sub, &d).await;
-        assert_eq!(
-            t1,
-            TickOutcome::Synced {
-                attempted: 1,
-                fetched: 0
+        for expected in 1..=3u32 {
+            let tick = reconcile_tick(&mut sub, &d).await;
+            assert_eq!(
+                tick,
+                TickOutcome::Synced {
+                    attempted: 1,
+                    fetched: 0
+                }
+            );
+            match sub.tip_status(&root) {
+                Some(TipSync::Failed { attempts, .. }) => {
+                    assert_eq!(*attempts, expected, "attempts accrue across ticks")
+                }
+                other => panic!("expected Failed after failing tick, got {other:?}"),
             }
-        );
-        let t2 = reconcile_tick(&mut sub, &d).await;
-        assert_eq!(
-            t2,
-            TickOutcome::Synced {
-                attempted: 1,
-                fetched: 0
-            },
-            "retried"
-        );
-        assert_eq!(fetcher.calls.lock().unwrap().len(), 2, "pulled twice");
+        }
+        assert_eq!(fetcher.calls.lock().unwrap().len(), 3, "retried each tick");
+
+        // A now-succeeding fetch flips the record to Held (attempts no longer relevant).
+        let ok_fetcher = Arc::new(RecordingFetcher {
+            calls: Mutex::new(vec![]),
+            fail: false,
+        });
+        let ok_deps = SubscriptionDeps {
+            chain: d.chain.clone(),
+            fetcher: ok_fetcher,
+            held: d.held.clone(),
+        };
+        reconcile_tick(&mut sub, &ok_deps).await;
+        assert_eq!(sub.tip_status(&root), Some(&TipSync::Held));
     }
 
     /// **Proves:** membership syncs from the persisted set (add + drop), preserving existing

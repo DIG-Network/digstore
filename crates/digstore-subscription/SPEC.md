@@ -31,7 +31,10 @@ and unit-testable with no chain and no network:
 - **`ChainWatch`** — resolve a store's confirmed capsule lineage (eve → tip). Return type
   `LineageResult = Result<Option<Lineage>, String>`. This carries the fail-closed contract (§4).
 - **`CapsuleFetcher`** — find + sync + verify + land the `.dig` for one capsule. MUST verify the
-  fetched module against the chain-anchored root before landing it, and be idempotent.
+  fetched module against the chain-anchored root before landing it, and be idempotent. It MUST
+  return `Ok(())` ONLY after the module is verified AND landed such that `HeldCheck` will report
+  it held — an `Ok(())` that does not actually land the module leaves the capsule missing, so the
+  next tick re-plans and re-fetches it indefinitely.
 - **`HeldCheck`** — whether the `.dig` for a capsule is already held locally.
 - **`Persistence`** — load/save the persisted `SubscriptionSet`. A missing/corrupt store loads
   as an empty set, never an error.
@@ -54,10 +57,15 @@ A `Subscription` tracks, per store:
 `observe_lineage(lineage, held)` folds a freshly-confirmed lineage into the state: it detects
 tip progression (new capsules appended) and reorg (§5), and refreshes each capsule's status
 from `HeldCheck`. A `Failed`/`Pending` record is preserved across a re-observe (so retry counts
-survive) unless the `.dig` is now held.
+survive) unless the `.dig` is now held. A subscription is bound to exactly ONE store: a lineage
+whose `store_id` differs from the subscription's is IGNORED (never folded), so a buggy
+`ChainWatch` returning another store's walk cannot repoint the history.
 
 `record_fetch_result(capsule, result)` sets `Held` on success, else `Failed` with an
-incremented attempt count (retries accrue across ticks).
+incremented attempt count. Attempts MUST accrue across ticks in the real reconcile flow: because
+a tick sets `Pending` immediately before recording the result, the `Pending` state carries the
+prior failed-attempt count forward, so a capsule that fails on N consecutive ticks records
+`Failed { attempts: N }` (never resetting to 1 each tick).
 
 ## 4. Fail-closed invariant (MANDATORY)
 
