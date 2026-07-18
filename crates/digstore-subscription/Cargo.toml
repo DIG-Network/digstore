@@ -1,0 +1,30 @@
+[package]
+name = "digstore-subscription"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The canonical DIG Network Subscription primitive: a networkless chain-watch state machine that follows one CHIP-0035 store singleton's full lineage and drives per-tip .dig backfill over injected chain/network seams."
+repository = "https://github.com/DIG-Network/dig-store"
+readme = "README.md"
+keywords = ["dig", "chia", "subscription", "chain-watch", "singleton"]
+categories = ["data-structures", "asynchronous"]
+
+[lib]
+name = "digstore_subscription"
+path = "src/lib.rs"
+
+[dependencies]
+# The canonical `Capsule` (storeId:rootHash) + `Bytes32` identity. A Subscription
+# follows a store's lineage of capsules, so it speaks the one ecosystem-wide capsule
+# type rather than re-inventing the pair. This is the crate's ONLY runtime dependency:
+# the primitive is a networkless leaf so any consumer (node, resolver, SDK) can follow a
+# store without dragging in the spend-heavy `digstore-chain` crate.
+digstore-core = { path = "../digstore-core" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+hex = "0.4"
