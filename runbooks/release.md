@@ -31,9 +31,9 @@ GitHub disables a `schedule:` trigger after **60 days of no repo activity** on a
 repo can go dark with no error. If nightlies (or a long-overdue stable release) stop appearing:
 
 ```bash
-gh api repos/DIG-Network/dig-store/actions/workflows/nightly-release.yml --jq .state
+gh api repos/DIG-Network/digs/actions/workflows/nightly-release.yml --jq .state
 # "disabled_inactivity" means GitHub turned it off — re-enable it:
-gh workflow enable nightly-release.yml --repo DIG-Network/dig-store
+gh workflow enable nightly-release.yml --repo DIG-Network/digs
 ```
 
 Any repo activity (a merged PR, a manual dispatch) resets the 60-day counter.
@@ -71,9 +71,9 @@ Actions → **Nightly + stable release** → **Run workflow** → `channel: nigh
 
 ## Verify a release went live
 
-- **Stable:** `gh release view vX.Y.Z --repo DIG-Network/dig-store` — bare per-OS binaries + `digs` +
+- **Stable:** `gh release view vX.Y.Z --repo DIG-Network/digs` — bare per-OS binaries + `digs` +
   apt `.tar.gz` (x86_64 + aarch64). Watch: `gh run watch <id>`.
-- **Nightly:** `gh release view nightly --repo DIG-Network/dig-store` (rolling) or
+- **Nightly:** `gh release view nightly --repo DIG-Network/digs` (rolling) or
   `gh release view nightly-YYYYMMDD` — `prerelease: true`.
 
 ## Workflows

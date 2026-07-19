@@ -31,4 +31,4 @@ Disable default features (`default-features = false`) for a `no_std`, wasm-clean
 
 ## License
 
-GPL-2.0-only. See [LICENSE](https://github.com/DIG-Network/dig-store/blob/main/LICENSE).
+GPL-2.0-only. See [LICENSE](https://github.com/DIG-Network/digs/blob/main/LICENSE).

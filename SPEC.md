@@ -470,7 +470,7 @@ selected channel(s).
 **60-day auto-disable caveat.** GitHub auto-disables a `schedule:` trigger after 60 days with no
 repo activity on a public repo, with no auto-re-enable — and since this cron is the ONLY automatic
 release trigger, a quiet repo can silently stop releasing with no error. Detect it with
-`gh api repos/DIG-Network/dig-store/actions/workflows/nightly-release.yml --jq .state` (a value of
+`gh api repos/DIG-Network/digs/actions/workflows/nightly-release.yml --jq .state` (a value of
 `disabled_inactivity` means it was auto-disabled) and recover with `gh workflow enable
 nightly-release.yml` (see `runbooks/release.md`). Any repo activity resets the 60-day counter.
 
