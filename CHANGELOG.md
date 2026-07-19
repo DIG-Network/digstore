@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.17.0] - 2026-07-19
+
+### Features
+- **digstore-subscription:** Canonical chain-watch Subscription with full-history backfill (#979) (#26)- **digstore-chain:** Migrate off dig-l1-wallet onto dig-wallet-backend engine seam (#27)
+
+### Refactor
+- **digstore-chain:** Consume DIG_ASSET_ID from dig-constants (#969) (#25)
+
 ## [0.15.0] - 2026-07-18
 
 ### Features
