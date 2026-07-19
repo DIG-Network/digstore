@@ -16,7 +16,7 @@ use crate::context::CliContext;
 use crate::error::CliError;
 
 /// Upstream repository whose releases drive `dig-store update`.
-pub const RELEASES_API: &str = "https://api.github.com/repos/DIG-Network/dig-store/releases/latest";
+pub const RELEASES_API: &str = "https://api.github.com/repos/DIG-Network/digs/releases/latest";
 
 /// GitHub requires a non-empty User-Agent on every API request.
 pub const USER_AGENT: &str = concat!("digstore-cli/", env!("CARGO_PKG_VERSION"));
@@ -663,7 +663,7 @@ fn not_writable(target: &std::path::Path, e: &std::io::Error) -> CliError {
         "cannot write {} ({e}).\n\
          Manual update:\n  \
          1. Download the dig-store binary for your OS/arch from \
-         https://github.com/DIG-Network/dig-store/releases/latest\n  \
+         https://github.com/DIG-Network/digs/releases/latest\n  \
          2. chmod +x ./dig-store\n  \
          3. (macOS) xattr -d com.apple.quarantine ./dig-store\n  \
          4. mv ./dig-store \"{}\"   # or re-run with write permission / the installer",
