@@ -254,7 +254,7 @@ The per-capsule price is **dynamic and USD-pegged**, NOT a fixed token amount:
 Scope note: a CLI/economic contract (not a `.dig` byte-format contract) governing how the money
 commands choose which XCH coins fund a spend, so a coin-fragmented wallet is never silently unable
 to publish. This is dig-store's expression of the ecosystem-wide **coin-management contract**
-(`SYSTEM.md` → coin-management; the shared primitive is `dig-l1-wallet`). A `dig-store`
+(`SYSTEM.md` → coin-management; the shared primitive is `dig-wallet-backend`'s engine seam `engine::selection`). A `dig-store`
 reimplementation MUST replicate it and MUST NOT hand-roll its own selection heuristic.
 
 Every XCH-funding spend built by `init` (mint fee), `commit` and `deploy` (root-advance XCH fee):
@@ -264,8 +264,10 @@ Every XCH-funding spend built by `init` (mint fee), `commit` and `deploy` (root-
   taken greedily until the target (`fee` for a root advance, `fee + 1` for a mint) is met. This
   minimizes the number of inputs, keeping the bundle's CLVM cost well under Chia's per-block ceiling
   (§11.3).
-- **Caps the attempt at 50 coins** (the shared `DEFAULT_COIN_CAP`; the boundary the browser/JS spend
-  layer uses too). Only the largest 50 coins are eligible for a single spend.
+- **Caps the attempt at 50 coins** — digstore uses a LOCAL `COIN_CAP = 50`, distinct from
+  dig-wallet-backend's `DEFAULT_COIN_CAP = 500`, because digstore's spend bundles must stay under
+  Chia's mempool cost ceiling. Only the largest 50 coins are eligible for a single dig-store
+  XCH-funding spend.
 - **Distinguishes three outcomes** — never a flat failure that hides the counts:
   1. **selectable** — the largest ≤ 50 coins cover the target; the bundle is built from exactly those.
   2. **needs consolidation** — the wallet's TOTAL XCH covers the target, but the largest 50 coins do
@@ -282,7 +284,7 @@ Every XCH-funding spend built by `init` (mint fee), `commit` and `deploy` (root-
   `NEEDS_CONSOLIDATION` error (exit 18) rather than spending unprompted. `--json` emits a
   `{"event":"consolidated", asset, merged_coins, merged_mojos, output_coin_id, tx_id}` record per
   round.
-- **Never hand-rolls the selection or the merge** — both are the `dig-l1-wallet` primitives
+- **Never hand-rolls the selection or the merge** — both are the `dig-wallet-backend` primitives
   (`select_for_spend` / `select_for_consolidation`); only the bundle construction (the datalayer_driver
   / `chia-wallet-sdk` builder) stays dig-store's.
 

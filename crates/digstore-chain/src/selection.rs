@@ -1,12 +1,12 @@
 //! Capped, high-value-first XCH coin selection + consolidation for digstore's
 //! on-chain money paths (`init` mint, `commit`/`deploy` root-advance).
 //!
-//! This is the digstore-side adapter over the **canonical dig-l1-wallet primitive**
-//! (coin-management epic #410, T0b). digstore NEVER hand-rolls coin selection
-//! (SYSTEM.md §4.1 / Appendix B): the ordering (descending by amount, tie-broken by
-//! coin id), the 50-coin cap ([`COIN_CAP`]), and the `NeedsConsolidation` vs
-//! `InsufficientFunds` distinction are the ecosystem-wide contract, expressed once
-//! in dig-l1-wallet and reused here.
+//! This is the digstore-side adapter over the **canonical dig-wallet-backend
+//! primitive** (`dig_wallet_backend::engine::selection`). digstore NEVER hand-rolls
+//! coin selection (SYSTEM.md §4.1 / Appendix B): the ordering (descending by amount,
+//! tie-broken by coin id), the coin cap ([`COIN_CAP`]), and the `NeedsConsolidation`
+//! vs `InsufficientFunds` distinction are the ecosystem-wide contract, expressed once
+//! in dig-wallet-backend and reused here.
 //!
 //! ## Why a cap
 //!
@@ -27,25 +27,28 @@
 //! pure — no network, no signing.
 
 use chia_protocol::Coin;
-use dig_l1_wallet::coins::selection::{select_for_consolidation, select_for_spend};
-use dig_l1_wallet::coins::tracker::{bytes32_to_hex, coin_record_to_protocol_coin};
-use dig_l1_wallet::{SelectionOutcome, DEFAULT_COIN_CAP};
+use dig_wallet_backend::engine::selection::{
+    select_for_consolidation, select_for_spend, SelectionOutcome,
+};
 
 use crate::error::{ChainError, Result};
 
 /// Default maximum number of coins a single digstore spend may consume (50).
 ///
-/// Re-exported from dig-l1-wallet's [`DEFAULT_COIN_CAP`] so digstore, the browser/JS
-/// spend layer, and every other consumer agree on the exact boundary between
-/// "spendable" and "needs consolidation".
-pub const COIN_CAP: usize = DEFAULT_COIN_CAP;
+/// digstore fixes its own cap so a `init`/`commit`/`deploy` bundle stays within Chia's
+/// block/mempool cost ceiling — a smaller bound than dig-wallet-backend's default
+/// ([`dig_wallet_backend::engine::selection::DEFAULT_COIN_CAP`]), which serves general
+/// wallets. Passed explicitly to every selection call so the browser/JS spend layer and
+/// every other digstore consumer agree on the exact boundary between "spendable" and
+/// "needs consolidation".
+pub const COIN_CAP: usize = 50;
 
 /// Outcome of a capped, high-value-first XCH selection over digstore's native coins.
 ///
-/// Mirrors dig-l1-wallet's [`SelectionOutcome`] but speaks in `chia_protocol::Coin`
-/// (what the mint/update builders consume) rather than chia-query `CoinRecord`s. The
-/// caller matches the variant — `NeedsConsolidation` is never conflated with
-/// `InsufficientFunds` (consolidation cannot create value).
+/// Mirrors dig-wallet-backend's [`SelectionOutcome`], re-expressed in digstore's own
+/// error/variant vocabulary for the mint/update builders. The caller matches the
+/// variant — `NeedsConsolidation` is never conflated with `InsufficientFunds`
+/// (consolidation cannot create value).
 #[derive(Debug, Clone)]
 pub enum XchSelection {
     /// Coins reaching the target were found within the cap; spend exactly these.
@@ -80,60 +83,23 @@ pub enum XchSelection {
     },
 }
 
-/// Convert a native coin into the chia-query `CoinRecord` the selector consumes.
-///
-/// Selection looks only at each coin's amount and (for the deterministic tie-break)
-/// its coin id, so the block-index / spent / coinbase / timestamp metadata is
-/// irrelevant here — unspent-coin placeholders are used. Parent + puzzle hash are
-/// preserved exactly so the returned records map back to the original coins.
-fn to_record(coin: &Coin) -> chia_query::CoinRecord {
-    chia_query::CoinRecord {
-        coin: chia_query::Coin {
-            parent_coin_info: bytes32_to_hex(&coin.parent_coin_info),
-            puzzle_hash: bytes32_to_hex(&coin.puzzle_hash),
-            amount: coin.amount,
-        },
-        confirmed_block_index: 1,
-        spent_block_index: 0,
-        spent: false,
-        coinbase: false,
-        timestamp: 0,
-    }
-}
-
-/// Map a selected chia-query `CoinRecord` back to the native `Coin` it was built
-/// from (identical parent/puzzle/amount ⇒ identical coin id).
-fn from_record(record: &chia_query::CoinRecord) -> Result<Coin> {
-    coin_record_to_protocol_coin(record)
-        .map_err(|e| ChainError::Chain(format!("coin selection: {e}")))
-}
-
 /// Select XCH coins to cover `target` mojos, high-value-first, capped at `cap` coins
 /// (pass [`COIN_CAP`] for the default of 50).
 ///
-/// Delegates to dig-l1-wallet's [`select_for_spend`] and translates the result into
-/// digstore's [`XchSelection`]. Pure — no network, no signing.
+/// Delegates to dig-wallet-backend's [`select_for_spend`] — which speaks in
+/// `chia_protocol::Coin` natively — and re-expresses the result in digstore's
+/// [`XchSelection`]. Pure — no network, no signing.
 pub fn select_xch(coins: &[Coin], target: u64, cap: usize) -> Result<XchSelection> {
-    let records: Vec<chia_query::CoinRecord> = coins.iter().map(to_record).collect();
-    let outcome = select_for_spend(&records, target, "XCH", cap)
-        .map_err(|e| ChainError::Chain(format!("coin selection: {e}")))?;
-    Ok(match outcome {
+    Ok(match select_for_spend(coins, target, cap) {
         SelectionOutcome::Selected {
-            coins: selected,
+            coins,
             total,
             change,
-            ..
-        } => {
-            let coins = selected
-                .iter()
-                .map(from_record)
-                .collect::<Result<Vec<Coin>>>()?;
-            XchSelection::Selected {
-                coins,
-                total,
-                change,
-            }
-        }
+        } => XchSelection::Selected {
+            coins,
+            total,
+            change,
+        },
         SelectionOutcome::NeedsConsolidation {
             available_coin_count,
             available_total,
@@ -148,7 +114,6 @@ pub fn select_xch(coins: &[Coin], target: u64, cap: usize) -> Result<XchSelectio
         SelectionOutcome::InsufficientFunds {
             available_total,
             required,
-            ..
         } => XchSelection::InsufficientFunds {
             available_total,
             required,
@@ -194,14 +159,12 @@ pub fn select_xch_coins(coins: &[Coin], target: u64) -> Result<Vec<Coin>> {
 /// Select up to `cap` XCH coins to merge into a single coin during consolidation
 /// (highest-value first, deterministic). Requires at least 2 coins.
 ///
-/// Delegates to dig-l1-wallet's [`select_for_consolidation`]. Pure — no network, no
-/// signing. The returned coins feed the consolidation bundle builder
+/// Delegates to dig-wallet-backend's [`select_for_consolidation`]. Pure — no network,
+/// no signing. The returned coins feed the consolidation bundle builder
 /// ([`crate::send::build_xch_consolidation`]).
 pub fn select_xch_for_consolidation(coins: &[Coin], cap: usize) -> Result<Vec<Coin>> {
-    let records: Vec<chia_query::CoinRecord> = coins.iter().map(to_record).collect();
-    let picked = select_for_consolidation(&records, cap)
-        .map_err(|e| ChainError::Chain(format!("consolidation selection: {e}")))?;
-    picked.iter().map(from_record).collect()
+    select_for_consolidation(coins, cap)
+        .map_err(|e| ChainError::Chain(format!("consolidation selection: {e}")))
 }
 
 #[cfg(test)]
@@ -225,6 +188,21 @@ mod tests {
     #[test]
     fn coin_cap_default_is_50() {
         assert_eq!(COIN_CAP, 50);
+    }
+
+    /// Regression guard for the epic #998 migration: digstore-chain must NOT depend on
+    /// the deprecated dig-l1-wallet — coin selection now comes from dig-wallet-backend.
+    #[test]
+    fn no_dig_l1_wallet_dependency() {
+        let manifest = include_str!("../Cargo.toml");
+        assert!(
+            !manifest.contains("dig-l1-wallet"),
+            "digstore-chain must not depend on the deprecated dig-l1-wallet"
+        );
+        assert!(
+            manifest.contains("dig-wallet-backend"),
+            "digstore-chain must depend on dig-wallet-backend"
+        );
     }
 
     #[test]

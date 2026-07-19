@@ -1247,30 +1247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chia-query"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d28ca28823fac6bf6ea214477b370c87a7adaaddacc6d33bb275a20db830b19c"
-dependencies = [
- "chia",
- "chia-wallet-sdk",
- "clvmr",
- "futures-util",
- "hex",
- "log",
- "openssl",
- "openssl-sys",
- "rand 0.8.7",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite",
-]
-
-[[package]]
 name = "chia-sdk-client"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2123,6 +2099,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "darling"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+dependencies = [
+ "darling_core",
+ "darling_macro",
+]
+
+[[package]]
+name = "darling_core"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+dependencies = [
+ "darling_core",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2220,54 +2230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dig-keystore"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dfa3f409601b5dc12de4b00eb7112ca2bd31ae9757a8373fdeca89e3fb4d0f6"
-dependencies = [
- "aes-gcm",
- "argon2",
- "chia-bls 0.26.0",
- "crc32fast",
- "hex",
- "parking_lot",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "thiserror 1.0.69",
- "zeroize",
-]
-
-[[package]]
-name = "dig-l1-wallet"
-version = "0.3.0"
-source = "git+https://github.com/DIG-Network/dig-l1-wallet?tag=v0.3.0#fed8758b6aa6644d3109e226f1c1a2f343212cff"
-dependencies = [
- "base64 0.22.1",
- "bip39",
- "chia",
- "chia-puzzle-types",
- "chia-puzzles",
- "chia-query",
- "chia-wallet-sdk",
- "clvm-traits",
- "clvm-utils",
- "clvmr",
- "dig-keystore",
- "dirs 6.0.0",
- "hex",
- "log",
- "openssl",
- "openssl-sys",
- "rand 0.8.7",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tokio",
- "zeroize",
-]
-
-[[package]]
 name = "dig-resolver"
 version = "0.1.0"
 dependencies = [
@@ -2275,6 +2237,26 @@ dependencies = [
  "digstore-chain",
  "hex",
  "tokio",
+]
+
+[[package]]
+name = "dig-wallet-backend"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "358c03e260019ab36389b4cc82f58185ca1ae0c3b9fd95b2b10f57c324c18545"
+dependencies = [
+ "async-trait",
+ "chia",
+ "chia-wallet-sdk",
+ "clvmr",
+ "enumset",
+ "futures-core",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -2300,7 +2282,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chain"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2310,7 +2292,6 @@ dependencies = [
  "chia",
  "chia-protocol",
  "chia-puzzles",
- "chia-query",
  "chia-sdk-coinset",
  "chia-sdk-test",
  "chia-sdk-types",
@@ -2320,9 +2301,9 @@ dependencies = [
  "clvmr",
  "datalayer-driver",
  "dig-constants",
- "dig-l1-wallet",
+ "dig-wallet-backend",
  "digstore-core",
- "dirs 5.0.1",
+ "dirs",
  "getrandom 0.2.17",
  "hex",
  "hex-literal",
@@ -2339,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chunker"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "digstore-core",
  "hex",
@@ -2349,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-cli"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
@@ -2372,7 +2353,7 @@ dependencies = [
  "digstore-remote",
  "digstore-stage",
  "digstore-store",
- "dirs 5.0.1",
+ "dirs",
  "flate2",
  "getrandom 0.2.17",
  "globset",
@@ -2415,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-core"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "aes-gcm-siv",
  "hex",
@@ -2512,7 +2493,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-remote"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2522,7 +2503,7 @@ dependencies = [
  "digstore-crypto",
  "digstore-host",
  "digstore-store",
- "dirs 5.0.1",
+ "dirs",
  "futures-util",
  "getrandom 0.2.17",
  "hex",
@@ -2570,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-subscription"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "async-trait",
  "digstore-core",
@@ -2597,16 +2578,7 @@ version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
 dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
-name = "dirs"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
-dependencies = [
- "dirs-sys 0.5.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -2627,20 +2599,8 @@ checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users 0.4.6",
+ "redox_users",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.5.2",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2650,7 +2610,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ebda144c4fe02d1f7ea1a7d9641b6fc6b580adcfa024ae48797ecdeb6825b4d"
 dependencies = [
  "libc",
- "redox_users 0.4.6",
+ "redox_users",
  "winapi",
 ]
 
@@ -2774,6 +2734,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "enumset"
+version = "1.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "839c4174b41e75c8f7306110b2c51996a293b8d1d850edd529011841d9fede7d"
+dependencies = [
+ "enumset_derive",
+ "serde",
+]
+
+[[package]]
+name = "enumset_derive"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bd536557b58c682b217b8fb199afdff47cd3eff260623f19e77074eb073d63a"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -3493,11 +3475,9 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2 0.6.4",
- "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
- "windows-registry",
 ]
 
 [[package]]
@@ -3611,6 +3591,12 @@ name = "id-arena"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
+
+[[package]]
+name = "ident_case"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "idna"
@@ -5078,17 +5064,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redox_users"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
-dependencies = [
- "getrandom 0.2.17",
- "libredox",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "regalloc2"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5139,7 +5114,6 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",
- "encoding_rs",
  "futures-channel",
  "futures-core",
  "futures-util",
@@ -5153,7 +5127,6 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
- "mime",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
@@ -5227,7 +5200,7 @@ checksum = "0811a16d45e5b4f102c7095fe43ec63afe8c76d85ae799522d0b9f247975aa61"
 dependencies = [
  "anyhow",
  "cargo_metadata",
- "dirs 5.0.1",
+ "dirs",
  "docker-generate",
  "hex",
  "regex",
@@ -5979,27 +5952,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "system-configuration"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a13f3d0daba03132c0aa9767f98351b3488edc2c100cda2d2ec2b04f3d8d3c8b"
-dependencies = [
- "bitflags 2.13.0",
- "core-foundation 0.9.4",
- "system-configuration-sys",
-]
-
-[[package]]
-name = "system-configuration-sys"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
-dependencies = [
- "core-foundation-sys",
- "libc",
-]
-
-[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6229,6 +6181,18 @@ checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
  "tokio",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -7264,17 +7228,6 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
-
-[[package]]
-name = "windows-registry"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
-dependencies = [
- "windows-link",
- "windows-result",
- "windows-strings",
-]
 
 [[package]]
 name = "windows-result"
