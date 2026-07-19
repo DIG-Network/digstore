@@ -123,7 +123,7 @@ runs:
     - name: Checkout digstore (${{ inputs.digstore-ref }})
       uses: actions/checkout@v4
       with:
-        repository: DIG-Network/dig-store
+        repository: DIG-Network/digs
         ref: ${{ inputs.digstore-ref }}
         path: .digstore-src
         persist-credentials: false

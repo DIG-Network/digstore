@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DIG-Network/dig-store/actions/workflows/ci.yml"><img src="https://github.com/DIG-Network/dig-store/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/DIG-Network/dig-store/releases"><img src="https://img.shields.io/github/v/release/DIG-Network/dig-store?sort=semver" alt="Release"></a>
+  <a href="https://github.com/DIG-Network/digs/actions/workflows/ci.yml"><img src="https://github.com/DIG-Network/digs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/DIG-Network/digs/releases"><img src="https://img.shields.io/github/v/release/DIG-Network/digs?sort=semver" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0-blue.svg" alt="License: GPL-2.0"></a>
   <img src="https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-555" alt="Platforms">
   <img src="https://img.shields.io/badge/rust-1.94.1-orange.svg" alt="Rust 1.94.1">
@@ -68,7 +68,7 @@ dig-store update --check  # just report whether a newer release exists
 ### Raw binary (macOS / Linux)
 
 Prefer the installer above. If you grab the raw per-OS binary from the
-[Releases](https://github.com/DIG-Network/dig-store/releases) page instead, pick
+[Releases](https://github.com/DIG-Network/digs/releases) page instead, pick
 the file for your CPU — **`dig-store-<ver>-macos-arm64`** (Apple Silicon: M1/M2/M3)
 or **`dig-store-<ver>-macos-x64`** (Intel Mac); **`dig-store-<ver>-linux-x64`** (or
 the `aarch64-unknown-linux-gnu.tar.gz` for ARM Linux). A macOS/Linux binary has
@@ -256,7 +256,7 @@ then add the workflow ([`examples/github-actions-deploy.yml`](examples/github-ac
 
 ```yaml
 - name: Deploy to DIG
-  uses: DIG-Network/dig-store@v0.5.29   # pin to a release tag
+  uses: DIG-Network/digs@v0.5.29   # pin to a release tag
   with:
     mnemonic: ${{ secrets.DIG_MNEMONIC }}
     deploy-key: ${{ secrets.DIG_DEPLOY_KEY }}
