@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.17.2] - 2026-07-20
+
+### Chores
+- **links:** Repoint self-referential repo links to DIG-Network/digs (#764) (#28)- **update:** Repoint the CLI self-update source to DIG-Network/digs (#764) (#29)
+
 ## [0.17.0] - 2026-07-19
 
 ### Features
