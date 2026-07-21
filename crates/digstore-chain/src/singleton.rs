@@ -2160,6 +2160,232 @@ mod verify_pinned_root_tests {
         Ok(())
     }
 
+    /// SECURITY (issue #1473): a forged singleton that curries `launcher_id == store_id`
+    /// but does NOT descend from the launcher coin (coin_id == store_id) MUST be rejected.
+    ///
+    /// `DataStore::from_spend` reads `launcher_id` straight from the parent's curried
+    /// `SingletonLayer`, and Chia's singleton top-layer does not bind that curried value to
+    /// the real launcher coin. So an attacker can construct a spend that from_spends to
+    /// `launcher_id == store_id` + `root == R_evil` from a coin whose id != store_id, hint
+    /// it to `store_id`, and — under the pre-#1473 verify, which gated ONLY on the curried
+    /// `launcher_id` — get an honest node to serve `R_evil` as chain-verified. The fixed
+    /// verify anchors identity on the unforgeable launcher coin, so this must fail closed.
+    #[tokio::test]
+    async fn impostor_singleton_rejected() -> anyhow::Result<()> {
+        use datalayer_driver::{DataStoreInfo, EveProof, Proof};
+
+        let mut sim = Simulator::new();
+        let attacker = sim.bls(1);
+        let attacker_ph: Bytes32 = attacker.puzzle_hash;
+
+        // The victim store_id the attacker targets. It is NOT a real launched singleton:
+        // no launcher coin whose coin_id == store_id exists on the (mock) chain.
+        let store_id = Bytes32::new([0xab; 32]);
+        let r_parent = Bytes32::new([0x11; 32]);
+        let r_evil = Bytes32::new([0xee; 32]);
+        // The impostor parent's own parent — an attacker coin, NEVER store_id.
+        let attacker_ancestor = Bytes32::new([0xcc; 32]);
+
+        // Forge a singleton currying launcher_id = store_id from an attacker-owned coin.
+        let info = DataStoreInfo::new(
+            store_id,
+            DataStoreMetadata {
+                root_hash: r_parent,
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            attacker_ph,
+            vec![],
+        );
+        let impostor_parent_coin = Coin::new(attacker_ancestor, attacker_ph, 1);
+        let proof = Proof::Eve(EveProof {
+            parent_parent_coin_info: attacker_ancestor,
+            parent_amount: 1,
+        });
+        let impostor_parent = DataStore::new(impostor_parent_coin, proof, info);
+
+        let up = update_store_metadata(
+            impostor_parent,
+            r_evil,
+            None,
+            None,
+            None,
+            None,
+            DataStoreInnerSpend::Owner(attacker.pk),
+        )
+        .map_err(|e| anyhow::anyhow!("forge impostor spend: {e}"))?;
+        let forged_parent_spend = up.coin_spends[0].clone();
+        let tip_c = up.new_datastore;
+
+        // The pre-#1473 verify TRUSTS exactly this: from_spend yields launcher_id==store_id
+        // and root==R_evil — a convincing forgery.
+        let mut ctx = SpendContext::new();
+        let parsed = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &forged_parent_spend, &[])
+            .map_err(|e| anyhow::anyhow!("parse forged spend: {e}"))?
+            .expect("forged spend parses as a datastore");
+        assert_eq!(
+            parsed.info.launcher_id, store_id,
+            "the forgery curries the victim launcher_id"
+        );
+        assert_eq!(
+            parsed.info.metadata.root_hash, r_evil,
+            "the forgery advertises the attacker's root"
+        );
+
+        // Seed the mock as coinset would answer for this attack: tip C unspent + hinted to
+        // store_id, its parent P spent with the forged spend, the attacker ancestor present
+        // but its own parent NEVER store_id, and — crucially — NO launcher coin for store_id.
+        let mut mock = MockChain::default();
+        let tip_id = tip_c.coin.coin_id();
+        let parent_id = tip_c.coin.parent_coin_info; // == impostor_parent_coin.coin_id()
+        mock.records.insert(
+            tip_id,
+            CoinInfo {
+                coin: tip_c.coin,
+                spent: false,
+                confirmed_block_index: 2,
+                spent_block_index: 0,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.records.insert(
+            parent_id,
+            CoinInfo {
+                coin: impostor_parent_coin,
+                spent: true,
+                confirmed_block_index: 1,
+                spent_block_index: 2,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.spends.insert(parent_id, forged_parent_spend);
+        // The attacker ancestor exists but chains to another attacker coin, never store_id.
+        mock.records.insert(
+            attacker_ancestor,
+            CoinInfo {
+                coin: Coin::new(Bytes32::new([0xdd; 32]), attacker_ph, 1),
+                spent: true,
+                confirmed_block_index: 0,
+                spent_block_index: 1,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        let tip_rec = mock.records.get(&tip_id).expect("tip seeded").clone();
+        mock.records_by_hint.insert(store_id, vec![tip_rec]);
+
+        let result = verify_pinned_root(&mock, store_id, r_evil).await;
+        assert!(
+            result.is_err(),
+            "impostor root R_evil must NOT verify — the tip does not descend from a launcher \
+             coin whose id == store_id; got {result:?}"
+        );
+        Ok(())
+    }
+
+    /// SECURITY (issue #1473) co-existence variant: a GENUINE store exists for `store_id`
+    /// whose forward walk is #747-broken, AND a different-lineage impostor tip currying
+    /// `store_id` with `R_evil` is ALSO hinted to `store_id`. The genuine current root must
+    /// still verify while the impostor root is rejected.
+    #[tokio::test]
+    async fn genuine_root_served_impostor_rejected_when_both_hinted() -> anyhow::Result<()> {
+        use datalayer_driver::{DataStoreInfo, EveProof, Proof};
+
+        let mut sim = Simulator::new();
+        let lin = build_three_gen_store(&mut sim)?;
+        let mut mock = seed_mock(&sim, &lin);
+        // #747: break the genuine forward walk by dropping an intermediate spend.
+        mock.spends.remove(&lin.eve_coin);
+
+        // Forge an impostor tip currying the genuine store_id but from an attacker coin.
+        let attacker = sim.bls(1);
+        let attacker_ph: Bytes32 = attacker.puzzle_hash;
+        let attacker_ancestor = Bytes32::new([0x7c; 32]);
+        let r_evil = Bytes32::new([0xee; 32]);
+        let info = DataStoreInfo::new(
+            lin.store_id,
+            DataStoreMetadata {
+                root_hash: Bytes32::new([0x71; 32]),
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            attacker_ph,
+            vec![],
+        );
+        let impostor_parent_coin = Coin::new(attacker_ancestor, attacker_ph, 1);
+        let impostor_parent = DataStore::new(
+            impostor_parent_coin,
+            Proof::Eve(EveProof {
+                parent_parent_coin_info: attacker_ancestor,
+                parent_amount: 1,
+            }),
+            info,
+        );
+        let up = update_store_metadata(
+            impostor_parent,
+            r_evil,
+            None,
+            None,
+            None,
+            None,
+            DataStoreInnerSpend::Owner(attacker.pk),
+        )
+        .map_err(|e| anyhow::anyhow!("forge impostor: {e}"))?;
+        let forged_parent_spend = up.coin_spends[0].clone();
+        let impostor_tip = up.new_datastore;
+        let impostor_tip_id = impostor_tip.coin.coin_id();
+        let impostor_parent_id = impostor_tip.coin.parent_coin_info;
+
+        mock.records.insert(
+            impostor_tip_id,
+            CoinInfo {
+                coin: impostor_tip.coin,
+                spent: false,
+                confirmed_block_index: 3,
+                spent_block_index: 0,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.records.insert(
+            impostor_parent_id,
+            CoinInfo {
+                coin: impostor_parent_coin,
+                spent: true,
+                confirmed_block_index: 2,
+                spent_block_index: 3,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.spends.insert(impostor_parent_id, forged_parent_spend);
+        // Both the genuine tip and the impostor tip are hinted to store_id.
+        let impostor_rec = mock.records.get(&impostor_tip_id).unwrap().clone();
+        mock.records_by_hint
+            .get_mut(&lin.store_id)
+            .expect("genuine hint seeded")
+            .push(impostor_rec);
+
+        // The impostor root is rejected (it never chains back to the launcher coin).
+        assert!(
+            verify_pinned_root(&mock, lin.store_id, r_evil)
+                .await
+                .is_err(),
+            "impostor root must not be served even alongside the genuine store"
+        );
+        // The genuine current root still verifies despite the broken forward walk (#747).
+        verify_pinned_root(&mock, lin.store_id, lin.root2)
+            .await
+            .expect("genuine current root verifies");
+        Ok(())
+    }
+
     /// FAIL-CLOSED: with no chain data (unreachable / unknown store) verify errors,
     /// never returns Ok.
     #[tokio::test]
