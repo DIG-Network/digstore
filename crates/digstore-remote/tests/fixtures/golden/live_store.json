@@ -1,0 +1,6 @@
+{
+  "status": "pending",
+  "note": "The REAL mainnet-published golden store identity (super-repo #843). Recorded ALONGSIDE the deterministic offline anchor in manifest.json (never overwriting it). Populated once `digstore init`/`commit`/`push` succeed on Chia mainnet; then rpc_tier_read_proof derives from LIVE_STORE_ID_HEX and runs live against rpc.dig.net.",
+  "plaintext_sha256": "4d1315ac42363fd61187e4d1b2787b44f19e2b46f6c7111ffc6b09ff6068229c",
+  "resource_key": "index.html"
+}
