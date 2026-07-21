@@ -1420,6 +1420,92 @@ pub async fn current_root(chain: &dyn ChainReads, launcher_id: Bytes32) -> Resul
     Ok(store.info.metadata.root_hash)
 }
 
+/// Verify — **fail-closed**, without a full lineage walk — that `pinned_root` is the
+/// store's CURRENT on-chain generation.
+///
+/// A local content read of `dig://<store_id>:<pinned_root>` (the §5.3 loopback tier)
+/// MUST NOT serve bytes for a root it cannot chain-anchor. The obvious anchor —
+/// [`current_root`] / [`sync_datastore`] — walks the singleton lineage launcher → eve →
+/// … → tip, parsing every generation's spend. A store with hundreds of generations makes
+/// that walk expensive, and a SINGLE unparseable intermediate spend aborts the whole walk
+/// (issue #747: "parse next store: missing child"), so even a perfectly valid pinned root
+/// becomes unreadable. This verify sidesteps the walk entirely.
+///
+/// Every datastore generation is created hinted to its `launcher_id` (the first
+/// recreation memo — see `DataStore::get_recreation_memos`), which equals the `store_id`.
+/// So the current unspent singleton is found DIRECTLY with one
+/// [`unspent_coins_by_hint`](ChainReads::unspent_coins_by_hint) query on `store_id` — no
+/// per-generation walk. Its on-chain root is read from the ONE spend that created it (the
+/// tip's parent), skipping every earlier (possibly broken) generation. `pinned_root` is
+/// accepted only when it equals that current root.
+///
+/// # Anti-rollback (§5.3 / NC-9)
+/// This is the strongest anti-rollback stance: only the CURRENT on-chain root passes. A
+/// root that was never on-chain, or a STALE (superseded) generation, is rejected. Verifying
+/// a historical-but-real generation would require enumerating past generations (the walk
+/// this API exists to avoid) and is intentionally out of scope.
+///
+/// # Errors
+/// Returns `Err` — never a false `Ok` — whenever the root cannot be positively
+/// chain-anchored: the chain is unreachable, no current unspent singleton for `store_id`
+/// is found, or the on-chain current root differs from `pinned_root`. Callers MUST treat
+/// any `Err` as "do not serve".
+///
+/// `store_id` is the store's `launcher_id`.
+pub async fn verify_pinned_root(
+    chain: &dyn ChainReads,
+    store_id: Bytes32,
+    pinned_root: Bytes32,
+) -> Result<()> {
+    // The current unspent singleton is hinted to launcher_id (== store_id): fetch it
+    // directly, no lineage walk. An owner may hold several stores under this hint, so we
+    // confirm each candidate's launcher_id below.
+    let candidates = chain.unspent_coins_by_hint(store_id).await?;
+
+    let mut ctx = SpendContext::new();
+    for coin in candidates {
+        // Read the candidate's on-chain root from the ONE spend that created it — the
+        // spend of its parent. This is the only generation we parse: earlier generations
+        // (which may be unparseable, #747) are never touched.
+        let parent_id = coin.parent_coin_info;
+        let Some(parent_rec) = chain.coin_record(parent_id).await? else {
+            continue;
+        };
+        if !parent_rec.spent {
+            continue;
+        }
+        let Some(parent_spend) = chain
+            .coin_spend(parent_id, parent_rec.spent_block_index)
+            .await?
+        else {
+            continue;
+        };
+        // The parent's own creation memos carry its delegated-puzzle set, so from_spend
+        // reconstructs the child without a caller-supplied delegated list (`&[]`).
+        let Ok(Some(store)) =
+            DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &parent_spend, &[])
+        else {
+            continue;
+        };
+        if store.info.launcher_id != store_id {
+            continue; // a different store sharing the hint
+        }
+        // This IS the current unspent generation of `store_id`. Fail-closed: the pinned
+        // root must equal the live on-chain root exactly.
+        if store.info.metadata.root_hash == pinned_root {
+            return Ok(());
+        }
+        return Err(ChainError::Chain(format!(
+            "pinned root {pinned_root:?} is not the current on-chain root {:?} for store {store_id:?}",
+            store.info.metadata.root_hash
+        )));
+    }
+
+    Err(ChainError::Chain(format!(
+        "no current unspent singleton found on chain for store {store_id:?}; pinned root unverifiable"
+    )))
+}
+
 // ===========================================================================
 // Store discovery — a user's own DataLayer stores → their capsules.
 //
@@ -1850,5 +1936,243 @@ mod discovery_tests {
             }
         );
         assert_eq!(hist.current, *hist.history.last().unwrap());
+    }
+}
+
+// ===========================================================================
+// verify_pinned_root — the #747 / #852 regression suite.
+//
+// Builds a REAL multi-generation datastore lineage on the in-process Chia
+// simulator, then feeds coinset-shaped reads into the in-crate MockChain. The
+// central regression (`pinned_root_verifies_when_full_walk_is_broken`) proves
+// that `verify_pinned_root` chain-anchors the current root even when an EARLIER
+// generation's spend is unreadable — exactly the condition under which
+// `sync_datastore`'s full walk aborts with "singleton spend not found" (#747),
+// which the same fixture asserts.
+// ===========================================================================
+#[cfg(test)]
+mod verify_pinned_root_tests {
+    use super::*;
+    use crate::coinset::mock::MockChain;
+    use crate::coinset::CoinInfo;
+    use chia_sdk_test::Simulator;
+    use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+    /// A three-generation store built on `sim`: eve(root0) → gen1(root1) → gen2(root2, tip).
+    struct Lineage {
+        store_id: Bytes32,
+        /// (coin_id, is_current_tip) for launcher, eve, gen1, gen2 — everything the
+        /// MockChain must know about to answer the reads.
+        eve_coin: Bytes32,
+        gen1_coin: Bytes32,
+        gen2_coin: Bytes32,
+        root0: Bytes32,
+        root1: Bytes32,
+        root2: Bytes32,
+    }
+
+    /// Mint an owner-only store and advance its root twice, applying every spend on
+    /// `sim`. Returns the lineage's coin ids + roots so a MockChain can be seeded.
+    fn build_three_gen_store(sim: &mut Simulator) -> anyhow::Result<Lineage> {
+        let owner = sim.bls(3);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let ctx = &mut SpendContext::new();
+
+        let root0 = Bytes32::new([0x10; 32]);
+        let (launch, eve) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: root0,
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            vec![],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+        let store_id = eve.info.launcher_id;
+
+        // gen1: advance root0 → root1 (owner-authorized).
+        let root1 = Bytes32::new([0x20; 32]);
+        let up1 = update_store_metadata(
+            eve.clone(),
+            root1,
+            None,
+            None,
+            None,
+            None,
+            DataStoreInnerSpend::Owner(owner.pk),
+        )
+        .map_err(|e| anyhow::anyhow!("update1: {e}"))?;
+        let sig1 = sign_coin_spends(&up1.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign1: {e}"))?;
+        sim.new_transaction(SpendBundle::new(up1.coin_spends, sig1))?;
+        let gen1 = up1.new_datastore;
+
+        // gen2 (the tip): advance root1 → root2.
+        let root2 = Bytes32::new([0x30; 32]);
+        let up2 = update_store_metadata(
+            gen1.clone(),
+            root2,
+            None,
+            None,
+            None,
+            None,
+            DataStoreInnerSpend::Owner(owner.pk),
+        )
+        .map_err(|e| anyhow::anyhow!("update2: {e}"))?;
+        let sig2 = sign_coin_spends(&up2.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign2: {e}"))?;
+        sim.new_transaction(SpendBundle::new(up2.coin_spends, sig2))?;
+        let gen2 = up2.new_datastore;
+
+        Ok(Lineage {
+            store_id,
+            eve_coin: eve.coin.coin_id(),
+            gen1_coin: gen1.coin.coin_id(),
+            gen2_coin: gen2.coin.coin_id(),
+            root0,
+            root1,
+            root2,
+        })
+    }
+
+    /// Seed a MockChain with a `coin_record` (+ `coin_spend` for spent coins) per id,
+    /// pulled from the simulator — mirroring `mock_from_sim`.
+    fn seed_records(sim: &Simulator, mock: &mut MockChain, coin_ids: &[Bytes32]) {
+        for &coin_id in coin_ids {
+            let Some(cs) = sim.coin_state(coin_id) else {
+                continue;
+            };
+            let spent_h = cs.spent_height;
+            mock.records.insert(
+                coin_id,
+                CoinInfo {
+                    coin: cs.coin,
+                    spent: spent_h.is_some(),
+                    confirmed_block_index: cs.created_height.unwrap_or(0),
+                    spent_block_index: spent_h.unwrap_or(0),
+                    timestamp: 0,
+                    coinbase: false,
+                },
+            );
+            if spent_h.is_some() {
+                if let Some(spend) = sim.coin_spend(coin_id) {
+                    mock.spends.insert(coin_id, spend);
+                }
+            }
+        }
+    }
+
+    /// Build a MockChain seeded to answer `verify_pinned_root`: records for the whole
+    /// lineage plus a hint index mapping `store_id` → the unspent tip (gen2), exactly
+    /// as coinset returns for a datastore's launcher-id hint.
+    fn seed_mock(sim: &Simulator, lin: &Lineage) -> MockChain {
+        let mut mock = MockChain::default();
+        seed_records(
+            sim,
+            &mut mock,
+            &[lin.store_id, lin.eve_coin, lin.gen1_coin, lin.gen2_coin],
+        );
+        let tip_rec = mock
+            .records
+            .get(&lin.gen2_coin)
+            .expect("tip record seeded")
+            .clone();
+        mock.records_by_hint.insert(lin.store_id, vec![tip_rec]);
+        mock
+    }
+
+    /// GREEN: the pinned CURRENT root of a multi-generation store verifies without a walk.
+    #[tokio::test]
+    async fn pinned_current_root_verifies() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let lin = build_three_gen_store(&mut sim)?;
+        let mock = seed_mock(&sim, &lin);
+        verify_pinned_root(&mock, lin.store_id, lin.root2)
+            .await
+            .expect("current root chain-anchors");
+        Ok(())
+    }
+
+    /// THE #747 REGRESSION: with an EARLIER generation's spend unreadable, the full
+    /// lineage walk (`sync_datastore`) aborts — yet `verify_pinned_root` still
+    /// chain-anchors the current root, because it only parses the tip's parent spend.
+    #[tokio::test]
+    async fn pinned_root_verifies_when_full_walk_is_broken() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let lin = build_three_gen_store(&mut sim)?;
+        let mut mock = seed_mock(&sim, &lin);
+
+        // Simulate #747: the eve→gen1 spend is unreadable. The forward walk needs it and
+        // cannot proceed past eve.
+        mock.spends.remove(&lin.eve_coin);
+
+        let walk_err = sync_datastore(&mock, lin.store_id).await.unwrap_err();
+        match walk_err {
+            ChainError::Chain(msg) => assert!(
+                msg.contains("singleton spend not found"),
+                "full walk should break on the missing intermediate spend; got: {msg}"
+            ),
+            other => panic!("expected Chain error from the broken walk, got {other:?}"),
+        }
+
+        // The pinned-root verify sidesteps the break entirely.
+        verify_pinned_root(&mock, lin.store_id, lin.root2)
+            .await
+            .expect("pinned current root verifies despite the broken lineage walk");
+        Ok(())
+    }
+
+    /// FAIL-CLOSED: a STALE (superseded) generation's root is rejected — anti-rollback.
+    #[tokio::test]
+    async fn stale_root_is_rejected() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let lin = build_three_gen_store(&mut sim)?;
+        let mock = seed_mock(&sim, &lin);
+        for stale in [lin.root0, lin.root1] {
+            let err = verify_pinned_root(&mock, lin.store_id, stale)
+                .await
+                .expect_err("a superseded root must not verify");
+            match err {
+                ChainError::Chain(msg) => {
+                    assert!(msg.contains("not the current on-chain root"), "got: {msg}")
+                }
+                other => panic!("expected root-mismatch Chain error, got {other:?}"),
+            }
+        }
+        Ok(())
+    }
+
+    /// FAIL-CLOSED: a root that was NEVER on-chain is rejected.
+    #[tokio::test]
+    async fn never_seen_root_is_rejected() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let lin = build_three_gen_store(&mut sim)?;
+        let mock = seed_mock(&sim, &lin);
+        let err = verify_pinned_root(&mock, lin.store_id, Bytes32::new([0xff; 32]))
+            .await
+            .expect_err("a fabricated root must not verify");
+        assert!(matches!(err, ChainError::Chain(_)));
+        Ok(())
+    }
+
+    /// FAIL-CLOSED: with no chain data (unreachable / unknown store) verify errors,
+    /// never returns Ok.
+    #[tokio::test]
+    async fn unreachable_chain_fails_closed() {
+        let mock = MockChain::default();
+        let err = verify_pinned_root(&mock, Bytes32::new([0x01; 32]), Bytes32::new([0x02; 32]))
+            .await
+            .expect_err("must fail closed when no unspent singleton is found");
+        match err {
+            ChainError::Chain(msg) => {
+                assert!(msg.contains("no current unspent singleton"), "got: {msg}")
+            }
+            other => panic!("expected fail-closed Chain error, got {other:?}"),
+        }
     }
 }
