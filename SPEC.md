@@ -215,6 +215,26 @@ byte-format contract — it is kept here because it is a public surface an indep
 - A writer delegate may advance the store's root (publish capsules) but can never change
   ownership or the delegated set itself — only the owner key can.
 
+### 9.1 Pinned-root chain-anchored verification (loopback read tier)
+
+Scope note: like §9, this is a chain-authority contract exposed by `digstore_chain::singleton`,
+not a `.dig` byte-format contract. It is normative for how a node serving a root-pinned URN
+(`dig://<store_id>:<pinned_root>`) over the §5.3 loopback tier chain-anchors the request.
+
+- `verify_pinned_root(chain, store_id, pinned_root) -> Result<()>` returns `Ok(())` **iff**
+  `pinned_root` equals the store's CURRENT on-chain generation root, and `Err` otherwise. It is
+  **fail-closed**: a chain-read failure, an absent unspent singleton, or any root mismatch is an
+  `Err` — never a false `Ok`. A caller MUST treat any `Err` as "do not serve".
+- It is a **bounded** verification, NOT a lineage walk: every datastore generation is created
+  hinted to its `launcher_id` (the first `DataStore::get_recreation_memos` memo, == `store_id`),
+  so the current unspent singleton is located with a single `unspent_coins_by_hint(store_id)`
+  query and its root read from the ONE spend that created it (the tip's parent). Earlier
+  generations are never parsed. This deliberately sidesteps the full forward walk
+  (`sync_datastore`), which aborts if any single intermediate generation's spend is unparseable.
+- **Anti-rollback**: only the current on-chain root passes; a root that was never on-chain and a
+  stale (superseded) generation are both rejected. Verifying a historical-but-real generation is
+  intentionally out of scope (it would require the per-generation enumeration this API avoids).
+
 ## 10. Per-capsule $DIG price (commit / deploy)
 
 Scope note: like §9, this is a CLI/economic contract, not a `.dig` byte-format contract; it is
