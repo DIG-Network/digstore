@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.18.0] - 2026-07-20
+
+### Features
+- **cli:** Add `store-status <store_id>` subcommand — reports a store's aggregate on-chain status (live/melted/not-found, confirmations, live root, owner, coin id) by consuming the fail-closed `dig_store::get_store_status` via a coinset-backed `dig_chainsource_interface::ChainSource` adapter; supports `--json`, `--confirmation-target`, and a `--coinset-url` / `$DIG_COINSET_URL` endpoint override (#1349)
+
 ## [0.17.2] - 2026-07-20
 
 ### Chores

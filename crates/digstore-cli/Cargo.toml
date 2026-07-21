@@ -42,6 +42,12 @@ clap_mangen = "0.2"
 anyhow = "1"
 thiserror = "1"
 chia-protocol = "0.26"
+# `store-status` (#1349): the fail-closed on-chain store-status aggregator lives in the `dig-store`
+# LIBRARY crate (NC-9, triple-gated); this CLI is a thin consumer of `dig_store::get_store_status`,
+# reading through a coinset-backed adapter over the canonical `dig_chainsource_interface::ChainSource`
+# trait. NEVER re-implement the status/lineage logic here.
+dig-store = "0.5"
+dig-chainsource-interface = "0.1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -69,3 +75,6 @@ axum = "0.7"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+# The in-memory canonical ChainSource for exercising `get_store_status` (Live/Melted/NotFound +
+# fail-closed) without a network, and the adapter's transport-mapping tests.
+dig-chainsource-interface = { version = "0.1", features = ["testing"] }

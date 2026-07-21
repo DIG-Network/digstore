@@ -147,6 +147,32 @@ pub enum Command {
     Did(DidArgs),
     /// Make, take, and inspect Chia offers (XCH/CAT trades).
     Offer(OfferArgs),
+    /// Show a store's aggregate ON-CHAIN status by store id (live/melted/not-found,
+    /// confirmations, live root, owner, coin id). Reads Chia chain state via coinset;
+    /// needs no local store. Distinct from `status` (the local working-tree view).
+    #[command(name = "store-status")]
+    StoreStatus(StoreStatusArgs),
+}
+
+/// Arguments for `store-status` (#1349) — a read-only on-chain status lookup by store id.
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Reads the store's on-chain status from Chia chain state (coin records + spends) \
+via coinset — NOT the dig-node content ladder. Point at a custom Chia read endpoint with \
+--coinset-url or $DIG_COINSET_URL.\n\nEXAMPLES:\n  dig-store store-status \
+<64-hex-store-id>\n  dig-store store-status urn:dig:chia:<store-id> --json\n  dig-store store-status \
+<store-id> --confirmation-target 16 --coinset-url https://api.coinset.org"
+)]
+pub struct StoreStatusArgs {
+    /// The store id: 32-byte hex (with or without `0x`), or a `urn:dig:chia:<store_id>` URN.
+    pub store_id: String,
+    /// Confirmation depth (blocks under the peak) at which the live tip is treated as settled.
+    #[arg(long, default_value_t = dig_store::DEFAULT_CONFIRMATION_TARGET)]
+    pub confirmation_target: u32,
+    /// Custom coinset read endpoint (overrides `$DIG_COINSET_URL` and the default). This surface
+    /// reads raw Chia chain state, so it uses a coinset endpoint, not the §5.3 node ladder.
+    #[arg(long)]
+    pub coinset_url: Option<String>,
 }
 
 // ===========================================================================
@@ -1307,6 +1333,41 @@ mod tests {
         match cli.command {
             Command::Add(a) => assert_eq!(a.paths[0].to_str().unwrap(), "file.txt"),
             _ => panic!("expected add"),
+        }
+    }
+
+    #[test]
+    fn parses_store_status_defaults_and_flags() {
+        // Defaults: confirmation-target from the library const, no coinset override.
+        let cli = Cli::try_parse_from(["digstore", "store-status", "abcd"]).unwrap();
+        match cli.command {
+            Command::StoreStatus(a) => {
+                assert_eq!(a.store_id, "abcd");
+                assert_eq!(
+                    a.confirmation_target,
+                    dig_store::DEFAULT_CONFIRMATION_TARGET
+                );
+                assert!(a.coinset_url.is_none());
+            }
+            _ => panic!("expected store-status"),
+        }
+        // Flags parse.
+        let cli = Cli::try_parse_from([
+            "digstore",
+            "store-status",
+            "urn:dig:chia:ab",
+            "--confirmation-target",
+            "16",
+            "--coinset-url",
+            "https://example.org",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::StoreStatus(a) => {
+                assert_eq!(a.confirmation_target, 16);
+                assert_eq!(a.coinset_url.as_deref(), Some("https://example.org"));
+            }
+            _ => panic!("expected store-status"),
         }
     }
 
