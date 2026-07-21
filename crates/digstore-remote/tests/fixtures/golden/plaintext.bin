@@ -1,0 +1,4 @@
+<!doctype html>
+<title>DIG golden read fixture</title>
+<h1>hello from the DIG Network</h1>
+<p>This is the #843 golden capsule: a single index.html resource whose ciphertext, inclusion proof, and root are derived deterministically from digstore_core.</p>
