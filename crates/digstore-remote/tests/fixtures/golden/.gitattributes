@@ -1,0 +1,4 @@
+# Golden read fixtures are byte-exact §5.1 anchors — git must NEVER touch their
+# bytes (no CRLF/LF normalization on checkout, or the byte-stability test fails
+# on Windows). Treat every file here as binary.
+* -text
