@@ -5,6 +5,7 @@ pub mod anchor_state;
 pub mod anchor_ux;
 pub mod assets;
 pub mod client_crypto;
+pub mod coinset_chain_source;
 pub mod consolidate;
 pub mod dighub;
 pub mod discovery;

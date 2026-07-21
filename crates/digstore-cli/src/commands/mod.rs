@@ -43,6 +43,7 @@ pub mod serve;
 pub mod setup;
 pub mod staged;
 pub mod status;
+pub mod store_status;
 pub mod stores;
 pub mod unstage;
 pub mod update;
@@ -222,6 +223,10 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
             let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
             return balance::run(&ctx, &ui);
         }
+        // `store-status` reads a store's on-chain status by store id alone — it needs no local
+        // store/workspace (like `did`/`offer`), and reads raw Chia chain state via coinset (NOT
+        // the §5.3 dig-node content ladder). See `store_status` for the endpoint resolution.
+        Command::StoreStatus(a) => return store_status::run(&ui, a),
         _ => {}
     }
 
@@ -317,6 +322,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         | Command::Did(_)
         | Command::Offer(_)
         | Command::Collection(_)
+        | Command::StoreStatus(_)
         | Command::Cat(_) => {
             unreachable!("handled above")
         }

@@ -2219,6 +2219,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 
 [[package]]
+name = "dig-capsule"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "710b7a953f37c0fe30e1262c32c8a25f76f06d5cbd668904239d65588bc76645"
+dependencies = [
+ "aes-gcm-siv",
+ "dig-urn-protocol",
+ "hex",
+ "hkdf",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "wasmparser 0.221.3",
+]
+
+[[package]]
+name = "dig-chainsource-interface"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01084c5fb2b4a14db1569da4fef039de14e3db8c5588ded3504945d7333a133c"
+dependencies = [
+ "chia-protocol",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "dig-constants"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2230,6 +2256,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dig-merkle"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1dcc3f7b4de976bc2670a01ab241d02f929c8c6688d8a48b1f1885e13476dac6"
+dependencies = [
+ "chia-protocol",
+ "chia-puzzle-types",
+ "chia-sha2 0.26.0",
+ "chia-wallet-sdk",
+ "clvm-traits",
+ "dig-chainsource-interface",
+ "hex-literal",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "dig-resolver"
 version = "0.1.0"
 dependencies = [
@@ -2237,6 +2279,32 @@ dependencies = [
  "digstore-chain",
  "hex",
  "tokio",
+]
+
+[[package]]
+name = "dig-store"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e981ef4ea50dbddc5ef435215d0b8c9ad631066d7debf345e76389c7db4af641"
+dependencies = [
+ "dig-capsule",
+ "dig-chainsource-interface",
+ "dig-merkle",
+ "dig-urn-protocol",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "dig-urn-protocol"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "197617ce594fadb31c784717ac37369cbdbe13dc8b5651866f5221fe55be0afc"
+dependencies = [
+ "hex",
+ "serde",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2282,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chain"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2320,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chunker"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "digstore-core",
  "hex",
@@ -2330,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-cli"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
@@ -2343,6 +2411,8 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "dig-chainsource-interface",
+ "dig-store",
  "digstore-chain",
  "digstore-chunker",
  "digstore-compiler",
@@ -2396,7 +2466,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-core"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "aes-gcm-siv",
  "hex",
@@ -2493,7 +2563,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-remote"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2551,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-subscription"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "async-trait",
  "digstore-core",
