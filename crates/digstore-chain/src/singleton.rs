@@ -1420,36 +1420,47 @@ pub async fn current_root(chain: &dyn ChainReads, launcher_id: Bytes32) -> Resul
     Ok(store.info.metadata.root_hash)
 }
 
-/// Verify — **fail-closed**, without a full lineage walk — that `pinned_root` is the
-/// store's CURRENT on-chain generation.
+/// Verify — **fail-closed**, without a full forward lineage walk — that `pinned_root` is
+/// the store's CURRENT on-chain generation.
 ///
-/// A local content read of `dig://<store_id>:<pinned_root>` (the §5.3 loopback tier)
-/// MUST NOT serve bytes for a root it cannot chain-anchor. The obvious anchor —
+/// A local content read of `dig://<store_id>:<pinned_root>` (the §5.3 loopback tier) MUST
+/// NOT serve bytes for a root it cannot chain-anchor. The obvious anchor —
 /// [`current_root`] / [`sync_datastore`] — walks the singleton lineage launcher → eve →
-/// … → tip, parsing every generation's spend. A store with hundreds of generations makes
-/// that walk expensive, and a SINGLE unparseable intermediate spend aborts the whole walk
-/// (issue #747: "parse next store: missing child"), so even a perfectly valid pinned root
-/// becomes unreadable. This verify sidesteps the walk entirely.
+/// … → tip FORWARD, parsing every generation's SPEND. A store with hundreds of generations
+/// makes that walk expensive, and a SINGLE unparseable intermediate spend aborts the whole
+/// walk (issue #747: "parse next store: missing child"), so even a perfectly valid pinned
+/// root becomes unreadable. This verify avoids that forward walk.
 ///
-/// Every datastore generation is created hinted to its `launcher_id` (the first
-/// recreation memo — see `DataStore::get_recreation_memos`), which equals the `store_id`.
-/// So the current unspent singleton is found DIRECTLY with one
-/// [`unspent_coins_by_hint`](ChainReads::unspent_coins_by_hint) query on `store_id` — no
-/// per-generation walk. Its on-chain root is read from the ONE spend that created it (the
-/// tip's parent), skipping every earlier (possibly broken) generation. `pinned_root` is
-/// accepted only when it equals that current root.
+/// # Identity is anchored on the launcher coin — NEVER the curried `launcher_id`
+/// The current unspent singleton is discovered with one
+/// [`unspent_coins_by_hint`](ChainReads::unspent_coins_by_hint) query on `store_id`. A hint
+/// is an attacker-controllable CREATE_COIN memo, and `DataStore::from_spend` reads
+/// `launcher_id` STRAIGHT from a spend's curried `SingletonLayer` — Chia's singleton
+/// top-layer does not bind that curried value to the real launcher coin. So a coin merely
+/// discovered by hint whose curried `launcher_id == store_id` is NOT proof of identity: an
+/// attacker can forge exactly that (issue #1473). The only unforgeable identity is the
+/// launcher coin itself — `coin_id == store_id` is a 256-bit hash preimage an attacker
+/// cannot grind. So each candidate tip is accepted only when it PROVABLY DESCENDS from that
+/// launcher, via a bounded BACKWARD walk of COIN RECORDS (following `coin.parent_coin_info`,
+/// capped at `MAX_HOPS`) that must reach the coin whose `coin_id == store_id` — and that
+/// launcher coin must itself exist, be spent, and carry the singleton launcher puzzle hash.
+///
+/// #747-immunity is preserved because the backward walk needs only COIN RECORDS, never the
+/// intermediate generations' SPENDS. The tip's root is still read from the ONE spend that
+/// created it (the tip's parent). As defense-in-depth, each hop whose spend IS available is
+/// checked to curry `launcher_id == store_id` — best-effort only: a missing/unparseable
+/// intermediate spend never fails the verification (the coin-record chain is the real proof).
 ///
 /// # Anti-rollback (§5.3 / NC-9)
-/// This is the strongest anti-rollback stance: only the CURRENT on-chain root passes. A
-/// root that was never on-chain, or a STALE (superseded) generation, is rejected. Verifying
-/// a historical-but-real generation would require enumerating past generations (the walk
-/// this API exists to avoid) and is intentionally out of scope.
+/// This is the strongest anti-rollback stance: only the CURRENT on-chain root of the store
+/// whose launcher is `store_id` passes. A root that was never on-chain, a STALE (superseded)
+/// generation, or a forged singleton not descending from the launcher coin is rejected.
 ///
 /// # Errors
 /// Returns `Err` — never a false `Ok` — whenever the root cannot be positively
-/// chain-anchored: the chain is unreachable, no current unspent singleton for `store_id`
-/// is found, or the on-chain current root differs from `pinned_root`. Callers MUST treat
-/// any `Err` as "do not serve".
+/// chain-anchored: the chain is unreachable, no launcher-anchored unspent singleton for
+/// `store_id` is found, or the on-chain current root differs from `pinned_root`. Callers
+/// MUST treat any `Err` as "do not serve".
 ///
 /// `store_id` is the store's `launcher_id`.
 pub async fn verify_pinned_root(
@@ -1458,15 +1469,15 @@ pub async fn verify_pinned_root(
     pinned_root: Bytes32,
 ) -> Result<()> {
     // The current unspent singleton is hinted to launcher_id (== store_id): fetch it
-    // directly, no lineage walk. An owner may hold several stores under this hint, so we
-    // confirm each candidate's launcher_id below.
+    // directly, no forward walk. A hint is attacker-controllable, so every candidate is
+    // anchored to the unforgeable launcher coin below before its root is trusted.
     let candidates = chain.unspent_coins_by_hint(store_id).await?;
 
     let mut ctx = SpendContext::new();
     for coin in candidates {
-        // Read the candidate's on-chain root from the ONE spend that created it — the
-        // spend of its parent. This is the only generation we parse: earlier generations
-        // (which may be unparseable, #747) are never touched.
+        // Read the candidate tip's on-chain root from the ONE spend that created it — the
+        // spend of its parent. This is the only generation whose spend we require; earlier
+        // generations (which may be unparseable, #747) are reached only via coin records.
         let parent_id = coin.parent_coin_info;
         let Some(parent_rec) = chain.coin_record(parent_id).await? else {
             continue;
@@ -1487,11 +1498,21 @@ pub async fn verify_pinned_root(
         else {
             continue;
         };
+        // Best-effort defense-in-depth on the tip's parent spend: its curried launcher_id
+        // must equal store_id. (This is NOT the identity proof — the backward walk is.)
         if store.info.launcher_id != store_id {
-            continue; // a different store sharing the hint
+            continue; // a different store sharing the hint, or a mis-curried forgery
         }
-        // This IS the current unspent generation of `store_id`. Fail-closed: the pinned
-        // root must equal the live on-chain root exactly.
+
+        // THE SOUNDNESS ANCHOR: prove this tip descends from the launcher coin whose
+        // coin_id == store_id. Without this, a forged singleton currying store_id (issue
+        // #1473) would be trusted. A candidate that cannot be anchored is skipped.
+        if !tip_descends_from_launcher(chain, coin, store_id).await? {
+            continue;
+        }
+
+        // This IS the current unspent generation of the launcher-anchored `store_id`.
+        // Fail-closed: the pinned root must equal the live on-chain root exactly.
         if store.info.metadata.root_hash == pinned_root {
             return Ok(());
         }
@@ -1504,6 +1525,73 @@ pub async fn verify_pinned_root(
     Err(ChainError::Chain(format!(
         "no current unspent singleton found on chain for store {store_id:?}; pinned root unverifiable"
     )))
+}
+
+/// Prove `tip` descends from the launcher coin whose `coin_id == store_id`, using ONLY
+/// coin records (never intermediate spends, preserving #747-immunity).
+///
+/// Walks `coin.parent_coin_info` upward from `tip`, bounded by `MAX_HOPS`, until a hop's
+/// parent is `store_id`; then confirms that launcher coin exists, is spent, and carries the
+/// singleton launcher puzzle hash. As best-effort defense-in-depth, each ancestor hop whose
+/// spend is available and parseable must curry `launcher_id == store_id`; a missing or
+/// unparseable spend is skipped (the coin-record parent chain is the real proof).
+///
+/// Returns `Ok(true)` only when the tip is provably launcher-anchored; `Ok(false)` for any
+/// unanchored candidate (missing ancestor, hop limit, bad launcher, or a parseable spend
+/// currying a different launcher_id). Chain-read failures propagate as `Err`.
+async fn tip_descends_from_launcher(
+    chain: &dyn ChainReads,
+    tip: Coin,
+    store_id: Bytes32,
+) -> Result<bool> {
+    const MAX_HOPS: u32 = 100_000; // mirror sync_datastore's bound
+
+    let mut ctx = SpendContext::new();
+    let mut current = tip;
+    let mut hops = 0u32;
+    loop {
+        hops += 1;
+        if hops > MAX_HOPS {
+            return Ok(false); // cycle or corrupt chain data — fail closed
+        }
+        let parent_id = current.parent_coin_info;
+        if parent_id == store_id {
+            // Reached the launcher. Confirm it is a real, spent singleton launcher coin.
+            return verify_launcher_coin(chain, store_id).await;
+        }
+        let Some(parent_rec) = chain.coin_record(parent_id).await? else {
+            return Ok(false); // an ancestor is missing — cannot anchor
+        };
+        // Best-effort per-hop check: if the ancestor's spend is available and parses as a
+        // datastore, its curried launcher_id must match store_id. A missing/unparseable
+        // spend is intentionally skipped (that is the whole reason this API exists, #747).
+        if parent_rec.spent {
+            if let Ok(Some(spend)) = chain
+                .coin_spend(parent_id, parent_rec.spent_block_index)
+                .await
+            {
+                if let Ok(Some(hop_store)) =
+                    DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &spend, &[])
+                {
+                    if hop_store.info.launcher_id != store_id {
+                        return Ok(false); // a parseable hop that curries a different store
+                    }
+                }
+            }
+        }
+        current = parent_rec.coin;
+    }
+}
+
+/// Confirm the coin whose `coin_id == store_id` is a real singleton launcher: it exists, is
+/// spent (a launcher is spent to create the eve singleton), and carries the well-known
+/// singleton launcher puzzle hash. A `store_id` that is not a launched singleton's launcher
+/// must fail closed.
+async fn verify_launcher_coin(chain: &dyn ChainReads, store_id: Bytes32) -> Result<bool> {
+    let Some(launcher) = chain.coin_record(store_id).await? else {
+        return Ok(false);
+    };
+    Ok(launcher.spent && launcher.coin.puzzle_hash == SINGLETON_LAUNCHER_PH)
 }
 
 // ===========================================================================
@@ -2157,6 +2245,233 @@ mod verify_pinned_root_tests {
             .await
             .expect_err("a fabricated root must not verify");
         assert!(matches!(err, ChainError::Chain(_)));
+        Ok(())
+    }
+
+    /// SECURITY (issue #1473): a forged singleton that curries `launcher_id == store_id`
+    /// but does NOT descend from the launcher coin (coin_id == store_id) MUST be rejected.
+    ///
+    /// `DataStore::from_spend` reads `launcher_id` straight from the parent's curried
+    /// `SingletonLayer`, and Chia's singleton top-layer does not bind that curried value to
+    /// the real launcher coin. So an attacker can construct a spend that from_spends to
+    /// `launcher_id == store_id` + `root == R_evil` from a coin whose id != store_id, hint
+    /// it to `store_id`, and — under the pre-#1473 verify, which gated ONLY on the curried
+    /// `launcher_id` — get an honest node to serve `R_evil` as chain-verified. The fixed
+    /// verify anchors identity on the unforgeable launcher coin, so this must fail closed.
+    #[tokio::test]
+    async fn impostor_singleton_rejected() -> anyhow::Result<()> {
+        use datalayer_driver::{DataStoreInfo, EveProof, Proof};
+
+        let mut sim = Simulator::new();
+        let attacker = sim.bls(1);
+        let attacker_ph: Bytes32 = attacker.puzzle_hash;
+
+        // The victim store_id the attacker targets. It is NOT a real launched singleton:
+        // no launcher coin whose coin_id == store_id exists on the (mock) chain.
+        let store_id = Bytes32::new([0xab; 32]);
+        let r_parent = Bytes32::new([0x11; 32]);
+        let r_evil = Bytes32::new([0xee; 32]);
+        // The impostor parent's own parent — an attacker coin, NEVER store_id.
+        let attacker_ancestor = Bytes32::new([0xcc; 32]);
+
+        // Forge a singleton currying launcher_id = store_id from an attacker-owned coin.
+        let info = DataStoreInfo::new(
+            store_id,
+            DataStoreMetadata {
+                root_hash: r_parent,
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            attacker_ph,
+            vec![],
+        );
+        let impostor_parent_coin = Coin::new(attacker_ancestor, attacker_ph, 1);
+        let proof = Proof::Eve(EveProof {
+            parent_parent_coin_info: attacker_ancestor,
+            parent_amount: 1,
+        });
+        let impostor_parent = DataStore::new(impostor_parent_coin, proof, info);
+
+        let up = update_store_metadata(
+            impostor_parent,
+            r_evil,
+            None,
+            None,
+            None,
+            None,
+            DataStoreInnerSpend::Owner(attacker.pk),
+        )
+        .map_err(|e| anyhow::anyhow!("forge impostor spend: {e}"))?;
+        let forged_parent_spend = up.coin_spends[0].clone();
+        let tip_c = up.new_datastore;
+
+        // The pre-#1473 verify TRUSTS exactly this: from_spend yields launcher_id==store_id
+        // and root==R_evil — a convincing forgery.
+        let mut ctx = SpendContext::new();
+        let parsed =
+            DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &forged_parent_spend, &[])
+                .map_err(|e| anyhow::anyhow!("parse forged spend: {e}"))?
+                .expect("forged spend parses as a datastore");
+        assert_eq!(
+            parsed.info.launcher_id, store_id,
+            "the forgery curries the victim launcher_id"
+        );
+        assert_eq!(
+            parsed.info.metadata.root_hash, r_evil,
+            "the forgery advertises the attacker's root"
+        );
+
+        // Seed the mock as coinset would answer for this attack: tip C unspent + hinted to
+        // store_id, its parent P spent with the forged spend, the attacker ancestor present
+        // but its own parent NEVER store_id, and — crucially — NO launcher coin for store_id.
+        let mut mock = MockChain::default();
+        let tip_id = tip_c.coin.coin_id();
+        let parent_id = tip_c.coin.parent_coin_info; // == impostor_parent_coin.coin_id()
+        mock.records.insert(
+            tip_id,
+            CoinInfo {
+                coin: tip_c.coin,
+                spent: false,
+                confirmed_block_index: 2,
+                spent_block_index: 0,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.records.insert(
+            parent_id,
+            CoinInfo {
+                coin: impostor_parent_coin,
+                spent: true,
+                confirmed_block_index: 1,
+                spent_block_index: 2,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.spends.insert(parent_id, forged_parent_spend);
+        // The attacker ancestor exists but chains to another attacker coin, never store_id.
+        mock.records.insert(
+            attacker_ancestor,
+            CoinInfo {
+                coin: Coin::new(Bytes32::new([0xdd; 32]), attacker_ph, 1),
+                spent: true,
+                confirmed_block_index: 0,
+                spent_block_index: 1,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        let tip_rec = mock.records.get(&tip_id).expect("tip seeded").clone();
+        mock.records_by_hint.insert(store_id, vec![tip_rec]);
+
+        let result = verify_pinned_root(&mock, store_id, r_evil).await;
+        assert!(
+            result.is_err(),
+            "impostor root R_evil must NOT verify — the tip does not descend from a launcher \
+             coin whose id == store_id; got {result:?}"
+        );
+        Ok(())
+    }
+
+    /// SECURITY (issue #1473) co-existence variant: a GENUINE store exists for `store_id`
+    /// whose forward walk is #747-broken, AND a different-lineage impostor tip currying
+    /// `store_id` with `R_evil` is ALSO hinted to `store_id`. The genuine current root must
+    /// still verify while the impostor root is rejected.
+    #[tokio::test]
+    async fn genuine_root_served_impostor_rejected_when_both_hinted() -> anyhow::Result<()> {
+        use datalayer_driver::{DataStoreInfo, EveProof, Proof};
+
+        let mut sim = Simulator::new();
+        let lin = build_three_gen_store(&mut sim)?;
+        let mut mock = seed_mock(&sim, &lin);
+        // #747: break the genuine forward walk by dropping an intermediate spend.
+        mock.spends.remove(&lin.eve_coin);
+
+        // Forge an impostor tip currying the genuine store_id but from an attacker coin.
+        let attacker = sim.bls(1);
+        let attacker_ph: Bytes32 = attacker.puzzle_hash;
+        let attacker_ancestor = Bytes32::new([0x7c; 32]);
+        let r_evil = Bytes32::new([0xee; 32]);
+        let info = DataStoreInfo::new(
+            lin.store_id,
+            DataStoreMetadata {
+                root_hash: Bytes32::new([0x71; 32]),
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            attacker_ph,
+            vec![],
+        );
+        let impostor_parent_coin = Coin::new(attacker_ancestor, attacker_ph, 1);
+        let impostor_parent = DataStore::new(
+            impostor_parent_coin,
+            Proof::Eve(EveProof {
+                parent_parent_coin_info: attacker_ancestor,
+                parent_amount: 1,
+            }),
+            info,
+        );
+        let up = update_store_metadata(
+            impostor_parent,
+            r_evil,
+            None,
+            None,
+            None,
+            None,
+            DataStoreInnerSpend::Owner(attacker.pk),
+        )
+        .map_err(|e| anyhow::anyhow!("forge impostor: {e}"))?;
+        let forged_parent_spend = up.coin_spends[0].clone();
+        let impostor_tip = up.new_datastore;
+        let impostor_tip_id = impostor_tip.coin.coin_id();
+        let impostor_parent_id = impostor_tip.coin.parent_coin_info;
+
+        mock.records.insert(
+            impostor_tip_id,
+            CoinInfo {
+                coin: impostor_tip.coin,
+                spent: false,
+                confirmed_block_index: 3,
+                spent_block_index: 0,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.records.insert(
+            impostor_parent_id,
+            CoinInfo {
+                coin: impostor_parent_coin,
+                spent: true,
+                confirmed_block_index: 2,
+                spent_block_index: 3,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.spends.insert(impostor_parent_id, forged_parent_spend);
+        // Both the genuine tip and the impostor tip are hinted to store_id.
+        let impostor_rec = mock.records.get(&impostor_tip_id).unwrap().clone();
+        mock.records_by_hint
+            .get_mut(&lin.store_id)
+            .expect("genuine hint seeded")
+            .push(impostor_rec);
+
+        // The impostor root is rejected (it never chains back to the launcher coin).
+        assert!(
+            verify_pinned_root(&mock, lin.store_id, r_evil)
+                .await
+                .is_err(),
+            "impostor root must not be served even alongside the genuine store"
+        );
+        // The genuine current root still verifies despite the broken forward walk (#747).
+        verify_pinned_root(&mock, lin.store_id, lin.root2)
+            .await
+            .expect("genuine current root verifies");
         Ok(())
     }
 
