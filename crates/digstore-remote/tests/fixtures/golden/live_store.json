@@ -1,6 +1,14 @@
 {
-  "status": "pending",
-  "note": "The REAL mainnet-published golden store identity (super-repo #843). Recorded ALONGSIDE the deterministic offline anchor in manifest.json (never overwriting it). Populated once `digstore init`/`commit`/`push` succeed on Chia mainnet; then rpc_tier_read_proof derives from LIVE_STORE_ID_HEX and runs live against rpc.dig.net.",
+  "status": "live",
+  "note": "The REAL mainnet-published golden store identity (super-repo #843). Recorded ALONGSIDE the deterministic offline anchor in manifest.json (never overwriting it). Minted + committed + pushed to rpc.dig.net on Chia mainnet; rpc_tier_read_proof derives every value from LIVE_STORE_ID_HEX and reads it live against rpc.dig.net.",
+  "store_id": "8c4b47f6d685e170ea663656d5cd2bdc8a1880efe5af285975e185974a7eded5",
+  "root": "ac876a9fcccfcf652eca4e2e636235c4465bd0cea01cdf756de66faa390222c7",
+  "retrieval_key": "86f34e81508155e84a8136d39af479e6c26b2cf09133590101cdaf1d81fea4cd",
+  "resource_key": "index.html",
+  "urn": "urn:dig:chia:8c4b47f6d685e170ea663656d5cd2bdc8a1880efe5af285975e185974a7eded5:ac876a9fcccfcf652eca4e2e636235c4465bd0cea01cdf756de66faa390222c7/index.html",
   "plaintext_sha256": "4d1315ac42363fd61187e4d1b2787b44f19e2b46f6c7111ffc6b09ff6068229c",
-  "resource_key": "index.html"
+  "mint_coin_id": "b784dddb6dcb44bba8e85098bb367df752c8c8eb30b799f768ab02d15a00eba6",
+  "commit_coin_id": "f066e655003d730d25055049be911ca045900163cf0ec456cf6bb9c37de34096",
+  "host_public_key": "8b25f5a06fadb344b71296d6927235e239d643c16cc7a52d8297b2dd2612a500",
+  "rpc_endpoint": "https://rpc.dig.net"
 }

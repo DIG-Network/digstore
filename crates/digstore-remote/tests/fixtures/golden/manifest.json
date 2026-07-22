@@ -3,9 +3,15 @@
   "canonical_urn_rootless": "urn:dig:chia:d9c8ae4b6006b5d2d82ecf53f84d74e4bfe7ec4e9fde2a0d71f058b14216ff9a/index.html",
   "ciphertext_len": 270,
   "description": "DIG Network #843 golden read fixture — one index.html capsule, derived deterministically from digstore_core. Shared by #843 (rpc read proof) and #1062 (P2P e2e). Do not fork a second copy.",
-  "live_at_rpc_dig_net": false,
+  "live": {
+    "live_at_rpc_dig_net": true,
+    "store_id": "8c4b47f6d685e170ea663656d5cd2bdc8a1880efe5af285975e185974a7eded5",
+    "root": "ac876a9fcccfcf652eca4e2e636235c4465bd0cea01cdf756de66faa390222c7",
+    "retrieval_key": "86f34e81508155e84a8136d39af479e6c26b2cf09133590101cdaf1d81fea4cd",
+    "detail_file": "live_store.json",
+    "note": "The real mainnet-published store (super-repo #843) — see live_store.json for the full identity incl. mint/commit coin ids. The fields above (store_id/root/etc, no \"live\" key) remain the OFFLINE deterministic anchor and are never overwritten by this."
+  },
   "plaintext_len": 254,
-  "publish_followup": "Publish a real store under a captured launcher id, re-point GOLDEN_STORE_ID_HEX, then un-gate rpc_tier_read_proof (set DIG_RPC_LIVE).",
   "resource_key": "index.html",
   "retrieval_key": "49bfbe2f53ebdfab55d03062bef63f0f004ee83a342cb721f42df6c20883840e",
   "root": "73faf03cf6618c69d0e25764867c25ed30ab76a03cdc172cb702f1860d9f75ba",
