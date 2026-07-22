@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.19.3] - 2026-07-22
+
+### Bug Fixes
+- **digstore-chain:** Pinned-root verification without full lineage walk (#1431) (#31)- **digstore-chain:** Anchor verify_pinned_root to the unforgeable launcher coin (#1473)
+
+### Testing
+- **remote:** Golden .dig fixture + rpc.dig.net read proof (#843) (#32)- **remote:** Publish mainnet golden store + un-gate #843 live rpc read proof (#34)
+
 ## [0.18.0] - 2026-07-21
 
 ### Features
