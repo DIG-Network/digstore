@@ -1420,36 +1420,47 @@ pub async fn current_root(chain: &dyn ChainReads, launcher_id: Bytes32) -> Resul
     Ok(store.info.metadata.root_hash)
 }
 
-/// Verify — **fail-closed**, without a full lineage walk — that `pinned_root` is the
-/// store's CURRENT on-chain generation.
+/// Verify — **fail-closed**, without a full forward lineage walk — that `pinned_root` is
+/// the store's CURRENT on-chain generation.
 ///
-/// A local content read of `dig://<store_id>:<pinned_root>` (the §5.3 loopback tier)
-/// MUST NOT serve bytes for a root it cannot chain-anchor. The obvious anchor —
+/// A local content read of `dig://<store_id>:<pinned_root>` (the §5.3 loopback tier) MUST
+/// NOT serve bytes for a root it cannot chain-anchor. The obvious anchor —
 /// [`current_root`] / [`sync_datastore`] — walks the singleton lineage launcher → eve →
-/// … → tip, parsing every generation's spend. A store with hundreds of generations makes
-/// that walk expensive, and a SINGLE unparseable intermediate spend aborts the whole walk
-/// (issue #747: "parse next store: missing child"), so even a perfectly valid pinned root
-/// becomes unreadable. This verify sidesteps the walk entirely.
+/// … → tip FORWARD, parsing every generation's SPEND. A store with hundreds of generations
+/// makes that walk expensive, and a SINGLE unparseable intermediate spend aborts the whole
+/// walk (issue #747: "parse next store: missing child"), so even a perfectly valid pinned
+/// root becomes unreadable. This verify avoids that forward walk.
 ///
-/// Every datastore generation is created hinted to its `launcher_id` (the first
-/// recreation memo — see `DataStore::get_recreation_memos`), which equals the `store_id`.
-/// So the current unspent singleton is found DIRECTLY with one
-/// [`unspent_coins_by_hint`](ChainReads::unspent_coins_by_hint) query on `store_id` — no
-/// per-generation walk. Its on-chain root is read from the ONE spend that created it (the
-/// tip's parent), skipping every earlier (possibly broken) generation. `pinned_root` is
-/// accepted only when it equals that current root.
+/// # Identity is anchored on the launcher coin — NEVER the curried `launcher_id`
+/// The current unspent singleton is discovered with one
+/// [`unspent_coins_by_hint`](ChainReads::unspent_coins_by_hint) query on `store_id`. A hint
+/// is an attacker-controllable CREATE_COIN memo, and `DataStore::from_spend` reads
+/// `launcher_id` STRAIGHT from a spend's curried `SingletonLayer` — Chia's singleton
+/// top-layer does not bind that curried value to the real launcher coin. So a coin merely
+/// discovered by hint whose curried `launcher_id == store_id` is NOT proof of identity: an
+/// attacker can forge exactly that (issue #1473). The only unforgeable identity is the
+/// launcher coin itself — `coin_id == store_id` is a 256-bit hash preimage an attacker
+/// cannot grind. So each candidate tip is accepted only when it PROVABLY DESCENDS from that
+/// launcher, via a bounded BACKWARD walk of COIN RECORDS (following `coin.parent_coin_info`,
+/// capped at `MAX_HOPS`) that must reach the coin whose `coin_id == store_id` — and that
+/// launcher coin must itself exist, be spent, and carry the singleton launcher puzzle hash.
+///
+/// #747-immunity is preserved because the backward walk needs only COIN RECORDS, never the
+/// intermediate generations' SPENDS. The tip's root is still read from the ONE spend that
+/// created it (the tip's parent). As defense-in-depth, each hop whose spend IS available is
+/// checked to curry `launcher_id == store_id` — best-effort only: a missing/unparseable
+/// intermediate spend never fails the verification (the coin-record chain is the real proof).
 ///
 /// # Anti-rollback (§5.3 / NC-9)
-/// This is the strongest anti-rollback stance: only the CURRENT on-chain root passes. A
-/// root that was never on-chain, or a STALE (superseded) generation, is rejected. Verifying
-/// a historical-but-real generation would require enumerating past generations (the walk
-/// this API exists to avoid) and is intentionally out of scope.
+/// This is the strongest anti-rollback stance: only the CURRENT on-chain root of the store
+/// whose launcher is `store_id` passes. A root that was never on-chain, a STALE (superseded)
+/// generation, or a forged singleton not descending from the launcher coin is rejected.
 ///
 /// # Errors
 /// Returns `Err` — never a false `Ok` — whenever the root cannot be positively
-/// chain-anchored: the chain is unreachable, no current unspent singleton for `store_id`
-/// is found, or the on-chain current root differs from `pinned_root`. Callers MUST treat
-/// any `Err` as "do not serve".
+/// chain-anchored: the chain is unreachable, no launcher-anchored unspent singleton for
+/// `store_id` is found, or the on-chain current root differs from `pinned_root`. Callers
+/// MUST treat any `Err` as "do not serve".
 ///
 /// `store_id` is the store's `launcher_id`.
 pub async fn verify_pinned_root(
@@ -1458,15 +1469,15 @@ pub async fn verify_pinned_root(
     pinned_root: Bytes32,
 ) -> Result<()> {
     // The current unspent singleton is hinted to launcher_id (== store_id): fetch it
-    // directly, no lineage walk. An owner may hold several stores under this hint, so we
-    // confirm each candidate's launcher_id below.
+    // directly, no forward walk. A hint is attacker-controllable, so every candidate is
+    // anchored to the unforgeable launcher coin below before its root is trusted.
     let candidates = chain.unspent_coins_by_hint(store_id).await?;
 
     let mut ctx = SpendContext::new();
     for coin in candidates {
-        // Read the candidate's on-chain root from the ONE spend that created it — the
-        // spend of its parent. This is the only generation we parse: earlier generations
-        // (which may be unparseable, #747) are never touched.
+        // Read the candidate tip's on-chain root from the ONE spend that created it — the
+        // spend of its parent. This is the only generation whose spend we require; earlier
+        // generations (which may be unparseable, #747) are reached only via coin records.
         let parent_id = coin.parent_coin_info;
         let Some(parent_rec) = chain.coin_record(parent_id).await? else {
             continue;
@@ -1487,11 +1498,21 @@ pub async fn verify_pinned_root(
         else {
             continue;
         };
+        // Best-effort defense-in-depth on the tip's parent spend: its curried launcher_id
+        // must equal store_id. (This is NOT the identity proof — the backward walk is.)
         if store.info.launcher_id != store_id {
-            continue; // a different store sharing the hint
+            continue; // a different store sharing the hint, or a mis-curried forgery
         }
-        // This IS the current unspent generation of `store_id`. Fail-closed: the pinned
-        // root must equal the live on-chain root exactly.
+
+        // THE SOUNDNESS ANCHOR: prove this tip descends from the launcher coin whose
+        // coin_id == store_id. Without this, a forged singleton currying store_id (issue
+        // #1473) would be trusted. A candidate that cannot be anchored is skipped.
+        if !tip_descends_from_launcher(chain, coin, store_id).await? {
+            continue;
+        }
+
+        // This IS the current unspent generation of the launcher-anchored `store_id`.
+        // Fail-closed: the pinned root must equal the live on-chain root exactly.
         if store.info.metadata.root_hash == pinned_root {
             return Ok(());
         }
@@ -1504,6 +1525,73 @@ pub async fn verify_pinned_root(
     Err(ChainError::Chain(format!(
         "no current unspent singleton found on chain for store {store_id:?}; pinned root unverifiable"
     )))
+}
+
+/// Prove `tip` descends from the launcher coin whose `coin_id == store_id`, using ONLY
+/// coin records (never intermediate spends, preserving #747-immunity).
+///
+/// Walks `coin.parent_coin_info` upward from `tip`, bounded by `MAX_HOPS`, until a hop's
+/// parent is `store_id`; then confirms that launcher coin exists, is spent, and carries the
+/// singleton launcher puzzle hash. As best-effort defense-in-depth, each ancestor hop whose
+/// spend is available and parseable must curry `launcher_id == store_id`; a missing or
+/// unparseable spend is skipped (the coin-record parent chain is the real proof).
+///
+/// Returns `Ok(true)` only when the tip is provably launcher-anchored; `Ok(false)` for any
+/// unanchored candidate (missing ancestor, hop limit, bad launcher, or a parseable spend
+/// currying a different launcher_id). Chain-read failures propagate as `Err`.
+async fn tip_descends_from_launcher(
+    chain: &dyn ChainReads,
+    tip: Coin,
+    store_id: Bytes32,
+) -> Result<bool> {
+    const MAX_HOPS: u32 = 100_000; // mirror sync_datastore's bound
+
+    let mut ctx = SpendContext::new();
+    let mut current = tip;
+    let mut hops = 0u32;
+    loop {
+        hops += 1;
+        if hops > MAX_HOPS {
+            return Ok(false); // cycle or corrupt chain data — fail closed
+        }
+        let parent_id = current.parent_coin_info;
+        if parent_id == store_id {
+            // Reached the launcher. Confirm it is a real, spent singleton launcher coin.
+            return verify_launcher_coin(chain, store_id).await;
+        }
+        let Some(parent_rec) = chain.coin_record(parent_id).await? else {
+            return Ok(false); // an ancestor is missing — cannot anchor
+        };
+        // Best-effort per-hop check: if the ancestor's spend is available and parses as a
+        // datastore, its curried launcher_id must match store_id. A missing/unparseable
+        // spend is intentionally skipped (that is the whole reason this API exists, #747).
+        if parent_rec.spent {
+            if let Ok(Some(spend)) = chain
+                .coin_spend(parent_id, parent_rec.spent_block_index)
+                .await
+            {
+                if let Ok(Some(hop_store)) =
+                    DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &spend, &[])
+                {
+                    if hop_store.info.launcher_id != store_id {
+                        return Ok(false); // a parseable hop that curries a different store
+                    }
+                }
+            }
+        }
+        current = parent_rec.coin;
+    }
+}
+
+/// Confirm the coin whose `coin_id == store_id` is a real singleton launcher: it exists, is
+/// spent (a launcher is spent to create the eve singleton), and carries the well-known
+/// singleton launcher puzzle hash. A `store_id` that is not a launched singleton's launcher
+/// must fail closed.
+async fn verify_launcher_coin(chain: &dyn ChainReads, store_id: Bytes32) -> Result<bool> {
+    let Some(launcher) = chain.coin_record(store_id).await? else {
+        return Ok(false);
+    };
+    Ok(launcher.spent && launcher.coin.puzzle_hash == SINGLETON_LAUNCHER_PH)
 }
 
 // ===========================================================================
@@ -2222,9 +2310,10 @@ mod verify_pinned_root_tests {
         // The pre-#1473 verify TRUSTS exactly this: from_spend yields launcher_id==store_id
         // and root==R_evil — a convincing forgery.
         let mut ctx = SpendContext::new();
-        let parsed = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &forged_parent_spend, &[])
-            .map_err(|e| anyhow::anyhow!("parse forged spend: {e}"))?
-            .expect("forged spend parses as a datastore");
+        let parsed =
+            DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &forged_parent_spend, &[])
+                .map_err(|e| anyhow::anyhow!("parse forged spend: {e}"))?
+                .expect("forged spend parses as a datastore");
         assert_eq!(
             parsed.info.launcher_id, store_id,
             "the forgery curries the victim launcher_id"

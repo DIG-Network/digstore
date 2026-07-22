@@ -225,15 +225,27 @@ not a `.dig` byte-format contract. It is normative for how a node serving a root
   `pinned_root` equals the store's CURRENT on-chain generation root, and `Err` otherwise. It is
   **fail-closed**: a chain-read failure, an absent unspent singleton, or any root mismatch is an
   `Err` — never a false `Ok`. A caller MUST treat any `Err` as "do not serve".
-- It is a **bounded** verification, NOT a lineage walk: every datastore generation is created
-  hinted to its `launcher_id` (the first `DataStore::get_recreation_memos` memo, == `store_id`),
-  so the current unspent singleton is located with a single `unspent_coins_by_hint(store_id)`
-  query and its root read from the ONE spend that created it (the tip's parent). Earlier
-  generations are never parsed. This deliberately sidesteps the full forward walk
-  (`sync_datastore`), which aborts if any single intermediate generation's spend is unparseable.
+- It is a **bounded, launcher-anchored** verification. Identity is anchored on the UNFORGEABLE
+  launcher coin (`coin_id == store_id`, a 256-bit hash preimage an attacker cannot grind), NEVER
+  on the curried `SingletonStruct.launcher_id` — that value is attacker-controllable, so a coin
+  merely discovered by hint whose curried `launcher_id == store_id` is NOT proof of identity. The
+  current unspent singleton is discovered with `unspent_coins_by_hint(store_id)`, then each
+  candidate tip is verified by a BOUNDED backward walk of coin records (following
+  `coin.parent_coin_info`, capped at 100_000 hops) that MUST reach the launcher coin whose
+  `coin_id == store_id` — which itself MUST exist, be spent, and have
+  `puzzle_hash == SINGLETON_LAUNCHER_HASH`. The tip's root is read from the ONE spend that created
+  it (the tip's parent). Intermediate generations' SPENDS are never required — only their coin
+  records — so this still sidesteps the full forward walk (`sync_datastore`), which aborts if any
+  single intermediate generation's spend is unparseable (#747). As defense-in-depth, each hop
+  whose spend IS available is parsed for ONLY its `SingletonLayer` and its curried
+  `launcher_id == store_id` asserted (best-effort — a missing/unparseable intermediate spend does
+  not fail the verification; the coin-record parent-chain to the launcher is the real proof).
 - **Anti-rollback**: only the current on-chain root passes; a root that was never on-chain and a
   stale (superseded) generation are both rejected. Verifying a historical-but-real generation is
   intentionally out of scope (it would require the per-generation enumeration this API avoids).
+  The trust root is the launcher coin (`coin_id == store_id`); a singleton discovered by hint that
+  does not chain back to that coin is rejected regardless of its curried `launcher_id` (the
+  pre-#1473 forgeability class).
 
 ## 10. Per-capsule $DIG price (commit / deploy)
 
