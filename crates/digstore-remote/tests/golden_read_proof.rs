@@ -63,8 +63,7 @@ const GOLDEN_STORE_ID_HEX: &str =
 /// read-crypto — so the rpc read proof re-derives independently and byte-compares
 /// against what the gateway serves. Recorded alongside the offline anchor in
 /// `tests/fixtures/golden/live_store.json` (the offline anchor is never touched).
-const LIVE_STORE_ID_HEX: &str =
-    "8c4b47f6d685e170ea663656d5cd2bdc8a1880efe5af285975e185974a7eded5";
+const LIVE_STORE_ID_HEX: &str = "8c4b47f6d685e170ea663656d5cd2bdc8a1880efe5af285975e185974a7eded5";
 
 /// The golden resource key (verbatim, not lowercased — §5.1 URN rule).
 const GOLDEN_RESOURCE_KEY: &str = "index.html";
@@ -348,10 +347,7 @@ async fn rpc_tier_read_proof() {
         "served ciphertext must hash to the proof leaf"
     );
     proof.root = g.root; // pin verification to the trusted root
-    assert!(
-        proof.verify(),
-        "served proof must verify to the live root"
-    );
+    assert!(proof.verify(), "served proof must verify to the live root");
 
     let key = derive_decryption_key(&rootless_urn_for(LIVE_STORE_ID_HEX).canonical(), None);
     let opened = decrypt_chunk(&key, &resp.ciphertext).expect("GCM-SIV tag must verify");
