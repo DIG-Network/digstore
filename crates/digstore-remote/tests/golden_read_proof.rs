@@ -54,6 +54,17 @@ use digstore_core::{
 const GOLDEN_STORE_ID_HEX: &str =
     "d9c8ae4b6006b5d2d82ecf53f84d74e4bfe7ec4e9fde2a0d71f058b14216ff9a";
 
+/// The LIVE mainnet golden store's `store_id` — the CHIP-0035 DataStore launcher
+/// id assigned by Chia when the store was minted (super-repo #843). Unlike
+/// [`GOLDEN_STORE_ID_HEX`] (a documented offline stand-in), this is a REAL,
+/// on-chain, published store whose single `index.html` capsule is readable from
+/// `rpc.dig.net`. Every live value (decryption key, ciphertext, root,
+/// retrieval_key) derives from THIS id through the exact same [`digstore_core`]
+/// read-crypto — so the rpc read proof re-derives independently and byte-compares
+/// against what the gateway serves. Recorded alongside the offline anchor in
+/// `tests/fixtures/golden/live_store.json` (the offline anchor is never touched).
+const LIVE_STORE_ID_HEX: &str = "8c4b47f6d685e170ea663656d5cd2bdc8a1880efe5af285975e185974a7eded5";
+
 /// The golden resource key (verbatim, not lowercased — §5.1 URN rule).
 const GOLDEN_RESOURCE_KEY: &str = "index.html";
 
@@ -75,15 +86,21 @@ fn fixtures_dir() -> PathBuf {
 // Deterministic derivation (the single source of truth for every golden value)
 // ---------------------------------------------------------------------------
 
-/// The rootless canonical URN — the one the retrieval/decryption keys derive from
-/// (the root is dropped so the keys survive generations, per the format skill).
-fn rootless_urn() -> Urn {
+/// The rootless canonical URN for a given store id — the one the retrieval/
+/// decryption keys derive from (the root is dropped so the keys survive
+/// generations, per the format skill).
+fn rootless_urn_for(store_id_hex: &str) -> Urn {
     Urn {
         chain: "chia".to_string(),
-        store_id: Bytes32::from_hex(GOLDEN_STORE_ID_HEX).expect("valid store_id hex"),
+        store_id: Bytes32::from_hex(store_id_hex).expect("valid store_id hex"),
         root_hash: None,
         resource_key: Some(GOLDEN_RESOURCE_KEY.to_string()),
     }
+}
+
+/// The offline stand-in's rootless URN (the deterministic crypto anchor).
+fn rootless_urn() -> Urn {
+    rootless_urn_for(GOLDEN_STORE_ID_HEX)
 }
 
 /// Everything a reader needs to verify + decrypt the golden, derived purely from
@@ -98,8 +115,12 @@ struct Golden {
     root: Bytes32,
 }
 
-fn derive_golden() -> Golden {
-    let urn = rootless_urn();
+/// Derive the full golden verification tuple for an arbitrary store id from the
+/// documented inputs — the single source of truth shared by the offline anchor
+/// (with [`GOLDEN_STORE_ID_HEX`]) and the live rpc proof (with
+/// [`LIVE_STORE_ID_HEX`]).
+fn derive_for(store_id_hex: &str) -> Golden {
+    let urn = rootless_urn_for(store_id_hex);
     let canonical = urn.canonical();
 
     let key = derive_decryption_key(&canonical, None);
@@ -118,6 +139,11 @@ fn derive_golden() -> Golden {
         proof,
         root,
     }
+}
+
+/// The offline stand-in golden (the deterministic §5.1 crypto anchor).
+fn derive_golden() -> Golden {
+    derive_for(GOLDEN_STORE_ID_HEX)
 }
 
 fn proof_to_b64(proof: &MerkleProof) -> String {
@@ -273,23 +299,27 @@ fn tampered_golden_fails_the_gate() {
 // The rpc-tier read proof (#843) — live against rpc.dig.net when a store exists
 // ---------------------------------------------------------------------------
 
-/// Read the golden URN from `rpc.dig.net` via `dig.getContent`, verify the
-/// returned inclusion proof against the golden root, decrypt, and byte-compare to
+/// Read the LIVE golden URN from `rpc.dig.net` via `dig.getContent`, verify the
+/// returned inclusion proof against the derived root, decrypt, and byte-compare to
 /// the golden plaintext — the definition of "a dig-node can read content" over
 /// the public gateway (the §5.3 final fallback tier).
 ///
-/// GATED behind `DIG_RPC_LIVE` because no store is published under
-/// [`GOLDEN_STORE_ID_HEX`] yet. RESUME CONDITION (documented on #843): publish a
-/// real store under a captured launcher id, re-point `GOLDEN_STORE_ID_HEX`, then
-/// run `DIG_RPC_LIVE=1 cargo test -p digstore-remote --test golden_read_proof
-/// rpc_tier_read_proof`. Kept present + compiling so the proof is ready to flip
-/// live the moment the store exists — never a red/absent test.
+/// This runs against the REAL mainnet-published store [`LIVE_STORE_ID_HEX`]
+/// (super-repo #843): a public single-`index.html` capsule minted + committed +
+/// pushed to rpc.dig.net. Every value the read is checked against
+/// ([`derive_for`]`(LIVE_STORE_ID_HEX)`) is re-derived independently through the
+/// same [`digstore_core`] crypto, so a PASS proves the gateway serves exactly the
+/// bytes the deterministic contract predicts.
+///
+/// GATED behind `DIG_RPC_LIVE` so CI (which has no network) skips it; run it with
+/// `DIG_RPC_LIVE=1 cargo test -p digstore-remote --test golden_read_proof
+/// rpc_tier_read_proof`. The offline anchor tests above cover the crypto in CI.
 #[tokio::test]
 async fn rpc_tier_read_proof() {
     if std::env::var("DIG_RPC_LIVE").is_err() {
         eprintln!(
-            "skipping rpc_tier_read_proof: set DIG_RPC_LIVE=1 once the golden store is published \
-             to rpc.dig.net (see manifest.json publish_followup / #843)"
+            "skipping rpc_tier_read_proof: set DIG_RPC_LIVE=1 to read the live golden store \
+             from rpc.dig.net (network-gated; the offline anchor tests cover the crypto)"
         );
         return;
     }
@@ -297,17 +327,18 @@ async fn rpc_tier_read_proof() {
     let base = std::env::var("DIG_RPC_URL").unwrap_or_else(|_| "https://rpc.dig.net".to_string());
     let client = digstore_remote::DigClient::new(base);
 
-    let g = derive_golden();
+    // The live store: every value derived independently from LIVE_STORE_ID_HEX.
+    let g = derive_for(LIVE_STORE_ID_HEX);
     let resp = client
         .get_content(&g.store_id, &g.retrieval_key, Some(&g.root))
         .await
-        .expect("dig.getContent must succeed for the published golden store");
+        .expect("dig.getContent must succeed for the published live golden store");
 
-    // Verify-then-decrypt against the CHAIN-anchored golden root (not the served
-    // roothash) — the read must fail closed if the gateway served a wrong tree.
+    // Verify-then-decrypt against the derived (chain-anchored) root — the read must
+    // fail closed if the gateway served a wrong tree.
     assert_eq!(
         resp.roothash, g.root,
-        "served root must equal the golden root"
+        "served root must equal the derived live root"
     );
     let mut proof = resp.merkle_proof;
     assert_eq!(
@@ -316,17 +347,30 @@ async fn rpc_tier_read_proof() {
         "served ciphertext must hash to the proof leaf"
     );
     proof.root = g.root; // pin verification to the trusted root
-    assert!(
-        proof.verify(),
-        "served proof must verify to the golden root"
-    );
+    assert!(proof.verify(), "served proof must verify to the live root");
 
-    let key = derive_decryption_key(&rootless_urn().canonical(), None);
+    let key = derive_decryption_key(&rootless_urn_for(LIVE_STORE_ID_HEX).canonical(), None);
     let opened = decrypt_chunk(&key, &resp.ciphertext).expect("GCM-SIV tag must verify");
     assert_eq!(
         opened, GOLDEN_PLAINTEXT,
         "rpc.dig.net read must byte-match the golden plaintext"
     );
+}
+
+/// The live store's identity recorded in `live_store.json` MUST match what the
+/// deterministic crypto derives from [`LIVE_STORE_ID_HEX`] — so the manifest the
+/// #1062 e2e / #1473 pinned-root work reads advertises the same store_id / root /
+/// retrieval_key the read path recomputes. Runs offline (no network), always.
+#[test]
+fn live_store_manifest_matches_derivation() {
+    let g = derive_for(LIVE_STORE_ID_HEX);
+    let live: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixtures_dir().join("live_store.json")).unwrap())
+            .unwrap();
+    assert_eq!(live["status"], "live");
+    assert_eq!(live["store_id"], g.store_id.to_hex());
+    assert_eq!(live["root"], g.root.to_hex());
+    assert_eq!(live["retrieval_key"], g.retrieval_key.to_hex());
 }
 
 // ---------------------------------------------------------------------------
