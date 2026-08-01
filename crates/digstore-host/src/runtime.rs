@@ -170,6 +170,15 @@ impl HostRuntime {
         let mut linker: Linker<RuntimeState> = Linker::new(&engine);
         crate::imports::register(&mut linker)?;
 
+        // Arm the execution budget BEFORE instantiating. A module's wasm `start`
+        // function runs inside `instantiate`, so instantiation is guest execution
+        // and must be sandboxed like any export call (§18.2). Fuel consumption is
+        // enabled engine-wide, which means an un-armed store has ZERO fuel and
+        // traps the moment a start function executes; epoch interruption likewise
+        // needs a deadline or the first epoch check trips.
+        let _ = store.set_fuel(limits.fuel);
+        store.set_epoch_deadline(2);
+
         let instance = linker
             .instantiate(&mut store, &module)
             .map_err(|e| HostError::Wasmtime(e.to_string()))?;
