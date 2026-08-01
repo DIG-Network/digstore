@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.20.0] - 2026-08-01
+
+### Bug Fixes
+- **deps:** Bump wasmtime off the unpatched 45.x line (RUSTSEC-2026-0222) (#35)
+
 ## [0.19.3] - 2026-07-22
 
 ### Bug Fixes
