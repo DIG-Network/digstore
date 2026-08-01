@@ -21,7 +21,7 @@ thiserror = "1"
 wat = "1"
 
 [dev-dependencies]
-wasmtime = "45"
+wasmtime = "47"
 wasmparser = "0.221"
 wat = "1"
 digstore-host = { path = "../digstore-host" }
