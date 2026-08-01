@@ -180,6 +180,27 @@ lowercase hex:
   exposes it to the browser as JSON.
 - **CLI** — `dig-store manifest [--json]` prints the normalized manifest.
 
+### 7.1 Serving-module execution bounds
+
+A compiled serving module is UNTRUSTED code. Every host that executes one
+(`digstore_host::HostRuntime`) MUST bound it with all three of:
+
+- a **wall-clock budget** enforced by engine epoch interruption (default 5 s per call),
+- an **outer memory ceiling** enforced by the store's resource limiter, covering every
+  growable resource — linear memory, tables, and instances — not memory alone
+  (default 384 MiB, matching the guest's declared maximum),
+- a **fuel budget** per unit of guest execution (default 5 000 000 000).
+
+**Instantiation counts as guest execution.** A module's wasm `start` function runs while the
+module is being instantiated, before any export is called, so the fuel budget and the epoch
+deadline MUST be armed on the store BEFORE instantiation, not only around export calls. A host
+that arms them afterwards either leaves the start function outside the sandbox entirely or —
+where the engine enables fuel consumption globally, leaving an un-armed store at zero fuel —
+rejects every legitimate module that has a start function.
+
+Each export call is armed with its own fresh budget; a serve sequence (alloc → call → read →
+dealloc) is deliberately NOT a single combined budget.
+
 ## 8. Conformance
 
 - The public manifest field names, types, ordering, and byte layout MUST match §6 exactly so
