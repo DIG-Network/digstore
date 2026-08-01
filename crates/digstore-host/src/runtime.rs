@@ -94,10 +94,24 @@ impl HostRuntime {
         let mut wcfg = wasmtime::Config::new();
         wcfg.consume_fuel(true);
         wcfg.epoch_interruption(true);
-        // Serve-only untrusted modules have no use for shared memory / atomics;
-        // disable the threads proposal so a guest cannot allocate shared memory
-        // outside the StoreLimits accounting (§18.2 sandbox surface reduction).
+        // Pin the accepted language EXPLICITLY rather than inheriting the engine
+        // default. `Config`'s default proposal set is not stable across wasmtime
+        // majors, so an engine upgrade would otherwise silently widen what an
+        // untrusted serving module may do (§18.2 sandbox surface reduction).
+        //
+        // Every proposal below is one the real guest never emits, and each one
+        // hands a guest a resource the store's limiter cannot see:
+        //  * threads    — shared memory allocated outside StoreLimits accounting.
+        //  * GC         — a SECOND heap; `bump_resource_counts` counts only
+        //                 `num_defined_memories()`, so a GC heap gets its own full
+        //                 `memory_size` allowance on top of the linear-memory
+        //                 ceiling, doubling the reachable footprint.
+        //  * exceptions, function-references — unwinding and typed-reference
+        //                 machinery with no use in a serve-only module.
         wcfg.wasm_threads(false);
+        wcfg.wasm_gc(false);
+        wcfg.wasm_exceptions(false);
+        wcfg.wasm_function_references(false);
         let engine = Engine::new(&wcfg).map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
         // Epoch ticker fires every timeout/2, so a deadline of 2 ticks bounds a
@@ -179,9 +193,13 @@ impl HostRuntime {
         let _ = store.set_fuel(limits.fuel);
         store.set_epoch_deadline(2);
 
+        // A start function can trap on the bounds armed just above, so the
+        // instantiation error goes through the same trap taxonomy as an export
+        // call: a bound-induced failure surfaces as Timeout / OutOfFuel rather
+        // than an opaque Wasmtime string.
         let instance = linker
             .instantiate(&mut store, &module)
-            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+            .map_err(Self::map_trap)?;
 
         let memory = instance
             .get_memory(&mut store, "memory")

@@ -44,29 +44,51 @@ fn benign_start_function_instantiates_and_runs() {
     assert_eq!(rt.get_store_id().unwrap(), vec![0xABu8; 32]);
 }
 
-/// The hostile counterpart: an unbounded `start` must be cut off, and promptly.
+/// The hostile counterpart: a non-terminating `start` must be cut off by the
+/// EPOCH DEADLINE, and instantiation must actually return.
+///
+/// Two details make this test load-bearing rather than decorative:
+///
+/// 1. `HostRuntime::new` runs on a worker thread behind `recv_timeout`. Timing
+///    the call inline cannot detect the failure it names — if instantiation
+///    never returns, the timing assertion that follows it is unreachable and the
+///    test hangs instead of failing.
+/// 2. Fuel is set to `u64::MAX` to ISOLATE the epoch deadline (the discipline in
+///    `tests/bounds.rs`). With a finite fuel budget the spin would trip
+///    `OutOfFuel` first and the epoch deadline would never be exercised, so a
+///    regression that dropped `set_epoch_deadline` would stay green.
 #[test]
-fn runaway_start_function_is_bounded_not_hung() {
+fn runaway_start_function_is_cut_off_by_the_epoch_deadline() {
     let module_bytes = wat::parse_str(include_str!("fixtures/wat/start_spin.wat")).unwrap();
     let limits = ExecutionLimits {
         timeout: Duration::from_millis(300),
+        fuel: u64::MAX, // isolate: prove the EPOCH deadline triggers, not fuel
         ..Default::default()
     };
-    let started = std::time::Instant::now();
-    let outcome = HostRuntime::new(
-        &module_bytes,
-        cfg(),
-        limits,
-        test_deps(FixedClock::new(1_700_000_000)),
-    );
-    let elapsed = started.elapsed();
 
-    let err = match outcome {
-        Err(e) => e,
-        Ok(_) => panic!("a module with a non-terminating start function must be rejected"),
-    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = HostRuntime::new(
+            &module_bytes,
+            cfg(),
+            limits,
+            test_deps(FixedClock::new(1_700_000_000)),
+        )
+        .map(|_| ())
+        .map_err(|e| format!("{e:?}"));
+        // A closed receiver just means the test already gave up; nothing to do.
+        let _ = tx.send(outcome);
+    });
+
+    // Generous next to the 300 ms deadline, but finite: a hang FAILS here rather
+    // than blocking the suite forever.
+    let result = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("instantiation of a non-terminating start function never returned");
+
+    let err = result.expect_err("a non-terminating start function must be rejected");
     assert!(
-        elapsed < Duration::from_secs(10),
-        "instantiation ran unbounded for {elapsed:?} before failing: {err:?}"
+        err.contains("Timeout"),
+        "expected the epoch deadline (HostError::Timeout), got {err}"
     );
 }
