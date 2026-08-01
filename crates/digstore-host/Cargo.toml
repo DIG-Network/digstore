@@ -1,7 +1,7 @@
 [package]
 name = "digstore-host"
 license = "GPL-2.0-only"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "wasmtime runtime for serving compiled Digstore WASM modules (paper 6.3, 6.4, 18)."
 
@@ -9,7 +9,7 @@ description = "wasmtime runtime for serving compiled Digstore WASM modules (pape
 digstore-core = { path = "../digstore-core" }
 digstore-crypto = { path = "../digstore-crypto" }
 digstore-prover = { path = "../digstore-prover" }
-wasmtime = { version = "45", default-features = false, features = ["std", "cranelift", "runtime", "gc", "gc-drc", "gc-null", "threads", "pooling-allocator", "parallel-compilation"] }
+wasmtime = { version = "47.0.3", default-features = false, features = ["std", "cranelift", "runtime", "gc", "gc-drc", "gc-null", "threads", "pooling-allocator", "parallel-compilation"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 rand = "0.8"
 rand_chacha = "0.3"

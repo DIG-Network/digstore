@@ -29,7 +29,7 @@ After the pass-3 fixes below, **no accidental drift remains**. 253 claims audite
 §12 attestation (BLS verify + trusted-set + nonce + freshness), §6.3/§12.4 SessionExpired vs NoSession + JWT-gate-requires-session, §5.1 Import section (8 dig_host imports) + memory max==256/min==1/memory64==false/shared==false enforced on emitted module, §5 compiler version 1.0.0, §8.5 default-resource + well-known manifest, §9.5 proof-path-len bound, §13.7 node-key bound to attestation key, §18.4 host/client boundary, §14.2 decoy octave bits. All confirmed in code with `file:line` evidence.
 
 ## 4. Approved deviations (12) — unchanged, code matches each
-Big-endian Chia codec (D1), deterministic ChaCha20 filler (D2/§19.3), risc0 re-execution + `program_hash=SHA256(module)` (D3), per-resource merkle leaf (D5), filler section (D4), fixed GCM nonce under per-URN keys (#4), proof size ≤ ceil(log2 n) (#5/D8), data-section offset 2 MiB (D2), wasmtime 45 (Windows trap fix), ProofPrelude/mock-prover-default (C3), wasm-opt skipped for determinism (§5.3 S8), configurable `data_dir` vs illustrative `~/.dig` (§4.4).
+Big-endian Chia codec (D1), deterministic ChaCha20 filler (D2/§19.3), risc0 re-execution + `program_hash=SHA256(module)` (D3), per-resource merkle leaf (D5), filler section (D4), fixed GCM nonce under per-URN keys (#4), proof size ≤ ceil(log2 n) (#5/D8), data-section offset 2 MiB (D2), wasmtime 47 (Windows trap fix + RUSTSEC-2026-0222), ProofPrelude/mock-prover-default (C3), wasm-opt skipped for determinism (§5.3 S8), configurable `data_dir` vs illustrative `~/.dig` (§4.4).
 
 ## 5. Three deliverable artifacts — all runnable
 1. **`digstore.exe`** (20.8 MB) — git-like binary: init/add/commit/status/log/diff/checkout/cat/remote/clone/push/pull.

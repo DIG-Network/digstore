@@ -25,25 +25,6 @@ ignore = [
     "RUSTSEC-2025-0052", # async-std: discontinued (httpmock dev-dependency, tests only)
     "RUSTSEC-2025-0055", # tracing/ANSI-escape log-injection advisory (transitive)
     "RUSTSEC-2025-0119", # number_prefix: unmaintained (transitive via indicatif progress bars; display-only)
-    # anyhow <=1.0.102: unsoundness in `Error::downcast_mut()` ONLY when called on
-    # an error that was wrapped via `Error::context` (the resulting borrow chain
-    # includes a shared ref → UB). digstore NEVER calls `downcast_mut` anywhere in
-    # the tree (verified), so the unsound path is unreachable; anyhow is used only
-    # for `?`/`anyhow!`/`#[from]` error wrapping. Accepted; RE-EVALUATE (and remove)
-    # once anyhow ships the fix (commit 6e8c000) and the lock is bumped.
-    "RUSTSEC-2026-0190",
-    # rustls-pemfile: no longer maintained (archived Aug 2025). Pulled TRANSITIVELY by
-    # the L7 peer-network stack (chia-sdk-client → dig-protocol → dig-gossip). It is a
-    # thin wrapper over the still-maintained rustls-pki-types PEM parser, so there is no
-    # security exposure — only an unmaintained-crate notice with no available upgrade.
-    # Accepted; RE-EVALUATE once chia-sdk-client / dig-gossip migrate to rustls-pki-types'
-    # PemObject API.
-    "RUSTSEC-2025-0134",
-    # bincode 1.3.3: unmaintained (the 1.x line; 2.x is a rewrite with a different API).
-    # Pulled TRANSITIVELY by the L7 peer-network stack (dig-gossip / chia deps). Used for
-    # serialization only within those deps; no security vulnerability, no drop-in fix.
-    # Accepted; RE-EVALUATE once the upstream deps move to bincode 2.x.
-    "RUSTSEC-2025-0141",
     # quick-xml <0.41.0: two unbounded-allocation DoS advisories in the XML namespace
     # parser (a start tag declaring a huge number of namespace bindings / duplicate
     # attributes allocates without a cap). Pulled TRANSITIVELY as quick-xml 0.37.5 via

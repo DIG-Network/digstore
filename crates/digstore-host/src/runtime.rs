@@ -94,10 +94,24 @@ impl HostRuntime {
         let mut wcfg = wasmtime::Config::new();
         wcfg.consume_fuel(true);
         wcfg.epoch_interruption(true);
-        // Serve-only untrusted modules have no use for shared memory / atomics;
-        // disable the threads proposal so a guest cannot allocate shared memory
-        // outside the StoreLimits accounting (§18.2 sandbox surface reduction).
+        // Pin the accepted language EXPLICITLY rather than inheriting the engine
+        // default. `Config`'s default proposal set is not stable across wasmtime
+        // majors, so an engine upgrade would otherwise silently widen what an
+        // untrusted serving module may do (§18.2 sandbox surface reduction).
+        //
+        // Every proposal below is one the real guest never emits, and each one
+        // hands a guest a resource the store's limiter cannot see:
+        //  * threads    — shared memory allocated outside StoreLimits accounting.
+        //  * GC         — a SECOND heap; `bump_resource_counts` counts only
+        //                 `num_defined_memories()`, so a GC heap gets its own full
+        //                 `memory_size` allowance on top of the linear-memory
+        //                 ceiling, doubling the reachable footprint.
+        //  * exceptions, function-references — unwinding and typed-reference
+        //                 machinery with no use in a serve-only module.
         wcfg.wasm_threads(false);
+        wcfg.wasm_gc(false);
+        wcfg.wasm_exceptions(false);
+        wcfg.wasm_function_references(false);
         let engine = Engine::new(&wcfg).map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
         // Epoch ticker fires every timeout/2, so a deadline of 2 ticks bounds a
@@ -170,9 +184,24 @@ impl HostRuntime {
         let mut linker: Linker<RuntimeState> = Linker::new(&engine);
         crate::imports::register(&mut linker)?;
 
+        // Arm the execution budget BEFORE instantiating. A module's wasm `start`
+        // function runs inside `instantiate`, so instantiation is guest execution
+        // and must be sandboxed like any export call (§18.2). Fuel consumption is
+        // enabled engine-wide, which means an un-armed store has ZERO fuel and
+        // traps the moment a start function executes; epoch interruption likewise
+        // needs a deadline or the first epoch check trips.
+        store
+            .set_fuel(limits.fuel)
+            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+        store.set_epoch_deadline(2);
+
+        // A start function can trap on the bounds armed just above, so the
+        // instantiation error goes through the same trap taxonomy as an export
+        // call: a bound-induced failure surfaces as Timeout / OutOfFuel rather
+        // than an opaque Wasmtime string.
         let instance = linker
             .instantiate(&mut store, &module)
-            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
+            .map_err(Self::map_trap)?;
 
         let memory = instance
             .get_memory(&mut store, "memory")
@@ -180,7 +209,9 @@ impl HostRuntime {
 
         if let Ok(init) = instance.get_typed_func::<(), i32>(&mut store, "init") {
             // arm bounds even for init so a malicious init cannot hang setup.
-            let _ = store.set_fuel(limits.fuel);
+            store
+                .set_fuel(limits.fuel)
+                .map_err(|e| HostError::Wasmtime(e.to_string()))?;
             // Epoch interruption is enabled; a deadline MUST be set or the first
             // epoch check traps. 2 ticks bounds init to ~`timeout` wall-clock.
             store.set_epoch_deadline(2);
@@ -199,11 +230,14 @@ impl HostRuntime {
     /// Set the per-export-call fuel budget. Epoch deadline is added in Task 12.
     /// NOTE: bounds are armed PER export call (alloc, serve, dealloc each get
     /// their own budget); the serve flow is not a single combined budget (§18.2).
-    fn arm_bounds(&mut self) {
-        let _ = self.store.set_fuel(self.limits_cfg.fuel);
+    fn arm_bounds(&mut self) -> Result<(), HostError> {
+        self.store
+            .set_fuel(self.limits_cfg.fuel)
+            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
         // Deadline = 2 epoch ticks (the ticker fires every timeout/2).
         // NOTE: bounds are armed per export call, not once per serve sequence (§18.2).
         self.store.set_epoch_deadline(2);
+        Ok(())
     }
 
     fn map_trap(e: wasmtime::Error) -> HostError {
@@ -233,7 +267,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport(name))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         let packed = func.call(&mut self.store, ()).map_err(Self::map_trap)?;
         self.unpack_and_read(packed)
     }
@@ -269,7 +303,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i64-export"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, ()).map_err(Self::map_trap)
     }
 
@@ -278,7 +312,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i32-export-1"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, arg).map_err(Self::map_trap)
     }
 
@@ -291,7 +325,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i32-export-0"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, ()).map_err(Self::map_trap)
     }
 
@@ -308,7 +342,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i32-export-2"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, (a, b)).map_err(Self::map_trap)
     }
 
@@ -317,7 +351,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i64-export-1"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, arg).map_err(Self::map_trap)
     }
 }
@@ -340,7 +374,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, "alloc")
             .map_err(|_| HostError::MissingExport("alloc"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         let req_ptr = alloc
             .call(&mut self.store, request.len() as i32)
             .map_err(Self::map_trap)?;
@@ -353,7 +387,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, export)
             .map_err(|_| HostError::MissingExport(export))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         let packed = serve
             .call(&mut self.store, (req_ptr, request.len() as i32))
             .map_err(Self::map_trap)?;
@@ -366,7 +400,7 @@ impl HostRuntime {
             .instance
             .get_typed_func::<(i32, i32), ()>(&mut self.store, "dealloc")
         {
-            self.arm_bounds();
+            self.arm_bounds()?;
             let _ = dealloc.call(&mut self.store, (req_ptr, request.len() as i32));
         }
 

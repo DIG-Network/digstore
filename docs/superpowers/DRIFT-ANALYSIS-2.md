@@ -32,7 +32,7 @@
 §12 attestation (verify/trustset/nonce/freshness), §6.3/§12.4 session-expired + JWT-gate-requires-session, §5.1 memory max/memory64/shared enforcement, §8.5 default-resource + well-known manifest, §9.5 proof-path-len (documented bound), §13.7 node-key bound to attestation key, §18.4 host/client boundary. All confirmed correct in code with `file:line` evidence.
 
 ## 4. Approved deviations re-confirmed (unchanged, documented)
-Big-endian Chia codec (D1), deterministic ChaCha20 filler (D2/§19.3), risc0 re-execution + `program_hash=SHA256(module)` (D3), per-resource merkle leaf (D5), filler section (D4), fixed GCM nonce under per-URN keys (#4), proof size ≤ ceil(log2 n) (#5/D8), data-section offset (D2), wasmtime 45, ProofPrelude/mock-prover-default (C3). Code matches each.
+Big-endian Chia codec (D1), deterministic ChaCha20 filler (D2/§19.3), risc0 re-execution + `program_hash=SHA256(module)` (D3), per-resource merkle leaf (D5), filler section (D4), fixed GCM nonce under per-URN keys (#4), proof size ≤ ceil(log2 n) (#5/D8), data-section offset (D2), wasmtime 47, ProofPrelude/mock-prover-default (C3). Code matches each.
 
 ## 5. Residual note
 The only intentionally-incomplete item is obfuscation **instruction substitution** (1 of 4 techniques), deferred as not provably behavior-preserving in scope — explicitly documented in code. The paper marks obfuscation optional and states security does not rest on it (§17.1); §17.2 secretlessness (the load-bearing property) is genuinely verified. A provably-safe constant-decomposition substitution could close this in a follow-up if strict 4/4 is required.

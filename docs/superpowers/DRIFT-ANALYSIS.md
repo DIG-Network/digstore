@@ -55,7 +55,7 @@ The implementation is **faithful to the whitepaper across all of Parts 2–4** w
 | 16 | Temporal validity window | Faithful | `guest/src/temporal.rs` `within_window` → decoy if outside |
 | 17.1 | Obfuscation: substitution, opaque predicates, bogus code, control-flow nops | **Drift (no-op placeholder)** | `obfuscate.rs`: verbatim section passthrough + marker custom section; performs none of the 4 |
 | 17.2 | Secretless module | Faithful (Property) | `compiler/tests/secretless.rs` |
-| 18.1–18.4 | wasmtime runtime, bounds, return buffer, serve flow | Faithful + **Deviation (documented)** | wasmtime 45 (was 27, Windows trap-unwind fix); epoch/fuel/StoreLimits; serve flow 18.4 |
+| 18.1–18.4 | wasmtime runtime, bounds, return buffer, serve flow | Faithful + **Deviation (documented)** | wasmtime 47 (was 27, then 45; Windows trap-unwind fix + RUSTSEC-2026-0222); epoch/fuel/StoreLimits; serve flow 18.4 |
 | 19.1–19.4 | Inputs, trusted keys (≥1 or NoTrustedKeys), determinism, atomic write | Faithful | double-compile byte-identical test; NoTrustedKeys; temp+rename |
 | 20.1–20.7 | CLI verbs init/add/commit/status/log/diff/checkout/cat/remote/clone/push/pull | Faithful (+extras) | `cli.rs` Command enum: all 12 + List/Remove |
 | 21.1–21.8 | REST surface, ETag/304, status codes, push auth (FF-only, pending head), delta | Faithful | server routes /module,/roots,/content,/proof,/delta; 201/202/304/401/403/404/409/413/422/429; push delegates to crypto (C7) |
@@ -72,7 +72,7 @@ The implementation is **faithful to the whitepaper across all of Parts 2–4** w
 | 4 | Merkle leaf = SHA-256(**resource** ciphertext), not per-chunk | `ContentResponse` carries one proof for the whole served resource | DATASECTION-CONTRACT D5 |
 | 5 | Filler lives in a **separate section** (id 11), not interleaved into pool gaps | Interleaving would break global chunk indexing; no-resource-boundary property still holds | DATASECTION-CONTRACT D4 |
 | 6 | Data section injected at fixed offset `DIGS_DATA_OFFSET` (0x200000), self-describing | Implementation mechanism for a self-serving module; relocated above guest heap | DATASECTION-CONTRACT D2 |
-| 7 | wasmtime 45 (plan pinned 27) | wasmtime 27 fuel/epoch libcall traps crash (non-unwinding) on Windows+rustc 1.94 | host deviations |
+| 7 | wasmtime 47 (plan pinned 27) | wasmtime 27 fuel/epoch libcall traps crash (non-unwinding) on Windows+rustc 1.94 | host deviations |
 | 8 | GCM fixed nonce `[0u8;12]` | Paper-specified; safe because key is unique per URN | §11.2 (faithful) |
 
 ---
