@@ -190,7 +190,9 @@ impl HostRuntime {
         // enabled engine-wide, which means an un-armed store has ZERO fuel and
         // traps the moment a start function executes; epoch interruption likewise
         // needs a deadline or the first epoch check trips.
-        let _ = store.set_fuel(limits.fuel);
+        store
+            .set_fuel(limits.fuel)
+            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
         store.set_epoch_deadline(2);
 
         // A start function can trap on the bounds armed just above, so the
@@ -207,7 +209,9 @@ impl HostRuntime {
 
         if let Ok(init) = instance.get_typed_func::<(), i32>(&mut store, "init") {
             // arm bounds even for init so a malicious init cannot hang setup.
-            let _ = store.set_fuel(limits.fuel);
+            store
+                .set_fuel(limits.fuel)
+                .map_err(|e| HostError::Wasmtime(e.to_string()))?;
             // Epoch interruption is enabled; a deadline MUST be set or the first
             // epoch check traps. 2 ticks bounds init to ~`timeout` wall-clock.
             store.set_epoch_deadline(2);
@@ -226,11 +230,14 @@ impl HostRuntime {
     /// Set the per-export-call fuel budget. Epoch deadline is added in Task 12.
     /// NOTE: bounds are armed PER export call (alloc, serve, dealloc each get
     /// their own budget); the serve flow is not a single combined budget (§18.2).
-    fn arm_bounds(&mut self) {
-        let _ = self.store.set_fuel(self.limits_cfg.fuel);
+    fn arm_bounds(&mut self) -> Result<(), HostError> {
+        self.store
+            .set_fuel(self.limits_cfg.fuel)
+            .map_err(|e| HostError::Wasmtime(e.to_string()))?;
         // Deadline = 2 epoch ticks (the ticker fires every timeout/2).
         // NOTE: bounds are armed per export call, not once per serve sequence (§18.2).
         self.store.set_epoch_deadline(2);
+        Ok(())
     }
 
     fn map_trap(e: wasmtime::Error) -> HostError {
@@ -260,7 +267,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport(name))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         let packed = func.call(&mut self.store, ()).map_err(Self::map_trap)?;
         self.unpack_and_read(packed)
     }
@@ -296,7 +303,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i64-export"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, ()).map_err(Self::map_trap)
     }
 
@@ -305,7 +312,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i32-export-1"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, arg).map_err(Self::map_trap)
     }
 
@@ -318,7 +325,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i32-export-0"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, ()).map_err(Self::map_trap)
     }
 
@@ -335,7 +342,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i32-export-2"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, (a, b)).map_err(Self::map_trap)
     }
 
@@ -344,7 +351,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, name)
             .map_err(|_| HostError::MissingExport("i64-export-1"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         f.call(&mut self.store, arg).map_err(Self::map_trap)
     }
 }
@@ -367,7 +374,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, "alloc")
             .map_err(|_| HostError::MissingExport("alloc"))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         let req_ptr = alloc
             .call(&mut self.store, request.len() as i32)
             .map_err(Self::map_trap)?;
@@ -380,7 +387,7 @@ impl HostRuntime {
             .instance
             .get_typed_func(&mut self.store, export)
             .map_err(|_| HostError::MissingExport(export))?;
-        self.arm_bounds();
+        self.arm_bounds()?;
         let packed = serve
             .call(&mut self.store, (req_ptr, request.len() as i32))
             .map_err(Self::map_trap)?;
@@ -393,7 +400,7 @@ impl HostRuntime {
             .instance
             .get_typed_func::<(i32, i32), ()>(&mut self.store, "dealloc")
         {
-            self.arm_bounds();
+            self.arm_bounds()?;
             let _ = dealloc.call(&mut self.store, (req_ptr, request.len() as i32));
         }
 

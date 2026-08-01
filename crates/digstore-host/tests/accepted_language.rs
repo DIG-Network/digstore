@@ -32,8 +32,9 @@ fn cfg() -> HostImportsConfig {
 /// error so a caller can check it is a *validation* refusal and not some
 /// unrelated failure that would make the test vacuous.
 fn reject(wat_src: &str, proposal: &str) -> String {
-    let module_bytes = wat::parse_str(wat_src)
-        .unwrap_or_else(|e| panic!("{proposal} fixture must assemble (else the test is vacuous): {e}"));
+    let module_bytes = wat::parse_str(wat_src).unwrap_or_else(|e| {
+        panic!("{proposal} fixture must assemble (else the test is vacuous): {e}")
+    });
     let outcome = HostRuntime::new(
         &module_bytes,
         cfg(),

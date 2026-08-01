@@ -180,27 +180,6 @@ lowercase hex:
   exposes it to the browser as JSON.
 - **CLI** — `dig-store manifest [--json]` prints the normalized manifest.
 
-### 7.1 Serving-module execution bounds
-
-A compiled serving module is UNTRUSTED code. Every host that executes one
-(`digstore_host::HostRuntime`) MUST bound it with all three of:
-
-- a **wall-clock budget** enforced by engine epoch interruption (default 5 s per call),
-- an **outer memory ceiling** enforced by the store's resource limiter, covering every
-  growable resource — linear memory, tables, and instances — not memory alone
-  (default 384 MiB, matching the guest's declared maximum),
-- a **fuel budget** per unit of guest execution (default 5 000 000 000).
-
-**Instantiation counts as guest execution.** A module's wasm `start` function runs while the
-module is being instantiated, before any export is called, so the fuel budget and the epoch
-deadline MUST be armed on the store BEFORE instantiation, not only around export calls. A host
-that arms them afterwards either leaves the start function outside the sandbox entirely or —
-where the engine enables fuel consumption globally, leaving an un-armed store at zero fuel —
-rejects every legitimate module that has a start function.
-
-Each export call is armed with its own fresh budget; a serve sequence (alloc → call → read →
-dealloc) is deliberately NOT a single combined budget.
-
 ## 8. Conformance
 
 - The public manifest field names, types, ordering, and byte layout MUST match §6 exactly so
@@ -587,3 +566,53 @@ installers have cut over.
 Releasing uses the `RELEASE_TOKEN` org PAT, not `GITHUB_TOKEN`. If `RELEASE_TOKEN` is absent, EVERY
 channel NO-OPS with a clear `::warning::` — never a half-release. A `concurrency: nightly-release`
 group (cancel-in-progress `false`) serializes runs so an overlapping cron + dispatch cannot race.
+
+## 13. Serving-module execution bounds
+
+A compiled serving module is UNTRUSTED code. Every host that executes one
+(`digstore_host::HostRuntime`) MUST bound it with all four of the following. The fourth —
+pinning the accepted language — is what makes the other three complete, so it is normative,
+not hardening.
+
+### 13.1 The accepted language is pinned explicitly
+
+The host MUST enumerate the wasm proposals it accepts rather than inheriting the engine's
+default set. Engine defaults are NOT stable across major versions, so inheriting them means an
+engine upgrade silently widens what an untrusted module may do.
+
+The **threads**, **GC**, **exceptions**, and **function-references** proposals MUST be
+disabled. The first two are the load-bearing ones: each hands a guest a growable resource that
+the store's resource limiter does not account for — shared memory allocated outside the
+limiter, and, for GC, an entire second heap that the limiter's memory count does not see (it
+counts only the module's *defined linear memories*). With GC enabled, a module receives its
+full memory allowance a second time, doubling the host footprint it can reach.
+
+### 13.2 Resource ceilings
+
+An outer ceiling enforced by the store's resource limiter, covering every growable resource the
+accepted language can express — linear memory (default 384 MiB, matching the guest's declared
+maximum), tables, table elements, memories, and instances — not linear memory alone. This
+enumeration is exhaustive ONLY in combination with §13.1: a proposal that introduces a resource
+outside the limiter's accounting MUST be disabled there rather than left to the ceiling.
+
+### 13.3 Time and fuel
+
+- A **wall-clock budget** enforced by engine epoch interruption (default 5 s per call).
+- A **fuel budget** per unit of guest execution (default 5 000 000 000).
+
+### 13.4 Instantiation counts as guest execution
+
+A module's wasm `start` function runs while the module is being instantiated, before any export
+is called, so the fuel budget and the epoch deadline MUST be armed on the store BEFORE
+instantiation, not only around export calls. A host that arms them afterwards either leaves the
+start function outside the sandbox entirely or — where the engine enables fuel consumption
+globally, leaving an un-armed store at zero fuel — rejects every legitimate module that has a
+start function.
+
+A bound-induced instantiation failure MUST surface with the same error taxonomy as a
+bound-induced export failure (timeout vs fuel exhaustion), not as an opaque engine error.
+
+### 13.5 Budgets are per call
+
+Each export call is armed with its own fresh budget; a serve sequence (alloc → call → read →
+dealloc) is deliberately NOT a single combined budget.
