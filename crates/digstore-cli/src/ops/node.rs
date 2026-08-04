@@ -491,6 +491,52 @@ mod tests {
         clear_env();
     }
 
+    /// Approval is per-DIRECTORY: approving a URL in one project must not
+    /// authorize the SAME URL in another.
+    ///
+    /// SPEC §14.3 requires both halves of the scoping, and only the per-value
+    /// half was covered. Without this, a trust store keyed on the URL alone —
+    /// or on nothing at all — would pass every other test in this module: one
+    /// approval anywhere would silently bless a freshly-cloned repo that names
+    /// the same host, which is the whole attack this gate exists to stop.
+    #[test]
+    fn approving_a_node_in_one_project_does_not_approve_it_in_another() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        let global = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_IDENTITY_DIR", global.path());
+
+        // Project A declares a node and the user approves it there.
+        let approved = tempfile::tempdir().unwrap();
+        let approved_ws = approved.path().join(".dig");
+        config::set_project_node_url_in(&approved_ws, "https://shared.example").unwrap();
+        config::trust_project_node_in(global.path(), &approved_ws, "https://shared.example")
+            .unwrap();
+        let approved_ctx = CliContext::workspace_only(approved_ws, false, false);
+        assert_eq!(
+            trusted_project_node(&approved_ctx, None)
+                .unwrap()
+                .as_deref(),
+            Some("https://shared.example"),
+            "fixture: the approved project must actually be approved, or the \
+             assertion below would pass for the wrong reason"
+        );
+
+        // Project B — a different directory — names the very same URL.
+        let cloned = tempfile::tempdir().unwrap();
+        let cloned_ws = cloned.path().join(".dig");
+        config::set_project_node_url_in(&cloned_ws, "https://shared.example").unwrap();
+        let cloned_ctx = CliContext::workspace_only(cloned_ws, false, false);
+
+        assert_eq!(
+            trusted_project_node(&cloned_ctx, None).unwrap(),
+            None,
+            "approval in one project must not authorize another project that \
+             happens to name the same URL"
+        );
+        clear_env();
+    }
+
     /// Approval is per-VALUE: a repo that is approved and then edits its
     /// node.toml must not keep the approval. Same directory, same approval
     /// record — only the declared URL differs from the approved one.
