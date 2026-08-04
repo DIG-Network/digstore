@@ -282,7 +282,25 @@ pub fn get_project_node_url_in(
         return Ok(None);
     }
     let text = fs::read_to_string(&p).map_err(|e| CliError::Other(e.into()))?;
-    let parsed: NodeConfigFile = toml::from_str(&text).map_err(|e| CliError::Other(e.into()))?;
+
+    // The parse error is SUMMARISED, never rendered.
+    //
+    // `toml`'s Display quotes the offending source line back — and this file is attacker-supplied,
+    // so that is a channel for arbitrary bytes onto stdout. A carriage return survives the
+    // renderer and erases its own `2 | ` framing, which lets the quoted line masquerade as digs'
+    // own output. It also makes a SYMLINKED node.toml echo a line of whatever it points at.
+    //
+    // Same rule the refusal below follows: a value we are rejecting is never quoted verbatim.
+    // A line number is all a real user needs to fix their file.
+    let parsed: NodeConfigFile = toml::from_str(&text).map_err(|e| {
+        let line = e
+            .span()
+            .map(|s| text[..s.start.min(text.len())].lines().count().max(1));
+        CliError::InvalidArgument(match line {
+            Some(n) => format!("{} is not valid TOML (line {n})", p.display()),
+            None => format!("{} is not valid TOML", p.display()),
+        })
+    })?;
 
     // THE CONSENT PROMPT IS ONLY WORTH WHAT ITS DISPLAY IS WORTH.
     //
@@ -344,7 +362,8 @@ pub fn set_project_node_url_in(workspace_dir: &std::path::Path, url: &str) -> Re
         .find(|c| c.is_control() || c.is_whitespace() || !c.is_ascii())
     {
         return Err(CliError::InvalidArgument(format!(
-            "that node.url contains {} — a node URL is plain ASCII with no control characters              or whitespace.",
+            "that node.url contains {} — a node URL is plain ASCII with no control \
+             characters or whitespace.",
             char_name(bad)
         )));
     }
@@ -461,6 +480,14 @@ pub fn redact_url_userinfo(url: &str) -> String {
         // remove.
         return "<unparseable URL>".to_string();
     };
+
+    // A node URL is an http(s) origin. `mailto:`, `data:`, `foo:` and friends parse cleanly with
+    // an empty username and no host, so without this they would sail through and be printed
+    // verbatim — the redactor would be echoing an arbitrary attacker-chosen string again, by a
+    // different door than the one just closed.
+    if parsed.host().is_none() || !matches!(parsed.scheme(), "http" | "https") {
+        return "<unusable URL>".to_string();
+    }
 
     if parsed.username().is_empty() && parsed.password().is_none() {
         return parsed.to_string();
@@ -822,6 +849,103 @@ mod tests {
 #[cfg(test)]
 mod credential_tests {
     use super::*;
+
+    /// A malformed `node.toml` must not echo its own bytes back.
+    ///
+    /// `toml`'s Display quotes the offending source line, and this file is attacker-supplied. A
+    /// carriage return survives the renderer and erases its `2 | ` framing, so the quoted line can
+    /// masquerade as digs' own output — and a SYMLINKED node.toml would echo a line of whatever it
+    /// points at. Contradicts the rule the refusal path already follows: never quote a rejected
+    /// value verbatim.
+    #[test]
+    fn a_malformed_node_toml_is_summarised_not_quoted() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join(".dig");
+        fs::create_dir_all(&ws).unwrap();
+        // Invalid TOML (an unterminated basic string) whose content is a decoy line.
+        fs::write(
+            ws.join("node.toml"),
+            "[node]\nurl = \"https://rpc.dig.net\r  ok  everything is fine\n",
+        )
+        .unwrap();
+
+        let err = get_project_node_url_in(&ws).expect_err("malformed TOML must be refused");
+        let msg = err.to_string();
+
+        assert!(
+            !msg.contains("everything is fine"),
+            "the error quoted the file's contents back: {msg:?}"
+        );
+        assert!(
+            !msg.contains('\r') && !msg.contains('\n'),
+            "the error must be a single unscrambled line: {msg:?}"
+        );
+        assert!(
+            msg.contains("not valid TOML"),
+            "the error must still say what is wrong: {msg:?}"
+        );
+    }
+
+    /// Non-http schemes parse cleanly with an empty username and no host, so without a scheme
+    /// check the redactor would print them verbatim — echoing an arbitrary attacker-chosen string
+    /// through a different door than the one just closed.
+    #[test]
+    fn a_non_http_scheme_is_not_echoed_by_the_redactor() {
+        for payload in [
+            "mailto:someone@example.com",
+            "data:text/html,<script>alert(1)</script>",
+            "foo:whatever-i-like",
+            "ftp://files.example/x",
+            "ws://node.example/socket",
+        ] {
+            let shown = redact_url_userinfo(payload);
+            assert_eq!(
+                shown, "<unusable URL>",
+                "{payload} is not an http(s) origin and must not be echoed"
+            );
+        }
+        // …while real node URLs still render.
+        assert!(redact_url_userinfo("https://rpc.dig.net").starts_with("https://rpc.dig.net"));
+        assert!(redact_url_userinfo("http://localhost:9778").starts_with("http://localhost:9778"));
+    }
+
+    /// The WRITE path must refuse what the READ path refuses.
+    ///
+    /// Shipped untested in the previous round: deleting the guard from `set_project_node_url_in`
+    /// entirely left the whole suite green, which makes it a guard that can be removed silently.
+    /// Without it, `digstore config node.url --local` happily writes a value its own next
+    /// invocation refuses — digs tells the user to create a file and then ignores it.
+    #[test]
+    fn the_write_path_refuses_what_the_read_path_refuses() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join(".dig");
+
+        for (payload, what) in [
+            ("https://a\nb.example", "a line feed"),
+            ("https://a\tb.example", "a tab"),
+            ("https://a b.example", "a space"),
+            ("https://rpc.dig.n\u{0435}t", "a Cyrillic homograph"),
+        ] {
+            let err = set_project_node_url_in(&ws, payload)
+                .expect_err("the write path must refuse {what}");
+            let msg = err.to_string();
+            assert!(
+                !msg.contains('\n') && !msg.contains('\t'),
+                "the refusal must not be scrambled by the payload it describes ({what}): {msg:?}"
+            );
+            assert!(
+                get_project_node_url_in(&ws).unwrap().is_none(),
+                "nothing may be persisted when the write is refused ({what})"
+            );
+        }
+
+        // …and a legitimate value still writes, so this is a guard rather than a wall.
+        set_project_node_url_in(&ws, "https://node.example:9778").unwrap();
+        assert_eq!(
+            get_project_node_url_in(&ws).unwrap().as_deref(),
+            Some("https://node.example:9778")
+        );
+    }
 
     /// A node URL may legally carry `user:token@`, and digs prints the node URL
     /// in the approval prompt, the ignored-value warning, `--show`, `doctor`,
