@@ -56,7 +56,12 @@ impl Check {
     }
 }
 
-pub fn run(ctx: &CliContext, ui: &Ui, _args: DoctorArgs) -> Result<(), CliError> {
+pub fn run(
+    ctx: &CliContext,
+    ui: &Ui,
+    _args: DoctorArgs,
+    node_flag: Option<&str>,
+) -> Result<(), CliError> {
     let mut checks = Vec::new();
 
     // 1+2. Seed present + unlocked. A live unlock session means a usable wallet
@@ -156,8 +161,15 @@ pub fn run(ctx: &CliContext, ui: &Ui, _args: DoctorArgs) -> Result<(), CliError>
     }
 
     // 5. Default remote reachable.
-    let remote_url = crate::config::resolve_remote_url(ctx, "origin")
-        .unwrap_or_else(|_| "https://rpc.dig.net".to_string());
+    let remote_url = crate::ops::node::resolve_remote_or_origin(
+        ctx,
+        ui,
+        "origin",
+        node_flag,
+        "doctor",
+        crate::ops::node::NodeRequirement::Read,
+    )
+    .unwrap_or_else(|_| digstore_remote::RPC_DIG_NET.to_string());
     match remote_reachable(&remote_url) {
         Ok(true) => checks.push(Check::pass(
             "default remote",

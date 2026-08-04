@@ -111,7 +111,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
                 json: cli.json,
                 verbose: cli.verbose,
             };
-            return doctor::run(&ctx, &ui, a);
+            return doctor::run(&ctx, &ui, a, cli.node.as_deref());
         }
         // `link` writes a committable `dig.toml` into CWD (where the developer's
         // source lives); like `doctor` it operates on the op_dir and needs no
@@ -133,7 +133,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         }
         Command::Clone(a) => {
             let ctx = CliContext::workspace_only(workspace_dir, cli.json, cli.verbose);
-            return clone::run(&ctx, &ui, a);
+            return clone::run(&ctx, &ui, a, cli.node.as_deref());
         }
         // `compile` builds an ephemeral single-store context at the (temp) workspace
         // dir, with op_dir == the --in content root, and never touches the chain.
@@ -161,7 +161,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
                 json: cli.json,
                 verbose: cli.verbose,
             };
-            return deploy::run(&ctx, &ui, a);
+            return deploy::run(&ctx, &ui, a, cli.node.as_deref());
         }
         Command::Stores(a) => {
             let ws = crate::workspace::Workspace::load_or_migrate(&workspace_dir)?;
@@ -279,7 +279,7 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
 
     match cli.command {
         Command::Add(a) => add::run(&ctx, &ui, a),
-        Command::Commit(a) => commit::run(&ctx, &ui, a),
+        Command::Commit(a) => commit::run(&ctx, &ui, a, cli.node.as_deref()),
         Command::Status(a) => status::run(&ctx, &ui, a),
         Command::Log(a) => log::run(&ctx, &ui, a),
         Command::Diff(a) => diff::run(&ctx, &ui, a),
@@ -291,9 +291,9 @@ pub fn dispatch(cli: Cli) -> Result<(), CliError> {
         Command::Staged(a) => staged::run(&ctx, &ui, a),
         Command::Urn(a) => urn::run(&ctx, &ui, a),
         Command::Remote(a) => remote::run(&ctx, &ui, a),
-        Command::Push(a) => push::run(&ctx, &ui, a),
+        Command::Push(a) => push::run(&ctx, &ui, a, cli.node.as_deref()),
         Command::Pull(a) => pull::run(&ctx, &ui, a, cli.node.as_deref()),
-        Command::Revoke(a) => revoke::run(&ctx, &ui, a),
+        Command::Revoke(a) => revoke::run(&ctx, &ui, a, cli.node.as_deref()),
         Command::Serve(a) => serve::run(&ctx, &ui, a),
         Command::Anchor(a) => anchor::run(&ctx, &ui, a),
         Command::DeployKey(a) => deploy_key::run(&ctx, &ui, a),

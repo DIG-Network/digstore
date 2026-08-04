@@ -1,12 +1,16 @@
 use digstore_core::Urn;
 
 use crate::cli::CloneArgs;
-use crate::config;
 use crate::context::CliContext;
 use crate::error::CliError;
 use crate::ops::{dighub, remote_ops};
 
-pub fn run(ws_ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(), CliError> {
+pub fn run(
+    ws_ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    args: CloneArgs,
+    node_flag: Option<&str>,
+) -> Result<(), CliError> {
     // Product gate: require a dighub account only for a DIGHUB remote (*.dig.net, or a
     // urn:dig:… that resolves to the public RPC). Cloning from a self-hosted / loopback node
     // needs no dighub account.
@@ -40,9 +44,14 @@ pub fn run(ws_ctx: &CliContext, ui: &crate::ui::Ui, args: CloneArgs) -> Result<(
     let store_url = if args.source.starts_with("urn:dig:") {
         let urn = Urn::parse(&args.source)
             .map_err(|e| CliError::InvalidArgument(format!("bad urn: {e}")))?;
-        let base = config::resolve_remote_url(ctx, "origin").map_err(|_| {
-            CliError::InvalidArgument("cloning a URN requires a configured `origin` remote".into())
-        })?;
+        let base = crate::ops::node::resolve_remote_or_origin(
+            ctx,
+            ui,
+            "origin",
+            node_flag,
+            "clone",
+            crate::ops::node::NodeRequirement::Read,
+        )?;
         // base is already a `…/stores/{id}` URL; rebuild from the URN's store id.
         let host = base.split("/stores/").next().unwrap_or(&base);
         format!(

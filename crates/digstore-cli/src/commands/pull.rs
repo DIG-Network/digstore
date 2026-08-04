@@ -87,7 +87,7 @@ pub fn run(
             .and_then(|m| m.get("origin").cloned())
             .map(|raw| config::normalize_remote_url(&raw))
     } else {
-        config::resolve_remote_url(ctx, &args.remote).ok()
+        config::configured_remote_url(ctx, &args.remote).ok().flatten()
     };
     if gate_base.as_deref().is_some_and(dighub::is_dighub_remote) {
         dighub::ensure_logged_in(ui)?;
@@ -106,15 +106,29 @@ pub fn run(
                     cfg.store_id.to_hex()
                 )));
             }
-            pull_whole_store(ctx, ui, "origin")
+            pull_whole_store(ctx, ui, "origin", node_flag)
         }
-        PullRoute::RemoteName(name) => pull_whole_store(ctx, ui, &name),
+        PullRoute::RemoteName(name) => pull_whole_store(ctx, ui, &name, node_flag),
     }
 }
 
 /// Existing behavior: whole-store `.dig` sync over the §21 protocol (unchanged).
-fn pull_whole_store(ctx: &CliContext, ui: &crate::ui::Ui, remote: &str) -> Result<(), CliError> {
-    let base = config::resolve_remote_url(ctx, remote)?;
+fn pull_whole_store(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    remote: &str,
+    node_flag: Option<&str>,
+) -> Result<(), CliError> {
+    // A pull only READS, so falling through to the public gateway is allowed —
+    // but the user is told it happened rather than left to assume otherwise.
+    let base = crate::ops::node::resolve_remote_or_origin(
+        ctx,
+        ui,
+        remote,
+        node_flag,
+        "pull",
+        crate::ops::node::NodeRequirement::Read,
+    )?;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
