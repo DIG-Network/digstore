@@ -832,14 +832,71 @@ pub fn build_update_ownership(
     })
 }
 
-/// Reconstructs the current unspent datastore singleton for `launcher_id` using
-/// only coinset reads (coin records + puzzle/solution), following the singleton
-/// lineage. No P2P peer required. Owner-only stores carry no delegated puzzles.
+/// The classified terminal state of a datastore singleton lineage.
 ///
-/// `DataStore::from_spend(ctx, spend, delegated)` returns the CHILD datastore
-/// created by spending `spend.coin`, so we walk launcher -> eve -> ... forward
-/// until we reach a singleton coin that is still unspent.
-pub async fn sync_datastore(chain: &dyn ChainReads, launcher_id: Bytes32) -> Result<DataStore> {
+/// The lineage walk (launcher → eve → … → tip) has exactly THREE well-formed
+/// terminal outcomes, which the legacy [`sync_datastore`] collapses into one
+/// stringly-typed [`ChainError::Chain`]. Distinguishing them is CUSTODY-CRITICAL:
+/// a downstream consumer (dig-node store-melt propagation, #1316) authorizes an
+/// IRREVERSIBLE local-data delete only on a genuine [`Melted`](Self::Melted), and
+/// MUST NOT delete on a [`NeverMinted`](Self::NeverMinted) or an
+/// unreachable/corrupt chain (which surfaces as `Err`, NEVER as `Melted`).
+///
+/// The invariant that makes this safe: **corrupt is never melt.** A `Melted` is
+/// returned ONLY when a singleton coin that genuinely parsed as a datastore was
+/// SPENT and its spend, parsed by `DataStore::from_spend`, returned
+/// `Err(DriverError::MissingChild)` — the exact on-chain signature of an
+/// owner-authorized melt (a valid datastore-singleton spend that recreates no
+/// odd-amount child). Every other outcome stays an `Err`, never `Melted`: a
+/// `from_spend` `Ok(None)` (the spend is not a datastore singleton at all), any
+/// other `DriverError`, an unreadable coin record, or a missing/unparseable
+/// spend are all treated as corrupt/unexpected terminals. (Note: the #1981
+/// ticket assumed melt surfaced as `Ok(None)`; that is WRONG for
+/// datalayer-driver 3.0.0 — `Ok(None)` is a corrupt terminal, not a melt.)
+#[derive(Debug)]
+pub enum SingletonTerminal {
+    /// The launcher was spent and the forward walk reached an UNSPENT tip — the
+    /// store is live and spendable. Carries the current [`DataStore`] (boxed: it is
+    /// far larger than the other variants, so boxing keeps the enum compact).
+    Live(Box<DataStore>),
+    /// The launcher coin exists on-chain but is still UNSPENT: the store was
+    /// never minted (no eve singleton was ever created). NOT a melt.
+    NeverMinted,
+    /// The launcher was spent and the walk reached a datastore singleton coin
+    /// that was SPENT with `DataStore::from_spend` returning
+    /// `Err(DriverError::MissingChild)` (a valid datastore-singleton spend
+    /// recreating no odd-amount child) — an owner-authorized MELT, permanently
+    /// retiring the store.
+    Melted {
+        /// The last on-chain root observed before the melt (the metadata root of
+        /// the singleton generation that was melt-spent). Lets a consumer record
+        /// what content the retired store last anchored.
+        last_root: Bytes32,
+        /// The block height at which the terminal (melt) spend was confirmed.
+        /// Downstream MUST enforce a burial depth against this height before
+        /// acting irreversibly: a reorg that un-melts the store AFTER a delete is
+        /// permanent data loss.
+        melt_spent_height: u32,
+    },
+}
+
+/// Walk the singleton lineage for `launcher_id` and classify its terminal state.
+///
+/// This is the ONE forward-walk traversal shared by [`sync_datastore`] (which maps
+/// the non-`Live` terminals back to its legacy error strings for byte-identical
+/// behaviour) and [`classify_singleton`] (which surfaces the typed enum). Keeping a
+/// single walker upholds the canonical-crate rule: a second lineage walker anywhere
+/// in the ecosystem is a byte-drift bug on a custody path.
+///
+/// `DataStore::from_spend(ctx, spend, delegated)` returns the CHILD datastore created
+/// by spending `spend.coin`, so we walk launcher → eve → … forward until either a
+/// singleton coin is still unspent (`Live`) or a spent coin's spend yields no child
+/// (`Melted`). Every genuine chain-read failure and every unparseable spend returns
+/// `Err` — corrupt is never `Melted`.
+async fn walk_singleton_terminal(
+    chain: &dyn ChainReads,
+    launcher_id: Bytes32,
+) -> Result<SingletonTerminal> {
     let mut ctx = SpendContext::new();
 
     // The launcher coin is spent to create the eve singleton.
@@ -848,20 +905,24 @@ pub async fn sync_datastore(chain: &dyn ChainReads, launcher_id: Bytes32) -> Res
         .await?
         .ok_or_else(|| ChainError::Chain(format!("launcher coin {launcher_id:?} not found")))?;
     if !launcher.spent {
-        return Err(ChainError::Chain(
-            "launcher coin is unspent (store not minted yet)".into(),
-        ));
+        // Launcher exists but is unspent: the store was never minted. This is a
+        // well-formed terminal state, NOT an error and NOT a melt.
+        return Ok(SingletonTerminal::NeverMinted);
     }
     let launcher_spend = chain
         .coin_spend(launcher_id, launcher.spent_block_index)
         .await?
         .ok_or_else(|| ChainError::Chain("launcher spend not found".into()))?;
 
+    // A launcher spend that does NOT yield a datastore is a corrupt / non-store
+    // launcher — NOT a melt. Only a spend of a coin that already parsed as a
+    // datastore (in the loop below) can be a melt.
     let mut store = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &launcher_spend, &[])
         .map_err(|e| ChainError::Chain(format!("parse eve store: {e}")))?
         .ok_or_else(|| ChainError::Chain("launcher spend is not a datastore".into()))?;
 
-    // Walk forward until the singleton coin is unspent.
+    // Walk forward until the singleton coin is unspent (Live) or a spend yields
+    // no child (Melted).
     const MAX_HOPS: u32 = 100_000;
     let mut hops = 0u32;
     loop {
@@ -877,17 +938,107 @@ pub async fn sync_datastore(chain: &dyn ChainReads, launcher_id: Bytes32) -> Res
             .await?
             .ok_or_else(|| ChainError::Chain(format!("singleton coin {coin_id:?} not found")))?;
         if !rec.spent {
-            return Ok(store); // current, unspent singleton
+            return Ok(SingletonTerminal::Live(Box::new(store))); // current, unspent singleton
         }
         let spend = chain
             .coin_spend(coin_id, rec.spent_block_index)
             .await?
             .ok_or_else(|| ChainError::Chain("singleton spend not found".into()))?;
         let delegated: Vec<DelegatedPuzzle> = store.info.delegated_puzzles.clone();
-        store = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &spend, &delegated)
-            .map_err(|e| ChainError::Chain(format!("parse next store: {e}")))?
-            .ok_or_else(|| ChainError::Chain("singleton spend did not yield a store".into()))?;
+        // Capture this generation's root + spend height BEFORE parsing the spend, so
+        // a `Melted` classification can surface the last root and the burial-depth
+        // anchor even though the melt spend produces no child to read them from.
+        let last_root = store.info.metadata.root_hash;
+        let melt_spent_height = rec.spent_block_index;
+        // The melt signature (datalayer-driver 3.0.0): the terminal spend IS a valid
+        // datastore singleton spend, but its inner conditions carry a MeltSingleton /
+        // fee-reserve with NO odd (singleton) create-coin — so `from_spend` returns
+        // `Err(DriverError::MissingChild)` (NOT `Ok(None)`, which the #1981 ticket
+        // assumed). `MissingChild` is therefore the EXACT, and only, on-chain
+        // signature of an owner-authorized melt. Every other error (unparseable
+        // puzzle, CLVM failure, an intermediate that isn't a datastore at all) is a
+        // corrupt/unexpected chain and MUST stay `Err` — corrupt is never melt.
+        match DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &spend, &delegated) {
+            // The spent singleton produced a datastore child: keep walking.
+            Ok(Some(child)) => store = child,
+            // The spend parsed but is not a datastore singleton at all — a corrupt /
+            // unexpected terminal, NOT a melt. Preserves `sync_datastore`'s legacy
+            // "singleton spend did not yield a store" error for this exact case.
+            Ok(None) => {
+                return Err(ChainError::Chain(
+                    "singleton spend did not yield a store".into(),
+                ));
+            }
+            // The one and only melt signature: a datastore singleton consumed with no
+            // singleton child.
+            Err(DriverError::MissingChild) => {
+                return Ok(SingletonTerminal::Melted {
+                    last_root,
+                    melt_spent_height,
+                });
+            }
+            // Any other parse error is a corrupt/unreadable terminal spend — stay Err.
+            Err(e) => {
+                return Err(ChainError::Chain(format!("parse next store: {e}")));
+            }
+        }
     }
+}
+
+/// Reconstructs the current unspent datastore singleton for `launcher_id` using
+/// only coinset reads (coin records + puzzle/solution), following the singleton
+/// lineage. No P2P peer required. Owner-only stores carry no delegated puzzles.
+///
+/// `DataStore::from_spend(ctx, spend, delegated)` returns the CHILD datastore
+/// created by spending `spend.coin`, so we walk launcher -> eve -> ... forward
+/// until we reach a singleton coin that is still unspent.
+///
+/// Behaviour is UNCHANGED from before the classifier was factored out: a
+/// never-minted launcher or a melted lineage still returns [`ChainError::Chain`]
+/// with the same message. Callers that need to DISTINGUISH those terminal states
+/// (e.g. melt propagation) MUST use [`classify_singleton`] instead.
+pub async fn sync_datastore(chain: &dyn ChainReads, launcher_id: Bytes32) -> Result<DataStore> {
+    match walk_singleton_terminal(chain, launcher_id).await? {
+        SingletonTerminal::Live(store) => Ok(*store),
+        SingletonTerminal::NeverMinted => Err(ChainError::Chain(
+            "launcher coin is unspent (store not minted yet)".into(),
+        )),
+        // Byte-identical to the pre-classifier behaviour: a melt surfaced through the
+        // generic `from_spend` error mapping as "parse next store: missing child"
+        // (melt == `Err(DriverError::MissingChild)`), so reproduce that exact string.
+        SingletonTerminal::Melted { .. } => {
+            Err(ChainError::Chain("parse next store: missing child".into()))
+        }
+    }
+}
+
+/// Classify the terminal state of the singleton lineage for `launcher_id`,
+/// distinguishing a live store, a never-minted launcher, and a genuine owner melt
+/// — the three states [`sync_datastore`] collapses into one error.
+///
+/// This is the canonical, custody-load-bearing classifier for the dig-node
+/// store-melt-propagation path (#1316): a `Melted` result authorizes an
+/// IRREVERSIBLE downstream data delete, so the semantics of each arm are exact —
+///
+/// - launcher UNSPENT ⇒ [`NeverMinted`](SingletonTerminal::NeverMinted);
+/// - walk reaches an UNSPENT tip ⇒ [`Live`](SingletonTerminal::Live);
+/// - a SPENT datastore singleton whose spend returns
+///   `Err(DriverError::MissingChild)` (recreates no odd-amount child) ⇒
+///   [`Melted`](SingletonTerminal::Melted), carrying the last root and the melt
+///   spend's block height (for burial-depth enforcement against reorgs);
+/// - EVERY chain-read failure, missing/unparseable spend, a `from_spend`
+///   `Ok(None)`, any other `DriverError`, or a non-datastore launcher spend ⇒
+///   `Err`. **A corrupt or unreachable chain is NEVER classified as `Melted`** —
+///   that is the single most important correctness property, since a false
+///   `Melted` triggers permanent data loss downstream.
+///
+/// Shares its lineage traversal with [`sync_datastore`] (via
+/// [`walk_singleton_terminal`]); there is exactly one walker.
+pub async fn classify_singleton(
+    chain: &dyn ChainReads,
+    launcher_id: Bytes32,
+) -> Result<SingletonTerminal> {
+    walk_singleton_terminal(chain, launcher_id).await
 }
 
 #[cfg(test)]
@@ -2488,6 +2639,308 @@ mod verify_pinned_root_tests {
                 assert!(msg.contains("no current unspent singleton"), "got: {msg}")
             }
             other => panic!("expected fail-closed Chain error, got {other:?}"),
+        }
+    }
+}
+
+// ===========================================================================
+// classify_singleton — the #1981 terminal-state classifier suite.
+//
+// Builds REAL singleton lineages on the in-process Chia simulator (mint /
+// update / owner-melt), feeds coinset-shaped reads into the in-crate MockChain,
+// and asserts each terminal state is classified EXACTLY. The custody-critical
+// property under test is `corrupt_chain_is_err_not_melted`: an unreadable chain
+// must NEVER be reported as `Melted`, because downstream a `Melted` authorizes an
+// irreversible data delete.
+// ===========================================================================
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+    use crate::coinset::mock::MockChain;
+    use crate::coinset::CoinInfo;
+    use chia::puzzles::Memos;
+    use chia_sdk_test::Simulator;
+    use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+    /// Seed a MockChain `coin_record` (+ `coin_spend` for spent coins) per id from
+    /// the simulator — mirroring the `verify_pinned_root_tests` helper.
+    fn seed_records(sim: &Simulator, mock: &mut MockChain, coin_ids: &[Bytes32]) {
+        for &coin_id in coin_ids {
+            let Some(cs) = sim.coin_state(coin_id) else {
+                continue;
+            };
+            let spent_h = cs.spent_height;
+            mock.records.insert(
+                coin_id,
+                CoinInfo {
+                    coin: cs.coin,
+                    spent: spent_h.is_some(),
+                    confirmed_block_index: cs.created_height.unwrap_or(0),
+                    spent_block_index: spent_h.unwrap_or(0),
+                    timestamp: 0,
+                    coinbase: false,
+                },
+            );
+            if spent_h.is_some() {
+                if let Some(spend) = sim.coin_spend(coin_id) {
+                    mock.spends.insert(coin_id, spend);
+                }
+            }
+        }
+    }
+
+    /// Mint an owner-only store (root0). Returns (store_id, eve DataStore) with every
+    /// spend applied on `sim`.
+    fn mint_store_on_sim(
+        sim: &mut Simulator,
+        ctx: &mut SpendContext,
+        root0: Bytes32,
+    ) -> anyhow::Result<(Bytes32, DataStore, chia_sdk_test::BlsPairWithCoin)> {
+        let owner = sim.bls(3);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let (launch, eve) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DataStoreMetadata {
+                root_hash: root0,
+                label: None,
+                description: None,
+                bytes: None,
+                size_proof: None,
+            },
+            owner.puzzle_hash.into(),
+            vec![],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+        Ok((eve.info.launcher_id, eve, owner))
+    }
+
+    /// MELT: launcher spent → eve → eve melt-spent (spend yields no datastore child)
+    /// ⇒ `Melted { last_root == root0, melt_spent_height == eve's spent height }`.
+    #[tokio::test]
+    async fn melted_lineage_classifies_as_melted_with_correct_height() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+        let root0 = Bytes32::new([0x10; 32]);
+        let (store_id, eve, owner) = mint_store_on_sim(&mut sim, ctx, root0)?;
+
+        // Owner-authorized melt of the eve singleton: the spend consumes the
+        // singleton and produces NO datastore child.
+        let melt_spends =
+            melt_store(eve.clone(), owner.pk).map_err(|e| anyhow::anyhow!("melt_store: {e}"))?;
+        let sig = sign_coin_spends(&melt_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign melt: {e}"))?;
+        sim.new_transaction(SpendBundle::new(melt_spends, sig))?;
+
+        let eve_coin = eve.coin.coin_id();
+        let expected_height = sim
+            .coin_state(eve_coin)
+            .and_then(|cs| cs.spent_height)
+            .expect("eve is spent after melt");
+
+        let mut mock = MockChain::default();
+        seed_records(&sim, &mut mock, &[store_id, eve_coin]);
+
+        match classify_singleton(&mock, store_id).await? {
+            SingletonTerminal::Melted {
+                last_root,
+                melt_spent_height,
+            } => {
+                assert_eq!(last_root, root0, "last root before melt is the eve root");
+                assert_eq!(
+                    melt_spent_height, expected_height,
+                    "melt height must be the terminal spend's spent_block_index"
+                );
+            }
+            other => panic!("expected Melted, got {other:?}"),
+        }
+
+        // sync_datastore must STILL surface the melt as its legacy error (behaviour
+        // unchanged by the refactor).
+        let err = sync_datastore(&mock, store_id).await.unwrap_err();
+        match err {
+            // A melt surfaces through sync_datastore as its legacy generic parse error
+            // (melt == Err(DriverError::MissingChild) -> "parse next store: missing child").
+            ChainError::Chain(msg) => {
+                assert!(msg.contains("missing child"), "got: {msg}")
+            }
+            other => panic!("expected legacy Chain error, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// NEVER-MINTED: launcher coin exists but is UNSPENT ⇒ `NeverMinted`.
+    #[tokio::test]
+    async fn unspent_launcher_classifies_as_never_minted() -> anyhow::Result<()> {
+        let launcher_id = Bytes32::new([0x42; 32]);
+        let mut mock = MockChain::default();
+        // An unspent launcher coin at the launcher puzzle hash (1 mojo, odd).
+        mock.records.insert(
+            launcher_id,
+            CoinInfo {
+                coin: Coin::new(Bytes32::new([0x01; 32]), SINGLETON_LAUNCHER_PH, 1),
+                spent: false,
+                confirmed_block_index: 100,
+                spent_block_index: 0,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+
+        assert!(matches!(
+            classify_singleton(&mock, launcher_id).await?,
+            SingletonTerminal::NeverMinted
+        ));
+
+        // sync_datastore keeps its legacy "not minted yet" error.
+        let err = sync_datastore(&mock, launcher_id).await.unwrap_err();
+        match err {
+            ChainError::Chain(msg) => assert!(msg.contains("not minted yet"), "got: {msg}"),
+            other => panic!("expected legacy Chain error, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// LIVE: launcher spent, walk reaches an UNSPENT tip ⇒ `Live(store)` carrying the
+    /// current root. Also asserts `sync_datastore` returns a byte-identical store.
+    #[tokio::test]
+    async fn live_lineage_classifies_as_live() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+        let root0 = Bytes32::new([0x10; 32]);
+        let (store_id, eve, _owner) = mint_store_on_sim(&mut sim, ctx, root0)?;
+
+        // eve is the unspent tip (never updated).
+        let eve_coin = eve.coin.coin_id();
+        let mut mock = MockChain::default();
+        seed_records(&sim, &mut mock, &[store_id, eve_coin]);
+
+        let live = classify_singleton(&mock, store_id).await?;
+        let store = match live {
+            SingletonTerminal::Live(store) => store,
+            other => panic!("expected Live, got {other:?}"),
+        };
+        assert_eq!(store.info.metadata.root_hash, root0);
+        assert_eq!(store.coin.coin_id(), eve_coin);
+
+        // sync_datastore returns the SAME live store (behaviour unchanged).
+        let via_sync = sync_datastore(&mock, store_id).await?;
+        assert_eq!(via_sync.coin.coin_id(), store.coin.coin_id());
+        assert_eq!(
+            via_sync.info.metadata.root_hash,
+            store.info.metadata.root_hash
+        );
+        Ok(())
+    }
+
+    /// CUSTODY GUARD — corrupt is NEVER melt. The launcher parsed as a datastore
+    /// (eve) and eve is SPENT, but eve's spend is UNREADABLE. A missing terminal
+    /// spend is the SAME on-chain-read shape a melt would surface through (a spent
+    /// terminal coin), so this is the exact case a naive classifier could
+    /// mis-report as `Melted`. It MUST stay `Err`.
+    #[tokio::test]
+    async fn corrupt_terminal_spend_is_err_not_melted() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+        let root0 = Bytes32::new([0x10; 32]);
+        let (store_id, eve, owner) = mint_store_on_sim(&mut sim, ctx, root0)?;
+
+        // Genuinely melt eve so its coin record is SPENT on the sim...
+        let melt_spends =
+            melt_store(eve.clone(), owner.pk).map_err(|e| anyhow::anyhow!("melt_store: {e}"))?;
+        let sig = sign_coin_spends(&melt_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign melt: {e}"))?;
+        sim.new_transaction(SpendBundle::new(melt_spends, sig))?;
+
+        let eve_coin = eve.coin.coin_id();
+        let mut mock = MockChain::default();
+        seed_records(&sim, &mut mock, &[store_id, eve_coin]);
+
+        // ...then CORRUPT the chain: eve is marked spent but its spend is unreadable.
+        // A classifier that inferred melt from "terminal coin is spent" alone (rather
+        // than from a spend that parses to Ok(None)) would wrongly return Melted.
+        mock.spends.remove(&eve_coin);
+
+        let err = classify_singleton(&mock, store_id)
+            .await
+            .expect_err("a corrupt/unreadable terminal spend must NOT classify as Melted");
+        match err {
+            ChainError::Chain(msg) => {
+                assert!(msg.contains("singleton spend not found"), "got: {msg}")
+            }
+            other => panic!("expected Chain error (corrupt), got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// CUSTODY GUARD — a terminal spend that is PRESENT and parses, but is NOT a
+    /// datastore singleton spend (`from_spend` -> `Ok(None)`), is a corrupt terminal,
+    /// NOT a melt. Only `Err(DriverError::MissingChild)` is a melt; the `Ok(None)`
+    /// arm must fail closed so a garbage terminal spend can never trigger a delete.
+    #[tokio::test]
+    async fn non_datastore_terminal_spend_is_err_not_melted() -> anyhow::Result<()> {
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+        let root0 = Bytes32::new([0x10; 32]);
+        let (store_id, eve, _owner) = mint_store_on_sim(&mut sim, ctx, root0)?;
+        let eve_coin = eve.coin.coin_id();
+
+        let mut mock = MockChain::default();
+        seed_records(&sim, &mut mock, &[store_id, eve_coin]);
+
+        // Mark eve SPENT, but store a NON-datastore spend under its id: a plain
+        // standard-layer coin spend. `from_spend` returns Ok(None) (no singleton
+        // layer) — which must NOT be read as a melt.
+        let victim = sim.bls(0);
+        let garbage_spends = {
+            let spend_ctx = &mut SpendContext::new();
+            StandardLayer::new(victim.pk).spend(
+                spend_ctx,
+                victim.coin,
+                Conditions::new().create_coin(victim.puzzle_hash, 1, Memos::None),
+            )?;
+            spend_ctx.take()
+        };
+        let garbage = garbage_spends
+            .into_iter()
+            .next()
+            .expect("one standard coin spend");
+        mock.records.insert(
+            eve_coin,
+            CoinInfo {
+                coin: eve.coin,
+                spent: true,
+                confirmed_block_index: 1,
+                spent_block_index: 2,
+                timestamp: 0,
+                coinbase: false,
+            },
+        );
+        mock.spends.insert(eve_coin, garbage);
+
+        let err = classify_singleton(&mock, store_id)
+            .await
+            .expect_err("a non-datastore terminal spend must NOT classify as Melted");
+        match err {
+            ChainError::Chain(msg) => {
+                assert!(msg.contains("did not yield a store"), "got: {msg}")
+            }
+            other => panic!("expected Chain error (corrupt), got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// CUSTODY GUARD — an unreachable launcher (no coin record at all) is `Err`,
+    /// never `Melted` and never `NeverMinted`.
+    #[tokio::test]
+    async fn unreachable_launcher_is_err_not_melted() {
+        let mock = MockChain::default();
+        let err = classify_singleton(&mock, Bytes32::new([0x99; 32]))
+            .await
+            .expect_err("an absent launcher must be an error, not a terminal classification");
+        match err {
+            ChainError::Chain(msg) => assert!(msg.contains("not found"), "got: {msg}"),
+            other => panic!("expected Chain error, got {other:?}"),
         }
     }
 }
