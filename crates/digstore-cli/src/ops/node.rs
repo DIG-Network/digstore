@@ -250,21 +250,45 @@ pub fn resolve_remote_or_origin(
         .map_err(|e| CliError::Other(e.into()))?
         .block_on(resolve_node_in(Some(ctx), Some(ui), node_flag))?;
 
-    if resolved.is_local() {
-        return Ok(resolved.base_url);
-    }
-    match requirement {
-        NodeRequirement::LocalNode => Err(CliError::NoLocalNode {
+    match decide_origin(&resolved, requirement) {
+        OriginDecision::Use(url) => Ok(url),
+        OriginDecision::UseWithNotice(url) => {
+            ui.hint(format!(
+                "no local DIG node answered — reading from {url} instead. \
+                 Run `dig-node status` to check yours, or see https://docs.dig.net/docs/run-a-node"
+            ));
+            Ok(url)
+        }
+        OriginDecision::Refuse => Err(CliError::NoLocalNode {
             operation: operation.to_string(),
         }),
-        NodeRequirement::Read => {
-            ui.hint(format!(
-                "no local DIG node answered — reading from {} instead. \
-                 Run `dig-node status` to check yours, or see https://docs.dig.net/docs/run-a-node",
-                resolved.base_url
-            ));
-            Ok(resolved.base_url)
-        }
+    }
+}
+
+/// What to do with a resolved node, given what the operation needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OriginDecision {
+    /// Go ahead silently — this is a node the user chose or runs.
+    Use(String),
+    /// Go ahead, but tell the user their read is leaving this machine.
+    UseWithNotice(String),
+    /// Refuse: the operation needs a local node and there is none.
+    Refuse,
+}
+
+/// The read/write split, as a pure function of the resolved node (#2099).
+///
+/// Extracted from [`resolve_remote_or_origin`] so the rule can be tested
+/// without a network: the surrounding function's other half is I/O (probing and
+/// printing), and a rule this load-bearing should not be reachable only through
+/// it.
+pub fn decide_origin(resolved: &ResolvedNode, requirement: NodeRequirement) -> OriginDecision {
+    if resolved.is_local() {
+        return OriginDecision::Use(resolved.base_url.clone());
+    }
+    match requirement {
+        NodeRequirement::Read => OriginDecision::UseWithNotice(resolved.base_url.clone()),
+        NodeRequirement::LocalNode => OriginDecision::Refuse,
     }
 }
 
@@ -407,6 +431,110 @@ mod tests {
         let urls: Vec<String> = local_candidates().into_iter().map(|c| c.url).collect();
         assert_eq!(urls[2], "http://localhost:9778");
         clear_env();
+    }
+
+    // -----------------------------------------------------------------------
+    // The read/write split (#2099 deliverable 3).
+    //
+    // Each case varies exactly ONE input against a common baseline, so a
+    // collapsed implementation — one that always refuses, always allows, or
+    // ignores the tier — is caught by at least one of them.
+    // -----------------------------------------------------------------------
+
+    fn node(tier: digstore_remote::ResolvedTier) -> ResolvedNode {
+        ResolvedNode {
+            base_url: "https://rpc.dig.net".into(),
+            tier,
+        }
+    }
+
+    /// A read with no local node proceeds — §6.0 keeps consuming frictionless —
+    /// but is NOT silent. Asserting `UseWithNotice` (not merely `Use`) is the
+    /// load-bearing half: the user explicitly asked to be told.
+    #[test]
+    fn a_read_with_no_local_node_proceeds_but_is_announced() {
+        assert_eq!(
+            decide_origin(
+                &node(digstore_remote::ResolvedTier::PublicGateway),
+                NodeRequirement::Read
+            ),
+            OriginDecision::UseWithNotice("https://rpc.dig.net".into())
+        );
+    }
+
+    /// The same resolved node, the same absent local node — only the
+    /// REQUIREMENT differs — must refuse. This is the pair that proves the
+    /// split exists rather than one branch being dead.
+    #[test]
+    fn an_identity_signed_write_with_no_local_node_refuses() {
+        assert_eq!(
+            decide_origin(
+                &node(digstore_remote::ResolvedTier::PublicGateway),
+                NodeRequirement::LocalNode
+            ),
+            OriginDecision::Refuse
+        );
+    }
+
+    /// A write against a node the user actually runs proceeds silently — the
+    /// refusal must be about "no local node", not about writes in general.
+    #[test]
+    fn a_write_against_a_local_node_proceeds_silently() {
+        for tier in [
+            digstore_remote::ResolvedTier::DigLocal,
+            digstore_remote::ResolvedTier::Localhost,
+        ] {
+            assert_eq!(
+                decide_origin(&node(tier), NodeRequirement::LocalNode),
+                OriginDecision::Use("https://rpc.dig.net".into()),
+                "a {tier:?} node must satisfy a write"
+            );
+        }
+    }
+
+    /// `--node https://rpc.dig.net` is the documented escape hatch, and the
+    /// error message tells users to reach for it — so an override must satisfy
+    /// a write EVEN THOUGH the URL is the public gateway. The base_url here is
+    /// identical to the refusing case above; only the tier differs, so an
+    /// implementation that refused on the URL rather than on how it was chosen
+    /// fails here.
+    #[test]
+    fn an_explicitly_chosen_gateway_satisfies_a_write() {
+        assert_eq!(
+            decide_origin(
+                &node(digstore_remote::ResolvedTier::Override),
+                NodeRequirement::LocalNode
+            ),
+            OriginDecision::Use("https://rpc.dig.net".into())
+        );
+    }
+
+    /// The error names the failing operation and carries BOTH things the user
+    /// asked for: how to check the node, and where to get it.
+    #[test]
+    fn the_no_local_node_error_tells_the_user_how_to_check_and_where_to_download() {
+        let msg = CliError::NoLocalNode {
+            operation: "push".into(),
+        }
+        .to_string();
+        assert!(msg.contains("push"), "must name the operation: {msg}");
+        assert!(msg.contains("dig-node status"), "must say how to check: {msg}");
+        assert!(
+            msg.contains("https://dig.net/install.sh")
+                && msg.contains("https://dig.net/install.ps1"),
+            "must give the installer for both platform families: {msg}"
+        );
+        assert!(
+            msg.contains("https://docs.dig.net/docs/run-a-node"),
+            "must link the published docs page: {msg}"
+        );
+        assert_eq!(
+            CliError::NoLocalNode {
+                operation: "push".into()
+            }
+            .code(),
+            "NO_LOCAL_NODE"
+        );
     }
 
     /// A probe scripted per URL, so this layer's wiring is tested against a
