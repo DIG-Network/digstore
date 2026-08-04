@@ -624,6 +624,14 @@ pub struct CommitArgs {
     /// NEEDS_CONSOLIDATION.
     #[arg(long)]
     pub consolidate: bool,
+    /// Skip the automatic post-commit seed push to your LOCAL dig-node. By default a
+    /// successful commit hands the freshly-produced `.dig` to your local node so it
+    /// becomes a discoverable holder immediately (the content-replication flywheel).
+    /// This opts OUT (highest precedence over `DIGSTORE_AUTOPUSH` / `dig.toml`
+    /// `auto-push`). The push is best-effort + non-fatal regardless — a missing local
+    /// node only prints a warning. `--no-seed` is an alias.
+    #[arg(long = "no-cache", alias = "no-seed")]
+    pub no_cache: bool,
 }
 
 #[derive(Debug, Args)]

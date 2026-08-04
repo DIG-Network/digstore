@@ -251,6 +251,26 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
             // is a sequence of capsules — one per commit/root advance.
             let capsule = format!("{}:{}", state.store_id, outcome.roothash.to_hex());
 
+            // Seed leg of the content-replication flywheel (#1476): hand the freshly
+            // produced `.dig` to the operator's LOCAL dig-node so it becomes a
+            // discoverable holder the instant the content is published. Fires on EVERY
+            // commit (independent of `--push`/DIGHUb), default-ON with a `--no-cache`
+            // opt-out. BEST-EFFORT + NON-FATAL — the on-chain commit already confirmed
+            // and the module is on disk, so a missing local node is a warning, not a
+            // failure. Config precedence: `--no-cache` > `DIGSTORE_AUTOPUSH` >
+            // `dig.toml` auto-push > default-ON.
+            let autopush = crate::ops::seed::autopush_enabled(
+                args.no_cache,
+                crate::ops::seed::autopush_env_bit(),
+                store_cfg_auto_push(ctx),
+            );
+            let seed_outcome = crate::ops::seed::seed_after_commit(
+                &state.store_id,
+                &outcome.roothash.to_hex(),
+                &outcome.output_path,
+                autopush,
+            );
+
             if ui.json() {
                 // Decide + perform the push in JSON mode too. `--push` is built for
                 // CI, which runs with `--json`; if the push only happened in the
@@ -274,6 +294,14 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                         Err(e) => obj["push_error"] = serde_json::json!(e.to_string()),
                     }
                 }
+                // Fold the local-node seed outcome into the JSON so a scripted
+                // publisher can see whether the capsule was cached/reshared locally.
+                if let Some(fields) = crate::ops::seed::seed_json_fields(&seed_outcome).as_object()
+                {
+                    for (k, v) in fields {
+                        obj[k] = v.clone();
+                    }
+                }
                 ui.emit_json(&obj);
             } else {
                 // #14: lead with a plain-language success line. Keep the capsule id
@@ -290,6 +318,9 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                     ));
                     ui.line(format!("  anchored on mainnet (coin {coin_hex})"));
                 }
+                // Report the local-node seed outcome (a YELLOW warning when no local
+                // node is running — the commit still succeeded).
+                crate::ops::seed::report_seed(ui, &seed_outcome);
                 // Offer to publish this deployment to DIGHUb. Never blocks/prompts in
                 // --json/non-TTY runs (see `maybe_offer_push`).
                 maybe_offer_push(ctx, ui, &args);
@@ -446,6 +477,16 @@ fn resolve_writer_keys(
         CliError::InvalidArgument("writer deploy key must be a 32-byte (64-hex) seed".into())
     })?;
     Ok(Some(digstore_chain::keys::wallet_keys_from_seed(&seed)))
+}
+
+/// Read the `dig.toml` `auto-push` bit for this project (the dig.toml layer of the
+/// seed-push config precedence, #1476). A missing/malformed file yields `None` (the
+/// resolver then falls through to its default-ON), so a config read never blocks the
+/// already-confirmed commit.
+fn store_cfg_auto_push(ctx: &CliContext) -> Option<bool> {
+    crate::dig_toml::DigToml::read(&ctx.op_dir)
+        .ok()
+        .and_then(|t| t.auto_push)
 }
 
 /// Parse a 32-byte hex id from `anchor.toml` into a `chia_protocol::Bytes32`.

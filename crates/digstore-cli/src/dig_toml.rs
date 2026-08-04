@@ -82,6 +82,13 @@ pub struct DigToml {
     /// Embedded project metadata (the dighub `Manifest` shape).
     #[serde(default)]
     pub metadata: DigMetadata,
+    /// Whether a successful `commit` auto-pushes the produced `.dig` to the local
+    /// dig-node so the node becomes a discoverable holder immediately (the
+    /// content-replication flywheel seed leg, dig_ecosystem#1476). `None` = unset
+    /// (defaults ON). Precedence: `--no-cache` flag > `DIGSTORE_AUTOPUSH` env > this
+    /// bit > default-ON.
+    #[serde(default, rename = "auto-push", alias = "auto_push")]
+    pub auto_push: Option<bool>,
 }
 
 impl DigToml {

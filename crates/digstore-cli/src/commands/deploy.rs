@@ -432,6 +432,11 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             // coin-fragmented to advance the root within the 50-coin cap, merge the
             // coins first (an extra XCH fee) rather than failing the deploy (#410).
             consolidate: args.consolidate,
+            // A deploy is a publish too: let the successful commit auto-seed the
+            // produced `.dig` to the operator's local dig-node (best-effort,
+            // non-fatal — #1476). No deploy-level opt-out today; `DIGSTORE_AUTOPUSH`
+            // / `dig.toml` auto-push still govern.
+            no_cache: false,
         },
     )?;
 
