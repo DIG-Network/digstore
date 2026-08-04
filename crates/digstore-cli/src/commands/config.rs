@@ -77,9 +77,13 @@ fn node_url(
             _ => true,
         };
 
+        // Wrapped once, here, so BOTH the json and human branches below are
+        // redacted by construction. The json branch was the site that got missed.
+        let shown = current.as_deref().map(config::RedactedUrl::new);
+
         if ui.json() {
             ui.emit_json(&serde_json::json!({
-                "node_url": current,
+                "node_url": shown,
                 "scope": scope,
                 // Machine-readable for the same reason: a script must be able to
                 // tell a value in force from one being ignored.
@@ -87,12 +91,9 @@ fn node_url(
                 "approved": approved,
             }));
         } else {
-            match current {
-                Some(u) if approved => ui.line(config::redact_url_userinfo(&u)),
+            match shown {
+                Some(u) if approved => ui.line(u.to_string()),
                 Some(u) => {
-                    // Redacted: an unapproved value came from outside this machine
-                    // (a cloned repo, a hand-edited file) and may carry credentials.
-                    let u = config::redact_url_userinfo(&u);
                     ui.line(format!("{u}  (NOT APPROVED — ignored)"));
                     ui.hint(format!(
                         "this project declares {u}, but it has not been approved on this \
@@ -118,13 +119,11 @@ fn node_url(
     } else {
         config::set_node_url(&url)?;
     }
+    let shown = config::RedactedUrl::new(&url);
     if ui.json() {
-        ui.emit_json(&serde_json::json!({ "node_url": url, "scope": scope }));
+        ui.emit_json(&serde_json::json!({ "node_url": shown, "scope": scope }));
     } else {
-        ui.success(format!(
-            "{scope} node.url = {}",
-            config::redact_url_userinfo(&url)
-        ));
+        ui.success(format!("{scope} node.url = {shown}"));
     }
     Ok(())
 }

@@ -82,7 +82,29 @@ fn trusted_project_node(
     ctx: &CliContext,
     ui: Option<&crate::ui::Ui>,
 ) -> Result<Option<String>, CliError> {
-    let Some(url) = config::get_project_node_url_in(&ctx.workspace_dir)? else {
+    // An unreadable or REFUSED project file must not be fatal, and must not skip the ladder.
+    //
+    // Propagating this error was a forced-downgrade primitive: a hostile repo that ships a
+    // malformed or control-character-bearing `node.toml` would knock the caller off their own
+    // node and straight onto the public gateway — the ladder never ran. Denying someone their
+    // local node is a weaker attack than redirecting them, but it is still the repo choosing
+    // where the user's traffic goes.
+    //
+    // So the project tier contributes nothing and resolution continues normally, which is
+    // exactly how an UNAPPROVED value already behaves. The warning matters: silently dropping a
+    // setting someone deliberately committed would be its own bug.
+    let declared = match config::get_project_node_url_in(&ctx.workspace_dir) {
+        Ok(v) => v,
+        Err(e) => {
+            if let Some(ui) = ui {
+                ui.hint(format!(
+                    "ignoring this project's node.url — {e}. Using the standard node ladder."
+                ));
+            }
+            return Ok(None);
+        }
+    };
+    let Some(url) = declared else {
         return Ok(None);
     };
     let global = config::global_config_dir()?;
@@ -96,7 +118,7 @@ fn trusted_project_node(
     // Redacted for display. A project value arrives from OUTSIDE — a cloned repo,
     // or a hand-edited file — so it may legally carry `user:token@`, and every
     // line below lands on stdout and in any CI transcript that captured it.
-    let shown = config::redact_url_userinfo(&url);
+    let shown = config::RedactedUrl::new(&url);
 
     if !ui.can_prompt() {
         ui.hint(format!(

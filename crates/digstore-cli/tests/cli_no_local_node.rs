@@ -300,3 +300,64 @@ fn an_approved_project_node_url_is_used() {
         "an approved project node.url must be used: {text}"
     );
 }
+
+/// A refused `node.toml` must not knock the caller off their own node.
+///
+/// Rejecting the spoofable value was the fix; propagating that rejection turned it into a
+/// FORCED-DOWNGRADE primitive. A hostile repo that cannot redirect you can still ship a malformed
+/// `node.toml`, and if that error escapes, the ladder never runs and resolution lands on the
+/// public gateway — the repo still chose where your traffic goes, just more crudely.
+///
+/// Observed on the installed binary before this fix: a clean project resolved to
+/// `http://dig.local`; the same project carrying a refused `node.toml` resolved to
+/// `https://rpc.dig.net` while the local node was up and answering.
+#[test]
+fn a_refused_project_node_file_still_lets_the_ladder_run() {
+    let dir = tmp_dig();
+    let mut init = dig(&dir);
+    assert!(
+        init.args(["init", "site"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "fixture setup: init must succeed"
+    );
+
+    // The two-character escapes matter: TOML decodes them into real control
+    // characters, and it is the decoded value the guard refuses. Raw bytes would
+    // instead be a TOML syntax error — a different path.
+    std::fs::write(
+        dir.path().join(".dig").join("node.toml"),
+        "[node]\nurl = \"https://rpc.dig.net\\n\\t\\t\\t\\t.evil.example/\"\n",
+    )
+    .unwrap();
+
+    let out = dig(&dir).args(["doctor"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The user is told, rather than the value being dropped in silence.
+    assert!(
+        text.contains("ignoring this project's node.url"),
+        "a refused project node.url must be reported: {text}"
+    );
+
+    // It must never route to the attacker's host.
+    assert!(
+        !text.contains("evil.example")
+            || !text.contains("default remote   https://rpc.dig.net.evil"),
+        "must never resolve to the attacker host: {text}"
+    );
+
+    // And crucially: resolution must not have become fatal. `doctor` still runs
+    // and still reports a resolved remote, which is what proves the ladder ran
+    // rather than the error aborting it.
+    assert!(
+        text.contains("default remote"),
+        "the ladder must still resolve after a refused project file: {text}"
+    );
+}

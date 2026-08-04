@@ -283,19 +283,59 @@ pub fn get_project_node_url_in(
     }
     let text = fs::read_to_string(&p).map_err(|e| CliError::Other(e.into()))?;
     let parsed: NodeConfigFile = toml::from_str(&text).map_err(|e| CliError::Other(e.into()))?;
+
+    // THE CONSENT PROMPT IS ONLY WORTH WHAT ITS DISPLAY IS WORTH.
+    //
+    // This value is attacker-controlled: it arrives in a repo-carried file, and a TOML basic
+    // string can carry `\n`, `\t`, `\r` and other escapes. The WHATWG URL parser STRIPS ASCII
+    // tab/LF/CR before parsing, so those bytes break the approval prompt across lines and then
+    // vanish before the dial. `url = "https://rpc.dig.net\n\t\t\t\t.evil.example/"` prompts with a
+    // first line reading `https://rpc.dig.net` — the very gateway our own NO_LOCAL_NODE text tells
+    // people to configure — while the host actually dialled is `rpc.dig.net.evil.example`.
+    //
+    // Rejected HERE, at the single point every consumer reads through, rather than sanitised at
+    // each display site. Redaction was already spread across eight sites and two were missed; a
+    // ninth site added later would be unprotected by construction. No legitimate URL needs a
+    // control character or whitespace, and these are exactly the bytes the parser discards.
+    if let Some(url) = parsed.node.url.as_deref() {
+        if let Some(bad) = url.chars().find(|c| c.is_control() || c.is_whitespace()) {
+            return Err(CliError::InvalidArgument(format!(
+                "{} declares a node.url containing {} — refusing it. A URL cannot legitimately \
+                 contain control characters or whitespace, and they can make the value displayed \
+                 for your approval differ from the host actually contacted.",
+                p.display(),
+                char_name(bad)
+            )));
+        }
+    }
     Ok(parsed.node.url)
+}
+
+/// A printable name for a byte we refuse, so the error says which one without
+/// echoing a character that would itself scramble the message.
+fn char_name(c: char) -> String {
+    match c {
+        '\n' => "a line feed (\\n)".into(),
+        '\r' => "a carriage return (\\r)".into(),
+        '\t' => "a tab (\\t)".into(),
+        ' ' => "a space".into(),
+        other => format!("the character U+{:04X}", other as u32),
+    }
 }
 
 /// Persist a project-scoped `node.url` into `<workspace_dir>/node.toml`.
 ///
-/// Refuses a URL carrying credentials: this file lives in the project and is
-/// routinely committed, so writing `https://user:token@host` here would publish
-/// the token to the repository.
+/// Refuses a URL carrying credentials.
+///
+/// `digstore init` gitignores `.dig/`, so this file is not committed by default — but it is a
+/// PROJECT file whose whole purpose is to travel with the project, and a repo that un-ignores or
+/// force-adds it publishes whatever is inside. A token written here would then be in the
+/// repository's history, where redacting the echo afterwards does not reach.
 pub fn set_project_node_url_in(workspace_dir: &std::path::Path, url: &str) -> Result<(), CliError> {
     if has_userinfo(url) {
         return Err(CliError::InvalidArgument(format!(
-            "{} embeds credentials, and .dig/node.toml is a project file that gets committed. \
-             Use a URL without a user/password.",
+            "{} embeds credentials, and .dig/node.toml is a project file meant to travel with \
+             the repository. Use a URL without a user/password.",
             redact_url_userinfo(url)
         )));
     }
@@ -346,6 +386,38 @@ fn load_trust(global_dir: &std::path::Path) -> Result<TrustFile, CliError> {
 /// A stable key for a workspace directory. Canonicalized where the path exists
 /// (so `.`/`..`/symlink spellings of the same project share one trust record)
 /// and otherwise used verbatim.
+/// A node URL that is safe to hand to a sink — it renders and serializes redacted.
+///
+/// This is a NEWTYPE rather than a `redact(…)` call at each print site on purpose. Redaction was
+/// spread across eight display sites and the last two — the `--json` paths in `commands/config.rs`
+/// — were missed, which is exactly the shape of bug that recurs: correctness by remembering.
+/// Wrapping the value moves it to correctness by construction, because reaching a sink now
+/// requires the wrapper and the wrapper has no un-redacted rendering.
+///
+/// `Display` covers `format!`/`ui.line`; `Serialize` covers `--json`, which is the mode whose
+/// transcripts CI and agents capture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedactedUrl(String);
+
+impl RedactedUrl {
+    /// Wrap a URL for display.
+    pub fn new(url: &str) -> Self {
+        RedactedUrl(redact_url_userinfo(url))
+    }
+}
+
+impl std::fmt::Display for RedactedUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl serde::Serialize for RedactedUrl {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
 /// A node URL with any embedded credentials replaced, safe to print.
 ///
 /// `https://user:token@host` is a legal URL, and digs prints the node URL in
@@ -764,9 +836,10 @@ mod credential_tests {
         assert!(!has_userinfo("https://node.example/path/with@sign"));
     }
 
-    /// `.dig/node.toml` is a project file that gets committed, so a credential
-    /// written there would be published to the repository. Redacting the echo
-    /// afterwards would not take it back — refuse to store it at all.
+    /// `.dig/node.toml` is a project file meant to travel with the repository.
+    /// `digstore init` gitignores `.dig/`, so it is not committed by default, but a
+    /// repo that un-ignores or force-adds it publishes whatever is inside — and
+    /// redacting the echo afterwards does not reach git history. Refuse to store it.
     #[test]
     fn a_project_node_url_with_credentials_is_refused_and_not_written() {
         let dir = tempfile::tempdir().unwrap();
@@ -790,6 +863,126 @@ mod credential_tests {
         assert_eq!(
             get_project_node_url_in(&ws).unwrap().as_deref(),
             Some("https://node.example")
+        );
+    }
+}
+
+#[cfg(test)]
+mod display_spoofing_tests {
+    use super::*;
+
+    /// Writes `node.toml` VERBATIM, so the TOML the test declares is the TOML the
+    /// parser sees. The escapes must stay as two characters (`\` then `n`) in the
+    /// file: TOML decodes them into real control characters, and it is that
+    /// decoded value the guard has to reject. A test that embedded a raw newline
+    /// instead would fail at TOML parse and prove nothing about the guard.
+    fn project_declaring(raw_toml: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join(".dig");
+        fs::create_dir_all(&ws).unwrap();
+        fs::write(ws.join("node.toml"), raw_toml).unwrap();
+        (dir, ws)
+    }
+
+    /// The attack this closes, exactly as it was demonstrated end to end.
+    ///
+    /// The WHATWG URL parser strips ASCII tab/LF/CR before parsing, so these bytes break the
+    /// approval prompt across lines and then vanish before the dial. The prompt's first line
+    /// reads `https://rpc.dig.net` — the gateway our own NO_LOCAL_NODE text tells users to
+    /// configure — while the host actually contacted is `rpc.dig.net.evil.example`.
+    #[test]
+    fn a_node_url_that_can_spoof_its_own_display_is_refused_at_read_time() {
+        let (_d, ws) = project_declaring(
+            "[node]\nurl = \"https://rpc.dig.net\\n\\t\\t\\t\\t.evil.example/\"\n",
+        );
+
+        // Fixture check: TOML must have decoded the escapes into real control
+        // characters. If it did not, the assertion below would pass without the
+        // guard ever being exercised.
+        let raw = fs::read_to_string(ws.join("node.toml")).unwrap();
+        assert!(
+            raw.contains("\\n"),
+            "the file must hold the two-character escape, not a raw newline"
+        );
+
+        let err = get_project_node_url_in(&ws).expect_err("a multi-line URL must be refused");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("line feed"),
+            "the refusal must name the offending byte: {msg}"
+        );
+        assert!(
+            !msg.contains('\n'),
+            "the refusal must not itself be scrambled by the payload: {msg}"
+        );
+    }
+
+    /// Every byte the URL parser silently discards, plus a plain space.
+    #[test]
+    fn every_control_character_and_whitespace_is_refused() {
+        for (escape, label) in [
+            ("\\n", "line feed"),
+            ("\\r", "carriage return"),
+            ("\\t", "tab"),
+            ("\\u0000", "NUL"),
+            ("\\u000B", "vertical tab"),
+        ] {
+            let (_d, ws) = project_declaring(&format!(
+                "[node]\nurl = \"https://good.example{escape}.evil.example\"\n"
+            ));
+            assert!(
+                get_project_node_url_in(&ws).is_err(),
+                "a URL containing a {label} must be refused"
+            );
+        }
+
+        let (_d, ws) = project_declaring("[node]\nurl = \"https://good.example /x\"\n");
+        assert!(
+            get_project_node_url_in(&ws).is_err(),
+            "a URL containing a space must be refused"
+        );
+    }
+
+    /// …and an ordinary URL still reads back untouched, so this is a guard rather
+    /// than a blanket refusal that would break every legitimate project.
+    #[test]
+    fn an_ordinary_project_node_url_still_reads_back() {
+        for good in [
+            "https://rpc.dig.net",
+            "http://dig.local",
+            "http://localhost:9778",
+            "https://node.example:9778/base-path",
+        ] {
+            let (_d, ws) = project_declaring(&format!("[node]\nurl = \"{good}\"\n"));
+            assert_eq!(
+                get_project_node_url_in(&ws).unwrap().as_deref(),
+                Some(good),
+                "{good} must be accepted unchanged"
+            );
+        }
+    }
+
+    /// The `--json` path is the one that leaked. The newtype makes the redacted
+    /// rendering the ONLY rendering, so a sink cannot obtain a raw value by omission.
+    #[test]
+    fn a_redacted_url_serializes_redacted() {
+        let r = RedactedUrl::new("https://alice:s3cr3tT0K3N@node.example");
+
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(
+            !json.contains("s3cr3tT0K3N"),
+            "serialization leaked the credential: {json}"
+        );
+        assert_eq!(json, "\"https://***@node.example\"");
+        assert_eq!(r.to_string(), "https://***@node.example");
+
+        // The exact shape `digstore config node.url --show --json` emits.
+        let body =
+            serde_json::json!({ "node_url": RedactedUrl::new("https://bob:hunter2@n.example") });
+        assert!(
+            !body.to_string().contains("hunter2"),
+            "the json body leaked the credential: {body}"
         );
     }
 }
