@@ -434,6 +434,121 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // The repo-carried-config guard (#2099).
+    //
+    // These drive `trusted_project_node` — the function that DECIDES whether a
+    // `.dig/node.toml` may route requests — not the trust store underneath it.
+    // The distinction matters: an earlier version of this suite exercised only
+    // `config::is_project_node_trusted_in`, and a mutation that made this
+    // function return the URL without ever consulting it stayed green.
+    // -----------------------------------------------------------------------
+
+    /// A project whose `.dig/node.toml` names `url`, plus an isolated global
+    /// config dir for the trust store. Returns both so a test can grant
+    /// approval and re-ask.
+    fn project_declaring(url: &str) -> (tempfile::TempDir, tempfile::TempDir, CliContext) {
+        let global = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let workspace = proj.path().join(".dig");
+        config::set_project_node_url_in(&workspace, url).unwrap();
+        let ctx = CliContext::workspace_only(workspace, false, false);
+        (global, proj, ctx)
+    }
+
+    /// A freshly-cloned repository's node.toml MUST NOT route anything. This is
+    /// the guard: `digs` is run inside repos people just cloned, and it signs
+    /// every request to the resolved node with the user's identity key, so
+    /// honouring an unapproved endpoint would hand a hostile repo the user's
+    /// signatures and content.
+    #[test]
+    fn an_unapproved_project_node_is_not_used() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        let (global, _proj, ctx) = project_declaring("https://evil.example");
+        std::env::set_var("DIG_IDENTITY_DIR", global.path());
+        assert_eq!(
+            trusted_project_node(&ctx, None).unwrap(),
+            None,
+            "an unapproved repo-carried node.url must never be used"
+        );
+        clear_env();
+    }
+
+    /// …and once approved, the very same file IS used — so the guard is a real
+    /// gate, not a blanket refusal that would make `--local` useless.
+    #[test]
+    fn an_approved_project_node_is_used() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        let (global, _proj, ctx) = project_declaring("https://mine.example");
+        std::env::set_var("DIG_IDENTITY_DIR", global.path());
+        config::trust_project_node_in(global.path(), &ctx.workspace_dir, "https://mine.example")
+            .unwrap();
+        assert_eq!(
+            trusted_project_node(&ctx, None).unwrap().as_deref(),
+            Some("https://mine.example")
+        );
+        clear_env();
+    }
+
+    /// Approval is per-VALUE: a repo that is approved and then edits its
+    /// node.toml must not keep the approval. Same directory, same approval
+    /// record — only the declared URL differs from the approved one.
+    #[test]
+    fn an_edited_project_node_loses_its_approval() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        let (global, _proj, ctx) = project_declaring("https://mine.example");
+        std::env::set_var("DIG_IDENTITY_DIR", global.path());
+        config::trust_project_node_in(global.path(), &ctx.workspace_dir, "https://mine.example")
+            .unwrap();
+        // The repo updates itself to point somewhere else.
+        config::set_project_node_url_in(&ctx.workspace_dir, "https://evil.example").unwrap();
+        assert_eq!(
+            trusted_project_node(&ctx, None).unwrap(),
+            None,
+            "an edited node.url must re-arm approval"
+        );
+        clear_env();
+    }
+
+    /// A non-interactive run (a script, CI, `--json`) has nobody to ask, so the
+    /// answer must be "no" rather than "assume yes". A real `Ui` is used here,
+    /// not `None`, so the `can_prompt()` branch itself is exercised.
+    #[test]
+    fn a_non_interactive_run_never_adopts_an_unapproved_project_node() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        let (global, _proj, ctx) = project_declaring("https://evil.example");
+        std::env::set_var("DIG_IDENTITY_DIR", global.path());
+        let ui = crate::ui::Ui::from_flags(crate::ui::ColorChoice::Never, true, false, true, false);
+        assert!(!ui.can_prompt(), "fixture must be non-interactive to be meaningful");
+        assert_eq!(trusted_project_node(&ctx, Some(&ui)).unwrap(), None);
+        // Refusing must not silently record approval either — otherwise the
+        // NEXT run would adopt it.
+        assert!(!config::is_project_node_trusted_in(
+            global.path(),
+            &ctx.workspace_dir,
+            "https://evil.example"
+        )
+        .unwrap());
+        clear_env();
+    }
+
+    /// No project file at all is simply "no project override" — not an error,
+    /// and not a prompt.
+    #[test]
+    fn a_project_without_a_node_file_contributes_nothing() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_IDENTITY_DIR", td.path());
+        let ctx = CliContext::workspace_only(td.path().join(".dig"), false, false);
+        assert_eq!(trusted_project_node(&ctx, None).unwrap(), None);
+        clear_env();
+    }
+
+    // -----------------------------------------------------------------------
     // The read/write split (#2099 deliverable 3).
     //
     // Each case varies exactly ONE input against a common baseline, so a
