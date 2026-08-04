@@ -271,7 +271,7 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
         std::env::set_var(DIG_NODE_URL_ENV, "https://env-node.example");
-        let overrides = override_inputs(Some("https://flag-node.example")).unwrap();
+        let overrides = override_inputs(None, None, Some("https://flag-node.example")).unwrap();
         assert_eq!(overrides.flag.as_deref(), Some("https://flag-node.example"));
         assert_eq!(
             digstore_remote::override_source(&overrides),
@@ -285,7 +285,7 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
         std::env::set_var(DIG_NODE_URL_ENV, "https://env-node.example");
-        let overrides = override_inputs(None).unwrap();
+        let overrides = override_inputs(None, None, None).unwrap();
         assert_eq!(
             digstore_remote::override_source(&overrides),
             Some(digstore_remote::OverrideSource::Env)
@@ -300,7 +300,7 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         std::env::set_var("DIG_IDENTITY_DIR", td.path());
         config::set_node_url("https://persisted-node.example").unwrap();
-        let overrides = override_inputs(None).unwrap();
+        let overrides = override_inputs(None, None, None).unwrap();
         assert_eq!(
             overrides.config_value.as_deref(),
             Some("https://persisted-node.example")
@@ -317,28 +317,77 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
         std::env::set_var(DIG_NODE_URL_ENV, "");
-        let overrides = override_inputs(None).unwrap();
+        let overrides = override_inputs(None, None, None).unwrap();
         assert_eq!(overrides.env_var, None);
         clear_env();
     }
 
+    /// #2099 regression. These URLs are the whole defect: the shipped ladder
+    /// probed `https://dig.local:9778` and `https://localhost:9778`, neither of
+    /// which any dig-node has ever bound, so the ladder could not find a local
+    /// node on ANY machine. Pinned literally against `dig-node/SPEC.md`
+    /// §4.1/§4.1a — a candidate list is only as good as its agreement with what
+    /// the server actually listens on, and nothing else in this repo checks it.
     #[test]
-    fn local_candidate_urls_use_default_port() {
+    fn local_candidates_match_the_addresses_dig_node_binds() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
-        let (dig_local, localhost) = local_candidate_urls();
-        assert_eq!(dig_local, "https://dig.local:9778");
-        assert_eq!(localhost, "https://localhost:9778");
+        let urls: Vec<String> = local_candidates().into_iter().map(|c| c.url).collect();
+        assert_eq!(
+            urls,
+            vec![
+                // 127.0.0.2:443 — portless, TLS (SPEC 4.1a listener 1).
+                "https://dig.local".to_string(),
+                // 127.0.0.2:80 — portless, plaintext (SPEC 4.1 listener 3).
+                "http://dig.local".to_string(),
+                // 127.0.0.1/[::1]:9778 — PLAINTEXT, never TLS (SPEC 4.1 listener 1/2).
+                "http://localhost:9778".to_string(),
+            ]
+        );
+        // The tiers must be labelled correctly too, or a dig.local hit would be
+        // reported (and cached/diagnosed) as a localhost hit.
+        let tiers: Vec<ResolvedTier> = local_candidates().into_iter().map(|c| c.tier).collect();
+        assert_eq!(
+            tiers,
+            vec![
+                ResolvedTier::DigLocal,
+                ResolvedTier::DigLocal,
+                ResolvedTier::Localhost
+            ]
+        );
     }
 
+    /// `DIG_NODE_PORT` moves ONLY the loopback listener: the `dig.local` binds
+    /// are pinned to 443/80 by the `127.0.0.2` hosts alias. Asserting the
+    /// dig.local rungs are UNCHANGED is the load-bearing half — an
+    /// implementation that applied the port everywhere would still pass a test
+    /// that only checked the localhost rung.
     #[test]
-    fn local_candidate_urls_honor_dig_node_port_env() {
+    fn dig_node_port_moves_only_the_loopback_rung() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
         std::env::set_var("DIG_NODE_PORT", "12345");
-        let (dig_local, localhost) = local_candidate_urls();
-        assert_eq!(dig_local, "https://dig.local:12345");
-        assert_eq!(localhost, "https://localhost:12345");
+        let urls: Vec<String> = local_candidates().into_iter().map(|c| c.url).collect();
+        assert_eq!(
+            urls,
+            vec![
+                "https://dig.local".to_string(),
+                "http://dig.local".to_string(),
+                "http://localhost:12345".to_string(),
+            ]
+        );
+        clear_env();
+    }
+
+    /// A `DIG_NODE_PORT` of 0 is not a port; dig-node itself treats it as unset
+    /// (`SPEC.md` §3.2), so the ladder must not probe `localhost:0`.
+    #[test]
+    fn a_zero_dig_node_port_falls_back_to_the_default() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+        std::env::set_var("DIG_NODE_PORT", "0");
+        let urls: Vec<String> = local_candidates().into_iter().map(|c| c.url).collect();
+        assert_eq!(urls[2], "http://localhost:9778");
         clear_env();
     }
 
