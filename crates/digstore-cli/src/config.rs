@@ -51,15 +51,28 @@ pub fn list_remotes(ctx: &CliContext) -> Result<BTreeMap<String, String>, CliErr
     Ok(load(ctx)?.remotes)
 }
 
+/// The URL explicitly configured for remote `name` (via `digstore remote add`),
+/// normalized; [`None`] when the user has configured no such remote.
+///
+/// This reports ONLY what the user configured. It deliberately supplies no
+/// default for `origin`: an unconfigured `origin` resolves through the §5.3
+/// node ladder to the user's own node, which needs a probe and so cannot be
+/// answered here (see `ops::node::resolve_remote_or_origin`).
+pub fn configured_remote_url(ctx: &CliContext, name: &str) -> Result<Option<String>, CliError> {
+    Ok(list_remotes(ctx)?
+        .get(name)
+        .map(|raw| normalize_remote_url(raw)))
+}
+
+/// The URL for remote `name`, erroring when it is not configured.
+///
+/// Callers that want the §5.3 default for an unconfigured `origin` must use
+/// `ops::node::resolve_remote_or_origin` instead — before #2099 this function
+/// answered an unconfigured `origin` with a hard-coded `https://rpc.dig.net`,
+/// which routed every un-configured user through the public gateway even while
+/// their own node was running.
 pub fn resolve_remote_url(ctx: &CliContext, name: &str) -> Result<String, CliError> {
-    match list_remotes(ctx)?.get(name).cloned() {
-        Some(raw) => Ok(normalize_remote_url(&raw)),
-        // `origin` defaults to the public RPC even when never `remote add`-ed: identity is the
-        // owner puzzle hash (keys authenticate the push), so the canonical origin is fixed and
-        // needs no per-store configuration. Other names must be explicitly added.
-        None if name == "origin" => Ok("https://rpc.dig.net".to_string()),
-        None => Err(CliError::NotFound(format!("remote {name}"))),
-    }
+    configured_remote_url(ctx, name)?.ok_or_else(|| CliError::NotFound(format!("remote {name}")))
 }
 
 /// The default network RPC host a bare `dig://` resolves to.
@@ -235,6 +248,141 @@ pub fn get_node_url_in(dir: &std::path::Path) -> Result<Option<String>, CliError
     Ok(load_node_config_in(dir)?.node.url)
 }
 
+// ===========================================================================
+// PROJECT-scoped node config (`digstore config node.url --local`, #2099).
+//
+// Lives at `<workspace>/node.toml` — that is, `.dig/node.toml` — as a sibling
+// of the per-project `remotes.toml`, and is therefore found by the SAME
+// git-style nearest-ancestor `.dig` walk the rest of the CLI already uses
+// (`CliContext::discover_workspace`). Reusing that boundary means "this
+// project" has exactly one definition throughout the tool.
+//
+// SECURITY: this file can travel inside a repository. A `git clone` of a
+// hostile repo would otherwise repoint the victim's node, and digs sends
+// §21.9 identity-SIGNED requests to whatever node it resolves — so the
+// exposure is signature and content harvesting, not merely a wrong read.
+// The value is therefore NOT trusted on sight: see [`is_project_node_trusted_in`].
+// ===========================================================================
+
+/// The per-project node-config file inside a `.dig/` workspace directory.
+pub fn project_node_path(workspace_dir: &std::path::Path) -> std::path::PathBuf {
+    workspace_dir.join("node.toml")
+}
+
+/// Read the project-scoped `node.url`, if the project declares one.
+///
+/// This is the RAW declared value — it has NOT been trust-checked. Callers MUST
+/// pass it through [`is_project_node_trusted_in`] before using it to route a
+/// request (`ops::node::override_inputs` is the one place that does).
+pub fn get_project_node_url_in(
+    workspace_dir: &std::path::Path,
+) -> Result<Option<String>, CliError> {
+    let p = project_node_path(workspace_dir);
+    if !p.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&p).map_err(|e| CliError::Other(e.into()))?;
+    let parsed: NodeConfigFile = toml::from_str(&text).map_err(|e| CliError::Other(e.into()))?;
+    Ok(parsed.node.url)
+}
+
+/// Persist a project-scoped `node.url` into `<workspace_dir>/node.toml`.
+pub fn set_project_node_url_in(
+    workspace_dir: &std::path::Path,
+    url: &str,
+) -> Result<(), CliError> {
+    fs::create_dir_all(workspace_dir).map_err(|e| CliError::Other(e.into()))?;
+    let f = NodeConfigFile {
+        node: NodeSection {
+            url: Some(url.trim_end_matches('/').to_string()),
+        },
+    };
+    let text = toml::to_string_pretty(&f).map_err(|e| CliError::Other(e.into()))?;
+    fs::write(project_node_path(workspace_dir), text).map_err(|e| CliError::Other(e.into()))
+}
+
+/// Clear a project-scoped `node.url`. Idempotent when none was set.
+pub fn unset_project_node_url_in(workspace_dir: &std::path::Path) -> Result<(), CliError> {
+    let p = project_node_path(workspace_dir);
+    if !p.exists() {
+        return Ok(());
+    }
+    fs::remove_file(&p).map_err(|e| CliError::Other(e.into()))
+}
+
+// --- The trust store -------------------------------------------------------
+
+/// Records which (project directory, node URL) pairs the user has approved.
+/// Keyed by the workspace path so two projects are independent, and holding the
+/// exact URL so that EDITING the project file re-arms the check — approving a
+/// directory once must not hand it a blank cheque to point anywhere later.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct TrustFile {
+    #[serde(default)]
+    trusted: BTreeMap<String, String>,
+}
+
+fn trust_path(global_dir: &std::path::Path) -> std::path::PathBuf {
+    global_dir.join("trusted-project-nodes.toml")
+}
+
+fn load_trust(global_dir: &std::path::Path) -> Result<TrustFile, CliError> {
+    let p = trust_path(global_dir);
+    if !p.exists() {
+        return Ok(TrustFile::default());
+    }
+    let text = fs::read_to_string(&p).map_err(|e| CliError::Other(e.into()))?;
+    toml::from_str(&text).map_err(|e| CliError::Other(e.into()))
+}
+
+/// A stable key for a workspace directory. Canonicalized where the path exists
+/// (so `.`/`..`/symlink spellings of the same project share one trust record)
+/// and otherwise used verbatim.
+fn trust_key(workspace_dir: &std::path::Path) -> String {
+    std::fs::canonicalize(workspace_dir)
+        .unwrap_or_else(|_| workspace_dir.to_path_buf())
+        .display()
+        .to_string()
+}
+
+/// Has the user approved THIS project directory pointing at THIS exact URL?
+///
+/// Both halves matter. Keying on the directory alone would let a repo change
+/// its `node.toml` after being approved once; keying on the URL alone would let
+/// approval in one project silently authorize another.
+pub fn is_project_node_trusted_in(
+    global_dir: &std::path::Path,
+    workspace_dir: &std::path::Path,
+    url: &str,
+) -> Result<bool, CliError> {
+    Ok(load_trust(global_dir)?.trusted.get(&trust_key(workspace_dir))
+        == Some(&url.trim_end_matches('/').to_string()))
+}
+
+/// Record the user's approval of `url` for `workspace_dir`, replacing any
+/// previous approval for that directory.
+pub fn trust_project_node_in(
+    global_dir: &std::path::Path,
+    workspace_dir: &std::path::Path,
+    url: &str,
+) -> Result<(), CliError> {
+    let mut f = load_trust(global_dir)?;
+    f.trusted.insert(
+        trust_key(workspace_dir),
+        url.trim_end_matches('/').to_string(),
+    );
+    fs::create_dir_all(global_dir).map_err(|e| CliError::Other(e.into()))?;
+    let text = toml::to_string_pretty(&f).map_err(|e| CliError::Other(e.into()))?;
+    fs::write(trust_path(global_dir), text).map_err(|e| CliError::Other(e.into()))
+}
+
+/// The global dig config directory (`DIG_IDENTITY_DIR`, else
+/// `<OS config_dir>/dig`) — where the trust store lives. Exposed so
+/// `ops::node` can pair a project value with its approval record.
+pub fn global_config_dir() -> Result<std::path::PathBuf, CliError> {
+    global_dig_dir()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,21 +422,39 @@ mod tests {
         assert!(resolve_remote_url(&ctx, "nope").is_err());
     }
 
+    /// #2099 regression: an unconfigured `origin` must NOT resolve to the
+    /// public gateway here. Naming the exact old value in the assertion pins
+    /// the specific defect, not merely "some error happened".
     #[test]
-    fn resolve_remote_url_origin_defaults_to_public_rpc() {
-        // With NO remotes configured, `origin` falls back to the canonical public RPC
-        // (identity is the owner puzzle hash, so origin needs no per-store config).
+    fn an_unconfigured_origin_no_longer_defaults_to_the_public_gateway() {
         let (_td, ctx) = ctx();
         assert!(list_remotes(&ctx).unwrap().is_empty());
+        assert_eq!(configured_remote_url(&ctx, "origin").unwrap(), None);
+        match resolve_remote_url(&ctx, "origin") {
+            Err(CliError::NotFound(_)) => {}
+            Ok(url) => panic!(
+                "an unconfigured origin must not resolve here; got {url} \
+                 (a hard-coded https://rpc.dig.net default is the #2099 defect)"
+            ),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+        // A non-origin unknown name behaves identically.
+        assert!(matches!(
+            resolve_remote_url(&ctx, "upstream"),
+            Err(CliError::NotFound(_))
+        ));
+    }
+
+    /// A CONFIGURED origin is still returned verbatim — the change removes the
+    /// default, not the ability to point origin wherever you like.
+    #[test]
+    fn a_configured_origin_is_returned_unchanged() {
+        let (_td, ctx) = ctx();
+        add_remote(&ctx, "origin", "https://rpc.dig.net").unwrap();
         assert_eq!(
             resolve_remote_url(&ctx, "origin").unwrap(),
             "https://rpc.dig.net"
         );
-        // A non-origin unknown name still errors (must be explicitly added).
-        match resolve_remote_url(&ctx, "upstream") {
-            Err(CliError::NotFound(_)) => {}
-            other => panic!("expected NotFound for unknown non-origin remote, got {other:?}"),
-        }
     }
 
     #[test]
@@ -386,6 +552,105 @@ mod tests {
         // Unsetting with no config file present at all must not error.
         unset_node_url_in(td.path()).unwrap();
         assert_eq!(get_node_url_in(td.path()).unwrap(), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Project-scoped node config + its trust store (#2099).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn project_node_url_round_trips_and_clears() {
+        let td = tempdir().unwrap();
+        let ws = td.path().join(".dig");
+        assert_eq!(get_project_node_url_in(&ws).unwrap(), None);
+        set_project_node_url_in(&ws, "https://project.example/").unwrap();
+        // Trailing slash normalized, matching the global setter.
+        assert_eq!(
+            get_project_node_url_in(&ws).unwrap().as_deref(),
+            Some("https://project.example")
+        );
+        unset_project_node_url_in(&ws).unwrap();
+        assert_eq!(get_project_node_url_in(&ws).unwrap(), None);
+        // Idempotent when already absent.
+        unset_project_node_url_in(&ws).unwrap();
+    }
+
+    /// The project file lives beside `remotes.toml` inside `.dig/`, so the
+    /// existing nearest-ancestor workspace walk finds it. Pinned because the
+    /// LOCATION is the contract a repo-carried file is judged against.
+    #[test]
+    fn project_node_file_sits_inside_the_dig_workspace_dir() {
+        let ws = std::path::Path::new("/proj/.dig");
+        assert_eq!(project_node_path(ws), ws.join("node.toml"));
+    }
+
+    /// A freshly-cloned repository's `node.toml` is NOT trusted: nobody has
+    /// approved it. This is the whole point of the trust store.
+    #[test]
+    fn a_project_node_url_is_untrusted_until_approved() {
+        let global = tempdir().unwrap();
+        let proj = tempdir().unwrap();
+        assert!(
+            !is_project_node_trusted_in(global.path(), proj.path(), "https://evil.example")
+                .unwrap()
+        );
+        trust_project_node_in(global.path(), proj.path(), "https://evil.example").unwrap();
+        assert!(
+            is_project_node_trusted_in(global.path(), proj.path(), "https://evil.example").unwrap()
+        );
+    }
+
+    /// Approving a directory once must NOT authorize whatever that directory
+    /// says NEXT — a repo that is trusted today and then edits its `node.toml`
+    /// (a later commit, a malicious PR merged upstream) has to be re-approved.
+    /// The fixture keeps the SAME directory and varies ONLY the URL, so a
+    /// directory-keyed-only implementation returns true here and fails.
+    #[test]
+    fn trust_does_not_carry_over_when_the_project_changes_the_url() {
+        let global = tempdir().unwrap();
+        let proj = tempdir().unwrap();
+        trust_project_node_in(global.path(), proj.path(), "https://good.example").unwrap();
+        assert!(
+            !is_project_node_trusted_in(global.path(), proj.path(), "https://evil.example")
+                .unwrap(),
+            "an edited node.toml must re-arm the approval check"
+        );
+        // The originally-approved URL still is trusted — the record was not
+        // merely wiped, it is value-specific.
+        assert!(
+            is_project_node_trusted_in(global.path(), proj.path(), "https://good.example").unwrap()
+        );
+    }
+
+    /// Approving one project must not authorize the same URL in a DIFFERENT
+    /// project. The fixture varies ONLY the directory, so a URL-keyed-only
+    /// implementation returns true here and fails.
+    #[test]
+    fn trust_is_scoped_to_the_project_that_was_approved() {
+        let global = tempdir().unwrap();
+        let approved = tempdir().unwrap();
+        let other = tempdir().unwrap();
+        trust_project_node_in(global.path(), approved.path(), "https://node.example").unwrap();
+        assert!(
+            !is_project_node_trusted_in(global.path(), other.path(), "https://node.example")
+                .unwrap(),
+            "approval in one project must not leak into another"
+        );
+    }
+
+    /// Two spellings of one directory share a trust record, so approving via
+    /// `.` does not leave the absolute path unapproved (and vice versa).
+    #[test]
+    fn trust_key_is_stable_across_path_spellings() {
+        let global = tempdir().unwrap();
+        let proj = tempdir().unwrap();
+        let nested = proj.path().join("sub");
+        std::fs::create_dir_all(&nested).unwrap();
+        let dotted = nested.join("..");
+        trust_project_node_in(global.path(), proj.path(), "https://node.example").unwrap();
+        assert!(
+            is_project_node_trusted_in(global.path(), &dotted, "https://node.example").unwrap()
+        );
     }
 
     #[test]
