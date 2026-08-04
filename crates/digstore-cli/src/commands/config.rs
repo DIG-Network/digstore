@@ -61,11 +61,42 @@ fn node_url(
         } else {
             config::get_node_url()?
         };
+
+        // A PROJECT value that has not been approved on this machine is NOT the
+        // node digs will use — it is a proposal the resolver ignores (§14.3).
+        // Printing it bare reads as "this is your node", which is precisely the
+        // wrong impression to give about a value that arrived inside a
+        // repository: a user checking why a clone behaves oddly would see the
+        // attacker's URL presented as their configuration.
+        let approved = match (local, current.as_deref()) {
+            (true, Some(u)) => config::is_project_node_trusted_in(
+                &config::global_config_dir()?,
+                &ctx.workspace_dir,
+                u,
+            )?,
+            _ => true,
+        };
+
         if ui.json() {
-            ui.emit_json(&serde_json::json!({ "node_url": current, "scope": scope }));
+            ui.emit_json(&serde_json::json!({
+                "node_url": current,
+                "scope": scope,
+                // Machine-readable for the same reason: a script must be able to
+                // tell a value in force from one being ignored.
+                "in_effect": current.is_some() && approved,
+                "approved": approved,
+            }));
         } else {
             match current {
-                Some(u) => ui.line(u),
+                Some(u) if approved => ui.line(u),
+                Some(u) => {
+                    ui.line(format!("{u}  (NOT APPROVED — ignored)"));
+                    ui.hint(format!(
+                        "this project declares {u}, but it has not been approved on this \
+                         machine, so digs is using the ladder instead ({LADDER_HINT}). \
+                         Approve it with `digstore config node.url --local {u}`."
+                    ));
+                }
                 None => ui.line(format!("(unset — {LADDER_HINT})")),
             }
         }

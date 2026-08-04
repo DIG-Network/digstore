@@ -195,6 +195,77 @@ fn an_unapproved_project_node_url_never_routes_a_request() {
     );
 }
 
+/// `--show` must not present an unapproved value as the configuration.
+///
+/// Found by driving the installed binary: a repo carrying `evil.example` was
+/// correctly IGNORED by the resolver, but `config node.url --local --show`
+/// printed `https://evil.example` bare — so a user investigating why a clone
+/// behaves oddly is shown the attacker's URL as though it were their setting.
+/// The gate held; the reporting undermined it.
+#[test]
+fn showing_an_unapproved_project_node_url_marks_it_as_ignored() {
+    let dir = tmp_dig();
+    let mut init = dig(&dir);
+    assert!(
+        init.args(["init", "site"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "fixture setup: init must succeed"
+    );
+    std::fs::write(
+        dir.path().join(".dig").join("node.toml"),
+        "[node]\nurl = \"https://attacker.example\"\n",
+    )
+    .unwrap();
+
+    let out = dig(&dir)
+        .args(["config", "node.url", "--local", "--show"])
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("NOT APPROVED"),
+        "an unapproved value must be shown as not in effect: {text}"
+    );
+
+    // The machine-readable form must carry the same distinction, or a script
+    // reading `node_url` would act on a value digs is ignoring.
+    let json = dig(&dir)
+        .args(["config", "node.url", "--local", "--show", "--json"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("--json must emit valid JSON");
+    assert_eq!(
+        v["in_effect"], false,
+        "an unapproved value must not report in_effect: {v}"
+    );
+
+    // Once approved, the same value reports plainly — so this is a marker, not
+    // a blanket warning that would fire on every legitimate setting.
+    assert!(dig(&dir)
+        .args(["config", "node.url", "--local", "https://attacker.example"])
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let after = dig(&dir)
+        .args(["config", "node.url", "--local", "--show", "--json"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&after.stdout).unwrap();
+    assert_eq!(
+        v["in_effect"], true,
+        "an approved value must report in_effect: {v}"
+    );
+}
+
 /// …and the same file, once approved, IS used — so the guard is a gate rather
 /// than a blanket refusal that would make `--local` pointless. Same fixture,
 /// same file; the only difference is that the user set it through the command.
