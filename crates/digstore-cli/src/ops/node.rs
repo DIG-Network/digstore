@@ -168,12 +168,30 @@ pub async fn resolve_node_in(
     ui: Option<&crate::ui::Ui>,
     node_flag: Option<&str>,
 ) -> Result<ResolvedNode, CliError> {
+    resolve_with_probe(ctx, ui, node_flag, &HttpHealthProbe::default()).await
+}
+
+/// [`resolve_node_in`] with the reachability probe injected.
+///
+/// The probe is a seam so tests can assert THIS layer's job — assembling the
+/// override tiers and the candidate list and handing both to the shared
+/// resolver — without depending on whether the machine running the test
+/// happens to have a dig-node listening. (It matters: the previous test here
+/// asserted "falls through to the public gateway", which only held because the
+/// candidate URLs were wrong. Once they were corrected it failed on any
+/// developer machine with a node installed — a green that had been measuring
+/// the bug.)
+async fn resolve_with_probe(
+    ctx: Option<&CliContext>,
+    ui: Option<&crate::ui::Ui>,
+    node_flag: Option<&str>,
+    probe: &dyn digstore_remote::HealthProbe,
+) -> Result<ResolvedNode, CliError> {
     let overrides = override_inputs(ctx, ui, node_flag)?;
-    let probe = HttpHealthProbe::default();
     Ok(resolver_resolve_node(
         &overrides,
         &local_candidates(),
-        &probe,
+        probe,
         DEFAULT_PROBE_TIMEOUT,
     )
     .await)
@@ -391,26 +409,66 @@ mod tests {
         clear_env();
     }
 
+    /// A probe scripted per URL, so this layer's wiring is tested against a
+    /// KNOWN world rather than the developer's machine.
+    struct ScriptedProbe(std::collections::HashMap<String, bool>);
+
+    #[async_trait::async_trait]
+    impl digstore_remote::HealthProbe for ScriptedProbe {
+        async fn probe(&self, base_url: &str, _timeout: std::time::Duration) -> bool {
+            self.0.get(base_url).copied().unwrap_or(false)
+        }
+    }
+
+    fn scripted(live: &[&str]) -> ScriptedProbe {
+        ScriptedProbe(live.iter().map(|u| (u.to_string(), true)).collect())
+    }
+
+    /// The #2099 acceptance case: a node listening where dig-node ACTUALLY
+    /// listens is found, and the ladder does not reach the public gateway.
+    /// Only the plaintext `dig.local` rung is live — the shape on a machine
+    /// whose installer has not provisioned a TLS leaf, which is the common one.
     #[tokio::test]
-    async fn resolve_node_returns_public_gateway_when_nothing_local_answers() {
-        // Scope the lock to the synchronous env setup/teardown only — holding a
-        // `std::sync::Mutex` guard across an `.await` is a clippy
-        // `await_holding_lock` violation (and a real deadlock risk under a
-        // multi-threaded runtime). `resolve_node` itself reads no env vars once
-        // called (its inputs are captured synchronously inside), so it is safe
-        // to run the async ladder walk AFTER releasing the guard.
+    async fn a_node_on_a_real_dig_node_address_is_found_before_the_gateway() {
         {
             let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             clear_env();
         }
-        // No local node is running in CI/dev sandboxes, and no override is set,
-        // so the ladder MUST fall all the way through to the public gateway
-        // rather than erroring — this is the "never fails" contract.
-        let resolved = resolve_node(None).await.unwrap();
+        let probe = scripted(&["http://dig.local"]);
+        let resolved = resolve_with_probe(None, None, None, &probe).await.unwrap();
+        assert_eq!(resolved.base_url, "http://dig.local");
+        assert_eq!(resolved.tier, digstore_remote::ResolvedTier::DigLocal);
+        assert!(resolved.is_local());
+    }
+
+    /// Same, for the always-on loopback listener — the rung that exists on
+    /// every install, TLS leaf or not, privileged ports or not.
+    #[tokio::test]
+    async fn a_plaintext_loopback_node_is_found_before_the_gateway() {
+        {
+            let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            clear_env();
+        }
+        let probe = scripted(&["http://localhost:9778"]);
+        let resolved = resolve_with_probe(None, None, None, &probe).await.unwrap();
+        assert_eq!(resolved.base_url, "http://localhost:9778");
+        assert_eq!(resolved.tier, digstore_remote::ResolvedTier::Localhost);
+        assert!(resolved.is_local());
+    }
+
+    /// With genuinely nothing listening anywhere the ladder still must not
+    /// fail — the public gateway is the documented backstop.
+    #[tokio::test]
+    async fn resolve_node_returns_public_gateway_when_nothing_local_answers() {
+        {
+            let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            clear_env();
+        }
+        let probe = scripted(&[]);
+        let resolved = resolve_with_probe(None, None, None, &probe).await.unwrap();
         assert_eq!(resolved.base_url, digstore_remote::RPC_DIG_NET);
         assert_eq!(resolved.tier, digstore_remote::ResolvedTier::PublicGateway);
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        clear_env();
+        assert!(!resolved.is_local());
     }
 
     #[tokio::test]
