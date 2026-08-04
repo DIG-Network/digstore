@@ -298,11 +298,14 @@ pub fn get_project_node_url_in(
     // ninth site added later would be unprotected by construction. No legitimate URL needs a
     // control character or whitespace, and these are exactly the bytes the parser discards.
     if let Some(url) = parsed.node.url.as_deref() {
-        if let Some(bad) = url.chars().find(|c| c.is_control() || c.is_whitespace()) {
+        if let Some(bad) = url
+            .chars()
+            .find(|c| c.is_control() || c.is_whitespace() || !c.is_ascii())
+        {
             return Err(CliError::InvalidArgument(format!(
-                "{} declares a node.url containing {} — refusing it. A URL cannot legitimately \
-                 contain control characters or whitespace, and they can make the value displayed \
-                 for your approval differ from the host actually contacted.",
+                "{} declares a node.url containing {} — refusing it. A node URL is plain ASCII \
+                 with no control characters or whitespace; those bytes can make the value \
+                 displayed for your approval differ from the host actually contacted.",
                 p.display(),
                 char_name(bad)
             )));
@@ -312,7 +315,8 @@ pub fn get_project_node_url_in(
 }
 
 /// A printable name for a byte we refuse, so the error says which one without
-/// echoing a character that would itself scramble the message.
+/// echoing a character that would itself scramble the message — a refused value
+/// is attacker-chosen, so it must never be quoted back verbatim.
 fn char_name(c: char) -> String {
     match c {
         '\n' => "a line feed (\\n)".into(),
@@ -332,6 +336,18 @@ fn char_name(c: char) -> String {
 /// force-adds it publishes whatever is inside. A token written here would then be in the
 /// repository's history, where redacting the echo afterwards does not reach.
 pub fn set_project_node_url_in(workspace_dir: &std::path::Path, url: &str) -> Result<(), CliError> {
+    // The same shape the READ path enforces. Without this, `config node.url --local` happily
+    // writes a value its own next invocation refuses — the user is left with a file digs told
+    // them to create and then ignores.
+    if let Some(bad) = url
+        .chars()
+        .find(|c| c.is_control() || c.is_whitespace() || !c.is_ascii())
+    {
+        return Err(CliError::InvalidArgument(format!(
+            "that node.url contains {} — a node URL is plain ASCII with no control characters              or whitespace.",
+            char_name(bad)
+        )));
+    }
     if has_userinfo(url) {
         return Err(CliError::InvalidArgument(format!(
             "{} embeds credentials, and .dig/node.toml is a project file meant to travel with \
@@ -383,9 +399,6 @@ fn load_trust(global_dir: &std::path::Path) -> Result<TrustFile, CliError> {
     toml::from_str(&text).map_err(|e| CliError::Other(e.into()))
 }
 
-/// A stable key for a workspace directory. Canonicalized where the path exists
-/// (so `.`/`..`/symlink spellings of the same project share one trust record)
-/// and otherwise used verbatim.
 /// A node URL that is safe to hand to a sink — it renders and serializes redacted.
 ///
 /// This is a NEWTYPE rather than a `redact(…)` call at each print site on purpose. Redaction was
@@ -429,22 +442,34 @@ impl serde::Serialize for RedactedUrl {
 /// The whole userinfo section goes, not just the password: a bare
 /// `https://alice@host` still names someone.
 pub fn redact_url_userinfo(url: &str) -> String {
-    let Some((scheme, rest)) = url.split_once("://") else {
-        return url.to_string();
+    // PARSE, do not split. This function previously terminated the authority at `/` only, while
+    // the WHATWG parser — `url`, the same crate reqwest dials with — also terminates it at `\`,
+    // `?` and `#` for special schemes. That divergence was directly exploitable:
+    //
+    //     https://evil.example\@rpc.dig.net/
+    //
+    // displayed as `https://***@rpc.dig.net/` (host `rpc.dig.net`, credentials tidily hidden)
+    // while the host actually dialled was `evil.example`. Worse than showing the raw string,
+    // because the redaction lent it the official gateway's name.
+    //
+    // Round-tripping through the real parser makes display and dial agree BY CONSTRUCTION: the
+    // host shown is the host `Url` resolved, and the `\`/`?`/`#` payload re-serializes into the
+    // path or query where it plainly belongs.
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        // Unparseable: there is no authority to reason about, so echo NOTHING attacker-chosen.
+        // Falling back to string surgery here is exactly the divergence this function exists to
+        // remove.
+        return "<unparseable URL>".to_string();
     };
-    // Userinfo is only userinfo before the first `/` — an `@` later in the URL
-    // is part of the path or query and must survive.
-    let (authority, path) = match rest.split_once('/') {
-        Some((a, p)) => (a, Some(p)),
-        None => (rest, None),
-    };
-    let Some((_creds, host)) = authority.rsplit_once('@') else {
-        return url.to_string();
-    };
-    match path {
-        Some(p) => format!("{scheme}://***@{host}/{p}"),
-        None => format!("{scheme}://***@{host}"),
+
+    if parsed.username().is_empty() && parsed.password().is_none() {
+        return parsed.to_string();
     }
+    // `***` rather than dropping the section, so the reader can see credentials WERE present.
+    // Both setters only fail on a cannot-be-a-base URL, which cannot carry userinfo anyway.
+    let _ = parsed.set_username("***");
+    let _ = parsed.set_password(None);
+    parsed.to_string()
 }
 
 /// Whether a node URL carries embedded credentials.
@@ -454,11 +479,17 @@ pub fn redact_url_userinfo(url: &str) -> String {
 /// credential written there would be published to the repository, and
 /// redacting the echo afterwards would not take it back.
 pub fn has_userinfo(url: &str) -> bool {
-    url.split_once("://")
-        .map(|(_, rest)| rest.split('/').next().unwrap_or(rest))
-        .is_some_and(|authority| authority.contains('@'))
+    // Same rule as the redactor: ask the parser, never the string. A `\@` payload puts the `@`
+    // in the PATH, so a split-based check would report credentials that are not there — and,
+    // reversed, would miss ones that are.
+    url::Url::parse(url)
+        .map(|u| !u.username().is_empty() || u.password().is_some())
+        .unwrap_or(false)
 }
 
+/// A stable key for a workspace directory. Canonicalized where the path exists
+/// (so `.`/`..`/symlink spellings of the same project share one trust record)
+/// and otherwise used verbatim.
 fn trust_key(workspace_dir: &std::path::Path) -> String {
     std::fs::canonicalize(workspace_dir)
         .unwrap_or_else(|_| workspace_dir.to_path_buf())
@@ -798,23 +829,33 @@ mod credential_tests {
     /// credential on stdout and into a CI transcript.
     #[test]
     fn redaction_removes_the_whole_userinfo_section() {
+        // The trailing `/` is the parser's canonical form, not a rewrite: redaction
+        // round-trips through `url::Url` so the string shown is the one it resolved.
         assert_eq!(
             redact_url_userinfo("https://alice:s3cret@node.example"),
-            "https://***@node.example"
+            "https://***@node.example/"
         );
         // A bare username still identifies someone.
         assert_eq!(
             redact_url_userinfo("https://alice@node.example"),
-            "https://***@node.example"
+            "https://***@node.example/"
         );
         assert_eq!(
             redact_url_userinfo("https://alice:s3cret@node.example:9778/base"),
             "https://***@node.example:9778/base"
         );
+        // The password must be gone, not merely masked alongside a surviving copy.
+        assert!(!redact_url_userinfo("https://alice:s3cret@node.example").contains("s3cret"));
     }
 
     /// It must not mangle the ordinary case, and an `@` after the authority is
     /// path or query data, not credentials.
+    ///
+    /// Compared against the PARSER's canonical form rather than byte-identity: redaction now
+    /// round-trips through `url::Url`, which appends a root path (`https://rpc.dig.net` ->
+    /// `https://rpc.dig.net/`). That normalization is the point — the string shown is the one
+    /// the parser resolved — so the assertion checks the host and userinfo survive, not that the
+    /// bytes are untouched.
     #[test]
     fn redaction_leaves_a_credential_free_url_alone() {
         for url in [
@@ -822,18 +863,89 @@ mod credential_tests {
             "http://dig.local",
             "http://localhost:9778",
             "https://node.example/path/with@sign",
-            "not-a-url",
         ] {
-            assert_eq!(redact_url_userinfo(url), url, "must not rewrite {url}");
+            let shown = redact_url_userinfo(url);
+            let expected = ::url::Url::parse(url).unwrap().to_string();
+            assert_eq!(
+                shown, expected,
+                "must not rewrite {url} beyond canonicalizing"
+            );
+            assert!(!shown.contains("***"), "{url} has no credentials to redact");
         }
     }
 
+    /// A value the parser cannot read has no authority to reason about, so nothing
+    /// attacker-chosen may be echoed. Falling back to string surgery here is exactly
+    /// the divergence the parser-based redactor exists to remove.
     #[test]
-    fn userinfo_is_detected_only_in_the_authority() {
+    fn an_unparseable_url_is_not_echoed() {
+        for bad in ["not-a-url", "://", "https://", ""] {
+            assert_eq!(
+                redact_url_userinfo(bad),
+                "<unparseable URL>",
+                "{bad:?} must not be echoed back"
+            );
+        }
+    }
+
+    /// THE ROUND-TWO ATTACK. Pure ASCII, no control characters, no whitespace — so the
+    /// control-character guard does not fire and redaction is the only thing standing between
+    /// the user and a spoofed prompt.
+    ///
+    /// The old redactor terminated the authority at `/` only. The WHATWG parser — the same crate
+    /// reqwest dials with — also terminates it at `\`, `?` and `#` for special schemes, so
+    /// `https://evil.example\@rpc.dig.net/` displayed as `https://***@rpc.dig.net/`: the official
+    /// gateway's name, with credentials tidily hidden, while `evil.example` was dialled. The
+    /// redaction made it MORE convincing than the raw string.
+    #[test]
+    fn a_backslash_or_query_or_fragment_cannot_disguise_the_real_host() {
+        for payload in [
+            "https://evil.example\\@rpc.dig.net/",
+            "https://evil.example?@rpc.dig.net/",
+            "https://evil.example#@rpc.dig.net/",
+        ] {
+            let shown = redact_url_userinfo(payload);
+            let dialled = ::url::Url::parse(payload).unwrap();
+
+            // The host the user is shown must be the host that will be contacted.
+            assert_eq!(
+                dialled.host_str(),
+                Some("evil.example"),
+                "fixture: {payload} must really resolve to evil.example, or this proves nothing"
+            );
+            assert!(
+                shown.starts_with("https://evil.example"),
+                "the display must lead with the host actually dialled; got {shown} for {payload}"
+            );
+            // And it must not read as though rpc.dig.net were the authority.
+            assert!(
+                !shown.starts_with("https://***@rpc.dig.net")
+                    && !shown.starts_with("https://rpc.dig.net"),
+                "the display disguised the host as rpc.dig.net: {shown}"
+            );
+        }
+    }
+
+    /// The same divergence, on the credential CHECK. A split-based test reported credentials in
+    /// `evil.example\@host` (there are none — the `@` is in the path) and would refuse a
+    /// perfectly legal URL while missing ones that do carry userinfo.
+    #[test]
+    fn userinfo_is_decided_by_the_parser_not_by_splitting() {
         assert!(has_userinfo("https://alice:s3cret@node.example"));
         assert!(has_userinfo("https://alice@node.example"));
+
         assert!(!has_userinfo("https://rpc.dig.net"));
         assert!(!has_userinfo("https://node.example/path/with@sign"));
+        for payload in [
+            "https://evil.example\\@rpc.dig.net/",
+            "https://evil.example?@rpc.dig.net/",
+            "https://evil.example#@rpc.dig.net/",
+        ] {
+            assert!(
+                !has_userinfo(payload),
+                "{payload} carries no userinfo — the @ is past the authority"
+            );
+        }
     }
 
     /// `.dig/node.toml` is a project file meant to travel with the repository.
@@ -944,6 +1056,42 @@ mod display_spoofing_tests {
         );
     }
 
+    /// Non-ASCII is refused too, and it needs its own assertion: homographs and invisible
+    /// separators are a spoofing family distinct from the ASCII control characters above, and
+    /// no DIG endpoint — `dig.local`, `localhost`, `rpc.dig.net` — needs a byte above 0x7F.
+    ///
+    /// Written with real characters rather than `\u{...}` escapes so the payload in the source
+    /// is the payload TOML receives. Dropping `!c.is_ascii()` from the predicate makes this fail.
+    #[test]
+    fn a_non_ascii_node_url_is_refused() {
+        let cyrillic_e = '\u{0435}'; // looks identical to ASCII 'e' in most fonts
+        let zero_width = '\u{200B}';
+        let line_sep = '\u{2028}';
+        let bom = '\u{FEFF}';
+
+        for (payload, what) in [
+            (
+                format!("https://rpc.dig.n{cyrillic_e}t"),
+                "Cyrillic homograph",
+            ),
+            (
+                format!("https://rpc.dig.net{zero_width}.evil.example"),
+                "zero-width space",
+            ),
+            (
+                format!("https://rpc.dig.net{line_sep}.evil.example"),
+                "line separator",
+            ),
+            (format!("https://rpc.dig.net{bom}"), "byte-order mark"),
+        ] {
+            let (_d, ws) = project_declaring(&format!("[node]\nurl = \"{payload}\"\n"));
+            assert!(
+                get_project_node_url_in(&ws).is_err(),
+                "a URL containing a {what} must be refused"
+            );
+        }
+    }
+
     /// …and an ordinary URL still reads back untouched, so this is a guard rather
     /// than a blanket refusal that would break every legitimate project.
     #[test]
@@ -974,8 +1122,10 @@ mod display_spoofing_tests {
             !json.contains("s3cr3tT0K3N"),
             "serialization leaked the credential: {json}"
         );
-        assert_eq!(json, "\"https://***@node.example\"");
-        assert_eq!(r.to_string(), "https://***@node.example");
+        // Trailing `/` is the parser's canonical form — redaction round-trips through
+        // `url::Url` so display and dial cannot disagree.
+        assert_eq!(json, "\"https://***@node.example/\"");
+        assert_eq!(r.to_string(), "https://***@node.example/");
 
         // The exact shape `digstore config node.url --show --json` emits.
         let body =

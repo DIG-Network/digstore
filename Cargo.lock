@@ -2446,6 +2446,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber 0.3.23",
+ "url",
  "zeroize",
 ]
 

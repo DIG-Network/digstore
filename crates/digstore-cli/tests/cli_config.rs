@@ -33,6 +33,11 @@ fn node_url_defaults_to_unset() {
 /// Setting then showing round-trips the value, and it PERSISTS across separate
 /// invocations (a fresh `dig()` command each time, only sharing the identity
 /// dir via env — proving it is durable config, not in-memory state).
+///
+/// `--show` reports the URL parser's CANONICAL form, hence the trailing `/`. That is
+/// deliberate: the displayed value is derived by round-tripping through the same parser the
+/// client dials with, so what a user is shown cannot disagree with what gets contacted. The
+/// stored value is unchanged; only the rendering is canonical.
 #[test]
 fn node_url_set_persists_across_invocations() {
     let dir = tmp_dig();
@@ -48,7 +53,10 @@ fn node_url_set_persists_across_invocations() {
         .unwrap();
     assert!(show_out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&show_out.stdout).unwrap();
-    assert_eq!(v["node_url"].as_str(), Some("https://my-node.example:9778"));
+    assert_eq!(
+        v["node_url"].as_str(),
+        Some("https://my-node.example:9778/")
+    );
 }
 
 /// `--unset` clears a previously-set value back to "(unset)".

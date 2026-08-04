@@ -17,6 +17,7 @@
 
 mod common;
 use common::{dig, tmp_dig};
+use tempfile::TempDir;
 
 use std::net::TcpListener;
 
@@ -313,32 +314,55 @@ fn an_approved_project_node_url_is_used() {
 /// `https://rpc.dig.net` while the local node was up and answering.
 #[test]
 fn a_refused_project_node_file_still_lets_the_ladder_run() {
-    let dir = tmp_dig();
-    let mut init = dig(&dir);
-    assert!(
-        init.args(["init", "site"])
-            .output()
-            .unwrap()
-            .status
-            .success(),
-        "fixture setup: init must succeed"
-    );
+    // Resolve once with NO project file, then again with a refused one, and require the two to
+    // agree. That comparison is what makes this environment-independent: on a developer machine
+    // the ladder lands on `dig.local`, in CI it falls through to the public gateway, and either
+    // is fine — what must never happen is the refused file CHANGING the answer.
+    //
+    // Asserting a literal endpoint instead would either fail in CI or pass vacuously on a laptop.
+    fn run(dir: &TempDir) -> (String, String) {
+        let out = dig(dir).args(["doctor"]).output().unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let line = text
+            .lines()
+            .find(|l| l.contains("default remote"))
+            .unwrap_or_else(|| panic!("doctor must report a resolved remote: {text}"))
+            .to_string();
+        (line, text)
+    }
 
-    // The two-character escapes matter: TOML decodes them into real control
-    // characters, and it is the decoded value the guard refuses. Raw bytes would
-    // instead be a TOML syntax error — a different path.
+    fn init(dir: &TempDir) {
+        assert!(
+            dig(dir)
+                .args(["init", "site"])
+                .output()
+                .unwrap()
+                .status
+                .success(),
+            "fixture setup: init must succeed"
+        );
+    }
+
+    let baseline_dir = tmp_dig();
+    init(&baseline_dir);
+    let (baseline, _) = run(&baseline_dir);
+
+    let refused_dir = tmp_dig();
+    init(&refused_dir);
+    // The two-character escapes matter: TOML decodes them into real control characters, and it is
+    // the decoded value the guard refuses. Raw bytes would be a TOML syntax error — a different path.
     std::fs::write(
-        dir.path().join(".dig").join("node.toml"),
-        "[node]\nurl = \"https://rpc.dig.net\\n\\t\\t\\t\\t.evil.example/\"\n",
+        refused_dir.path().join(".dig").join("node.toml"),
+        "[node]
+url = \"https://rpc.dig.net\n\t\t\t\t.evil.example/\"
+",
     )
     .unwrap();
-
-    let out = dig(&dir).args(["doctor"]).output().unwrap();
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let (with_refused, text) = run(&refused_dir);
 
     // The user is told, rather than the value being dropped in silence.
     assert!(
@@ -346,18 +370,17 @@ fn a_refused_project_node_file_still_lets_the_ladder_run() {
         "a refused project node.url must be reported: {text}"
     );
 
-    // It must never route to the attacker's host.
+    // Never the attacker's host — asserted on the RESOLVED line, because the warning above
+    // legitimately names the URL and a whole-output check could never fail.
     assert!(
-        !text.contains("evil.example")
-            || !text.contains("default remote   https://rpc.dig.net.evil"),
-        "must never resolve to the attacker host: {text}"
+        !with_refused.contains("evil.example"),
+        "must never resolve to the attacker host; resolved: {with_refused}"
     );
 
-    // And crucially: resolution must not have become fatal. `doctor` still runs
-    // and still reports a resolved remote, which is what proves the ladder ran
-    // rather than the error aborting it.
-    assert!(
-        text.contains("default remote"),
-        "the ladder must still resolve after a refused project file: {text}"
+    // The property that actually separates the fix from the forced-downgrade regression: a
+    // refused file contributes NOTHING, so resolution is byte-identical to having no file.
+    assert_eq!(
+        with_refused, baseline,
+        "a refused project file changed which endpoint won — that is the forced downgrade"
     );
 }
