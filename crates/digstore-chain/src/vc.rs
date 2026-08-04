@@ -29,7 +29,7 @@
 //! note returned by [`vc_transfer_unsupported`].
 
 use crate::error::{ChainError, Result};
-use chia::clvm_utils::TreeHash;
+use clvm_utils::TreeHash;
 use chia_protocol::{Bytes32, Coin, CoinSpend};
 use chia_wallet_sdk::driver::{
     Launcher, SpendContext, Verification, VerificationAsserter, VerifiedData,
@@ -231,7 +231,7 @@ pub fn vc_launcher_coin(did_coin_id: Bytes32) -> Coin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chia::puzzles::Memos;
+    use chia_puzzle_types::Memos;
     use chia_protocol::Bytes;
     use chia_puzzles::SINGLETON_LAUNCHER_HASH;
     use chia_sdk_test::Simulator;

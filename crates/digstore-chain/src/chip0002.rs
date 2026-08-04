@@ -16,7 +16,7 @@
 
 use crate::error::{ChainError, Result};
 use bip39::Mnemonic;
-use chia::puzzles::DeriveSynthetic;
+use chia_puzzle_types::DeriveSynthetic;
 use chia_protocol::Program;
 use datalayer_driver::{
     master_to_wallet_unhardened, sign_coin_spends, sign_message, verify_signed_message, Bytes32,

@@ -25,7 +25,7 @@
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
-use chia::puzzles::Memos;
+use chia_puzzle_types::Memos;
 use chia_protocol::{Bytes32, Coin, CoinSpend, SpendBundle};
 use chia_wallet_sdk::driver::{
     Clawback, Puzzle, Spend, SpendContext, SpendWithConditions, StandardLayer,

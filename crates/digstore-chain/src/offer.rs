@@ -24,8 +24,8 @@
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
-use chia::puzzles::offer::{NotarizedPayment, Payment};
-use chia::puzzles::Memos;
+use chia_puzzle_types::offer::{NotarizedPayment, Payment};
+use chia_puzzle_types::Memos;
 use chia_protocol::{Bytes32, Coin, SpendBundle};
 use chia_wallet_sdk::driver::{
     decode_offer, encode_offer, Action, AssetInfo, Cat, CatAssetInfo, Id, Offer, Relation,
@@ -673,8 +673,8 @@ pub async fn build_take_offer(
 mod tests {
     use super::*;
     use crate::keys::derive_indexed_keys;
-    use chia::puzzles::offer::{NotarizedPayment, Payment};
-    use chia::puzzles::Memos;
+    use chia_puzzle_types::offer::{NotarizedPayment, Payment};
+    use chia_puzzle_types::Memos;
     use chia_puzzles::SETTLEMENT_PAYMENT_HASH;
     use chia_sdk_test::Simulator;
     use chia_wallet_sdk::driver::{

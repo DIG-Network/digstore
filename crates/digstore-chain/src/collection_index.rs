@@ -38,7 +38,7 @@
 
 use crate::coinset::ChainReads;
 use crate::error::{ChainError, Result};
-use chia::puzzles::nft::NftMetadata;
+use chia_puzzle_types::nft::NftMetadata;
 use chia_protocol::{Bytes32, Coin};
 use chia_wallet_sdk::driver::{Nft, Puzzle, SpendContext};
 

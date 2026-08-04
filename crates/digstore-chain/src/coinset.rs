@@ -482,6 +482,7 @@ impl ChainReads for Coinset {
                     None,
                     None,
                     Some(false),
+                    None,
                 )
             })
             .await?;
@@ -512,7 +513,7 @@ impl ChainReads for Coinset {
         let resp = self
             .call("get_coin_records_by_hint", || {
                 self.client
-                    .get_coin_records_by_hint(hint, None, None, Some(false))
+                    .get_coin_records_by_hint(hint, None, None, Some(false), None)
             })
             .await?;
 
@@ -551,6 +552,7 @@ impl ChainReads for Coinset {
                     None,
                     None,
                     Some(include_spent),
+                    None,
                 )
             })
             .await?;
@@ -579,7 +581,7 @@ impl ChainReads for Coinset {
         let resp = self
             .call("get_coin_records_by_hint", || {
                 self.client
-                    .get_coin_records_by_hint(hint, None, None, Some(include_spent))
+                    .get_coin_records_by_hint(hint, None, None, Some(include_spent), None)
             })
             .await?;
 
@@ -611,6 +613,7 @@ impl ChainReads for Coinset {
                     None,
                     None,
                     Some(include_spent),
+                    None,
                 )
             })
             .await?;
@@ -694,7 +697,7 @@ impl ChainReads for Coinset {
 
         if !resp.success {
             return Err(ChainError::Chain(format!(
-                "push_tx rejected: status={} error={:?}",
+                "push_tx rejected: status={:?} error={:?}",
                 resp.status, resp.error
             )));
         }
@@ -1372,7 +1375,7 @@ mod tests {
         // A tiny bundle is fine.
         let small = SpendBundle::new(
             vec![coin_spend_with_reveal_len(500)],
-            chia::bls::Signature::default(),
+            chia_bls::Signature::default(),
         );
         assert!(oversize_reason(&small).is_none());
         assert_eq!(bundle_generator_bytes(&small), 508);
@@ -1381,7 +1384,7 @@ mod tests {
         // Threshold ≈ 11e9 / 12000 ≈ 916_667 bytes; one ~1 MB reveal clears it.
         let big = SpendBundle::new(
             vec![coin_spend_with_reveal_len(1_000_000)],
-            chia::bls::Signature::default(),
+            chia_bls::Signature::default(),
         );
         let reason = oversize_reason(&big).expect("a ~1 MB bundle must be flagged oversized");
         assert!(
@@ -1398,7 +1401,7 @@ mod tests {
         let cs = Coinset::with_url("http://127.0.0.1:9".into()).with_retry_config(fast_cfg(5));
         let big = SpendBundle::new(
             vec![coin_spend_with_reveal_len(1_000_000)],
-            chia::bls::Signature::default(),
+            chia_bls::Signature::default(),
         );
         let err = cs.push(big).await.unwrap_err();
         assert!(

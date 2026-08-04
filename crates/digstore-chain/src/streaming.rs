@@ -32,8 +32,8 @@
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
-use chia::consensus::make_aggsig_final_message::u64_to_bytes;
-use chia::puzzles::Memos;
+use chia_consensus::make_aggsig_final_message::u64_to_bytes;
+use chia_puzzle_types::Memos;
 use chia_protocol::{Bytes, Bytes32, Coin, CoinSpend};
 use chia_wallet_sdk::driver::{SpendContext, StandardLayer, StreamedAsset, StreamingPuzzleInfo};
 use chia_wallet_sdk::types::Conditions;

@@ -36,8 +36,8 @@
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
-use chia::clvm_utils::TreeHash;
-use chia::secp::{K1PublicKey, K1SecretKey, K1Signature};
+use clvm_utils::TreeHash;
+use chia_secp::{K1PublicKey, K1SecretKey, K1Signature};
 use chia_protocol::{Bytes32, Coin, CoinSpend};
 use chia_sha2::Sha256;
 use chia_wallet_sdk::driver::{
@@ -347,7 +347,7 @@ pub fn sign_vault_create_spends(
 mod tests {
     use super::*;
     use crate::keys::derive_indexed_keys;
-    use chia::puzzles::Memos;
+    use chia_puzzle_types::Memos;
     use chia_protocol::SpendBundle;
     use chia_sdk_test::{K1Pair, Simulator};
 

@@ -2658,7 +2658,7 @@ mod classify_tests {
     use super::*;
     use crate::coinset::mock::MockChain;
     use crate::coinset::CoinInfo;
-    use chia::puzzles::Memos;
+    use chia_puzzle_types::Memos;
     use chia_sdk_test::Simulator;
     use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
 

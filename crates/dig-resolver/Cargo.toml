@@ -11,6 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 digstore-chain = { path = "../digstore-chain" }
-chia-protocol = "0.26"
+chia-protocol = "0.36.1"
 hex = "0.4"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
