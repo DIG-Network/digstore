@@ -88,8 +88,11 @@ fn node_url(
             }));
         } else {
             match current {
-                Some(u) if approved => ui.line(u),
+                Some(u) if approved => ui.line(config::redact_url_userinfo(&u)),
                 Some(u) => {
+                    // Redacted: an unapproved value came from outside this machine
+                    // (a cloned repo, a hand-edited file) and may carry credentials.
+                    let u = config::redact_url_userinfo(&u);
                     ui.line(format!("{u}  (NOT APPROVED — ignored)"));
                     ui.hint(format!(
                         "this project declares {u}, but it has not been approved on this \
@@ -118,7 +121,10 @@ fn node_url(
     if ui.json() {
         ui.emit_json(&serde_json::json!({ "node_url": url, "scope": scope }));
     } else {
-        ui.success(format!("{scope} node.url = {url}"));
+        ui.success(format!(
+            "{scope} node.url = {}",
+            config::redact_url_userinfo(&url)
+        ));
     }
     Ok(())
 }

@@ -93,15 +93,20 @@ fn trusted_project_node(
     let Some(ui) = ui else {
         return Ok(None);
     };
+    // Redacted for display. A project value arrives from OUTSIDE — a cloned repo,
+    // or a hand-edited file — so it may legally carry `user:token@`, and every
+    // line below lands on stdout and in any CI transcript that captured it.
+    let shown = config::redact_url_userinfo(&url);
+
     if !ui.can_prompt() {
         ui.hint(format!(
-            "ignoring this project's node.url ({url}): it has not been approved on this machine. \
-             Run `digstore config node.url --local {url}` to approve it."
+            "ignoring this project's node.url ({shown}): it has not been approved on this machine. \
+             Run `digstore config node.url --local {shown}` to approve it."
         ));
         return Ok(None);
     }
     ui.line(format!(
-        "This project asks digs to use the node {url}.\n\
+        "This project asks digs to use the node {shown}.\n\
          It comes from {}, which can travel inside a repository — and digs signs every \
          request it sends to that node with your identity key.",
         config::project_node_path(&ctx.workspace_dir).display()

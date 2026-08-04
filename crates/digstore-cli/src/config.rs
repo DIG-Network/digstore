@@ -287,7 +287,18 @@ pub fn get_project_node_url_in(
 }
 
 /// Persist a project-scoped `node.url` into `<workspace_dir>/node.toml`.
+///
+/// Refuses a URL carrying credentials: this file lives in the project and is
+/// routinely committed, so writing `https://user:token@host` here would publish
+/// the token to the repository.
 pub fn set_project_node_url_in(workspace_dir: &std::path::Path, url: &str) -> Result<(), CliError> {
+    if has_userinfo(url) {
+        return Err(CliError::InvalidArgument(format!(
+            "{} embeds credentials, and .dig/node.toml is a project file that gets committed. \
+             Use a URL without a user/password.",
+            redact_url_userinfo(url)
+        )));
+    }
     fs::create_dir_all(workspace_dir).map_err(|e| CliError::Other(e.into()))?;
     let f = NodeConfigFile {
         node: NodeSection {
@@ -335,6 +346,47 @@ fn load_trust(global_dir: &std::path::Path) -> Result<TrustFile, CliError> {
 /// A stable key for a workspace directory. Canonicalized where the path exists
 /// (so `.`/`..`/symlink spellings of the same project share one trust record)
 /// and otherwise used verbatim.
+/// A node URL with any embedded credentials replaced, safe to print.
+///
+/// `https://user:token@host` is a legal URL, and digs prints the node URL in
+/// half a dozen places — the approval prompt, the ignored-value warning,
+/// `--show`, `doctor`, and the "reading remotely" notice. Printing one
+/// verbatim would put a credential on stdout and into any log or CI transcript
+/// that captured it.
+///
+/// The whole userinfo section goes, not just the password: a bare
+/// `https://alice@host` still names someone.
+pub fn redact_url_userinfo(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    // Userinfo is only userinfo before the first `/` — an `@` later in the URL
+    // is part of the path or query and must survive.
+    let (authority, path) = match rest.split_once('/') {
+        Some((a, p)) => (a, Some(p)),
+        None => (rest, None),
+    };
+    let Some((_creds, host)) = authority.rsplit_once('@') else {
+        return url.to_string();
+    };
+    match path {
+        Some(p) => format!("{scheme}://***@{host}/{p}"),
+        None => format!("{scheme}://***@{host}"),
+    }
+}
+
+/// Whether a node URL carries embedded credentials.
+///
+/// Refused at the point a value is STORED rather than merely redacted on
+/// display, because `.dig/node.toml` is a project file people commit — a
+/// credential written there would be published to the repository, and
+/// redacting the echo afterwards would not take it back.
+pub fn has_userinfo(url: &str) -> bool {
+    url.split_once("://")
+        .map(|(_, rest)| rest.split('/').next().unwrap_or(rest))
+        .is_some_and(|authority| authority.contains('@'))
+}
+
 fn trust_key(workspace_dir: &std::path::Path) -> String {
     std::fs::canonicalize(workspace_dir)
         .unwrap_or_else(|_| workspace_dir.to_path_buf())
@@ -660,6 +712,84 @@ mod tests {
         assert_eq!(
             get_node_url_in(td.path()).unwrap().as_deref(),
             Some("https://second.example")
+        );
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    /// A node URL may legally carry `user:token@`, and digs prints the node URL
+    /// in the approval prompt, the ignored-value warning, `--show`, `doctor`,
+    /// and the reading-remotely notice. Any of those would otherwise put a
+    /// credential on stdout and into a CI transcript.
+    #[test]
+    fn redaction_removes_the_whole_userinfo_section() {
+        assert_eq!(
+            redact_url_userinfo("https://alice:s3cret@node.example"),
+            "https://***@node.example"
+        );
+        // A bare username still identifies someone.
+        assert_eq!(
+            redact_url_userinfo("https://alice@node.example"),
+            "https://***@node.example"
+        );
+        assert_eq!(
+            redact_url_userinfo("https://alice:s3cret@node.example:9778/base"),
+            "https://***@node.example:9778/base"
+        );
+    }
+
+    /// It must not mangle the ordinary case, and an `@` after the authority is
+    /// path or query data, not credentials.
+    #[test]
+    fn redaction_leaves_a_credential_free_url_alone() {
+        for url in [
+            "https://rpc.dig.net",
+            "http://dig.local",
+            "http://localhost:9778",
+            "https://node.example/path/with@sign",
+            "not-a-url",
+        ] {
+            assert_eq!(redact_url_userinfo(url), url, "must not rewrite {url}");
+        }
+    }
+
+    #[test]
+    fn userinfo_is_detected_only_in_the_authority() {
+        assert!(has_userinfo("https://alice:s3cret@node.example"));
+        assert!(has_userinfo("https://alice@node.example"));
+        assert!(!has_userinfo("https://rpc.dig.net"));
+        assert!(!has_userinfo("https://node.example/path/with@sign"));
+    }
+
+    /// `.dig/node.toml` is a project file that gets committed, so a credential
+    /// written there would be published to the repository. Redacting the echo
+    /// afterwards would not take it back — refuse to store it at all.
+    #[test]
+    fn a_project_node_url_with_credentials_is_refused_and_not_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join(".dig");
+
+        let err = set_project_node_url_in(&ws, "https://alice:s3cret@node.example")
+            .expect_err("a credential-bearing URL must be refused");
+
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("s3cret"),
+            "the refusal must not echo the credential: {msg}"
+        );
+        assert!(
+            get_project_node_url_in(&ws).unwrap().is_none(),
+            "nothing may be persisted when the value is refused"
+        );
+
+        // …and the ordinary case still works.
+        set_project_node_url_in(&ws, "https://node.example").unwrap();
+        assert_eq!(
+            get_project_node_url_in(&ws).unwrap().as_deref(),
+            Some("https://node.example")
         );
     }
 }
