@@ -517,6 +517,50 @@ emit the canonical bare `urn:dig:chia:…` form (the single resource-identifier 
 **never** a `dig://`-prefixed URN — and MUST keep the URN first. The list is additive: an old reader
 simply reads whichever entry it understands.
 
+## 11a. Post-commit seed push to the local dig-node (content-replication flywheel)
+
+Scope note: a CLI/networking contract (not a `.dig` byte-format contract) governing how a successful
+`commit`/`deploy` seeds the publisher's OWN local node, so freshly-published content is discoverable
++ reshareable immediately instead of only after some other node is first asked for it. This is the
+publisher-side (seed) leg of the ecosystem content-replication flywheel (`SYSTEM.md` → dig-node
+`cache.pushCapsule`; dig_ecosystem#1476).
+
+**When.** After a `commit` CONFIRMS on-chain and the generation is finalized (the `.dig` is on disk),
+the CLI pushes the produced capsule to the operator's local dig-node. It fires on EVERY successful
+commit, INDEPENDENT of `--push`/DIGHub. `deploy` (which drives `commit`) seeds identically.
+
+**Best-effort + STRICTLY NON-FATAL.** The commit has already succeeded before the seed runs, so EVERY
+failure mode — no local node running, the control token unavailable, any transport/RPC error — prints
+a single YELLOW warning (`local dig-node not running: committed locally, not yet cached/reshared`) and
+returns SUCCESS. The seed push MUST NEVER fail a commit and MUST NEVER block on a slow/absent node
+(short-timeout probe).
+
+**Local tiers ONLY.** The target node is resolved via the §5.3 ladder RESTRICTED to the local tiers —
+`dig.local` then `localhost` (default port 9778, `DIG_NODE_PORT`-overridable), over plain HTTP (the
+node's loopback JSON-RPC surface). `rpc.dig.net` is NEVER seeded (seeding the public gateway is not the
+local-cache flywheel), and an explicit `--node` override is deliberately ignored for this path.
+
+**Wire — `cache.pushCapsule` (locked by dig-node `SPEC.md` §5.5.3).** The `.dig` is pushed in ≤3 MiB
+base64 windows the node reassembles: params `{ store_id (64-hex), root (64-hex), data (base64,
+standard), offset (u64, default 0), total_length (u64) }`; the node acks `{ offset, complete (bool),
+next_offset (u64|null), size_bytes }` (+ `served_root` and `already_cached: true` on completion). The
+client sends `offset = 0` first and follows `next_offset` until `complete == true`.
+
+**Auth — the local control token.** `cache.pushCapsule` makes the node a durable holder, so over
+loopback HTTP it carries the node's master control token in the `X-Dig-Control-Token` header — the SAME
+gate as `cache.fetchAndCache` (dig-node `SPEC.md` §5.5.3/§7), NOT a §21.9 signature (that is only for
+the opt-in opened peer surface). A same-machine caller obtains the token from `DIG_NODE_CONTROL_TOKEN`
+(the headless/CI escape hatch), else by reading the node's on-disk `control-token` file from the state
+dir dig-node resolves (`DIG_NODE_STATE_DIR` override → the per-OS machine-wide state dir → the legacy
+per-user dir). When the token cannot be obtained (a service-run node under another OS account) the push
+proceeds without the header, the node answers `Unauthorized`, and that surfaces as the same non-fatal
+YELLOW warning — never a bypass.
+
+**Config (default-ON).** Auto-push is ON by default. Precedence (uniform `flag > env > dig.toml >
+default`): `--no-cache` (alias `--no-seed`) opts out > `DIGSTORE_AUTOPUSH` (`true`/`1`/… vs
+`false`/`0`/…) > `dig.toml` `auto-push` (bool) > default-ON. `commit --json` folds the outcome into its
+object (`seeded`, and `already_cached` / `seed_warning` / `seed_skipped`).
+
 ## 12. Release pipeline — nightly cron + manual dispatch
 
 How the `dig-store` CLI binary + its `digs` alias are built and released. The shape is copied from

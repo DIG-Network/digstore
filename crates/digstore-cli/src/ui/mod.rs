@@ -173,6 +173,26 @@ impl Ui {
         let _ = writeln!(o, "{} {}", tick, msg);
     }
 
+    /// A YELLOW, non-fatal warning line (`⚠ ...`) to stderr. Used for best-effort
+    /// steps that failed WITHOUT failing the command — e.g. the post-commit seed
+    /// push when no local dig-node is running (dig_ecosystem#1476): the commit
+    /// already succeeded, so this warns rather than erroring. Suppressed in
+    /// `--json`/`--quiet` (the JSON envelope carries the reason as a field instead).
+    pub fn warn(&self, msg: impl std::fmt::Display) {
+        if self.json || self.quiet {
+            return;
+        }
+        let sign = theme::paint(
+            self.color,
+            anstyle::Style::new()
+                .fg_color(Some(anstyle::AnsiColor::Yellow.into()))
+                .bold(),
+            "⚠",
+        );
+        let mut o = self.out();
+        let _ = writeln!(o, "{} {}", sign, msg);
+    }
+
     /// A `+/~/?` item line.
     pub fn item(&self, marker: Marker, text: impl std::fmt::Display) {
         if self.quiet || self.json {
