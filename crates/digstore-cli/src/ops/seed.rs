@@ -181,16 +181,19 @@ pub async fn push_capsule_chunked(
                 .and_then(Value::as_bool)
                 .unwrap_or(false));
         }
-        // Not complete: the node MUST tell us where to continue. Strict forward
-        // progress — a node that does not advance past our current offset would spin
-        // the loop forever, so treat a non-advancing `next_offset` as an error.
+        // Not complete: the node MUST tell us where to continue. `next_offset` must be
+        // strictly forward AND within the capsule — a non-advancing value would spin the
+        // loop forever, and an overshoot (`next >= total`) would slice `&bytes[start..]` out
+        // of range on the next iteration (a panic). Both are protocol violations by an
+        // out-of-contract local node; reject them so the caller degrades to a non-fatal
+        // NotSeeded rather than hanging or panicking (#1476 non-fatal-for-every-failure-mode).
         let next = result
             .get("next_offset")
             .and_then(Value::as_u64)
             .ok_or_else(|| "node did not report next_offset for an incomplete push".to_string())?;
-        if next <= offset {
+        if next <= offset || next >= total {
             return Err(format!(
-                "node did not advance the push (offset {offset} → {next})"
+                "node reported an out-of-range next_offset (offset {offset} → {next}, total {total})"
             ));
         }
         offset = next;
@@ -592,6 +595,45 @@ mod tests {
             "a >3 MiB capsule must be chunked across ≥2 windows, got {}",
             *node.windows.lock().unwrap()
         );
+    }
+
+    // ---- an out-of-range next_offset is an error, never a slice panic ---------
+
+    /// A protocol-violating node: it claims `complete=false` but points `next_offset`
+    /// PAST the capsule end. A naive follow-loop would slice `&bytes[next..]` out of
+    /// range and PANIC; the guard must instead return an error so the caller degrades to
+    /// a non-fatal NotSeeded (#1476 non-fatal-for-every-failure-mode).
+    struct OvershootNode;
+    #[async_trait::async_trait]
+    impl PushTransport for OvershootNode {
+        async fn push_window(
+            &self,
+            _base_url: &str,
+            _token: Option<&str>,
+            params: Value,
+        ) -> Result<Value, String> {
+            let total = params["total_length"].as_u64().unwrap();
+            Ok(json!({
+                "offset": params["offset"], "complete": false,
+                "next_offset": total + 4096, "size_bytes": 0,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn overshoot_next_offset_is_rejected_not_panicked() {
+        let bytes: Vec<u8> = (0..64u16).map(|i| i as u8).collect();
+        let err = push_capsule_chunked(
+            &OvershootNode,
+            "http://localhost:9778",
+            None,
+            &hex64(1),
+            &hex64(2),
+            &bytes,
+        )
+        .await
+        .expect_err("an out-of-range next_offset must be an error, never a panic");
+        assert!(err.contains("out-of-range"), "unexpected error: {err}");
     }
 
     // ---- (e) the control-token header is carried on every window --------------
