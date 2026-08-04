@@ -844,10 +844,15 @@ pub fn build_update_ownership(
 ///
 /// The invariant that makes this safe: **corrupt is never melt.** A `Melted` is
 /// returned ONLY when a singleton coin that genuinely parsed as a datastore was
-/// SPENT and its spend, parsed by `DataStore::from_spend`, yielded no datastore
-/// child (`Ok(None)`) — the exact on-chain signature of an owner-authorized melt.
-/// Any unreadable coin record, missing/unparseable spend, or a launcher whose
-/// spend is not a datastore at all stays an `Err`.
+/// SPENT and its spend, parsed by `DataStore::from_spend`, returned
+/// `Err(DriverError::MissingChild)` — the exact on-chain signature of an
+/// owner-authorized melt (a valid datastore-singleton spend that recreates no
+/// odd-amount child). Every other outcome stays an `Err`, never `Melted`: a
+/// `from_spend` `Ok(None)` (the spend is not a datastore singleton at all), any
+/// other `DriverError`, an unreadable coin record, or a missing/unparseable
+/// spend are all treated as corrupt/unexpected terminals. (Note: the #1981
+/// ticket assumed melt surfaced as `Ok(None)`; that is WRONG for
+/// datalayer-driver 3.0.0 — `Ok(None)` is a corrupt terminal, not a melt.)
 #[derive(Debug)]
 pub enum SingletonTerminal {
     /// The launcher was spent and the forward walk reached an UNSPENT tip — the
@@ -857,9 +862,11 @@ pub enum SingletonTerminal {
     /// The launcher coin exists on-chain but is still UNSPENT: the store was
     /// never minted (no eve singleton was ever created). NOT a melt.
     NeverMinted,
-    /// The launcher was spent and the walk reached a singleton coin that was
-    /// SPENT to a spend yielding no datastore child — an owner-authorized MELT,
-    /// permanently retiring the store.
+    /// The launcher was spent and the walk reached a datastore singleton coin
+    /// that was SPENT with `DataStore::from_spend` returning
+    /// `Err(DriverError::MissingChild)` (a valid datastore-singleton spend
+    /// recreating no odd-amount child) — an owner-authorized MELT, permanently
+    /// retiring the store.
     Melted {
         /// The last on-chain root observed before the melt (the metadata root of
         /// the singleton generation that was melt-spent). Lets a consumer record
@@ -1015,13 +1022,15 @@ pub async fn sync_datastore(chain: &dyn ChainReads, launcher_id: Bytes32) -> Res
 ///
 /// - launcher UNSPENT ⇒ [`NeverMinted`](SingletonTerminal::NeverMinted);
 /// - walk reaches an UNSPENT tip ⇒ [`Live`](SingletonTerminal::Live);
-/// - a SPENT singleton coin whose spend yields no datastore child ⇒
+/// - a SPENT datastore singleton whose spend returns
+///   `Err(DriverError::MissingChild)` (recreates no odd-amount child) ⇒
 ///   [`Melted`](SingletonTerminal::Melted), carrying the last root and the melt
 ///   spend's block height (for burial-depth enforcement against reorgs);
-/// - EVERY chain-read failure, missing/unparseable spend, or non-datastore
-///   launcher spend ⇒ `Err`. **A corrupt or unreachable chain is NEVER classified
-///   as `Melted`** — that is the single most important correctness property, since
-///   a false `Melted` triggers permanent data loss downstream.
+/// - EVERY chain-read failure, missing/unparseable spend, a `from_spend`
+///   `Ok(None)`, any other `DriverError`, or a non-datastore launcher spend ⇒
+///   `Err`. **A corrupt or unreachable chain is NEVER classified as `Melted`** —
+///   that is the single most important correctness property, since a false
+///   `Melted` triggers permanent data loss downstream.
 ///
 /// Shares its lineage traversal with [`sync_datastore`] (via
 /// [`walk_singleton_terminal`]); there is exactly one walker.
