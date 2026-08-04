@@ -247,6 +247,45 @@ not a `.dig` byte-format contract. It is normative for how a node serving a root
   does not chain back to that coin is rejected regardless of its curried `launcher_id` (the
   pre-#1473 forgeability class).
 
+### 9.2 Singleton terminal-state classification (melt detection)
+
+Scope note: like §9, this is a chain-authority contract exposed by `digstore_chain::singleton`,
+not a `.dig` byte-format contract. It is normative for how a consumer distinguishes the terminal
+states of a store's on-chain singleton lineage — in particular a genuine owner **melt** (which
+downstream may authorize an IRREVERSIBLE local-data delete) from a store that was never minted and
+from a corrupt/unreachable chain.
+
+`classify_singleton(chain, launcher_id) -> Result<SingletonTerminal>` walks the singleton lineage
+(launcher → eve → … → tip) exactly once and returns one of THREE well-formed terminal states, or
+`Err`:
+
+- **`Live(DataStore)`** — the launcher is spent and the forward walk reached an UNSPENT tip. The
+  returned `DataStore` is the live, spendable singleton.
+- **`NeverMinted`** — the launcher coin exists on-chain but is still UNSPENT (no eve singleton was
+  ever created). This is NOT a melt.
+- **`Melted { last_root, melt_spent_height }`** — the launcher is spent and the walk reached a
+  singleton coin that was SPENT to a spend consuming the singleton with no singleton child (an
+  owner-authorized melt). `last_root` is the metadata root of the generation that was melt-spent;
+  `melt_spent_height` is the block height at which the melt spend was confirmed.
+
+Normative invariants (custody-critical):
+
+- **Corrupt is NEVER melt.** A `Melted` is returned ONLY when the terminal spend parses as a valid
+  datastore singleton spend whose inner conditions carry no odd (singleton) create-coin — the exact
+  on-chain signature of a melt, which `DataStore::from_spend` surfaces as
+  `Err(DriverError::MissingChild)`. EVERY other outcome — a missing/unreadable coin record, a
+  missing/unparseable spend, a spend that is not a datastore singleton at all
+  (`from_spend -> Ok(None)`), or any other parse/CLVM error — is `Err`, NEVER `Melted`. A consumer
+  MUST treat any `Err` as "unknown / do not delete".
+- **Burial-depth anchor.** A consumer that acts irreversibly on `Melted` (e.g. deleting locally
+  cached content) MUST enforce a burial depth against `melt_spent_height` before doing so: a reorg
+  that un-melts the store AFTER a delete is permanent data loss. `melt_spent_height` is provided for
+  exactly this check.
+- **Single walker.** `classify_singleton` and `sync_datastore` share ONE lineage traversal;
+  `sync_datastore` maps the non-`Live` terminals back to its legacy `ChainError::Chain` strings, so
+  its signature and behaviour are unchanged. Reimplementing this walk elsewhere (e.g. in dig-node)
+  is forbidden — a second canonical walker on a custody path is a byte-drift bug.
+
 ## 10. Per-capsule $DIG price (commit / deploy)
 
 Scope note: like §9, this is a CLI/economic contract, not a `.dig` byte-format contract; it is
