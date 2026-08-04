@@ -287,10 +287,7 @@ pub fn get_project_node_url_in(
 }
 
 /// Persist a project-scoped `node.url` into `<workspace_dir>/node.toml`.
-pub fn set_project_node_url_in(
-    workspace_dir: &std::path::Path,
-    url: &str,
-) -> Result<(), CliError> {
+pub fn set_project_node_url_in(workspace_dir: &std::path::Path, url: &str) -> Result<(), CliError> {
     fs::create_dir_all(workspace_dir).map_err(|e| CliError::Other(e.into()))?;
     let f = NodeConfigFile {
         node: NodeSection {
@@ -355,7 +352,9 @@ pub fn is_project_node_trusted_in(
     workspace_dir: &std::path::Path,
     url: &str,
 ) -> Result<bool, CliError> {
-    Ok(load_trust(global_dir)?.trusted.get(&trust_key(workspace_dir))
+    Ok(load_trust(global_dir)?
+        .trusted
+        .get(&trust_key(workspace_dir))
         == Some(&url.trim_end_matches('/').to_string()))
 }
 

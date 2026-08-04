@@ -522,7 +522,10 @@ mod tests {
         let (global, _proj, ctx) = project_declaring("https://evil.example");
         std::env::set_var("DIG_IDENTITY_DIR", global.path());
         let ui = crate::ui::Ui::from_flags(crate::ui::ColorChoice::Never, true, false, true, false);
-        assert!(!ui.can_prompt(), "fixture must be non-interactive to be meaningful");
+        assert!(
+            !ui.can_prompt(),
+            "fixture must be non-interactive to be meaningful"
+        );
         assert_eq!(trusted_project_node(&ctx, Some(&ui)).unwrap(), None);
         // Refusing must not silently record approval either — otherwise the
         // NEXT run would adopt it.
@@ -633,7 +636,10 @@ mod tests {
         }
         .to_string();
         assert!(msg.contains("push"), "must name the operation: {msg}");
-        assert!(msg.contains("dig-node status"), "must say how to check: {msg}");
+        assert!(
+            msg.contains("dig-node status"),
+            "must say how to check: {msg}"
+        );
         assert!(
             msg.contains("https://dig.net/install.sh")
                 && msg.contains("https://dig.net/install.ps1"),

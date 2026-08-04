@@ -533,13 +533,8 @@ mod tests {
             flag: Some("https://custom.example:9999".to_string()),
             ..Default::default()
         };
-        let resolved = resolve_node(
-            &overrides,
-            &candidates(),
-            &probe,
-            Duration::from_millis(50),
-        )
-        .await;
+        let resolved =
+            resolve_node(&overrides, &candidates(), &probe, Duration::from_millis(50)).await;
         assert_eq!(resolved.base_url, "https://custom.example:9999");
         assert_eq!(resolved.tier, ResolvedTier::Override);
         // An override is trusted outright — the ladder is never consulted.
@@ -560,13 +555,8 @@ mod tests {
             flag: Some(RPC_DIG_NET.to_string()),
             ..Default::default()
         };
-        let resolved = resolve_node(
-            &overrides,
-            &candidates(),
-            &probe,
-            Duration::from_millis(50),
-        )
-        .await;
+        let resolved =
+            resolve_node(&overrides, &candidates(), &probe, Duration::from_millis(50)).await;
         assert_eq!(resolved.base_url, RPC_DIG_NET);
         assert_eq!(resolved.tier, ResolvedTier::Override);
         assert!(resolved.is_local());
@@ -579,13 +569,8 @@ mod tests {
             flag: Some("https://custom.example/".to_string()),
             ..Default::default()
         };
-        let resolved = resolve_node(
-            &overrides,
-            &candidates(),
-            &probe,
-            Duration::from_millis(50),
-        )
-        .await;
+        let resolved =
+            resolve_node(&overrides, &candidates(), &probe, Duration::from_millis(50)).await;
         assert_eq!(resolved.base_url, "https://custom.example");
     }
 
@@ -681,13 +666,8 @@ mod tests {
             project_value: Some("https://project-node.example".into()),
             ..Default::default()
         };
-        let resolved = resolve_node(
-            &overrides,
-            &candidates(),
-            &probe,
-            Duration::from_millis(50),
-        )
-        .await;
+        let resolved =
+            resolve_node(&overrides, &candidates(), &probe, Duration::from_millis(50)).await;
         assert_eq!(resolved.base_url, "https://project-node.example");
         assert_eq!(resolved.tier, ResolvedTier::Override);
         assert!(probe.calls().is_empty());

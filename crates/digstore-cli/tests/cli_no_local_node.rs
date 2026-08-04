@@ -51,7 +51,11 @@ fn push_without_a_local_node_refuses_with_check_and_install_instructions() {
     let dir = tmp_dig();
     let mut init = dig(&dir);
     assert!(
-        init.args(["init", "site"]).output().unwrap().status.success(),
+        init.args(["init", "site"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
         "fixture setup: init must succeed"
     );
 
@@ -109,7 +113,11 @@ fn a_read_without_a_local_node_falls_through_but_says_so() {
     let dir = tmp_dig();
     let mut init = dig(&dir);
     assert!(
-        init.args(["init", "site"]).output().unwrap().status.success(),
+        init.args(["init", "site"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
         "fixture setup: init must succeed"
     );
 
@@ -143,7 +151,11 @@ fn an_unapproved_project_node_url_never_routes_a_request() {
     let dir = tmp_dig();
     let mut init = dig(&dir);
     assert!(
-        init.args(["init", "site"]).output().unwrap().status.success(),
+        init.args(["init", "site"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
         "fixture setup: init must succeed"
     );
 
@@ -191,7 +203,11 @@ fn an_approved_project_node_url_is_used() {
     let dir = tmp_dig();
     let mut init = dig(&dir);
     assert!(
-        init.args(["init", "site"]).output().unwrap().status.success(),
+        init.args(["init", "site"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
         "fixture setup: init must succeed"
     );
 

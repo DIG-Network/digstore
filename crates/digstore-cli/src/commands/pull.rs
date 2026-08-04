@@ -87,7 +87,9 @@ pub fn run(
             .and_then(|m| m.get("origin").cloned())
             .map(|raw| config::normalize_remote_url(&raw))
     } else {
-        config::configured_remote_url(ctx, &args.remote).ok().flatten()
+        config::configured_remote_url(ctx, &args.remote)
+            .ok()
+            .flatten()
     };
     if gate_base.as_deref().is_some_and(dighub::is_dighub_remote) {
         dighub::ensure_logged_in(ui)?;
