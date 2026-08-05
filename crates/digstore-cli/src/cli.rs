@@ -753,10 +753,15 @@ pub enum RemoteAction {
 #[derive(Debug, Args)]
 #[command(
     after_help = "Every network read resolves the DIG node in this fixed order (CLAUDE.md \
-§5.3), using the first that answers: an explicit override (--node flag / $DIG_NODE_URL / this \
-config) > dig.local (the installed local node) > localhost (default port) > rpc.dig.net (public \
-gateway, final fallback).\n\nEXAMPLES:\n  digstore config node.url https://dig.local:9778\n  \
-digstore config node.url --show\n  digstore config node.url --unset"
+§5.3), using the first that answers: --node flag > $DIG_NODE_URL > this project's node.url \
+(--local) > the machine-wide node.url > dig.local (the installed local node) > localhost \
+(default port) > rpc.dig.net (public gateway, final fallback).\n\n--local writes \
+.dig/node.toml in the current project, so one project can use the public gateway while another \
+uses your own node. Because that file can travel inside a repository, a node.url digs did not \
+see you set is NOT used until you approve it.\n\nEXAMPLES:\n  \
+digstore config node.url --local https://rpc.dig.net\n  digstore config node.url --local --show\n  \
+digstore config node.url --local --unset\n  digstore config node.url https://dig.local\n  \
+digstore config node.url --show"
 )]
 pub struct ConfigArgs {
     #[command(subcommand)]
@@ -778,6 +783,11 @@ pub enum ConfigAction {
         /// Clear the persisted value, reverting to the dig.local/localhost/rpc.dig.net ladder.
         #[arg(long)]
         unset: bool,
+        /// Apply to THIS project only (`.dig/node.toml`) instead of the whole
+        /// machine. A project value beats the machine-wide one, and setting it
+        /// here also approves it, so it takes effect immediately.
+        #[arg(long)]
+        local: bool,
     },
 }
 

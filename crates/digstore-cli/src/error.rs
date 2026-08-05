@@ -57,6 +57,40 @@ pub enum CliError {
         required: u64,
         cap: usize,
     },
+    /// No DIG node on this machine answered the §5.3 ladder, and the requested
+    /// operation needs one.
+    ///
+    /// Reads deliberately do NOT raise this — they fall through to the public
+    /// gateway with a visible notice, so consuming content stays frictionless
+    /// (`CLAUDE.md` §6.0). It is raised only for operations that need a node the
+    /// user controls: identity-signed writes (`push`, `revoke`) would otherwise
+    /// publish the user's content AND their §21.9 request signatures to a public
+    /// server they never chose.
+    ///
+    /// The message carries the two things a stuck user needs — how to check
+    /// whether the node is running, and where to get it — plus the escape hatch
+    /// for someone who genuinely wants a remote node.
+    #[error(
+        "no DIG node is running on this machine, and `{operation}` needs one.\n\
+         \n\
+         Check whether your node is running:\n    \
+             dig-node status        (exit 0 = serving, 1 = not serving)\n\
+         Start it if it is installed but stopped:\n    \
+             dig-node start\n\
+         \n\
+         Don't have a node yet? Install one:\n    \
+             Linux/macOS   curl -fsSL https://dig.net/install.sh | sudo sh\n    \
+             Windows       irm https://dig.net/install.ps1 | iex   (in an admin PowerShell)\n    \
+             Docs          https://docs.dig.net/docs/run-a-node\n\
+         \n\
+         To use a remote node for this project instead:\n    \
+             digstore config node.url --local https://rpc.dig.net"
+    )]
+    NoLocalNode {
+        /// The operation that required a local node, e.g. `push` — named in the
+        /// message so the user knows WHICH command to retry.
+        operation: String,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -84,6 +118,7 @@ impl CliError {
             CliError::UpdateFailed(_) => 16,
             CliError::TooLarge(_) => 17,
             CliError::NeedsConsolidation { .. } => 18,
+            CliError::NoLocalNode { .. } => 19,
             CliError::Other(_) => 1,
         }
     }
@@ -112,6 +147,7 @@ impl CliError {
             CliError::UpdateFailed(_) => "UPDATE_FAILED",
             CliError::TooLarge(_) => "TOO_LARGE",
             CliError::NeedsConsolidation { .. } => "NEEDS_CONSOLIDATION",
+            CliError::NoLocalNode { .. } => "NO_LOCAL_NODE",
             CliError::Other(_) => "ERROR",
         }
     }
@@ -177,6 +213,11 @@ impl CliError {
                 18,
                 "the wallet is spendable but too fragmented; consolidate coins (or pass --consolidate) first",
             ),
+            (
+                "NO_LOCAL_NODE",
+                19,
+                "no DIG node is running on this machine and this operation needs one; start or install dig-node",
+            ),
         ]
     }
 
@@ -184,6 +225,9 @@ impl CliError {
     pub fn hint(&self) -> Option<String> {
         match self {
             CliError::NoStore(_) => Some("run `digstore init` to create a store here".into()),
+            // The variant's own message already carries the check/install/escape
+            // instructions in full; a hint here would only repeat them.
+            CliError::NoLocalNode { .. } => Some("run `dig-node status` to check your node".into()),
             CliError::NonFastForward => Some("run `digstore pull` first, then push".into()),
             CliError::Unauthorized(_) => Some("check your credentials / store signing key".into()),
             CliError::NotFound(_) => Some("run `digstore log` to list capsules and keys".into()),

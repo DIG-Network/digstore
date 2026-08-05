@@ -51,6 +51,10 @@ dig-chainsource-interface = "0.1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# The SAME parser reqwest dials with. Redaction must not re-implement authority parsing:
+# a hand-rolled split terminated the authority at `/` only, while the WHATWG parser also
+# terminates it at `\`, `?` and `#`, so a displayed host could differ from the dialled one.
+url = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

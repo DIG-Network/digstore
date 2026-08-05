@@ -17,7 +17,12 @@ use digstore_chain::dig::{format_dig, format_xch};
 /// only after the update confirms is the generation persisted. A confirmation
 /// timeout (or any confirm error) leaves staging + history untouched and a
 /// resumable Pending `anchor.toml`, so a re-run reuses the in-flight update.
-pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(), CliError> {
+pub fn run(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    args: CommitArgs,
+    node_flag: Option<&str>,
+) -> Result<(), CliError> {
     // 1. Compute the next root from staging. Persists NOTHING. Fails fast if
     //    nothing is staged — before any wallet/anchor work.
     let prepared = store_ops::stage_to_root(ctx)?;
@@ -277,7 +282,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                 // human branch, `commit --push --json` would silently NOT publish.
                 // `do_push` only pushes when `--push` is set (json/non-TTY never
                 // prompts), so json + no `--push` still pushes nothing — unchanged.
-                let pushed = do_push(ctx, ui, &args);
+                let pushed = do_push(ctx, ui, &args, node_flag);
                 let mut obj = serde_json::json!({
                     "root": outcome.roothash.to_hex(),
                     "capsule": capsule,
@@ -323,7 +328,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: CommitArgs) -> Result<(),
                 crate::ops::seed::report_seed(ui, &seed_outcome);
                 // Offer to publish this deployment to DIGHUb. Never blocks/prompts in
                 // --json/non-TTY runs (see `maybe_offer_push`).
-                maybe_offer_push(ctx, ui, &args);
+                maybe_offer_push(ctx, ui, &args, node_flag);
             }
             Ok(())
         }
@@ -413,6 +418,7 @@ fn do_push(
     ctx: &CliContext,
     ui: &crate::ui::Ui,
     args: &CommitArgs,
+    node_flag: Option<&str>,
 ) -> Option<Result<crate::commands::push::PushOutcome, CliError>> {
     // Explicit opt-out, or a non-interactive run with no `--push`: do not push.
     if args.no_push || (!args.push && !ui.can_prompt()) {
@@ -427,15 +433,22 @@ fn do_push(
     if !push {
         return None;
     }
-    Some(crate::commands::push::push_core(ctx, ui, "origin"))
+    Some(crate::commands::push::push_core(
+        ctx, ui, "origin", node_flag,
+    ))
 }
 
 /// Human-mode wrapper over [`do_push`]: pushes per the decision, then prints the
 /// same `pushed root … to origin` success line `digstore push origin` would, or
 /// surfaces the error + the retry hint. (The JSON branch folds the [`do_push`]
 /// result into its single object instead of printing.)
-fn maybe_offer_push(ctx: &CliContext, ui: &crate::ui::Ui, args: &CommitArgs) {
-    match do_push(ctx, ui, args) {
+fn maybe_offer_push(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    args: &CommitArgs,
+    node_flag: Option<&str>,
+) {
+    match do_push(ctx, ui, args, node_flag) {
         // No push attempted (opted out / declined / non-interactive default).
         None => ui.hint("digstore push origin"),
         Some(Ok(out)) => {

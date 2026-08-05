@@ -260,7 +260,12 @@ fn run_build(ui: &crate::ui::Ui, op_dir: &std::path::Path, cmd: &str) -> Result<
     Ok(())
 }
 
-pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(), CliError> {
+pub fn run(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    args: DeployArgs,
+    node_flag: Option<&str>,
+) -> Result<(), CliError> {
     // #18 PREVIEW: free, no chain, no wallet, no deploy key, NO store id. Run the
     // real compile→verify→decrypt read path on the build, write a local preview
     // artifact (`.dig` module) + a content-address, and STOP — before any
@@ -438,6 +443,7 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: DeployArgs) -> Result<(),
             // / `dig.toml` auto-push still govern.
             no_cache: false,
         },
+        node_flag,
     )?;
 
     // 6. Point the developer at the live deployment. The capsule is already

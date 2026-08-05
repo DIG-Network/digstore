@@ -8,7 +8,8 @@ mod test_helpers;
 use test_helpers::*;
 
 use digstore_remote::{
-    resolve_node, HealthProbe, HttpHealthProbe, OverrideInputs, RemoteServer, ResolvedTier,
+    resolve_node, HealthProbe, HttpHealthProbe, LadderCandidate, OverrideInputs, RemoteServer,
+    ResolvedTier,
 };
 use std::time::Duration;
 
@@ -72,12 +73,43 @@ async fn full_ladder_with_real_http_probe_prefers_first_live_tier() {
     let probe = HttpHealthProbe::default();
     let resolved = resolve_node(
         &OverrideInputs::default(),
-        &dig_local,
-        &localhost,
+        &[
+            LadderCandidate::new(dig_local.clone(), ResolvedTier::DigLocal),
+            LadderCandidate::new(localhost, ResolvedTier::Localhost),
+        ],
         &probe,
         Duration::from_millis(500),
     )
     .await;
     assert_eq!(resolved.base_url, dig_local);
     assert_eq!(resolved.tier, ResolvedTier::DigLocal);
+    assert!(resolved.is_local());
+}
+
+/// The real-wire counterpart of the unit test: a DEAD first rung followed by a
+/// LIVE second one, over actual sockets. Proves the production probe reports
+/// "unreachable" (rather than erroring out of the loop) and that the ladder
+/// then reaches a server that genuinely answers `/health` — the exact shape
+/// that was broken in the field, where a wrong-scheme first rung meant the
+/// live localhost node was never reached.
+#[tokio::test]
+async fn full_ladder_with_real_http_probe_reaches_a_live_lower_rung() {
+    let dead_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dead_addr = dead_listener.local_addr().unwrap();
+    drop(dead_listener);
+    let localhost = spawn_server().await;
+
+    let probe = HttpHealthProbe::default();
+    let resolved = resolve_node(
+        &OverrideInputs::default(),
+        &[
+            LadderCandidate::new(format!("http://{dead_addr}"), ResolvedTier::DigLocal),
+            LadderCandidate::new(localhost.clone(), ResolvedTier::Localhost),
+        ],
+        &probe,
+        Duration::from_millis(500),
+    )
+    .await;
+    assert_eq!(resolved.base_url, localhost);
+    assert_eq!(resolved.tier, ResolvedTier::Localhost);
 }

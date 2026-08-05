@@ -19,10 +19,18 @@ fn parse_reason(s: &str) -> Result<RevocationReason, CliError> {
     }
 }
 
-pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: RevokeArgs) -> Result<(), CliError> {
+pub fn run(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    args: RevokeArgs,
+    node_flag: Option<&str>,
+) -> Result<(), CliError> {
     // Product gate: require a dighub account only for a DIGHUB remote (*.dig.net). Revoking on a
     // self-hosted / loopback node needs no dighub account.
-    let gate_base = config::resolve_remote_url(ctx, &args.remote).unwrap_or_default();
+    let gate_base = config::configured_remote_url(ctx, &args.remote)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     if dighub::is_dighub_remote(&gate_base) {
         dighub::ensure_logged_in(ui)?;
     }
@@ -54,7 +62,15 @@ pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: RevokeArgs) -> Result<(),
         args.remote
     ))?;
 
-    let base = config::resolve_remote_url(ctx, &args.remote)?;
+    // Publishing a tombstone is an identity-signed write, like push (#2099).
+    let base = crate::ops::node::resolve_remote_or_origin(
+        ctx,
+        ui,
+        &args.remote,
+        node_flag,
+        "revoke",
+        crate::ops::node::NodeRequirement::LocalNode,
+    )?;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

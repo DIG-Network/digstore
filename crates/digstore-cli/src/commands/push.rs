@@ -1,8 +1,7 @@
 use crate::cli::PushArgs;
-use crate::config;
 use crate::context::CliContext;
 use crate::error::CliError;
-use crate::ops::{dighub, remote_ops, store_ops};
+use crate::ops::{dighub, node, remote_ops, store_ops};
 
 /// The outcome of a push: the pushed root and whether the dighub claim succeeded.
 pub struct PushOutcome {
@@ -18,8 +17,19 @@ pub fn push_core(
     ctx: &CliContext,
     ui: &crate::ui::Ui,
     remote: &str,
+    node_flag: Option<&str>,
 ) -> Result<PushOutcome, CliError> {
-    let base = config::resolve_remote_url(ctx, remote)?;
+    // A push signs every request with the caller's identity key (§21.9), so an
+    // unconfigured `origin` must resolve to a node the user controls — never
+    // silently to the public gateway (#2099).
+    let base = node::resolve_remote_or_origin(
+        ctx,
+        ui,
+        remote,
+        node_flag,
+        "push",
+        node::NodeRequirement::LocalNode,
+    )?;
     // Product gate: require a dighub account — but ONLY for dighub-managed remotes
     // (*.dig.net). Pushing to a self-hosted / loopback node needs no dighub account.
     // (Does NOT change the store-key/§21.9 push owner-auth, unchanged below.)
@@ -49,8 +59,13 @@ pub fn push_core(
     Ok(PushOutcome { root, claimed })
 }
 
-pub fn run(ctx: &CliContext, ui: &crate::ui::Ui, args: PushArgs) -> Result<(), CliError> {
-    let out = push_core(ctx, ui, &args.remote)?;
+pub fn run(
+    ctx: &CliContext,
+    ui: &crate::ui::Ui,
+    args: PushArgs,
+    node_flag: Option<&str>,
+) -> Result<(), CliError> {
+    let out = push_core(ctx, ui, &args.remote, node_flag)?;
 
     if ui.json() {
         ui.emit_json(&serde_json::json!({

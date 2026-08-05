@@ -699,3 +699,94 @@ bound-induced export failure (timeout vs fuel exhaustion), not as an opaque engi
 
 Each export call is armed with its own fresh budget; a serve sequence (alloc → call → read →
 dealloc) is deliberately NOT a single combined budget.
+
+## 14. Client → node resolution (the origin)
+
+This section is normative for every command that must reach a DIG node: which endpoint is
+chosen, how a project pins its own, and when a missing local node is an error rather than a
+fall-through. It implements `CLAUDE.md` §5.3.
+
+### 14.1 Precedence
+
+The endpoint is decided by the FIRST of these that is present; a configured value overrides the
+probe ladder entirely and is never probed:
+
+1. `--node <url>`
+2. `$DIG_NODE_URL` (an empty value counts as unset)
+3. the PROJECT `node.url` — `<workspace>/node.toml`, i.e. `.dig/node.toml`, found by the same
+   nearest-ancestor `.dig` walk that locates the workspace — **only when approved** (§14.3)
+4. the MACHINE `node.url` — `<DIG_IDENTITY_DIR | OS config dir>/dig/config.toml`
+5. otherwise, the probe ladder (§14.2)
+
+A trailing `/` is stripped from every configured value.
+
+### 14.2 The probe ladder
+
+With no configured value, these candidates are probed IN ORDER with `GET {base}/health` and a
+short timeout; the FIRST to answer 2xx wins. A non-2xx, a transport error, or an elapsed
+timeout falls through to the next candidate; a timeout MUST NOT abort the remaining candidates.
+
+| # | Candidate | Tier | dig-node listener |
+|---|---|---|---|
+| 1 | `https://dig.local` | `DigLocal` | `127.0.0.2:443` (present only with a dig-cert leaf) |
+| 2 | `http://dig.local` | `DigLocal` | `127.0.0.2:80` |
+| 3 | `http://localhost:<port>` | `Localhost` | `127.0.0.1:<port>` and `[::1]:<port>` |
+| — | `https://rpc.dig.net` | `PublicGateway` | terminal fallback, returned UNPROBED |
+
+`<port>` is `$DIG_NODE_PORT` when it parses to a non-zero `u16`, else `9778`. The port applies
+ONLY to candidate 3: the `dig.local` binds are fixed at 443/80 by the `127.0.0.2` hosts alias.
+The candidate URLs MUST match the addresses `dig-node` actually binds (`dig-node/SPEC.md`
+§4.1, §4.1a) — in particular the loopback listener is PLAINTEXT, never TLS.
+
+Resolution MUST NOT fail: the public gateway is always a valid last resort. The resolved choice
+is cached for the invocation.
+
+`https://rpc.dig.net` is an ordinary node that happens to be well known. It MUST NOT be the
+primary or hard-coded endpoint of any surface.
+
+### 14.3 A project-declared node is untrusted until approved (HARD RULE)
+
+`.dig/node.toml` can travel inside a repository, and every request this CLI sends to the
+resolved node carries the caller's §21.9 identity SIGNATURE. A project-declared value is
+therefore an untrusted input that PROPOSES an endpoint; it MUST NOT route any request until the
+user has approved it on this machine.
+
+Approval is recorded in `<global dig dir>/trusted-project-nodes.toml`, keyed by the
+canonicalized project directory and holding the exact approved URL. Both halves are required:
+
+- Approval MUST be scoped to the project that was approved — it MUST NOT authorize the same URL
+  in another directory.
+- Approval MUST be scoped to the value that was approved — if the project later declares a
+  DIFFERENT URL, approval is re-armed and the new value MUST NOT be used until re-approved.
+
+`digstore config node.url --local <url>` writes the value AND records approval, because typing
+the URL is itself the approval. An unapproved value MAY be approved by an interactive
+confirmation. When the CLI cannot prompt (non-interactive, `--quiet`, `--json`, no TTY) the
+answer is always NO: it MUST warn, ignore the value, fall back to the ladder, and MUST NOT
+record approval.
+
+### 14.4 The `origin` remote
+
+An `origin` that has been configured with `digstore remote add` resolves to that URL.
+
+An UNCONFIGURED `origin` resolves through §14.1/§14.2 — the user's own node. It MUST NOT
+default to `https://rpc.dig.net`. Any other unconfigured remote name is an error.
+
+### 14.5 Missing local node — read vs. write
+
+When resolution reaches the `PublicGateway` tier (nothing local answered AND no value was
+configured), the behaviour depends on what the operation needs:
+
+- **Read** (`pull`, `clone`, `cat`, `doctor`) — proceeds against the gateway, so consuming
+  content works without a node installed, and MUST tell the user the read left this machine.
+- **Local node required** (`push`, `revoke`, and any other identity-signed write) — MUST fail
+  with `NO_LOCAL_NODE` (exit 19) rather than degrade. Falling through would publish the user's
+  content and their §21.9 request signatures to a server they never chose.
+
+The error MUST state how to check the node (`dig-node status`), where to install it
+(`https://dig.net/install.sh`, `https://dig.net/install.ps1`,
+`https://docs.dig.net/docs/run-a-node`), and the escape hatch
+(`digstore config node.url --local <url>`).
+
+Any tier OTHER than `PublicGateway` — including `Override` — satisfies both requirements: an
+explicitly named endpoint is the user's own choice even when it is `rpc.dig.net`.

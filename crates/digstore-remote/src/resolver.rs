@@ -60,9 +60,24 @@ pub enum ResolvedTier {
 /// The resolved node endpoint + how it was chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedNode {
-    /// Base URL, e.g. `https://dig.local:9778` or `https://rpc.dig.net`.
+    /// Base URL, e.g. `http://localhost:9778` or `https://rpc.dig.net`.
     pub base_url: String,
     pub tier: ResolvedTier,
+}
+
+impl ResolvedNode {
+    /// True when a node on THIS machine answered — i.e. the ladder did not have
+    /// to fall through to the public gateway.
+    ///
+    /// An [`Override`](ResolvedTier::Override) counts as local for this purpose:
+    /// the user named that endpoint deliberately, so it is their chosen node
+    /// whatever it points at. This is the predicate a caller uses to decide
+    /// between "read remotely, but say so" and "refuse, because this operation
+    /// needs a node the user actually controls" (see the `digstore` CLI's
+    /// `NoLocalNode` error).
+    pub fn is_local(&self) -> bool {
+        !matches!(self.tier, ResolvedTier::PublicGateway)
+    }
 }
 
 /// The transport a resolved node connection should use. Plain HTTPS is what every
@@ -92,7 +107,12 @@ pub enum OverrideSource {
     Flag,
     /// `$DIG_NODE_URL`.
     Env,
-    /// Persisted `digstore config node.url <url>`.
+    /// The PROJECT-scoped `node.url` (`digstore config node.url --local`),
+    /// persisted in the nearest ancestor `.dig/node.toml`. Beats the global
+    /// value because it is the more specific scope, the same way a repository
+    /// `.git/config` beats `~/.gitconfig`.
+    Project,
+    /// Persisted machine-wide `digstore config node.url <url>`.
     Config,
 }
 
@@ -108,48 +128,80 @@ pub trait HealthProbe: Send + Sync {
 }
 
 /// Explicit override inputs, already extracted from their sources by the caller
-/// (a CLI flag, `std::env::var`, or the persisted config file) so this module
-/// stays free of I/O and is trivially unit-testable. Precedence: `flag` >
-/// `env_var` > `config_value`.
+/// (a CLI flag, `std::env::var`, or a persisted config file) so this module
+/// stays free of I/O and is trivially unit-testable.
+///
+/// Precedence, highest first: `flag` > `env_var` > `project_value` >
+/// `config_value` — narrowest scope wins, and anything the user typed on THIS
+/// invocation beats anything persisted.
+///
+/// `project_value` is the caller's responsibility to gate: it originates from a
+/// file that can travel inside a cloned repository, so the CLI only populates
+/// it once that specific directory+URL pair has been trusted (see the CLI's
+/// `ops::node`). This struct trusts whatever it is handed.
 #[derive(Debug, Clone, Default)]
 pub struct OverrideInputs {
     pub flag: Option<String>,
     pub env_var: Option<String>,
+    pub project_value: Option<String>,
     pub config_value: Option<String>,
 }
 
 impl OverrideInputs {
     /// The highest-precedence override present, with its source tag.
     fn resolve(&self) -> Option<(&str, OverrideSource)> {
-        if let Some(v) = self.flag.as_deref() {
-            return Some((v, OverrideSource::Flag));
+        let ordered = [
+            (self.flag.as_deref(), OverrideSource::Flag),
+            (self.env_var.as_deref(), OverrideSource::Env),
+            (self.project_value.as_deref(), OverrideSource::Project),
+            (self.config_value.as_deref(), OverrideSource::Config),
+        ];
+        ordered
+            .into_iter()
+            .find_map(|(value, source)| value.map(|v| (v, source)))
+    }
+}
+
+/// One rung of the local ladder: a fully-formed base URL plus the tier it
+/// represents. A single tier may need SEVERAL candidates — `dig.local` is
+/// served on both `https://dig.local` (`127.0.0.2:443`, only once the installer
+/// has provisioned a dig-cert leaf) and `http://dig.local` (`127.0.0.2:80`), so
+/// the ladder must try both before concluding `dig.local` is absent
+/// (`dig-node/SPEC.md` §4.1/§4.1a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LadderCandidate {
+    /// Fully-formed base URL, scheme included, e.g. `http://localhost:9778`.
+    pub url: String,
+    /// The tier to report if THIS candidate is the one that answers.
+    pub tier: ResolvedTier,
+}
+
+impl LadderCandidate {
+    /// A candidate at `tier` reachable at `url` (trailing slash normalized away).
+    pub fn new(url: impl Into<String>, tier: ResolvedTier) -> Self {
+        Self {
+            url: url.into().trim_end_matches('/').to_string(),
+            tier,
         }
-        if let Some(v) = self.env_var.as_deref() {
-            return Some((v, OverrideSource::Env));
-        }
-        if let Some(v) = self.config_value.as_deref() {
-            return Some((v, OverrideSource::Config));
-        }
-        None
     }
 }
 
 /// Resolve the node endpoint per `CLAUDE.md` §5.3 / `dig-node/SPEC.md` §2.2:
-/// override > `dig.local` > `localhost` > `rpc.dig.net`, probing each
-/// non-override tier with `probe` and falling through on a timeout/no-response.
-/// `rpc.dig.net` is the final fallback and is returned even if it does not
-/// itself answer the probe (there is nowhere left to fall through to).
+/// an explicit override wins outright; otherwise each candidate in
+/// `local_candidates` is probed IN ORDER and the first to answer wins;
+/// `rpc.dig.net` is the terminal fallback when none does.
 ///
-/// `dig_local_url`/`localhost_url` are the fully-formed base URLs for those
-/// tiers (callers build them once, e.g. `https://dig.local:9778`); passing them
-/// in (rather than hardcoding a scheme/port here) keeps this function transport-
-/// agnostic and lets callers vary the local node port via `DIG_NODE_PORT`.
+/// Candidates are supplied by the caller rather than built here so this
+/// function stays transport-agnostic: the caller owns the scheme/host/port
+/// knowledge (which differs per tier — see [`LadderCandidate`]) and can vary it
+/// via `DIG_NODE_PORT`.
 ///
 /// Panics-free; never fails — the public gateway is always a valid last resort.
+/// Callers that must NOT silently use the public gateway branch on
+/// [`ResolvedNode::is_local`].
 pub async fn resolve_node(
     overrides: &OverrideInputs,
-    dig_local_url: &str,
-    localhost_url: &str,
+    local_candidates: &[LadderCandidate],
     probe: &dyn HealthProbe,
     timeout: Duration,
 ) -> ResolvedNode {
@@ -160,18 +212,13 @@ pub async fn resolve_node(
         };
     }
 
-    if probe.probe(dig_local_url, timeout).await {
-        return ResolvedNode {
-            base_url: dig_local_url.trim_end_matches('/').to_string(),
-            tier: ResolvedTier::DigLocal,
-        };
-    }
-
-    if probe.probe(localhost_url, timeout).await {
-        return ResolvedNode {
-            base_url: localhost_url.trim_end_matches('/').to_string(),
-            tier: ResolvedTier::Localhost,
-        };
+    for candidate in local_candidates {
+        if probe.probe(&candidate.url, timeout).await {
+            return ResolvedNode {
+                base_url: candidate.url.clone(),
+                tier: candidate.tier,
+            };
+        }
     }
 
     ResolvedNode {
@@ -210,13 +257,12 @@ impl CachedResolver {
     pub async fn get_or_resolve(
         &self,
         overrides: &OverrideInputs,
-        dig_local_url: &str,
-        localhost_url: &str,
+        local_candidates: &[LadderCandidate],
         probe: &dyn HealthProbe,
         timeout: Duration,
     ) -> ResolvedNode {
         self.cached
-            .get_or_init(|| resolve_node(overrides, dig_local_url, localhost_url, probe, timeout))
+            .get_or_init(|| resolve_node(overrides, local_candidates, probe, timeout))
             .await
             .clone()
     }
@@ -306,59 +352,121 @@ mod tests {
         }
     }
 
-    const DIG_LOCAL: &str = "https://dig.local:9778";
-    const LOCALHOST: &str = "https://localhost:9778";
+    // The REAL candidate set a `dig-node` install presents (`dig-node/SPEC.md`
+    // §4.1/§4.1a): `dig.local` is portless on :443/:80, and the localhost
+    // listener is PLAINTEXT on 9778. Using the real shapes here (rather than
+    // two abstract URLs) is deliberate — a fixture built from invented
+    // scheme/port pairs is exactly what let the shipped ladder probe
+    // `https://dig.local:9778`, where nothing has ever listened, for two
+    // releases without a test noticing.
+    const DIG_LOCAL_HTTPS: &str = "https://dig.local";
+    const DIG_LOCAL_HTTP: &str = "http://dig.local";
+    const LOCALHOST: &str = "http://localhost:9778";
 
+    /// The three-rung candidate list under test, in ladder order.
+    fn candidates() -> Vec<LadderCandidate> {
+        vec![
+            LadderCandidate::new(DIG_LOCAL_HTTPS, ResolvedTier::DigLocal),
+            LadderCandidate::new(DIG_LOCAL_HTTP, ResolvedTier::DigLocal),
+            LadderCandidate::new(LOCALHOST, ResolvedTier::Localhost),
+        ]
+    }
+
+    /// Only `dig.local`-over-TLS answers. Every LOWER rung is scripted to answer
+    /// too, so an implementation that probed in the wrong order — or probed
+    /// everything and picked by rank — would return a DIFFERENT url here and
+    /// fail. A fixture where only the winner answers cannot see that.
     #[tokio::test]
     async fn prefers_dig_local_when_it_answers() {
-        let probe = ScriptedProbe::new(&[(DIG_LOCAL, true), (LOCALHOST, true)]);
+        let probe = ScriptedProbe::new(&[
+            (DIG_LOCAL_HTTPS, true),
+            (DIG_LOCAL_HTTP, true),
+            (LOCALHOST, true),
+        ]);
         let resolved = resolve_node(
             &OverrideInputs::default(),
-            DIG_LOCAL,
-            LOCALHOST,
+            &candidates(),
             &probe,
             Duration::from_millis(50),
         )
         .await;
-        assert_eq!(resolved.base_url, DIG_LOCAL);
+        assert_eq!(resolved.base_url, DIG_LOCAL_HTTPS);
         assert_eq!(resolved.tier, ResolvedTier::DigLocal);
-        // localhost must NOT have been probed once dig.local answered — first
-        // responder wins, not "probe everything and rank".
-        assert_eq!(probe.calls(), vec![DIG_LOCAL.to_string()]);
+        // Nothing below the first responder may be probed — first responder
+        // wins, not "probe everything and rank".
+        assert_eq!(probe.calls(), vec![DIG_LOCAL_HTTPS.to_string()]);
+    }
+
+    /// The machine has no dig-cert leaf yet, so `:443` is dead but `:80` serves
+    /// (`SPEC.md` §4.1a fail-soft). The ladder must still report `DigLocal` —
+    /// and must NOT skip to localhost. `localhost` is scripted live so a ladder
+    /// that dropped the http rung would visibly resolve to the wrong tier.
+    #[tokio::test]
+    async fn falls_through_to_plaintext_dig_local_when_tls_is_absent() {
+        let probe = ScriptedProbe::new(&[
+            (DIG_LOCAL_HTTPS, false),
+            (DIG_LOCAL_HTTP, true),
+            (LOCALHOST, true),
+        ]);
+        let resolved = resolve_node(
+            &OverrideInputs::default(),
+            &candidates(),
+            &probe,
+            Duration::from_millis(50),
+        )
+        .await;
+        assert_eq!(resolved.base_url, DIG_LOCAL_HTTP);
+        assert_eq!(resolved.tier, ResolvedTier::DigLocal);
+        assert_eq!(
+            probe.calls(),
+            vec![DIG_LOCAL_HTTPS.to_string(), DIG_LOCAL_HTTP.to_string()]
+        );
     }
 
     #[tokio::test]
     async fn falls_through_to_localhost_when_dig_local_is_unreachable() {
-        let probe = ScriptedProbe::new(&[(DIG_LOCAL, false), (LOCALHOST, true)]);
+        let probe = ScriptedProbe::new(&[
+            (DIG_LOCAL_HTTPS, false),
+            (DIG_LOCAL_HTTP, false),
+            (LOCALHOST, true),
+        ]);
         let resolved = resolve_node(
             &OverrideInputs::default(),
-            DIG_LOCAL,
-            LOCALHOST,
+            &candidates(),
             &probe,
             Duration::from_millis(50),
         )
         .await;
         assert_eq!(resolved.base_url, LOCALHOST);
         assert_eq!(resolved.tier, ResolvedTier::Localhost);
+        assert!(resolved.is_local());
         assert_eq!(
             probe.calls(),
-            vec![DIG_LOCAL.to_string(), LOCALHOST.to_string()]
+            vec![
+                DIG_LOCAL_HTTPS.to_string(),
+                DIG_LOCAL_HTTP.to_string(),
+                LOCALHOST.to_string()
+            ]
         );
     }
 
     #[tokio::test]
     async fn falls_through_to_public_gateway_as_final_fallback() {
-        let probe = ScriptedProbe::new(&[(DIG_LOCAL, false), (LOCALHOST, false)]);
+        let probe = ScriptedProbe::new(&[]); // nothing answers
         let resolved = resolve_node(
             &OverrideInputs::default(),
-            DIG_LOCAL,
-            LOCALHOST,
+            &candidates(),
             &probe,
             Duration::from_millis(50),
         )
         .await;
         assert_eq!(resolved.base_url, RPC_DIG_NET);
         assert_eq!(resolved.tier, ResolvedTier::PublicGateway);
+        // The distinguishing assertion: the gateway is NOT a local node, which
+        // is what gates the local-node-required operations.
+        assert!(!resolved.is_local());
+        // Every rung must have been tried before giving up.
+        assert_eq!(probe.calls().len(), 3);
     }
 
     /// A tier that never resolves/times out must fall through exactly like an
@@ -379,8 +487,7 @@ mod tests {
         }
         let resolved = resolve_node(
             &OverrideInputs::default(),
-            DIG_LOCAL,
-            LOCALHOST,
+            &candidates(),
             &NeverRespondsProbe,
             Duration::from_millis(5),
         )
@@ -388,26 +495,71 @@ mod tests {
         assert_eq!(resolved.tier, ResolvedTier::PublicGateway);
     }
 
+    /// A timing-out rung must not ABORT the ladder: a live rung BELOW it still
+    /// wins. The earlier fixture (nothing answers) passes whether the loop
+    /// continues or returns early on the first timeout, so it cannot see this.
     #[tokio::test]
-    async fn explicit_override_wins_without_probing_anything() {
-        let probe = ScriptedProbe::new(&[(DIG_LOCAL, true), (LOCALHOST, true)]);
-        let overrides = OverrideInputs {
-            flag: Some("https://custom.example:9999".to_string()),
-            env_var: None,
-            config_value: None,
-        };
+    async fn a_timing_out_rung_does_not_abort_the_rungs_below_it() {
+        struct SlowFirstRungProbe;
+        #[async_trait::async_trait]
+        impl HealthProbe for SlowFirstRungProbe {
+            async fn probe(&self, base_url: &str, timeout: Duration) -> bool {
+                if base_url.contains("dig.local") {
+                    tokio::time::sleep(timeout * 2).await;
+                    return false;
+                }
+                true
+            }
+        }
         let resolved = resolve_node(
-            &overrides,
-            DIG_LOCAL,
-            LOCALHOST,
-            &probe,
-            Duration::from_millis(50),
+            &OverrideInputs::default(),
+            &candidates(),
+            &SlowFirstRungProbe,
+            Duration::from_millis(5),
         )
         .await;
+        assert_eq!(resolved.base_url, LOCALHOST);
+        assert_eq!(resolved.tier, ResolvedTier::Localhost);
+    }
+
+    #[tokio::test]
+    async fn explicit_override_wins_without_probing_anything() {
+        let probe = ScriptedProbe::new(&[
+            (DIG_LOCAL_HTTPS, true),
+            (DIG_LOCAL_HTTP, true),
+            (LOCALHOST, true),
+        ]);
+        let overrides = OverrideInputs {
+            flag: Some("https://custom.example:9999".to_string()),
+            ..Default::default()
+        };
+        let resolved =
+            resolve_node(&overrides, &candidates(), &probe, Duration::from_millis(50)).await;
         assert_eq!(resolved.base_url, "https://custom.example:9999");
         assert_eq!(resolved.tier, ResolvedTier::Override);
         // An override is trusted outright — the ladder is never consulted.
         assert!(probe.calls().is_empty());
+        // A deliberately-named endpoint counts as the user's own node, so it
+        // never trips the "no local node" refusal.
+        assert!(resolved.is_local());
+    }
+
+    /// An override naming the public gateway is the user's explicit choice and
+    /// must be honoured as such — reported as `Override`, not demoted to
+    /// `PublicGateway`, so `digstore push --node https://rpc.dig.net` works
+    /// while a silent fall-through to the same host still refuses.
+    #[tokio::test]
+    async fn override_naming_the_public_gateway_is_still_an_override() {
+        let probe = ScriptedProbe::new(&[]);
+        let overrides = OverrideInputs {
+            flag: Some(RPC_DIG_NET.to_string()),
+            ..Default::default()
+        };
+        let resolved =
+            resolve_node(&overrides, &candidates(), &probe, Duration::from_millis(50)).await;
+        assert_eq!(resolved.base_url, RPC_DIG_NET);
+        assert_eq!(resolved.tier, ResolvedTier::Override);
+        assert!(resolved.is_local());
     }
 
     #[tokio::test]
@@ -417,28 +569,36 @@ mod tests {
             flag: Some("https://custom.example/".to_string()),
             ..Default::default()
         };
-        let resolved = resolve_node(
-            &overrides,
-            DIG_LOCAL,
-            LOCALHOST,
-            &probe,
-            Duration::from_millis(50),
-        )
-        .await;
+        let resolved =
+            resolve_node(&overrides, &candidates(), &probe, Duration::from_millis(50)).await;
         assert_eq!(resolved.base_url, "https://custom.example");
+    }
+
+    #[test]
+    fn candidate_normalizes_a_trailing_slash() {
+        let c = LadderCandidate::new("http://localhost:9778/", ResolvedTier::Localhost);
+        assert_eq!(c.url, "http://localhost:9778");
     }
 
     // -----------------------------------------------------------------------
     // Override precedence: flag > env > config.
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn flag_wins_over_env_and_config() {
-        let overrides = OverrideInputs {
+    /// Every tier populated with a DISTINCT value, so the winner identifies
+    /// itself unambiguously. A fixture that left the lower tiers empty could
+    /// not tell "flag wins" from "only flag was read".
+    fn all_tiers() -> OverrideInputs {
+        OverrideInputs {
             flag: Some("flag-url".into()),
             env_var: Some("env-url".into()),
+            project_value: Some("project-url".into()),
             config_value: Some("config-url".into()),
-        };
+        }
+    }
+
+    #[test]
+    fn flag_wins_over_every_other_source() {
+        let overrides = all_tiers();
         assert_eq!(
             overrides.resolve(),
             Some(("flag-url", OverrideSource::Flag))
@@ -447,22 +607,36 @@ mod tests {
     }
 
     #[test]
-    fn env_wins_over_config_when_no_flag() {
+    fn env_wins_over_project_and_config_when_no_flag() {
         let overrides = OverrideInputs {
             flag: None,
-            env_var: Some("env-url".into()),
-            config_value: Some("config-url".into()),
+            ..all_tiers()
         };
         assert_eq!(overrides.resolve(), Some(("env-url", OverrideSource::Env)));
         assert_eq!(override_source(&overrides), Some(OverrideSource::Env));
     }
 
+    /// The per-directory value beats the machine-wide one: a project that pins
+    /// its own node must not be overridden by a global default.
     #[test]
-    fn config_used_when_no_flag_or_env() {
+    fn project_wins_over_global_config_when_no_flag_or_env() {
         let overrides = OverrideInputs {
             flag: None,
             env_var: None,
+            ..all_tiers()
+        };
+        assert_eq!(
+            overrides.resolve(),
+            Some(("project-url", OverrideSource::Project))
+        );
+        assert_eq!(override_source(&overrides), Some(OverrideSource::Project));
+    }
+
+    #[test]
+    fn global_config_used_when_it_is_the_only_source() {
+        let overrides = OverrideInputs {
             config_value: Some("config-url".into()),
+            ..Default::default()
         };
         assert_eq!(
             overrides.resolve(),
@@ -475,6 +649,28 @@ mod tests {
     fn no_override_when_all_absent() {
         assert_eq!(OverrideInputs::default().resolve(), None);
         assert_eq!(override_source(&OverrideInputs::default()), None);
+    }
+
+    /// A project value alone must beat the LADDER, not merely the global config
+    /// — §5.3's "a configured value overrides the ladder entirely". The ladder
+    /// is scripted fully live so a bug that consulted it anyway would resolve
+    /// somewhere else and fail here.
+    #[tokio::test]
+    async fn project_value_alone_beats_a_fully_live_ladder() {
+        let probe = ScriptedProbe::new(&[
+            (DIG_LOCAL_HTTPS, true),
+            (DIG_LOCAL_HTTP, true),
+            (LOCALHOST, true),
+        ]);
+        let overrides = OverrideInputs {
+            project_value: Some("https://project-node.example".into()),
+            ..Default::default()
+        };
+        let resolved =
+            resolve_node(&overrides, &candidates(), &probe, Duration::from_millis(50)).await;
+        assert_eq!(resolved.base_url, "https://project-node.example");
+        assert_eq!(resolved.tier, ResolvedTier::Override);
+        assert!(probe.calls().is_empty());
     }
 
     // -----------------------------------------------------------------------
@@ -499,23 +695,12 @@ mod tests {
         let cache = CachedResolver::new();
         let overrides = OverrideInputs::default();
 
+        let cands = candidates();
         let first = cache
-            .get_or_resolve(
-                &overrides,
-                DIG_LOCAL,
-                LOCALHOST,
-                &probe,
-                Duration::from_millis(50),
-            )
+            .get_or_resolve(&overrides, &cands, &probe, Duration::from_millis(50))
             .await;
         let second = cache
-            .get_or_resolve(
-                &overrides,
-                DIG_LOCAL,
-                LOCALHOST,
-                &probe,
-                Duration::from_millis(50),
-            )
+            .get_or_resolve(&overrides, &cands, &probe, Duration::from_millis(50))
             .await;
 
         assert_eq!(first, second);
