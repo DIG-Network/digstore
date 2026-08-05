@@ -47,7 +47,7 @@ chia-protocol = "0.36.1"
 # reading through a coinset-backed adapter over the canonical `dig_chainsource_interface::ChainSource`
 # trait. NEVER re-implement the status/lineage logic here.
 dig-store = "0.5"
-dig-chainsource-interface = "0.1"
+dig-chainsource-interface = "0.3"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -77,4 +77,4 @@ predicates = "3"
 tempfile = "3"
 # The in-memory canonical ChainSource for exercising `get_store_status` (Live/Melted/NotFound +
 # fail-closed) without a network, and the adapter's transport-mapping tests.
-dig-chainsource-interface = { version = "0.1", features = ["testing"] }
+dig-chainsource-interface = { version = "0.3", features = ["testing"] }
