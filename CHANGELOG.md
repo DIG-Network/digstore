@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.22.0] - 2026-08-05
+
+### Features
+- **digstore-chain:** Typed singleton terminal-state classifier (Live/NeverMinted/Melted) (#1981)- **commit:** Auto-push .dig to local node cache — publisher seeds the flywheel (#38)
+
 ## [0.20.0] - 2026-08-01
 
 ### Bug Fixes
