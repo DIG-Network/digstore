@@ -546,8 +546,8 @@ mod tests {
     use super::*;
     use crate::coinset::mock::MockChain;
     use crate::keys::derive_indexed_keys;
-    use chia_puzzle_types::nft::NftMetadata;
     use chia_protocol::SpendBundle;
+    use chia_puzzle_types::nft::NftMetadata;
     use chia_sdk_test::Simulator;
     use chia_wallet_sdk::driver::Launcher;
 

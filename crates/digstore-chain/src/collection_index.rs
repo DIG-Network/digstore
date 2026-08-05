@@ -38,8 +38,8 @@
 
 use crate::coinset::ChainReads;
 use crate::error::{ChainError, Result};
-use chia_puzzle_types::nft::NftMetadata;
 use chia_protocol::{Bytes32, Coin};
+use chia_puzzle_types::nft::NftMetadata;
 use chia_wallet_sdk::driver::{Nft, Puzzle, SpendContext};
 
 /// One collection item resolved to its CURRENT on-chain state — the public, owner-independent

@@ -22,9 +22,9 @@
 // TODO(#34 at scale): CSV/large-JSON manifest ingest + generative trait composition + rarity tables.
 // TODO(#40 drop mechanics): delayed reveal, allowlist/claim gating, phased scheduling, lazy mint.
 
+use chia_protocol::{Bytes32, Coin, CoinSpend, Program};
 use chia_puzzle_types::nft::NftMetadata;
 use chia_puzzle_types::Memos;
-use chia_protocol::{Bytes32, Coin, CoinSpend, Program};
 use chia_wallet_sdk::driver::{
     Did, IntermediateLauncher, NftMint, SingletonInfo, SpendContext, StandardLayer,
 };

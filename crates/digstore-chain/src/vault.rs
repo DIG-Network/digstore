@@ -36,9 +36,8 @@
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
-use clvm_utils::TreeHash;
-use chia_secp::{K1PublicKey, K1SecretKey, K1Signature};
 use chia_protocol::{Bytes32, Coin, CoinSpend};
+use chia_secp::{K1PublicKey, K1SecretKey, K1Signature};
 use chia_sha2::Sha256;
 use chia_wallet_sdk::driver::{
     mips_puzzle_hash, InnerPuzzleSpend, Launcher, MipsSpend, MofN, SpendContext, StandardLayer,
@@ -46,6 +45,7 @@ use chia_wallet_sdk::driver::{
 };
 use chia_wallet_sdk::types::puzzles::{K1Member, K1MemberSolution};
 use chia_wallet_sdk::types::{Conditions, Mod};
+use clvm_utils::TreeHash;
 use datalayer_driver::{sign_coin_spends, SecretKey, Signature};
 
 /// A vault's custody configuration: `required` of the given K1 member public keys must
@@ -347,8 +347,8 @@ pub fn sign_vault_create_spends(
 mod tests {
     use super::*;
     use crate::keys::derive_indexed_keys;
-    use chia_puzzle_types::Memos;
     use chia_protocol::SpendBundle;
+    use chia_puzzle_types::Memos;
     use chia_sdk_test::{K1Pair, Simulator};
 
     // Public BIP-39 test vector (NOT a real wallet). Matches the rest of the crate.

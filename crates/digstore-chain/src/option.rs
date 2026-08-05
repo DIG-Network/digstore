@@ -30,8 +30,8 @@
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
-use chia_puzzle_types::Memos;
 use chia_protocol::{Coin, CoinSpend};
+use chia_puzzle_types::Memos;
 use chia_wallet_sdk::driver::{
     OptionContract, OptionLauncher, OptionLauncherInfo, OptionType, OptionUnderlying,
     SingletonInfo, SpendContext, StandardLayer,
@@ -239,8 +239,8 @@ pub fn sign_option_spends(
 mod tests {
     use super::*;
     use crate::keys::derive_indexed_keys;
-    use chia_puzzle_types::offer::SettlementPaymentsSolution;
     use chia_protocol::{Bytes32, SpendBundle};
+    use chia_puzzle_types::offer::SettlementPaymentsSolution;
     use chia_puzzles::SETTLEMENT_PAYMENT_HASH;
     use chia_sdk_test::Simulator;
     use chia_wallet_sdk::driver::{Layer, SettlementLayer};
