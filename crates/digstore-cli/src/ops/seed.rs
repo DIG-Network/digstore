@@ -39,7 +39,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 
 use digstore_remote::{
-    resolve_node, HealthProbe, HttpHealthProbe, OverrideInputs, ResolvedTier,
+    resolve_node, HealthProbe, HttpHealthProbe, LadderCandidate, OverrideInputs, ResolvedTier,
     DEFAULT_LOCAL_NODE_PORT, DEFAULT_PROBE_TIMEOUT, DIG_LOCAL_HOST,
 };
 
@@ -220,14 +220,15 @@ async fn resolve_local_node(probe: &dyn HealthProbe, timeout: Duration) -> Optio
     let port = local_port();
     let dig_local = format!("http://{DIG_LOCAL_HOST}:{port}");
     let localhost = format!("http://localhost:{port}");
-    let resolved = resolve_node(
-        &OverrideInputs::default(),
-        &dig_local,
-        &localhost,
-        probe,
-        timeout,
-    )
-    .await;
+    // An explicit candidate list rather than the standard ladder: this is the seed path, and it
+    // must reach ONLY a local node. `resolve_node` takes the candidates it should probe, so
+    // omitting the gateway is what makes "never seed the public gateway" structural rather than a
+    // check on the result.
+    let candidates = [
+        LadderCandidate::new(dig_local, ResolvedTier::DigLocal),
+        LadderCandidate::new(localhost, ResolvedTier::Localhost),
+    ];
+    let resolved = resolve_node(&OverrideInputs::default(), &candidates, probe, timeout).await;
     match resolved.tier {
         ResolvedTier::DigLocal | ResolvedTier::Localhost => Some(resolved.base_url),
         // PublicGateway (nothing local answered) / Override — never seeded.
