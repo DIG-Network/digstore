@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.23.0] - 2026-08-06
+
+### Bug Fixes
+- **cli:** Default the origin to the local node, with a per-project override (#37)
+
 ## [0.22.0] - 2026-08-05
 
 ### Features
