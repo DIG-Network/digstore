@@ -2261,9 +2261,9 @@ dependencies = [
 
 [[package]]
 name = "dig-merkle"
-version = "0.4.3"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dcc3f7b4de976bc2670a01ab241d02f929c8c6688d8a48b1f1885e13476dac6"
+checksum = "c8129713c49177d3c7b9d397e6350cb79cd0903b46f4e1721e8840329f357fd4"
 dependencies = [
  "chia-protocol",
  "chia-puzzle-types",
@@ -2287,9 +2287,9 @@ dependencies = [
 
 [[package]]
 name = "dig-store"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e981ef4ea50dbddc5ef435215d0b8c9ad631066d7debf345e76389c7db4af641"
+checksum = "8c1279f57121406e90b1b439fc79f7816866579788ae56c1586ea11bd7d54eab"
 dependencies = [
  "dig-capsule",
  "dig-chainsource-interface",
@@ -2354,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chain"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2392,7 +2392,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chunker"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "digstore-core",
  "hex",
@@ -2402,7 +2402,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-cli"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
@@ -2471,7 +2471,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-core"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "aes-gcm-siv",
  "hex",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-remote"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2626,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-subscription"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "async-trait",
  "digstore-core",
@@ -2846,7 +2846,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3767,7 +3767,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4207,7 +4207,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4957,7 +4957,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.4",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5533,7 +5533,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6057,7 +6057,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
