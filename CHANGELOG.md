@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.23.1] - 2026-08-10
+
+### Chores
+- **deps:** Bump dig-store to 0.5.1 and dig-merkle to 0.4.5 (#39)
+
 ## [0.23.0] - 2026-08-06
 
 ### Bug Fixes
