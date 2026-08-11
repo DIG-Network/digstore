@@ -82,6 +82,13 @@ pub struct HostRuntime {
     memory: Memory,
     limits_cfg: ExecutionLimits,
     _ticker: EpochTicker,
+    /// Whether this runtime's `host_random_bytes` RNG was pinned to a fixed seed
+    /// ([`HostDeps::rng_seed`] was `Some`). Recorded so a CALLER can assert what
+    /// it actually built: the RNG itself is not observable through any export, so
+    /// without this a test can only inspect the deps struct it hands in — which
+    /// proves nothing about the deps the production call site constructs. See
+    /// [`HostRuntime::rng_is_deterministic`].
+    rng_seeded: bool,
 }
 
 impl HostRuntime {
@@ -124,6 +131,7 @@ impl HostRuntime {
         let module =
             Module::new(&engine, module_bytes).map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
+        let rng_seeded = deps.rng_seed.is_some();
         let rng = match deps.rng_seed {
             Some(s) => HostRng::from_seed(s),
             None => HostRng::from_entropy(),
@@ -224,7 +232,16 @@ impl HostRuntime {
             memory,
             limits_cfg: limits,
             _ticker: ticker,
+            rng_seeded,
         })
+    }
+
+    /// `true` when this runtime's host RNG was pinned to a fixed seed, making
+    /// every `host_random_bytes` draw reproducible by anyone who can read the
+    /// seed. Production serve paths MUST build a runtime for which this is
+    /// `false`; deterministic-fixture tests are the only legitimate `true`.
+    pub fn rng_is_deterministic(&self) -> bool {
+        self.rng_seeded
     }
 
     /// Set the per-export-call fuel budget. Epoch deadline is added in Task 12.

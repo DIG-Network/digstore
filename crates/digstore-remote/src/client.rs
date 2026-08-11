@@ -236,6 +236,25 @@ impl DigClient {
         method: &str,
         store_id: &Bytes32,
     ) -> Result<reqwest::RequestBuilder, ClientError> {
+        self.authed_with(req, method, store_id, getrandom::getrandom)
+    }
+
+    /// [`Self::authed`] with the entropy source injected, so a test can drive the
+    /// REAL header-stamping path under a failing CSPRNG.
+    ///
+    /// This exists because `auth_nonce` returning a `Result` is only half the
+    /// guarantee: the caller must also propagate it. A test that exercises
+    /// `auth_nonce` alone stays green against `auth_nonce(..).unwrap_or([0u8;
+    /// 32])` right here — the exact mutation that restores the vulnerability.
+    /// `authed` is a one-line delegation so there is no second copy of this body
+    /// for such a mutation to hide in.
+    fn authed_with(
+        &self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        store_id: &Bytes32,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+    ) -> Result<reqwest::RequestBuilder, ClientError> {
         let Some(identity) = &self.identity else {
             return Ok(req);
         };
@@ -243,7 +262,7 @@ impl DigClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let nonce = auth_nonce(getrandom::getrandom)?;
+        let nonce = auth_nonce(fill)?;
         let msg = digstore_crypto::request_signing_message(method, store_id, timestamp, &nonce);
         let sig = (identity.sign)(&msg);
         Ok(req
@@ -1073,6 +1092,52 @@ mod content_tests {
         let err = auth_nonce(|_| Err(getrandom::Error::UNSUPPORTED))
             .expect_err("entropy failure must not yield a nonce");
         assert!(matches!(err, ClientError::Entropy(_)), "got {err:?}");
+    }
+
+    /// An identified client whose signer records nothing — enough to reach the
+    /// nonce draw in `authed_with`.
+    fn identified_client() -> DigClient {
+        DigClient::new("http://127.0.0.1:1").with_identity(RequestIdentity {
+            pubkey_hex: "ab".repeat(48),
+            sign: Box::new(|_| Bytes96([0u8; 96])),
+        })
+    }
+
+    /// §21.9 FAIL-CLOSED **at the call site**: `authed` must propagate the nonce
+    /// failure, not merely be able to observe one.
+    ///
+    /// `auth_nonce`'s own test proves the helper returns `Err`; it says nothing
+    /// about what the caller does with it. Replace the draw with
+    /// `auth_nonce(..).unwrap_or([0u8; 32])` and that test stays green while
+    /// every request goes back to signing a constant nonce. This test drives the
+    /// real header-stamping path and fails on exactly that mutation.
+    #[test]
+    fn authed_propagates_an_entropy_failure_instead_of_signing_a_constant_nonce() {
+        let client = identified_client();
+        let req = client.http.get("http://127.0.0.1:1/");
+
+        let err = client
+            .authed_with(req, "fetch", &Bytes32([7u8; 32]), |_| {
+                Err(getrandom::Error::UNSUPPORTED)
+            })
+            .err()
+            .expect("a request must not be stamped without a real nonce");
+        assert!(matches!(err, ClientError::Entropy(_)), "got {err:?}");
+    }
+
+    /// The control: with entropy available the SAME path stamps the request.
+    /// Without this, the test above is satisfied by an `authed` that always
+    /// errors.
+    #[test]
+    fn authed_stamps_the_request_when_entropy_is_available() {
+        let client = identified_client();
+        let req = client.http.get("http://127.0.0.1:1/");
+
+        let stamped = client.authed_with(req, "fetch", &Bytes32([7u8; 32]), |buf| {
+            buf.fill(0x11);
+            Ok(())
+        });
+        assert!(stamped.is_ok(), "entropy available must yield a signed request");
     }
 
     /// The success path still produces a fresh 32-byte nonce from the supplied

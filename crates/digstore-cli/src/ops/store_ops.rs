@@ -1461,6 +1461,13 @@ pub(crate) fn load_host_pubkey(ctx: &CliContext) -> Result<Bytes48, CliError> {
 /// is a serve path that must now REFUSE to run without it: an operator seeing a
 /// bare io error would reasonably look for a content problem instead of a
 /// missing store identity.
+///
+/// The length is validated before the key is derived — `SecretKey::from_seed`
+/// asserts `len >= 32` and therefore ABORTS THE PROCESS on a short seed. A
+/// zero-length or truncated `signing_key.bin` needs no attacker to occur (an
+/// `init` interrupted mid-write leaves exactly that), and a panic is the one
+/// failure an operator cannot act on. Matches [`read_signing_seed`], which has
+/// always required exactly 32 bytes.
 pub(crate) fn load_signing_key(
     ctx: &CliContext,
 ) -> Result<digstore_crypto::bls::SecretKey, CliError> {
@@ -1472,7 +1479,15 @@ pub(crate) fn load_signing_key(
             path.display()
         ))
     })?;
-    Ok(digstore_crypto::bls::SecretKey::from_seed(&bytes))
+    let seed: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+        CliError::InvalidArgument(format!(
+            "the host signing key at {} is {} bytes, not a 32-byte seed — the file is \
+             truncated or corrupt; re-create the store identity",
+            path.display(),
+            bytes.len()
+        ))
+    })?;
+    Ok(digstore_crypto::bls::SecretKey::from_seed(&seed))
 }
 
 /// Generate a fresh host BLS signing identity: returns the 32-byte seed and the
@@ -1853,6 +1868,67 @@ mod tests {
         let seed = read_signing_seed(&ctx).unwrap();
         let on_disk = fs::read(ctx.dig_dir.join("signing_key.bin")).unwrap();
         assert_eq!(seed.to_vec(), on_disk);
+    }
+
+    /// A truncated `signing_key.bin` must be a clean ERROR, not a process abort.
+    ///
+    /// `SecretKey::from_seed` is `assert!(seed.len() >= 32)`, so handing it the
+    /// file bytes unvalidated turns a corrupt file into a panic. Both truncation
+    /// cases are reachable without an attacker: an `init` interrupted mid-write
+    /// leaves a short (often zero-length) file. Driving `load_signing_key` — the
+    /// function the serve paths call — is what makes this load-bearing; asserting
+    /// on a length check in isolation would survive its removal.
+    #[test]
+    fn a_truncated_signing_key_is_an_error_not_a_panic() {
+        for short in [0usize, 1, 31] {
+            let (_td, ctx) = ctx(false);
+            fs::write(ctx.dig_dir.join("signing_key.bin"), vec![0xABu8; short]).unwrap();
+
+            let err = load_signing_key(&ctx)
+                .err()
+                .unwrap_or_else(|| panic!("a {short}-byte key must not be accepted"));
+            assert!(
+                matches!(err, CliError::InvalidArgument(_)),
+                "a {short}-byte key must report a corrupt file, got {err:?}"
+            );
+        }
+    }
+
+    /// An OVERLONG key file is equally corrupt. `from_seed` accepts `len >= 32`,
+    /// so without an exact-length check a 64-byte file would silently derive a
+    /// key from bytes nothing wrote — a different identity than the store's, with
+    /// no error anywhere. This is the side of the bound a `>= 32` guard misses.
+    #[test]
+    fn an_overlong_signing_key_is_rejected_rather_than_silently_truncated() {
+        let (_td, ctx) = ctx(false);
+        fs::write(ctx.dig_dir.join("signing_key.bin"), vec![0xABu8; 64]).unwrap();
+
+        assert!(
+            matches!(
+                load_signing_key(&ctx),
+                Err(CliError::InvalidArgument(_))
+            ),
+            "a 64-byte key file must be rejected, not truncated to its first 32 bytes"
+        );
+    }
+
+    /// The at-bound case still works: exactly 32 bytes derives the expected key.
+    /// Without this the two rejection tests above are satisfied by a guard that
+    /// rejects everything.
+    #[test]
+    fn an_exactly_32_byte_signing_key_is_accepted() {
+        let (_td, ctx) = ctx(false);
+        let seed = [0x5Au8; 32];
+        fs::write(ctx.dig_dir.join("signing_key.bin"), seed).unwrap();
+
+        let sk = load_signing_key(&ctx).expect("a 32-byte seed is valid");
+        assert_eq!(
+            sk.public_key().to_bytes().0,
+            digstore_crypto::bls::SecretKey::from_seed(&seed)
+                .public_key()
+                .to_bytes()
+                .0
+        );
     }
 
     #[test]
