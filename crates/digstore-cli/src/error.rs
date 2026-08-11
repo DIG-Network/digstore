@@ -91,6 +91,21 @@ pub enum CliError {
         /// message so the user knows WHICH command to retry.
         operation: String,
     },
+    /// The store's own identity material (`signing_key.bin` /
+    /// `trusted_keys.json`) could not be read or is malformed.
+    ///
+    /// Raised ONLY by the paths that genuinely consume an identity — signing a
+    /// proof, pushing. Reading committed content does not consume one and never
+    /// raises this: the guest's content path does not consult the host identity,
+    /// so refusing a read over a missing key would cost availability and buy no
+    /// security.
+    ///
+    /// Nothing branches on this variant for control flow. It exists so an
+    /// operator is told WHICH file is unreadable instead of "the system cannot
+    /// find the file specified", and so a §6.2 machine consumer can classify the
+    /// failure without matching on prose.
+    #[error("store identity unavailable at {path}: {detail}")]
+    IdentityUnavailable { path: String, detail: String },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -119,6 +134,7 @@ impl CliError {
             CliError::TooLarge(_) => 17,
             CliError::NeedsConsolidation { .. } => 18,
             CliError::NoLocalNode { .. } => 19,
+            CliError::IdentityUnavailable { .. } => 20,
             CliError::Other(_) => 1,
         }
     }
@@ -148,6 +164,7 @@ impl CliError {
             CliError::TooLarge(_) => "TOO_LARGE",
             CliError::NeedsConsolidation { .. } => "NEEDS_CONSOLIDATION",
             CliError::NoLocalNode { .. } => "NO_LOCAL_NODE",
+            CliError::IdentityUnavailable { .. } => "IDENTITY_UNAVAILABLE",
             CliError::Other(_) => "ERROR",
         }
     }
@@ -218,6 +235,11 @@ impl CliError {
                 19,
                 "no DIG node is running on this machine and this operation needs one; start or install dig-node",
             ),
+            (
+                "IDENTITY_UNAVAILABLE",
+                20,
+                "the store's own identity file could not be read; re-create the store identity (reading committed content does not need one)",
+            ),
         ]
     }
 
@@ -229,6 +251,9 @@ impl CliError {
             // instructions in full; a hint here would only repeat them.
             CliError::NoLocalNode { .. } => Some("run `dig-node status` to check your node".into()),
             CliError::NonFastForward => Some("run `digstore pull` first, then push".into()),
+            CliError::IdentityUnavailable { path, .. } => Some(format!(
+                "check that {path} exists and is readable by this user; reading committed                  content does not need it, only signing does"
+            )),
             CliError::Unauthorized(_) => Some("check your credentials / store signing key".into()),
             CliError::NotFound(_) => Some("run `digstore log` to list capsules and keys".into()),
             CliError::NoSeed => Some("run `digstore seed import` to set up your seed".into()),
@@ -343,6 +368,10 @@ mod tests {
                 required: 50,
                 cap: 50,
             },
+            CliError::IdentityUnavailable {
+                path: "signing_key.bin".into(),
+                detail: "x".into(),
+            },
         ];
         let mut codes: Vec<i32> = errs.iter().map(|e| e.exit_code()).collect();
         let n = codes.len();
@@ -388,6 +417,10 @@ mod tests {
                 available: 100,
                 required: 50,
                 cap: 50,
+            },
+            CliError::IdentityUnavailable {
+                path: "signing_key.bin".into(),
+                detail: "x".into(),
             },
         ];
         let mut codes: Vec<&str> = errs.iter().map(|e| e.code()).collect();

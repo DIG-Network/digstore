@@ -120,7 +120,13 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
             m,
             "host_get_public_key",
             |mut caller: Caller<'_, RuntimeState>| -> i32 {
-                let pk = caller.data().host.keys.bls_public.0; // [u8; 48]
+                // An anonymous host has no key to return. NotFound is the honest
+                // answer; writing 48 zero bytes would hand the guest a key-shaped
+                // value it could not distinguish from a real one.
+                let pk = match caller.data().host.keys.bls_public {
+                    Some(pk) => pk.0, // [u8; 48]
+                    None => return ErrorCode::NotFound as i32,
+                };
                 match caller.data_mut().host.return_buffer.set(&pk) {
                     Ok(n) => n as i32,
                     Err(_) => ErrorCode::GeneralError as i32,
@@ -160,7 +166,12 @@ pub fn register(linker: &mut Linker<RuntimeState>) -> Result<(), HostError> {
                     Ok(s) => s,
                     Err(_) => return ErrorCode::AttestationFailed as i32,
                 };
-                let pk = state.attestation.public_key();
+                // A backend that signed must also be able to name itself; a
+                // signature attributed to no key is unverifiable by construction.
+                let pk = match state.attestation.public_key() {
+                    Some(pk) => pk,
+                    None => return ErrorCode::AttestationFailed as i32,
+                };
                 let mut resp = Vec::with_capacity(48 + 32 + 96);
                 resp.extend_from_slice(&pk.0);
                 resp.extend_from_slice(&state.instance_id.0);

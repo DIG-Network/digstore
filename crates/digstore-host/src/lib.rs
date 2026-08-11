@@ -28,4 +28,6 @@ pub use serve_blind::{
 };
 pub use session::{Session, SessionTable};
 pub use state::{HostKeys, HostState, ReturnBuffer};
-pub use teehook::{AttestationBackend, BlsAttestationBackend, SharedBackend};
+pub use teehook::{
+    AttestationBackend, BlsAttestationBackend, SharedBackend, UnavailableAttestationBackend,
+};
