@@ -27,6 +27,9 @@ hex = "0.4"
 base64 = "0.22"
 getrandom = "0.2"
 dirs = "5"
+# Scrub transient plaintext copies of the identity seed on drop (the disk-read
+# buffer in `identity::load_or_create_seed`). See that module.
+zeroize = "1"
 futures-util = { version = "0.3", default-features = false }
 async-trait = "0.1"
 
