@@ -15,3 +15,5 @@
 /docs/whitepaper/digstore-whitepaper.html
 .testcredentials
 .claude/worktrees/
+# GitNexus code-intelligence index (per-worktree, regenerable)
+.gitnexus/
