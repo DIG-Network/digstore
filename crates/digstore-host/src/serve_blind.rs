@@ -183,8 +183,11 @@ impl BlindServeDeps {
 fn host_deps(cfg: BlindServeConfig, deps: BlindServeDeps) -> HostDeps {
     HostDeps {
         store_id: cfg.store_id,
-        bls_secret: cfg.bls_secret,
-        bls_public: cfg.bls_public,
+        // `BlindServeConfig` REQUIRES an identity, so this path is never
+        // anonymous: the blind serve exists to prove the host's key is in the
+        // module's trusted set.
+        bls_secret: Some(cfg.bls_secret),
+        bls_public: Some(cfg.bls_public),
         clock: deps.clock,
         chain: deps.chain,
         prover: deps.prover,

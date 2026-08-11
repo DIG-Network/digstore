@@ -7,7 +7,7 @@ use crate::memory::read_bytes;
 use crate::random::HostRng;
 use crate::session::SessionTable;
 use crate::state::{HostKeys, HostState, ReturnBuffer};
-use crate::teehook::{BlsAttestationBackend, SharedBackend};
+use crate::teehook::{BlsAttestationBackend, SharedBackend, UnavailableAttestationBackend};
 use digstore_core::abi::{is_error, unpack_ptr_len};
 use digstore_core::config::HostImportsConfig;
 use digstore_core::types::{Bytes32, Bytes48};
@@ -57,8 +57,14 @@ impl Drop for EpochTicker {
 /// Dependencies injected into a runtime: BLS keys, clock, chain, prover, rng.
 pub struct HostDeps {
     pub store_id: Bytes32,
-    pub bls_secret: BlsSecretKey,
-    pub bls_public: Bytes48,
+    /// The host's BLS identity, or `None` for an ANONYMOUS host.
+    ///
+    /// Both halves are supplied together or not at all: a secret with no public
+    /// half cannot be attributed, and a public half with no secret cannot sign.
+    /// An anonymous host still serves committed content — the guest's content
+    /// path does not consult the host identity — it simply cannot attest.
+    pub bls_secret: Option<BlsSecretKey>,
+    pub bls_public: Option<Bytes48>,
     pub clock: Arc<dyn Clock>,
     pub chain: Arc<dyn ChainSource>,
     pub prover: Arc<dyn Prover>,
@@ -89,6 +95,13 @@ pub struct HostRuntime {
     /// proves nothing about the deps the production call site constructs. See
     /// [`HostRuntime::rng_is_deterministic`].
     rng_seeded: bool,
+    /// Whether this runtime was built with a host public identity
+    /// ([`HostDeps::bls_public`] was `Some`). Recorded for the same reason as
+    /// [`Self::rng_seeded`]: the identity is not observable through any export
+    /// on the content path, so a caller that wants to assert what the PRODUCTION
+    /// call site actually built has nothing else to ask. See
+    /// [`HostRuntime::has_host_public_key`].
+    host_pubkey_present: bool,
 }
 
 impl HostRuntime {
@@ -132,20 +145,23 @@ impl HostRuntime {
             Module::new(&engine, module_bytes).map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
         let rng_seeded = deps.rng_seed.is_some();
+        let host_pubkey_present = deps.bls_public.is_some();
         let rng = match deps.rng_seed {
             Some(s) => HostRng::from_seed(s),
             None => HostRng::from_entropy(),
         };
 
-        // The BLS secret is not `Clone`, so share it (Arc) between HostKeys and
-        // the default attestation backend (§13.6 default = BLS backend).
-        let shared_secret = Arc::new(deps.bls_secret);
-        let attestation: SharedBackend = match deps.attestation {
-            Some(b) => b,
-            None => Arc::new(BlsAttestationBackend::from_shared(
-                shared_secret.clone(),
-                deps.bls_public,
-            )),
+        // §13.6 default backend = BLS, but ONLY when this host actually has an
+        // identity. An anonymous host gets a backend that refuses, never one
+        // built from a stand-in key: a placeholder would make every attestation
+        // it produced attributable to a key nobody controls.
+        let attestation: SharedBackend = match (deps.attestation, deps.bls_secret, deps.bls_public)
+        {
+            (Some(b), _, _) => b,
+            (None, Some(secret), Some(public)) => {
+                Arc::new(BlsAttestationBackend::new(secret, public))
+            }
+            (None, _, _) => Arc::new(UnavailableAttestationBackend),
         };
 
         let host = HostState {
@@ -153,7 +169,6 @@ impl HostRuntime {
             config: config.clone(),
             return_buffer: ReturnBuffer::new(&config),
             keys: Arc::new(HostKeys {
-                bls_secret: shared_secret,
                 bls_public: deps.bls_public,
             }),
             attestation,
@@ -233,6 +248,7 @@ impl HostRuntime {
             limits_cfg: limits,
             _ticker: ticker,
             rng_seeded,
+            host_pubkey_present,
         })
     }
 
@@ -242,6 +258,13 @@ impl HostRuntime {
     /// `false`; deterministic-fixture tests are the only legitimate `true`.
     pub fn rng_is_deterministic(&self) -> bool {
         self.rng_seeded
+    }
+
+    /// `true` when this runtime carries a host public identity. Read paths build
+    /// runtimes for which this is `false`: serving committed content consults no
+    /// identity, so carrying one there is surface with no purpose.
+    pub fn has_host_public_key(&self) -> bool {
+        self.host_pubkey_present
     }
 
     /// Set the per-export-call fuel budget. Epoch deadline is added in Task 12.

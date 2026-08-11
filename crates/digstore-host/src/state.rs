@@ -7,7 +7,6 @@ use crate::session::SessionTable;
 use crate::teehook::SharedBackend;
 use digstore_core::config::HostImportsConfig;
 use digstore_core::types::{Bytes32, Bytes48, Bytes96};
-use digstore_crypto::bls::BlsSecretKey;
 use digstore_prover::{ChainSource, Prover};
 use std::sync::Arc;
 
@@ -45,15 +44,18 @@ impl ReturnBuffer {
     }
 }
 
-/// Host BLS key material used for attestation and node-proof signing (§12).
+/// The host's PUBLIC BLS identity, as answered to the guest by
+/// `host_get_public_key` (§12).
 ///
-/// DEVIATION: `digstore_crypto::bls::BlsSecretKey` is not `Clone`, and the
-/// default `BlsAttestationBackend` must sign with the same key. The secret is
-/// therefore held behind an `Arc` so it can be shared between this keystore and
-/// the default attestation backend without duplicating the (un-clonable) key.
+/// `None` means this host is anonymous: it holds no identity, so there is no key
+/// to hand out. Absence is representable rather than substituted — see
+/// [`crate::teehook::AttestationBackend::public_key`].
+///
+/// The secret half lives ONLY in the attestation backend that signs with it. It
+/// was previously mirrored here too and read by nothing, which put un-clonable
+/// key material one field access away from every import handler for no purpose.
 pub struct HostKeys {
-    pub bls_secret: Arc<BlsSecretKey>,
-    pub bls_public: Bytes48,
+    pub bls_public: Option<Bytes48>,
 }
 
 /// State threaded through every `dig_host` import call (§18.3).

@@ -15,8 +15,14 @@ use std::sync::Arc;
 pub trait AttestationBackend: Send + Sync + 'static {
     /// Produce a 96-byte attestation signature over the challenge bytes.
     fn attest(&self, challenge: &[u8]) -> Result<Bytes96, HostError>;
-    /// The attesting public key (48-byte BLS G1 for the BLS backend).
-    fn public_key(&self) -> Bytes48;
+    /// The attesting public key (48-byte BLS G1 for the BLS backend), or `None`
+    /// when this host holds no identity to attest with.
+    ///
+    /// `None` is the HONEST answer for an anonymous host and is deliberately not
+    /// representable as a placeholder key: an all-zero `Bytes48` is not a weaker
+    /// identity, it is a nonexistent one wearing the shape of a real one, and a
+    /// caller cannot tell the two apart.
+    fn public_key(&self) -> Option<Bytes48>;
 }
 
 /// Shared backend handle carried on `HostState`.
@@ -55,8 +61,27 @@ impl AttestationBackend for BlsAttestationBackend {
             challenge,
         ))
     }
-    fn public_key(&self) -> Bytes48 {
-        self.public
+    fn public_key(&self) -> Option<Bytes48> {
+        Some(self.public)
+    }
+}
+
+/// The backend installed when the host carries NO identity (§13.6).
+///
+/// An anonymous host can still SERVE committed content — the guest's content
+/// path does not consult the host's identity — but it cannot speak for anyone,
+/// so every attestation attempt fails rather than producing a signature under a
+/// borrowed or invented key.
+pub struct UnavailableAttestationBackend;
+
+impl AttestationBackend for UnavailableAttestationBackend {
+    fn attest(&self, _challenge: &[u8]) -> Result<Bytes96, HostError> {
+        Err(HostError::GuestError(
+            digstore_core::ErrorCode::NotFound,
+        ))
+    }
+    fn public_key(&self) -> Option<Bytes48> {
+        None
     }
 }
 
@@ -70,8 +95,8 @@ mod tests {
         fn attest(&self, _challenge: &[u8]) -> Result<Bytes96, crate::error::HostError> {
             Ok(Bytes96([0x5Au8; 96]))
         }
-        fn public_key(&self) -> Bytes48 {
-            Bytes48([0x11u8; 48])
+        fn public_key(&self) -> Option<Bytes48> {
+            Some(Bytes48([0x11u8; 48]))
         }
     }
 
@@ -80,6 +105,16 @@ mod tests {
         let b = ConstBackend;
         let sig = b.attest(b"challenge").unwrap();
         assert_eq!(sig.0, [0x5Au8; 96]);
-        assert_eq!(b.public_key().0, [0x11u8; 48]);
+        assert_eq!(b.public_key().unwrap().0, [0x11u8; 48]);
+    }
+
+    /// An identity-less host must REFUSE to attest, not attest as nobody. Both
+    /// halves matter: a backend that returned `Ok` with a placeholder signature
+    /// would let a verifier believe a host had spoken.
+    #[test]
+    fn the_unavailable_backend_has_no_key_and_cannot_attest() {
+        let b = UnavailableAttestationBackend;
+        assert!(b.public_key().is_none());
+        assert!(b.attest(b"challenge").is_err());
     }
 }
