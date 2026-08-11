@@ -1904,10 +1904,7 @@ mod tests {
         fs::write(ctx.dig_dir.join("signing_key.bin"), vec![0xABu8; 64]).unwrap();
 
         assert!(
-            matches!(
-                load_signing_key(&ctx),
-                Err(CliError::InvalidArgument(_))
-            ),
+            matches!(load_signing_key(&ctx), Err(CliError::InvalidArgument(_))),
             "a 64-byte key file must be rejected, not truncated to its first 32 bytes"
         );
     }

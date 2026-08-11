@@ -1120,8 +1120,7 @@ mod content_tests {
             .authed_with(req, "fetch", &Bytes32([7u8; 32]), |_| {
                 Err(getrandom::Error::UNSUPPORTED)
             })
-            .err()
-            .expect("a request must not be stamped without a real nonce");
+            .expect_err("a request must not be stamped without a real nonce");
         assert!(matches!(err, ClientError::Entropy(_)), "got {err:?}");
     }
 
@@ -1137,7 +1136,10 @@ mod content_tests {
             buf.fill(0x11);
             Ok(())
         });
-        assert!(stamped.is_ok(), "entropy available must yield a signed request");
+        assert!(
+            stamped.is_ok(),
+            "entropy available must yield a signed request"
+        );
     }
 
     /// The success path still produces a fresh 32-byte nonce from the supplied
