@@ -88,8 +88,8 @@ fn host_deps(store_id: Bytes32) -> HostDeps {
     let prover = MockProver::new(prover_sk, prover_pk, block);
     HostDeps {
         store_id,
-        bls_secret: sk,
-        bls_public: pk,
+        bls_secret: Some(sk),
+        bls_public: Some(pk),
         clock: Arc::new(FixedClock::new(1_700_000_000)),
         chain: Arc::new(chain),
         prover: Arc::new(prover),
