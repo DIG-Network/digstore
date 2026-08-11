@@ -700,24 +700,29 @@ bound-induced export failure (timeout vs fuel exhaustion), not as an opaque engi
 Each export call is armed with its own fresh budget; a serve sequence (alloc → call → read →
 dealloc) is deliberately NOT a single combined budget.
 
-### 13.6 The store's host identity is required in order to serve
+### 13.6 Host identity: never substituted, and required to attest, sign, or push
 
 A store's host identity is its BLS signing key (`signing_key.bin`) and the trusted host keys
-(`trusted_keys.json`) persisted at init. A host MUST NOT serve, attest, or sign without them.
+(`trusted_keys.json`) persisted at init.
 
-- A host MUST refuse to serve when either file is absent or unreadable, and the refusal MUST name
-  the missing file.
+- A host MUST NOT substitute a default, fixed, hardcoded, or all-zero value for a missing signing
+  key or public key. A fixed seed is reproducible by anyone with the source, so a host holding one
+  carries no identity at all rather than a weaker one, and an all-zero public key is a nonexistent
+  identity rather than a weak one.
+- A host MUST refuse to attest, sign, or push when the identity is absent or unreadable.
 - The signing key MUST be exactly 32 bytes. A shorter or longer file is malformed and MUST be
   reported as a corrupt-identity error — never truncated, never padded, and never handed to key
   derivation, which is permitted to abort the process on a short seed.
-- A host MUST NOT substitute a default, fixed, hardcoded, or all-zero value for a missing key or
-  public key. A fixed seed is reproducible by anyone with the source, so a host holding one carries
-  no identity at all rather than a weaker one.
+- Wherever a code path loads the identity, an unreadable or malformed identity MUST surface as an
+  error naming the offending file, rather than as a downstream symptom several layers away.
 
-This requirement is normative regardless of whether a given read path currently verifies
-attestation. A path that does not consume the identity today MUST NOT be treated as licence to
-substitute a placeholder, because the substitution becomes forgeable identity the moment any
-consumer begins verifying it.
+The substitution ban holds regardless of whether a given path currently verifies the identity it
+loads. A path that does not consume the identity today MUST NOT be treated as licence to supply a
+placeholder, because the placeholder becomes forgeable identity the moment any consumer begins
+verifying it. Where a path genuinely does not need an identity, the correct expression is to carry
+no identity at all — not to carry a fabricated one.
+
+## 14. Client → node resolution (the origin)
 
 This section is normative for every command that must reach a DIG node: which endpoint is
 chosen, how a project pins its own, and when a missing local node is an error rather than a
