@@ -91,7 +91,19 @@ pub fn request_for(urn: &Urn) -> Vec<u8> {
     out
 }
 
-fn host_deps(store_id: Bytes32, pubkey: Bytes48, secret: BlsSecretKey) -> HostDeps {
+/// Dependencies for an ANONYMOUS read runtime: no host identity at all.
+///
+/// Reading committed content consumes no identity, so this path carries none.
+/// That is not a relaxed check but the absence of a subject to check: the guest's
+/// content path builds its gate with `require_attestation: false`
+/// (`digstore-guest/src/content.rs`), so nothing ever asks this host who it is.
+/// Supplying a key here would be surface with no consumer; supplying a *stand-in*
+/// key would be worse, because a store whose identity had been destroyed would
+/// look healthy.
+///
+/// [`serve_proof`] is the sibling that genuinely does consume an identity, and it
+/// loads one itself. See §13.6.
+fn host_deps(store_id: Bytes32) -> HostDeps {
     let prover_sk = BlsSecretKey::from_seed(&[7u8; 32]);
     let prover_pk = prover_sk.public_key();
     let block = ChiaBlockRef {
@@ -101,60 +113,55 @@ fn host_deps(store_id: Bytes32, pubkey: Bytes48, secret: BlsSecretKey) -> HostDe
     };
     let chain = MockChainSource::new(vec![block.clone()], 1_700_000_000);
     let prover = MockProver::new(prover_sk, prover_pk, block);
-    HostDeps {
+    // ANONYMOUS: see this function's doc comment. `HostDeps::new` carries no
+    // identity, and this path never calls `with_identity` — absence, not a
+    // placeholder.
+    //
+    // The RNG is left at its default of real OS entropy rather than a constant
+    // seed, converging on the convention `digstore_host::serve_blind` follows.
+    //
+    // SCOPE, stated honestly: this RNG backs `host_random_bytes`, whose only
+    // live consumer is the guest's oblivious-access cover traffic. The §12
+    // attestation nonce draw is unreachable here — `digstore-guest`'s content
+    // path hardcodes `require_attestation: false` (dighub content is public
+    // and must be servable by any node), so no module this CLI compiles takes
+    // that branch. Nor is this closing a third-party attack: the party the
+    // cover-traffic shuffle hides access patterns from is the HOST, and the
+    // host is what supplies this randomness. The change removes a constant
+    // seed that had no business outside a test fixture.
+    HostDeps::new(
         store_id,
-        bls_secret: secret,
-        bls_public: pubkey,
-        clock: Arc::new(FixedClock::new(1_700_000_000)),
-        chain: Arc::new(chain),
-        prover: Arc::new(prover),
-        // Draw real OS entropy rather than a constant seed, converging on the
-        // convention `digstore_host::serve_blind` already follows.
-        //
-        // SCOPE, stated honestly: this RNG backs `host_random_bytes`, whose only
-        // live consumer is the guest's oblivious-access cover traffic. The §12
-        // attestation nonce draw is unreachable here — `digstore-guest`'s content
-        // path hardcodes `require_attestation: false` (dighub content is public
-        // and must be servable by any node), so no module this CLI compiles takes
-        // that branch. Nor is this closing a third-party attack: the party the
-        // cover-traffic shuffle hides access patterns from is the HOST, and the
-        // host is what supplies this randomness. The change removes a constant
-        // seed that had no business outside a test fixture.
-        rng_seed: None,
-        instance_id: Bytes32([1u8; 32]),
-        attestation: None,
-    }
+        Arc::new(FixedClock::new(1_700_000_000)),
+        Arc::new(chain),
+        Arc::new(prover),
+        Bytes32([1u8; 32]),
+    )
 }
 
 /// Instantiate the real host runtime over `module_path` (real wasmtime load /
 /// validate / instantiate — this is how a corrupted CODE section surfaces).
-fn instantiate_host(
-    ctx: &CliContext,
-    module_path: &Path,
-    store_id: Bytes32,
-    pubkey: Bytes48,
-) -> Result<HostRuntime, CliError> {
+///
+/// The runtime is ANONYMOUS by construction: it reads no `signing_key.bin` and no
+/// `trusted_keys.json`, so a store whose identity files are missing, unreadable,
+/// or malformed still serves its committed content. Reading DIG content never
+/// needs an account or a key (§5.3), and the two files are not inputs to it.
+///
+/// This deliberately reverses the earlier fail-closed load here. That load
+/// misread the fix it belonged to: the real defect was SUBSTITUTING a stand-in
+/// identity (an all-zero G1, a `from_seed(&[42u8; 32])` seed), and the cure for a
+/// substituted key is to stop substituting, not to refuse the read. Refusing cost
+/// availability on every read while buying nothing, because the guest never
+/// consults the value — and it broke far more than `cat`: `checkout`, `dev`,
+/// `deploy --preview` and `compute_status` reach this function too and have no
+/// network ladder to fall through to.
+fn instantiate_host(module_path: &Path, store_id: Bytes32) -> Result<HostRuntime, CliError> {
     let module_bytes = std::fs::read(module_path)
         .map_err(|_| CliError::NotFound(module_path.display().to_string()))?;
-    // §12.2: the host attests with the store's host signing key — the same key
-    // whose public half the compiler embedded as the trusted key. Load the
-    // persisted seed that `init` wrote to `signing_key.bin`.
-    //
-    // Note what this key does NOT do on the read path: `digstore-guest`'s content
-    // path hardcodes `require_attestation: false`, so the guest does not verify
-    // this host and would not serve decoys if the key were wrong. The key is
-    // genuinely consumed by `serve_proof` below (§13.7 "one key for both roles").
-    //
-    // FAIL CLOSED anyway: no fallback key. A hardcoded seed is reproducible by
-    // anyone reading this source, so a host holding it carries no identity at
-    // all — surface the missing key instead of degrading into an anonymous host,
-    // and surface it HERE rather than in the proof path that is harder to reach.
-    let secret = store_ops::load_signing_key(ctx)?;
     HostRuntime::new(
         &module_bytes,
         HostImportsConfig::default(),
         ExecutionLimits::default(),
-        host_deps(store_id, pubkey, secret),
+        host_deps(store_id),
     )
     .map_err(|e| CliError::VerificationFailed(format!("module load/instantiate failed: {e:?}")))
 }
@@ -175,22 +182,11 @@ pub fn serve_content_raw(
     urn: &Urn,
 ) -> Result<Vec<u8>, CliError> {
     let store_id = urn.store_id;
-    // FAIL CLOSED, same reason as the signing key one line below: a store that
-    // cannot produce its own host identity is a broken store, and an all-zero G1
-    // is not a weaker identity but a nonexistent one.
-    //
-    // Do NOT weaken this on the theory that the old fallback failed closed
-    // downstream anyway. It did not, and the earlier version of this comment
-    // claiming otherwise was the most dangerous line in the file: it read as a
-    // license to restore `unwrap_or(Bytes48([0u8; 48]))`. The guest's content
-    // path hardcodes `require_attestation: false` (see `instantiate_host`), so
-    // the host pubkey is never read here and never checked against any trusted
-    // set. Measured against the released 0.23.0 binary: with `trusted_keys.json`
-    // deleted it exits 0 and serves the content, under an identity that exists
-    // nowhere. Refusing here IS the fix, not a diagnostic nicety layered over a
-    // default that was already safe.
-    let pubkey = store_ops::load_host_pubkey(ctx)?;
-    let mut rt = instantiate_host(ctx, module_path, store_id, pubkey)?;
+    // No identity is loaded, and none is substituted for one — see
+    // [`instantiate_host`]. `ctx` is still threaded through for the callers'
+    // benefit, not for an identity read.
+    let _ = ctx;
+    let mut rt = instantiate_host(module_path, store_id)?;
 
     // Drive the module's own serve flow. The request carries the ROOT-INDEPENDENT
     // retrieval key (matching the compiler's `static_key`) so the guest finds the
@@ -292,8 +288,15 @@ pub fn serve_proof(
     // attestation signing key (init wrote `signing_key.bin`) rather than minting
     // an independent prover key, so node attribution is bound to the attestation
     // identity by construction.
-    // FAIL CLOSED (see `instantiate_host`): a proof signed by a world-known
-    // fallback key attributes serving work to nobody.
+    // FAIL CLOSED, and note that this is the OPPOSITE of the serve path above,
+    // deliberately. Serving content consumes no identity, so it carries none;
+    // signing a proof IS an act of attribution, so an absent or unreadable key
+    // must stop it. Neither substituting a stand-in key (a proof attributed to a
+    // world-known seed attributes serving work to nobody) nor proceeding without
+    // one is available here — a proof needs a signer.
+    //
+    // Do not "simplify" this to match `instantiate_host`. The asymmetry is the
+    // fix: identity became optional on the READ path only.
     let node_sk = store_ops::load_signing_key(ctx)?;
     let node_pk = node_sk.public_key();
     let block = ChiaBlockRef {
@@ -376,11 +379,10 @@ mod tests {
     /// whatever the RNG does).
     #[test]
     fn the_host_instantiate_host_builds_draws_real_entropy() {
-        let (_td, ctx, store_id, module_path) = committed_store();
-        let pubkey = store_ops::load_host_pubkey(&ctx).unwrap();
+        let (_td, _ctx, store_id, module_path) = committed_store();
 
-        let rt = instantiate_host(&ctx, &module_path, store_id, pubkey)
-            .expect("an initialized store instantiates");
+        let rt =
+            instantiate_host(&module_path, store_id).expect("an initialized store instantiates");
 
         assert!(
             !rt.rng_is_deterministic(),
@@ -389,22 +391,83 @@ mod tests {
         );
     }
 
-    /// FAIL CLOSED on a missing host PUBLIC key, the sibling of the signing-key
-    /// load one line away in the same function.
+    /// Delete every file that carries the store's identity.
+    fn destroy_identity(ctx: &CliContext) {
+        for f in ["signing_key.bin", "trusted_keys.json"] {
+            let p = ctx.dig_dir.join(f);
+            if p.exists() {
+                std::fs::remove_file(&p).unwrap();
+            }
+        }
+    }
+
+    /// A store with NO identity still serves its committed content (#2712).
     ///
-    /// Before this, `load_host_pubkey` fell back to an all-zero `Bytes48`, so a
-    /// store whose `trusted_keys.json` had gone missing served on with a host
-    /// identity that does not exist — and it SUCCEEDED. The pre-fix outcome was
-    /// not "an error, misattributed a few layers away"; it was a 200-equivalent.
-    /// Attestation is hardcoded off on the content path, so the zero key was
-    /// never read, let alone rejected. Confirmed against the released 0.23.0
-    /// binary, which serves the file with `trusted_keys.json` deleted.
+    /// Asserting `Ok` here would be a false green: the miss path returns a DECOY
+    /// through the same `Ok` (§14.2), so a runtime that had silently stopped
+    /// finding the resource would satisfy a bare success check. The assertion is
+    /// therefore on the decrypted, merkle-verified PLAINTEXT — the one outcome a
+    /// decoy cannot produce, because its proof does not verify against the
+    /// trusted root.
     ///
-    /// That is why this has to be a call-site test: the difference it detects is
-    /// served-content versus refusal, which no assertion on `load_host_pubkey`'s
-    /// return value alone would show.
+    /// Fixture design: exactly one actor varies (the identity files), and the
+    /// intact store is kept as a truthful control, so a store that had stopped
+    /// serving for some unrelated reason could not read as a pass.
     #[test]
-    fn a_missing_trusted_key_file_refuses_to_serve() {
+    fn a_store_with_no_identity_still_serves_committed_content() {
+        let (_td, ctx, _store_id, _module_path) = committed_store();
+        let cfg = ctx.load_config().unwrap();
+        let root = store_ops::current_root(&ctx).unwrap().unwrap();
+
+        // Control: the intact store returns the real bytes.
+        let intact = read_resource_plaintext(&ctx, &cfg, &root, "hello")
+            .expect("an intact store serves its own content");
+        assert_eq!(intact, b"hello serve");
+
+        destroy_identity(&ctx);
+
+        let anonymous = read_resource_plaintext(&ctx, &cfg, &root, "hello").expect(
+            "reading committed content consumes no identity, so a store whose \
+             identity files are gone must still serve it",
+        );
+        assert_eq!(
+            anonymous, intact,
+            "an anonymous read must return the SAME real plaintext, not a decoy"
+        );
+    }
+
+    /// The read runtime the PRODUCTION path builds carries no host identity.
+    ///
+    /// Anchored at the call site for the same reason as the RNG test above: an
+    /// assertion on `host_deps(..)`'s return value is defeated by inlining a
+    /// `.with_identity(..)` call into `instantiate_host`.
+    /// The identity is not observable through any export on the content path, so
+    /// `HostRuntime::has_host_public_key` exists to answer this.
+    #[test]
+    fn the_read_runtime_carries_no_host_identity() {
+        let (_td, _ctx, store_id, module_path) = committed_store();
+
+        let rt = instantiate_host(&module_path, store_id).expect("an initialized store serves");
+
+        assert!(
+            !rt.has_host_public_key(),
+            "the read path must carry NO host identity; carrying one re-couples \
+             every read to files it does not consume"
+        );
+    }
+
+    /// The control that keeps the relaxation honest: identity became optional on
+    /// the READ path ONLY.
+    ///
+    /// `serve_proof` signs, and signing is an act of attribution, so it must still
+    /// refuse when the signing key is gone. Without this test the suite above is
+    /// satisfied equally by "identity optional on reads" and by "identity optional
+    /// everywhere" — the second being the security regression this change must not
+    /// become. The message must also name the missing file, because a bare io
+    /// error ("the system cannot find the file specified") fails just as closed
+    /// and tells an operator nothing.
+    #[test]
+    fn serve_proof_still_refuses_without_a_signing_key() {
         let (_td, ctx, store_id, module_path) = committed_store();
         let urn = Urn {
             chain: "chia".into(),
@@ -412,22 +475,104 @@ mod tests {
             root_hash: None,
             resource_key: Some("hello".into()),
         };
-        // Control: the intact store serves.
-        serve_content_raw(&ctx, &module_path, &urn).expect("an intact store serves");
+        let root = store_ops::current_root(&ctx).unwrap().unwrap();
 
-        std::fs::remove_file(ctx.dig_dir.join("trusted_keys.json")).unwrap();
+        // Control: with the identity intact, a proof is produced.
+        serve_proof(&ctx, &module_path, &urn, root).expect("an intact store can sign a proof");
 
-        let err = serve_content_raw(&ctx, &module_path, &urn)
-            .expect_err("a store with no host identity must refuse to serve");
-        // The refusal is only half the value; the other half is that the message
-        // names the file that is gone. A bare io error ("the system cannot find
-        // the file specified") fails just as closed and tells an operator
-        // nothing, so assert the subject, not merely the failure.
+        destroy_identity(&ctx);
+
+        let err = serve_proof(&ctx, &module_path, &urn, root)
+            .expect_err("signing a proof REQUIRES an identity and must refuse without one");
         let msg = format!("{err:?}");
         assert!(
-            msg.contains("trusted_keys.json"),
-            "the error must name the missing identity file, not a downstream \
-             symptom or a bare io error: {msg}"
+            msg.contains("signing_key.bin"),
+            "the refusal must name the missing identity file: {msg}"
         );
+    }
+
+    /// Revert-proof, two legs chained in ONE test because either alone is
+    /// defeatable.
+    ///
+    /// `has_host_public_key` (the behavioural leg) is green both when the read
+    /// path carries NOTHING and — crucially — it is NOT green when a stand-in key
+    /// is substituted, so it catches a restored `unwrap_or(Bytes48([0u8; 48]))`.
+    /// What it CANNOT catch is a re-added *refusal*: a runtime that never gets
+    /// built because the read aborted earlier still trivially "carries no
+    /// identity".
+    ///
+    /// SCOPE, stated exactly, because the previous wording overstated it: this
+    /// leg catches a re-added refusal only in the `load_host_pubkey` form. It
+    /// cannot catch the `load_signing_key` form — that token is deliberately
+    /// ALLOWED below, since `serve_proof` lives in this same file and must keep
+    /// calling it. The test that actually covers a refusal of any shape is the
+    /// behavioural
+    /// [`a_store_with_no_identity_still_serves_committed_content`], which deletes
+    /// the identity files and demands real plaintext back; its control against
+    /// over-relaxation is
+    /// [`serve_proof_still_refuses_without_a_signing_key`].
+    ///
+    /// The banned tokens are the identity-carrying positions specifically, not
+    /// seeds in general: `host_deps`'s MOCK PROVER key is a legitimate
+    /// `from_seed(&[7u8; 32])` and has nothing to do with the host identity, so a
+    /// blanket seed ban here would be a false failure that invites deletion.
+    #[test]
+    fn the_read_path_never_reaches_for_the_store_identity() {
+        // ONE literal, used for both the count assertion and the split, so that
+        // naming the marker here does not itself change the count.
+        const TEST_MODULE_MARKER: &str = "#[cfg(test)]";
+
+        let src = include_str!("serve.rs");
+
+        // The split below assumes the FIRST marker opens the test module, so the
+        // prefix it keeps is the whole production half. A new `cfg(test)`-gated
+        // helper added ABOVE the read path would silently move that boundary and
+        // narrow the guard to a prefix no longer containing the code it polices —
+        // a guard that passes by scanning the wrong text. Fail loudly instead.
+        let marker_count = src.matches(TEST_MODULE_MARKER).count();
+        assert_eq!(
+            marker_count, 2,
+            "expected exactly 2 `{TEST_MODULE_MARKER}` occurrences in serve.rs \
+             (the test-module attribute + this test's own marker literal), found \
+             {marker_count}. A new one was added: re-check that the split below \
+             still yields the WHOLE production half, then update this count."
+        );
+
+        // Cut the test module off so this file's own doc comments and fixtures do
+        // not match themselves.
+        let production = src
+            .split(TEST_MODULE_MARKER)
+            .next()
+            .expect("this file has a test module");
+
+        // `load_signing_key` is deliberately absent from this list: `serve_proof`
+        // still calls it, and must.
+        //
+        // The two identity-carrying positions reachable from THIS crate are the
+        // builder call and field assignment. A `HostDeps { identity: Some(..) }`
+        // literal is not one of them — `HostDeps` is `#[non_exhaustive]` and this
+        // is a different crate, so that form is a compile error here and banning
+        // it would be a ban on an unproducible string.
+        //
+        // Field assignment needs its own token because `#[non_exhaustive]`
+        // restricts construction, not assignment: `d.identity = Some(..)` on an
+        // existing value is legal from here and matches neither the builder token
+        // nor the literal one. It is not a live hole either way — the behavioural
+        // `the_read_runtime_carries_no_host_identity` catches it — this scan is
+        // the cheap second leg.
+        for banned in [
+            "load_host_pubkey",
+            ".identity = Some(",
+            "with_identity(",
+            "[0u8; 48]",
+        ] {
+            assert!(
+                !production.contains(banned),
+                "`{banned}` reappeared in this file's read path. Reading committed \
+                 content consumes no identity: it must neither load one (which \
+                 costs availability, #2712) nor substitute one (which fakes an \
+                 identity nobody controls, #2553)."
+            );
+        }
     }
 }

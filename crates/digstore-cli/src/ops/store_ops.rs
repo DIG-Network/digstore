@@ -1468,10 +1468,17 @@ pub(crate) fn load_host_pubkey(ctx: &CliContext) -> Result<Bytes48, CliError> {
 
 /// Load the host BLS signing key (seed) persisted at init (§12.2).
 ///
-/// The error names the file and the likely cause, because every caller of this
-/// is a serve path that must now REFUSE to run without it: an operator seeing a
-/// bare io error would reasonably look for a content problem instead of a
-/// missing store identity.
+/// Every remaining caller is a path that genuinely CONSUMES the identity —
+/// signing a proof, pushing — so the failure is classified as
+/// [`CliError::IdentityUnavailable`] (`IDENTITY_UNAVAILABLE`, exit 20) rather
+/// than a generic error. Reading committed content does not call this at all
+/// (§13.6): it consumes no identity, so a missing key is not a reason to refuse
+/// a read.
+///
+/// The error names the file and the likely cause because an operator seeing a
+/// bare io error would reasonably look for a content problem instead of a missing
+/// store identity — and a §6.2 machine consumer can branch on the stable code
+/// instead of matching prose.
 ///
 /// The length is validated before the key is derived — `SecretKey::from_seed`
 /// asserts `len >= 32` and therefore ABORTS THE PROCESS on a short seed. A
@@ -1483,12 +1490,12 @@ pub(crate) fn load_signing_key(
     ctx: &CliContext,
 ) -> Result<digstore_crypto::bls::SecretKey, CliError> {
     let path = ctx.dig_dir.join("signing_key.bin");
-    let bytes = fs::read(&path).map_err(|e| {
-        CliError::Other(anyhow::anyhow!(
-            "cannot read the host signing key at {} ({e}) — the store may not have been \
-             initialized (`dig init`), or the key file was removed or is unreadable",
-            path.display()
-        ))
+    let bytes = fs::read(&path).map_err(|e| CliError::IdentityUnavailable {
+        path: path.display().to_string(),
+        detail: format!(
+            "cannot read the host signing key ({e}) — the store may not have been \
+             initialized (`dig init`), or the key file was removed or is unreadable"
+        ),
     })?;
     let seed: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
         CliError::InvalidArgument(format!(
@@ -1572,6 +1579,50 @@ mod tests {
         assert!(td.path().join("trusted_keys.json").exists());
         assert!(td.path().join("signing_key.bin").exists());
         assert_ne!(res.store_id, Bytes32([0u8; 32]));
+    }
+
+    /// `load_host_pubkey` must ERROR on both shapes of a missing trusted key —
+    /// never return one.
+    ///
+    /// This is the successor to `serve_fails_closed`'s deleted
+    /// `a_missing_trusted_key_file_refuses_to_serve`, which covered #2553's
+    /// pubkey leg from the read path. The read path no longer loads trusted keys
+    /// at all, so that test could not survive; without a replacement, a
+    /// reacquired `unwrap_or(Bytes48([0u8; 48]))` here would turn nothing red.
+    ///
+    /// The code is CORRECT today and even the hypothetical regression fails
+    /// closed downstream (an all-zero 48 bytes is not a canonical G1 point, so
+    /// `verify_head_signature` rejects it at clone time). This closes a hole in
+    /// the GUARDS, not a live defect.
+    ///
+    /// The assertion is "returns an error", deliberately not "is not the all-zero
+    /// key": the latter is satisfied by ANY substituted key, which is the same
+    /// class of lie with different bytes.
+    #[test]
+    fn load_host_pubkey_errors_when_there_is_no_trusted_key() {
+        let td = tempdir().unwrap();
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
+        init_store(&ctx, false, None, None, None, None, None, None).unwrap();
+        let path = td.path().join("trusted_keys.json");
+
+        // Control: an initialized store DOES yield a key, so the two failures
+        // below are the absence of a key and not a broken fixture.
+        load_host_pubkey(&ctx).expect("an initialized store has a trusted host key");
+
+        // Shape 1: the file is gone.
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            load_host_pubkey(&ctx).is_err(),
+            "a missing trusted_keys.json must refuse, never yield a key"
+        );
+
+        // Shape 2: the file parses but holds no key. `.first()` on an empty list
+        // is exactly where a `unwrap_or(default)` would substitute one.
+        std::fs::write(&path, "[]").unwrap();
+        assert!(
+            load_host_pubkey(&ctx).is_err(),
+            "an empty trusted-key list must refuse, never yield a key"
+        );
     }
 
     #[test]
@@ -1903,6 +1954,37 @@ mod tests {
                 "a {short}-byte key must report a corrupt file, got {err:?}"
             );
         }
+    }
+
+    /// An ABSENT key file is classified as `IDENTITY_UNAVAILABLE`, distinctly from
+    /// the corrupt-length cases above.
+    ///
+    /// A §6.2 machine consumer must be able to tell "this store has no identity,
+    /// so it cannot sign" from "something went wrong", because the two have
+    /// different remedies (re-create the identity vs investigate). Before this,
+    /// both arrived as the catch-all `ERROR`/exit 1. The distinction matters more
+    /// now that a missing identity no longer stops a READ (§13.6): the only
+    /// operations that surface it are the ones that genuinely need a signer.
+    #[test]
+    fn an_absent_signing_key_is_classified_as_identity_unavailable() {
+        let (_td, ctx) = ctx(false);
+        fs::remove_file(ctx.dig_dir.join("signing_key.bin")).unwrap();
+
+        let err = load_signing_key(&ctx)
+            .err()
+            .expect("an absent key cannot be loaded");
+        assert!(
+            matches!(err, CliError::IdentityUnavailable { .. }),
+            "an absent identity must be its own class, not the catch-all: {err:?}"
+        );
+        assert_eq!(err.code(), "IDENTITY_UNAVAILABLE");
+        assert_eq!(err.exit_code(), 20);
+        // The path must reach the operator: "store identity unavailable" without
+        // naming the file leaves them guessing which of the two files it was.
+        assert!(
+            format!("{err}").contains("signing_key.bin"),
+            "the message must name the file: {err}"
+        );
     }
 
     /// An OVERLONG key file is equally corrupt. `from_seed` accepts `len >= 32`,

@@ -183,6 +183,15 @@ struct SigningHost {
     time: u64,
     rand: std::cell::Cell<u32>,
     corrupt_sig: bool,
+    /// Behave as an ANONYMOUS host: hold no identity, so both identity imports
+    /// fail. This mirrors what `digstore-host` actually does for a runtime built
+    /// with `identity: None` — `host_get_public_key` returns `NotFound` and the
+    /// `UnavailableAttestationBackend` refuses to sign.
+    ///
+    /// The double is widened rather than the test weakened: a double that can only
+    /// vary `corrupt_sig` cannot express "the host has nothing to sign with",
+    /// which is a different lie from "the host signed badly".
+    anonymous: bool,
 }
 
 impl SigningHost {
@@ -195,15 +204,30 @@ impl SigningHost {
             time: 1_700_000_000,
             rand: std::cell::Cell::new(0),
             corrupt_sig: false,
+            anonymous: false,
+        }
+    }
+
+    /// The same host, stripped of its identity.
+    fn anonymous(seed: &[u8; 32]) -> Self {
+        SigningHost {
+            anonymous: true,
+            ..SigningHost::new(seed)
         }
     }
 }
 
 impl digstore_guest::host::DigHost for SigningHost {
     fn get_public_key(&self) -> digstore_guest::host::HostResult {
+        if self.anonymous {
+            return Err(digstore_core::ErrorCode::NotFound);
+        }
         Ok(self.pubkey.to_vec())
     }
     fn create_attestation(&self, challenge: &[u8]) -> digstore_guest::host::HostResult {
+        if self.anonymous {
+            return Err(digstore_core::ErrorCode::NotFound);
+        }
         // Sign the EXACT challenge bytes the gate handed us (AugScheme).
         let mut sig = digstore_crypto::bls::bls_sign(&self.secret, challenge).0;
         if self.corrupt_sig {
@@ -278,6 +302,72 @@ fn valid_attestation_from_trusted_key_returns_real() {
     assert!(
         matches!(attest_fixture(false, true), ContentOutcome::Real(_)),
         "a valid AugScheme signature from a trusted key must release real content"
+    );
+}
+
+/// An ANONYMOUS host must NOT be able to serve a module that genuinely requires
+/// attestation (#2712).
+///
+/// This is the test that proves making the host identity optional is not a hole.
+/// The read path in `digstore-cli` now builds its runtime with no identity at all,
+/// which is safe only because the content gate does not ask for one
+/// (`require_attestation: false`). This asserts the converse directly: where the
+/// gate DOES ask, an identity-less host gets a **Decoy**, never real content.
+///
+/// Fixture design — exactly one actor varies. The trusted set still contains a
+/// real, valid key and the gate is still enabled; the only difference from
+/// `valid_attestation_from_trusted_key_returns_real` (the control, immediately
+/// above) is that this host holds nothing to sign with. Removing the trusted key
+/// instead would have proved a different, already-covered thing
+/// (`attestation_with_no_embedded_trusted_set_returns_decoy`) and would have made
+/// the fixture unable to see the property under test, because no honest signer
+/// would remain.
+#[test]
+fn an_anonymous_host_cannot_serve_content_that_requires_attestation() {
+    let key = Bytes32([0x11; 32]);
+    let entry = KeyTableEntry {
+        static_key: key,
+        generation: Bytes32([0xBB; 32]),
+        chunk_indices: vec![0],
+        total_size: 5,
+    };
+    let table = encode_key_table(&[entry]);
+    let pool = fixtures::pack_pool(&[b"alpha"]);
+
+    // The trusted set holds the key this host WOULD have signed with, so the only
+    // thing standing between the request and real content is the missing identity.
+    let identified = SigningHost::new(&[42u8; 32]);
+    let blob = section_with_trusted([0xAA; 32], [0xBB; 32], &table, &pool, &[identified.pubkey]);
+    let ds = DataSection::parse(&blob).unwrap();
+
+    let mut gc = gate_config();
+    gc.require_attestation = true;
+    let req = ContentRequest {
+        retrieval_key: key,
+        root_hash: None,
+        range: None,
+        jwt: None,
+        window: None,
+    };
+
+    // Control: the SAME fixture releases real content to a host that can attest.
+    assert!(
+        matches!(
+            serve_content(&identified, &ds, &req, &gc),
+            ContentOutcome::Real(_)
+        ),
+        "control: an identified, trusted host must get real content from this \
+         fixture, otherwise the assertion below proves nothing"
+    );
+
+    let anonymous = SigningHost::anonymous(&[42u8; 32]);
+    assert!(
+        matches!(
+            serve_content(&anonymous, &ds, &req, &gc),
+            ContentOutcome::Decoy(_)
+        ),
+        "a host with NO identity must fail the attestation gate closed and get a \
+         Decoy; making the identity optional must not make the gate optional"
     );
 }
 

@@ -16,7 +16,7 @@ use digstore_compiler::{Compiler, CompilerConfig};
 use digstore_core::config::HostImportsConfig;
 use digstore_core::{AuthenticationInfo, Bytes32, ChiaBlockRef, Decode, Decoder};
 use digstore_crypto::bls::BlsSecretKey;
-use digstore_host::{ExecutionLimits, FixedClock, HostDeps, HostRuntime};
+use digstore_host::{ExecutionLimits, FixedClock, HostDeps, HostIdentity, HostRuntime};
 use digstore_prover::{MockChainSource, MockProver};
 use std::sync::Arc;
 
@@ -28,7 +28,6 @@ const GUEST_WASM: &str = concat!(
 fn host_deps(store_id: Bytes32) -> HostDeps {
     // The embedded trusted key is the public half of seed [42u8;32] (common.rs).
     let sk = BlsSecretKey::from_seed(&[42u8; 32]);
-    let pk = sk.public_key().to_bytes();
     let prover_sk = BlsSecretKey::from_seed(&[7u8; 32]);
     let prover_pk = prover_sk.public_key();
     let block = ChiaBlockRef {
@@ -38,17 +37,15 @@ fn host_deps(store_id: Bytes32) -> HostDeps {
     };
     let chain = MockChainSource::new(vec![block.clone()], 1_700_000_000);
     let prover = MockProver::new(prover_sk, prover_pk, block);
-    HostDeps {
+    HostDeps::new(
         store_id,
-        bls_secret: sk,
-        bls_public: pk,
-        clock: Arc::new(FixedClock::new(1_700_000_000)),
-        chain: Arc::new(chain),
-        prover: Arc::new(prover),
-        rng_seed: Some([99u8; 32]),
-        instance_id: Bytes32([1u8; 32]),
-        attestation: None,
-    }
+        Arc::new(FixedClock::new(1_700_000_000)),
+        Arc::new(chain),
+        Arc::new(prover),
+        Bytes32([1u8; 32]),
+    )
+    .with_identity(HostIdentity::new(sk))
+    .with_rng_seed([99u8; 32])
 }
 
 /// Compile a real module embedding `auth`, then read back the guest's
