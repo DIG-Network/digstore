@@ -700,7 +700,7 @@ bound-induced export failure (timeout vs fuel exhaustion), not as an opaque engi
 Each export call is armed with its own fresh budget; a serve sequence (alloc → call → read →
 dealloc) is deliberately NOT a single combined budget.
 
-### 13.6 Host identity: never substituted, and required to attest, sign, or push
+### 13.6 Host identity: never substituted, required to attest, sign, or push, and not consulted to read
 
 A store's host identity is its BLS signing key (`signing_key.bin`) and the trusted host keys
 (`trusted_keys.json`) persisted at init.
@@ -710,6 +710,17 @@ A store's host identity is its BLS signing key (`signing_key.bin`) and the trust
   carries no identity at all rather than a weaker one, and an all-zero public key is a nonexistent
   identity rather than a weak one.
 - A host MUST refuse to attest, sign, or push when the identity is absent or unreadable.
+- Serving committed content consumes NO host identity. A host MUST carry none on that path, MUST NOT
+  read the identity files to take it, and MUST NOT refuse a read because the identity is absent,
+  unreadable, or malformed. Reading DIG content requires no account and no key (§14), so a missing
+  identity is not a reason to withhold content that is already committed and merkle-verifiable
+  against its trusted root.
+- Where a host does carry no identity, that absence MUST be representable as absence rather than
+  encoded as a placeholder value, so that a path which later begins consuming the identity fails
+  closed instead of accepting a key nobody controls.
+- Making the identity optional MUST NOT make any gate optional. Where the content gate does require
+  attestation (§12.2), a host holding no identity MUST fail that gate closed and return a decoy,
+  exactly as a host presenting an untrusted or invalid key does.
 - The signing key MUST be exactly 32 bytes. A shorter or longer file is malformed and MUST be
   reported as a corrupt-identity error — never truncated, never padded, and never handed to key
   derivation, which is permitted to abort the process on a short seed.
@@ -720,7 +731,13 @@ The substitution ban holds regardless of whether a given path currently verifies
 loads. A path that does not consume the identity today MUST NOT be treated as licence to supply a
 placeholder, because the placeholder becomes forgeable identity the moment any consumer begins
 verifying it. Where a path genuinely does not need an identity, the correct expression is to carry
-no identity at all — not to carry a fabricated one.
+no identity at all — not to carry a fabricated one, and not to refuse the operation.
+
+These two rules are one rule seen from both sides, and neither implies the other. Refusing a read
+over a missing identity is not a stricter form of not substituting one: it withholds content whose
+integrity does not depend on the host at all, while leaving every path that DOES consume an identity
+exactly as safe as it was. Conversely, tolerating a missing identity on the read path grants nothing
+to the signing paths, which continue to require one.
 
 ## 14. Client → node resolution (the origin)
 
