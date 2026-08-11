@@ -76,9 +76,7 @@ pub struct UnavailableAttestationBackend;
 
 impl AttestationBackend for UnavailableAttestationBackend {
     fn attest(&self, _challenge: &[u8]) -> Result<Bytes96, HostError> {
-        Err(HostError::GuestError(
-            digstore_core::ErrorCode::NotFound,
-        ))
+        Err(HostError::GuestError(digstore_core::ErrorCode::NotFound))
     }
     fn public_key(&self) -> Option<Bytes48> {
         None

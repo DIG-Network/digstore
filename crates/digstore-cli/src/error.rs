@@ -252,7 +252,8 @@ impl CliError {
             CliError::NoLocalNode { .. } => Some("run `dig-node status` to check your node".into()),
             CliError::NonFastForward => Some("run `digstore pull` first, then push".into()),
             CliError::IdentityUnavailable { path, .. } => Some(format!(
-                "check that {path} exists and is readable by this user; reading committed                  content does not need it, only signing does"
+                "check that {path} exists and is readable by this user; reading committed \
+                 content does not need it, only signing does"
             )),
             CliError::Unauthorized(_) => Some("check your credentials / store signing key".into()),
             CliError::NotFound(_) => Some("run `digstore log` to list capsules and keys".into()),

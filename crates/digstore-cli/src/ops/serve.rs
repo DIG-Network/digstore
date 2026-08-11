@@ -382,8 +382,8 @@ mod tests {
     fn the_host_instantiate_host_builds_draws_real_entropy() {
         let (_td, _ctx, store_id, module_path) = committed_store();
 
-        let rt = instantiate_host(&module_path, store_id)
-            .expect("an initialized store instantiates");
+        let rt =
+            instantiate_host(&module_path, store_id).expect("an initialized store instantiates");
 
         assert!(
             !rt.rng_is_deterministic(),
