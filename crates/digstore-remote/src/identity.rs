@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use digstore_core::{Bytes48, Bytes96};
 use digstore_crypto::bls::SecretKey;
+use zeroize::Zeroizing;
 
 use crate::client::{RequestIdentity, RequestSignFn};
 
@@ -56,8 +57,12 @@ fn random_seed() -> [u8; 32] {
 }
 
 /// Write a secret file (the identity seed) with owner-only permissions. On Unix the
-/// file is created mode `0600`; on Windows it inherits the user-profile ACL (the
-/// identity dir lives under the user's config dir), already restricted to the owner.
+/// file is created mode `0600`; on Windows an EXPLICIT, inheritance-blocking
+/// (PROTECTED) DACL granting only the current user is stamped on the file — real
+/// parity with `0o600`, NOT mere inheritance of the profile-dir ACL (a redirected/
+/// roaming `%APPDATA%` or a loosened profile would otherwise silently widen read
+/// access to the operator's identity seed). Any other target falls back to a plain
+/// write.
 fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -73,9 +78,138 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         f.flush()?;
         Ok(())
     }
-    #[cfg(not(unix))]
+    #[cfg(all(not(unix), windows))]
+    {
+        std::fs::write(path, bytes)?;
+        windows_acl::set_owner_only_dacl(path)
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         std::fs::write(path, bytes)
+    }
+}
+
+#[cfg(windows)]
+mod windows_acl {
+    //! Stamp a Windows file with an owner-only, inheritance-blocking DACL — the
+    //! effective parity with the Unix `0o600` mode used for the identity seed.
+    //!
+    //! WHY: on Windows a freshly-written file merely INHERITS its directory's DACL.
+    //! The identity seed lives under the user's config dir, but a redirected/roaming
+    //! `%APPDATA%` or a loosened profile ACL would silently widen read access to the
+    //! operator's identity seed. To match the Unix `0o600` guarantee we replace the
+    //! file's DACL with an EXPLICIT, PROTECTED (inheritance-blocking) DACL that grants
+    //! the current user full control and no one else — so no principal but the owner
+    //! can read the seed regardless of the directory's ACL.
+
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE};
+    use windows_sys::Win32::Security::Authorization::{
+        SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, NO_MULTIPLE_TRUSTEE,
+        SET_ACCESS, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
+    };
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TokenUser, ACL, DACL_SECURITY_INFORMATION, NO_INHERITANCE,
+        PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// `FILE_ALL_ACCESS` — full control over a file object, the access we grant the owner.
+    const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+
+    /// Closes an owned Windows `HANDLE` on drop.
+    struct HandleGuard(HANDLE);
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// `LocalFree`s a Win32-allocated block (an ACL from `SetEntriesInAclW`) on drop.
+    struct LocalFreeGuard(*mut core::ffi::c_void);
+    impl Drop for LocalFreeGuard {
+        fn drop(&mut self) {
+            unsafe { LocalFree(self.0) };
+        }
+    }
+
+    /// Replace `path`'s DACL with an owner-only, PROTECTED (inheritance-blocking) DACL.
+    pub fn set_owner_only_dacl(path: &Path) -> io::Result<()> {
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            // 1. Resolve the current user's SID from the process token.
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let _token_guard = HandleGuard(token);
+
+            // Size then fetch the TOKEN_USER (the first call is expected to "fail",
+            // reporting the required buffer length in `needed`).
+            let mut needed: u32 = 0;
+            GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed);
+            if needed == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let mut buf = vec![0u8; needed as usize];
+            if GetTokenInformation(
+                token,
+                TokenUser,
+                buf.as_mut_ptr() as *mut core::ffi::c_void,
+                needed,
+                &mut needed,
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            let owner_sid = (*(buf.as_ptr() as *const TOKEN_USER)).User.Sid;
+
+            // 2. One explicit ACE: the owner gets full control, no inheritance. Per the
+            //    Win32 SID-trustee convention the PSID is passed via `ptstrName`.
+            let ea = EXPLICIT_ACCESS_W {
+                grfAccessPermissions: FILE_ALL_ACCESS,
+                grfAccessMode: SET_ACCESS,
+                grfInheritance: NO_INHERITANCE,
+                Trustee: TRUSTEE_W {
+                    pMultipleTrustee: std::ptr::null_mut(),
+                    MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+                    TrusteeForm: TRUSTEE_IS_SID,
+                    TrusteeType: TRUSTEE_IS_USER,
+                    ptstrName: owner_sid as *mut u16,
+                },
+            };
+
+            // 3. Build a fresh ACL containing only that ACE.
+            let mut acl: *mut ACL = std::ptr::null_mut();
+            let rc = SetEntriesInAclW(1, &ea, std::ptr::null(), &mut acl);
+            if rc != ERROR_SUCCESS {
+                return Err(io::Error::from_raw_os_error(rc as i32));
+            }
+            let _acl_guard = LocalFreeGuard(acl as *mut core::ffi::c_void);
+
+            // 4. Install it as the file's PROTECTED DACL (blocks inherited ACEs).
+            let rc = SetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                acl,
+                std::ptr::null(),
+            );
+            if rc != ERROR_SUCCESS {
+                return Err(io::Error::from_raw_os_error(rc as i32));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -83,11 +217,16 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// persisting one on first use. Returns the 32-byte seed and the 48-byte G1
 /// public key. The seed is `Copy`, so signer closures can capture it and
 /// reconstruct the key per call (trivially `Send + Sync`).
+///
+/// The transient plaintext buffer read from disk is wrapped in [`Zeroizing`] so it
+/// is scrubbed on drop rather than lingering in freed memory. (The returned `[u8;
+/// 32]` is a `Copy` the signer closures keep alive for the process lifetime by
+/// design — that is out of scope here.)
 pub fn load_or_create_seed() -> std::io::Result<([u8; 32], Bytes48)> {
     let path = identity_key_path()?;
     let seed: [u8; 32] = if path.exists() {
-        let bytes = std::fs::read(&path)?;
-        bytes.try_into().map_err(|_| {
+        let bytes = Zeroizing::new(std::fs::read(&path)?);
+        <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "identity_key.bin is not a 32-byte seed",
@@ -193,6 +332,126 @@ mod tests {
         assert!(digstore_crypto::verify_request(
             &pk, "module", &store, 100, &nonce, &sig
         ));
+        std::env::remove_var("DIG_IDENTITY_DIR");
+    }
+
+    /// The Windows at-rest guarantee for the identity seed: the persisted file
+    /// carries an EXPLICIT, inheritance-blocking (PROTECTED) DACL that grants only
+    /// the owner — parity with the Unix `0o600` mode. Two independent properties
+    /// prove it, either of which a bare inherited-ACL write violates:
+    ///   1. the DACL is PROTECTED (`SE_DACL_PROTECTED`) — an inherited/default DACL
+    ///      from `std::fs::write` is NOT protected, so this fails deterministically
+    ///      regardless of what principals the profile/temp dir happens to grant; and
+    ///   2. no well-known non-owner principal (Everyone / BUILTIN\Users) has an ACE.
+    ///
+    /// `#[cfg(windows)]`, so it gates on the windows-latest CI job (this crate's
+    /// suite runs under `cargo nextest run --workspace`), not on Unix runners.
+    #[cfg(windows)]
+    #[test]
+    fn identity_seed_dacl_is_owner_only_and_protected() {
+        use std::os::windows::ffi::OsStrExt;
+        use std::path::Path;
+        use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS};
+        use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+        use windows_sys::Win32::Security::{
+            CreateWellKnownSid, EqualSid, GetAce, GetSecurityDescriptorControl, WinBuiltinUsersSid,
+            WinWorldSid, ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+            PSID, SE_DACL_PROTECTED, WELL_KNOWN_SID_TYPE,
+        };
+
+        // Allocate a well-known SID (e.g. Everyone) into an owned buffer.
+        fn well_known(kind: WELL_KNOWN_SID_TYPE) -> Vec<u8> {
+            unsafe {
+                let mut size: u32 = 0;
+                CreateWellKnownSid(kind, std::ptr::null_mut(), std::ptr::null_mut(), &mut size);
+                let mut buf = vec![0u8; size as usize];
+                let ok = CreateWellKnownSid(
+                    kind,
+                    std::ptr::null_mut(),
+                    buf.as_mut_ptr() as PSID,
+                    &mut size,
+                );
+                assert_ne!(ok, 0, "CreateWellKnownSid failed");
+                buf
+            }
+        }
+
+        // Read the file's DACL + control flags; assert PROTECTED and no ACE for `deny`.
+        fn assert_owner_only(path: &Path, deny: &[(&str, PSID)]) {
+            let wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            unsafe {
+                let mut dacl: *mut ACL = std::ptr::null_mut();
+                let mut psd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+                let rc = GetNamedSecurityInfoW(
+                    wide.as_ptr(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut dacl,
+                    std::ptr::null_mut(),
+                    &mut psd,
+                );
+                assert_eq!(rc, ERROR_SUCCESS, "GetNamedSecurityInfoW failed");
+                assert!(
+                    !dacl.is_null(),
+                    "expected an explicit DACL, got NULL (all-access)"
+                );
+
+                let mut control: u16 = 0;
+                let mut revision: u32 = 0;
+                assert_ne!(
+                    GetSecurityDescriptorControl(psd, &mut control, &mut revision),
+                    0,
+                    "GetSecurityDescriptorControl failed"
+                );
+                assert_ne!(
+                    control & SE_DACL_PROTECTED,
+                    0,
+                    "identity seed DACL must be PROTECTED (inheritance-blocking, owner-only)"
+                );
+
+                let count = (*dacl).AceCount;
+                for &(name, sid) in deny {
+                    let mut hit = false;
+                    for i in 0..count {
+                        let mut ace: *mut core::ffi::c_void = std::ptr::null_mut();
+                        if GetAce(dacl, i as u32, &mut ace) == 0 {
+                            continue;
+                        }
+                        let ace = ace as *const ACCESS_ALLOWED_ACE;
+                        let ace_sid = std::ptr::addr_of!((*ace).SidStart) as PSID;
+                        if EqualSid(ace_sid, sid) != 0 {
+                            hit = true;
+                            break;
+                        }
+                    }
+                    assert!(!hit, "{name} must have NO ACE on the identity seed");
+                }
+                LocalFree(psd);
+            }
+        }
+
+        let _g = ENV_LOCK.lock().unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_IDENTITY_DIR", td.path());
+        let (_seed, _pk) = load_or_create_seed().unwrap();
+        let path = td.path().join("identity_key.bin");
+        assert!(path.exists());
+
+        let everyone = well_known(WinWorldSid);
+        let users = well_known(WinBuiltinUsersSid);
+        assert_owner_only(
+            &path,
+            &[
+                ("Everyone (S-1-1-0)", everyone.as_ptr() as PSID),
+                ("BUILTIN\\Users", users.as_ptr() as PSID),
+            ],
+        );
         std::env::remove_var("DIG_IDENTITY_DIR");
     }
 }

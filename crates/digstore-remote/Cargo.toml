@@ -27,8 +27,21 @@ hex = "0.4"
 base64 = "0.22"
 getrandom = "0.2"
 dirs = "5"
+# Scrub transient plaintext copies of the identity seed on drop (the disk-read
+# buffer in `identity::load_or_create_seed`). See that module.
+zeroize = "1"
 futures-util = { version = "0.3", default-features = false }
 async-trait = "0.1"
+
+# Windows-only: explicit owner-only DACL on the identity seed file (Unix uses
+# mode 0o600). See `identity::write_secret_file`.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile = "3"
