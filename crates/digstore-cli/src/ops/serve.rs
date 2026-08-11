@@ -177,10 +177,18 @@ pub fn serve_content_raw(
     let store_id = urn.store_id;
     // FAIL CLOSED, same reason as the signing key one line below: a store that
     // cannot produce its own host identity is a broken store, and an all-zero G1
-    // is not a weaker identity but a nonexistent one. It happens to fail closed
-    // downstream (no zero key is ever in a module's embedded trusted set), but a
-    // caller that reports "attestation not trusted" for "your trusted_keys.json
-    // is missing" has turned a one-line diagnosis into an investigation.
+    // is not a weaker identity but a nonexistent one.
+    //
+    // Do NOT weaken this on the theory that the old fallback failed closed
+    // downstream anyway. It did not, and the earlier version of this comment
+    // claiming otherwise was the most dangerous line in the file: it read as a
+    // license to restore `unwrap_or(Bytes48([0u8; 48]))`. The guest's content
+    // path hardcodes `require_attestation: false` (see `instantiate_host`), so
+    // the host pubkey is never read here and never checked against any trusted
+    // set. Measured against the released 0.23.0 binary: with `trusted_keys.json`
+    // deleted it exits 0 and serves the content, under an identity that exists
+    // nowhere. Refusing here IS the fix, not a diagnostic nicety layered over a
+    // default that was already safe.
     let pubkey = store_ops::load_host_pubkey(ctx)?;
     let mut rt = instantiate_host(ctx, module_path, store_id, pubkey)?;
 
@@ -386,10 +394,15 @@ mod tests {
     ///
     /// Before this, `load_host_pubkey` fell back to an all-zero `Bytes48`, so a
     /// store whose `trusted_keys.json` had gone missing served on with a host
-    /// identity that does not exist. It failed closed downstream (a zero G1 is in
-    /// no module's trusted set), which is exactly why only a call-site test can
-    /// see the difference: the outcome was already an error, just a misattributed
-    /// one several layers away from the missing file.
+    /// identity that does not exist — and it SUCCEEDED. The pre-fix outcome was
+    /// not "an error, misattributed a few layers away"; it was a 200-equivalent.
+    /// Attestation is hardcoded off on the content path, so the zero key was
+    /// never read, let alone rejected. Confirmed against the released 0.23.0
+    /// binary, which serves the file with `trusted_keys.json` deleted.
+    ///
+    /// That is why this has to be a call-site test: the difference it detects is
+    /// served-content versus refusal, which no assertion on `load_host_pubkey`'s
+    /// return value alone would show.
     #[test]
     fn a_missing_trusted_key_file_refuses_to_serve() {
         let (_td, ctx, store_id, module_path) = committed_store();

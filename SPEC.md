@@ -700,7 +700,24 @@ bound-induced export failure (timeout vs fuel exhaustion), not as an opaque engi
 Each export call is armed with its own fresh budget; a serve sequence (alloc → call → read →
 dealloc) is deliberately NOT a single combined budget.
 
-## 14. Client → node resolution (the origin)
+### 13.6 The store's host identity is required in order to serve
+
+A store's host identity is its BLS signing key (`signing_key.bin`) and the trusted host keys
+(`trusted_keys.json`) persisted at init. A host MUST NOT serve, attest, or sign without them.
+
+- A host MUST refuse to serve when either file is absent or unreadable, and the refusal MUST name
+  the missing file.
+- The signing key MUST be exactly 32 bytes. A shorter or longer file is malformed and MUST be
+  reported as a corrupt-identity error — never truncated, never padded, and never handed to key
+  derivation, which is permitted to abort the process on a short seed.
+- A host MUST NOT substitute a default, fixed, hardcoded, or all-zero value for a missing key or
+  public key. A fixed seed is reproducible by anyone with the source, so a host holding one carries
+  no identity at all rather than a weaker one.
+
+This requirement is normative regardless of whether a given read path currently verifies
+attestation. A path that does not consume the identity today MUST NOT be treated as licence to
+substitute a placeholder, because the substitution becomes forgeable identity the moment any
+consumer begins verifying it.
 
 This section is normative for every command that must reach a DIG node: which endpoint is
 chosen, how a project pins its own, and when a missing local node is an error rather than a
