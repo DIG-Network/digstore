@@ -432,7 +432,7 @@ mod tests {
                     }
                     assert!(!hit, "{name} must have NO ACE on the identity seed");
                 }
-                LocalFree(psd as *mut core::ffi::c_void);
+                LocalFree(psd);
             }
         }
 
