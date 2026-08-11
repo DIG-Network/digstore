@@ -122,6 +122,13 @@ fn serving_succeeds_when_the_host_signing_key_is_missing() {
 /// #2553 cared about — that no output is ever attributed to a key anyone can
 /// reproduce from this repository — and it keeps holding on the happy path, where
 /// a substituted key would otherwise go unnoticed.
+///
+/// The expected key is derived HERE from the seed bytes on disk rather than read
+/// back through the crate's own `load_host_pubkey`. Asking production code what
+/// the key should be would make the assertion circular: a loader that substituted
+/// a stand-in would hand the test the same stand-in the signer used, and the
+/// comparison would pass. `from_seed` is a crypto primitive, not the code under
+/// test, so re-deriving through it is an independent oracle.
 #[test]
 fn a_proof_is_signed_by_the_stores_own_key_never_the_world_known_fallback() {
     let fx = committed_store();
@@ -129,9 +136,14 @@ fn a_proof_is_signed_by_the_stores_own_key_never_the_world_known_fallback() {
     let (proof, _root) = serve::serve_proof(&fx.ctx, &fx.module_path, &fx.urn, fx.root)
         .expect("an intact store can sign a proof");
 
-    let expected = store_ops::load_host_pubkey(&fx.ctx).expect("the store has a host key");
+    let seed = std::fs::read(fx.ctx.dig_dir.join("signing_key.bin"))
+        .expect("init must persist the host signing key");
+    let expected = digstore_crypto::bls::SecretKey::from_seed(&seed)
+        .public_key()
+        .to_bytes()
+        .0;
     assert_eq!(
-        proof.node_pubkey.0, expected.0,
+        proof.node_pubkey.0, expected,
         "the proof must be signed by the store's own host key"
     );
     assert_ne!(
