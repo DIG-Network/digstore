@@ -185,7 +185,7 @@ struct SigningHost {
     corrupt_sig: bool,
     /// Behave as an ANONYMOUS host: hold no identity, so both identity imports
     /// fail. This mirrors what `digstore-host` actually does for a runtime built
-    /// with `bls_public: None` — `host_get_public_key` returns `NotFound` and the
+    /// with `identity: None` — `host_get_public_key` returns `NotFound` and the
     /// `UnavailableAttestationBackend` refuses to sign.
     ///
     /// The double is widened rather than the test weakened: a double that can only
