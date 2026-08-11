@@ -1455,12 +1455,23 @@ pub(crate) fn load_host_pubkey(ctx: &CliContext) -> Result<Bytes48, CliError> {
     Ok(Bytes48(k.public_key))
 }
 
-/// Load the host BLS signing key (seed) persisted at init.
+/// Load the host BLS signing key (seed) persisted at init (§12.2).
+///
+/// The error names the file and the likely cause, because every caller of this
+/// is a serve path that must now REFUSE to run without it: an operator seeing a
+/// bare io error would reasonably look for a content problem instead of a
+/// missing store identity.
 pub(crate) fn load_signing_key(
     ctx: &CliContext,
 ) -> Result<digstore_crypto::bls::SecretKey, CliError> {
-    let bytes =
-        fs::read(ctx.dig_dir.join("signing_key.bin")).map_err(|e| CliError::Other(e.into()))?;
+    let path = ctx.dig_dir.join("signing_key.bin");
+    let bytes = fs::read(&path).map_err(|e| {
+        CliError::Other(anyhow::anyhow!(
+            "cannot read the host signing key at {} ({e}) — the store may not have been \
+             initialized (`dig init`), or the key file was removed or is unreadable",
+            path.display()
+        ))
+    })?;
     Ok(digstore_crypto::bls::SecretKey::from_seed(&bytes))
 }
 

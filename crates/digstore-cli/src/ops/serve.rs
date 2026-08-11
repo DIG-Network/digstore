@@ -108,7 +108,13 @@ fn host_deps(store_id: Bytes32, pubkey: Bytes48, secret: BlsSecretKey) -> HostDe
         clock: Arc::new(FixedClock::new(1_700_000_000)),
         chain: Arc::new(chain),
         prover: Arc::new(prover),
-        rng_seed: Some([99u8; 32]),
+        // SECURITY: use real OS entropy, not a hardcoded seed (the convention
+        // `digstore_host::serve_blind` already follows). This RNG backs
+        // `host_random_bytes`, which supplies the guest's §12 attestation
+        // challenge nonce and its oblivious-access cover traffic; under a
+        // constant seed both become predictable, so an attestation response can
+        // be precomputed and the cover reads no longer hide the real ones.
+        rng_seed: None,
         instance_id: Bytes32([1u8; 32]),
         attestation: None,
     }
@@ -128,8 +134,10 @@ fn instantiate_host(
     // key whose public half the compiler embedded as the trusted key. Load the
     // persisted seed (init wrote `signing_key.bin`) so the guest's attestation
     // verification accepts this host; otherwise it would (correctly) serve decoys.
-    let secret =
-        store_ops::load_signing_key(ctx).unwrap_or_else(|_| BlsSecretKey::from_seed(&[42u8; 32]));
+    // FAIL CLOSED: no fallback key. A hardcoded seed is reproducible by anyone
+    // reading this source, so a host attesting with it carries no identity at
+    // all — surface the missing key instead of degrading into an anonymous host.
+    let secret = store_ops::load_signing_key(ctx)?;
     HostRuntime::new(
         &module_bytes,
         HostImportsConfig::default(),
@@ -258,8 +266,9 @@ pub fn serve_proof(
     // attestation signing key (init wrote `signing_key.bin`) rather than minting
     // an independent prover key, so node attribution is bound to the attestation
     // identity by construction.
-    let node_sk =
-        store_ops::load_signing_key(ctx).unwrap_or_else(|_| BlsSecretKey::from_seed(&[42u8; 32]));
+    // FAIL CLOSED (see `instantiate_host`): a proof signed by a world-known
+    // fallback key attributes serving work to nobody.
+    let node_sk = store_ops::load_signing_key(ctx)?;
     let node_pk = node_sk.public_key();
     let block = ChiaBlockRef {
         header_hash: Bytes32([0x55u8; 32]),
@@ -295,4 +304,30 @@ pub fn serve_proof(
 
     let _ = module_bytes;
     Ok((proof, root))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FAIL CLOSED: the serve path must never pin the host RNG.
+    ///
+    /// A fixed seed makes `host_random_bytes` reproducible, and that RNG supplies
+    /// the guest's §12 attestation challenge nonce and its oblivious-access cover
+    /// traffic. Determinism is asserted structurally because neither consumer is
+    /// observable through the serve output: the miss-path decoy is deliberately
+    /// derived from the retrieval key (§14.2, `digstore-guest/src/decoy.rs`), so
+    /// it is byte-stable whatever the RNG does.
+    #[test]
+    fn the_serve_host_draws_real_entropy_and_never_a_pinned_seed() {
+        let deps = host_deps(
+            Bytes32([3u8; 32]),
+            Bytes48([0u8; 48]),
+            BlsSecretKey::from_seed(&[1u8; 32]),
+        );
+        assert!(
+            deps.rng_seed.is_none(),
+            "serve must draw OS entropy; a pinned seed makes attestation nonces predictable"
+        );
+    }
 }
