@@ -2591,6 +2591,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tower 0.4.13",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

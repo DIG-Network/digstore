@@ -195,4 +195,116 @@ mod tests {
         ));
         std::env::remove_var("DIG_IDENTITY_DIR");
     }
+
+    /// The Windows at-rest guarantee for the identity seed: the persisted file
+    /// carries an EXPLICIT, inheritance-blocking (PROTECTED) DACL that grants only
+    /// the owner — parity with the Unix `0o600` mode. Two independent properties
+    /// prove it, either of which a bare inherited-ACL write violates:
+    ///   1. the DACL is PROTECTED (`SE_DACL_PROTECTED`) — an inherited/default DACL
+    ///      from `std::fs::write` is NOT protected, so this fails deterministically
+    ///      regardless of what principals the profile/temp dir happens to grant; and
+    ///   2. no well-known non-owner principal (Everyone / BUILTIN\Users) has an ACE.
+    ///
+    /// `#[cfg(windows)]`, so it gates on the windows-latest CI job (this crate's
+    /// suite runs under `cargo nextest run --workspace`), not on Unix runners.
+    #[cfg(windows)]
+    #[test]
+    fn identity_seed_dacl_is_owner_only_and_protected() {
+        use std::os::windows::ffi::OsStrExt;
+        use std::path::Path;
+        use windows_sys::Win32::Foundation::{LocalFree, ERROR_SUCCESS};
+        use windows_sys::Win32::Security::Authorization::{
+            GetNamedSecurityInfoW, SE_FILE_OBJECT,
+        };
+        use windows_sys::Win32::Security::{
+            CreateWellKnownSid, EqualSid, GetAce, GetSecurityDescriptorControl,
+            ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+            SE_DACL_PROTECTED, WinBuiltinUsersSid, WinWorldSid, WELL_KNOWN_SID_TYPE,
+        };
+
+        // Allocate a well-known SID (e.g. Everyone) into an owned buffer.
+        fn well_known(kind: WELL_KNOWN_SID_TYPE) -> Vec<u8> {
+            unsafe {
+                let mut size: u32 = 0;
+                CreateWellKnownSid(kind, std::ptr::null_mut(), std::ptr::null_mut(), &mut size);
+                let mut buf = vec![0u8; size as usize];
+                let ok =
+                    CreateWellKnownSid(kind, std::ptr::null_mut(), buf.as_mut_ptr() as PSID, &mut size);
+                assert_ne!(ok, 0, "CreateWellKnownSid failed");
+                buf
+            }
+        }
+
+        // Read the file's DACL + control flags; assert PROTECTED and no ACE for `deny`.
+        fn assert_owner_only(path: &Path, deny: &[(&str, PSID)]) {
+            let wide: Vec<u16> =
+                path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+            unsafe {
+                let mut dacl: *mut ACL = std::ptr::null_mut();
+                let mut psd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+                let rc = GetNamedSecurityInfoW(
+                    wide.as_ptr(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut dacl,
+                    std::ptr::null_mut(),
+                    &mut psd,
+                );
+                assert_eq!(rc, ERROR_SUCCESS, "GetNamedSecurityInfoW failed");
+                assert!(!dacl.is_null(), "expected an explicit DACL, got NULL (all-access)");
+
+                let mut control: u16 = 0;
+                let mut revision: u32 = 0;
+                assert_ne!(
+                    GetSecurityDescriptorControl(psd, &mut control, &mut revision),
+                    0,
+                    "GetSecurityDescriptorControl failed"
+                );
+                assert_ne!(
+                    control & SE_DACL_PROTECTED,
+                    0,
+                    "identity seed DACL must be PROTECTED (inheritance-blocking, owner-only)"
+                );
+
+                let count = (*dacl).AceCount;
+                for &(name, sid) in deny {
+                    let mut hit = false;
+                    for i in 0..count {
+                        let mut ace: *mut core::ffi::c_void = std::ptr::null_mut();
+                        if GetAce(dacl, i as u32, &mut ace) == 0 {
+                            continue;
+                        }
+                        let ace = ace as *const ACCESS_ALLOWED_ACE;
+                        let ace_sid = std::ptr::addr_of!((*ace).SidStart) as PSID;
+                        if EqualSid(ace_sid, sid) != 0 {
+                            hit = true;
+                            break;
+                        }
+                    }
+                    assert!(!hit, "{name} must have NO ACE on the identity seed");
+                }
+                LocalFree(psd as *mut core::ffi::c_void);
+            }
+        }
+
+        let _g = ENV_LOCK.lock().unwrap();
+        let td = tempfile::tempdir().unwrap();
+        std::env::set_var("DIG_IDENTITY_DIR", td.path());
+        let (_seed, _pk) = load_or_create_seed().unwrap();
+        let path = td.path().join("identity_key.bin");
+        assert!(path.exists());
+
+        let everyone = well_known(WinWorldSid);
+        let users = well_known(WinBuiltinUsersSid);
+        assert_owner_only(
+            &path,
+            &[
+                ("Everyone (S-1-1-0)", everyone.as_ptr() as PSID),
+                ("BUILTIN\\Users", users.as_ptr() as PSID),
+            ],
+        );
+        std::env::remove_var("DIG_IDENTITY_DIR");
+    }
 }
