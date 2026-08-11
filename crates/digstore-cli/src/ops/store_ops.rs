@@ -1581,6 +1581,50 @@ mod tests {
         assert_ne!(res.store_id, Bytes32([0u8; 32]));
     }
 
+    /// `load_host_pubkey` must ERROR on both shapes of a missing trusted key —
+    /// never return one.
+    ///
+    /// This is the successor to `serve_fails_closed`'s deleted
+    /// `a_missing_trusted_key_file_refuses_to_serve`, which covered #2553's
+    /// pubkey leg from the read path. The read path no longer loads trusted keys
+    /// at all, so that test could not survive; without a replacement, a
+    /// reacquired `unwrap_or(Bytes48([0u8; 48]))` here would turn nothing red.
+    ///
+    /// The code is CORRECT today and even the hypothetical regression fails
+    /// closed downstream (an all-zero 48 bytes is not a canonical G1 point, so
+    /// `verify_head_signature` rejects it at clone time). This closes a hole in
+    /// the GUARDS, not a live defect.
+    ///
+    /// The assertion is "returns an error", deliberately not "is not the all-zero
+    /// key": the latter is satisfied by ANY substituted key, which is the same
+    /// class of lie with different bytes.
+    #[test]
+    fn load_host_pubkey_errors_when_there_is_no_trusted_key() {
+        let td = tempdir().unwrap();
+        let ctx = CliContext::workspace_only(td.path().to_path_buf(), false, false);
+        init_store(&ctx, false, None, None, None, None, None, None).unwrap();
+        let path = td.path().join("trusted_keys.json");
+
+        // Control: an initialized store DOES yield a key, so the two failures
+        // below are the absence of a key and not a broken fixture.
+        load_host_pubkey(&ctx).expect("an initialized store has a trusted host key");
+
+        // Shape 1: the file is gone.
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            load_host_pubkey(&ctx).is_err(),
+            "a missing trusted_keys.json must refuse, never yield a key"
+        );
+
+        // Shape 2: the file parses but holds no key. `.first()` on an empty list
+        // is exactly where a `unwrap_or(default)` would substitute one.
+        std::fs::write(&path, "[]").unwrap();
+        assert!(
+            load_host_pubkey(&ctx).is_err(),
+            "an empty trusted-key list must refuse, never yield a key"
+        );
+    }
+
     #[test]
     fn init_store_id_is_sha256_of_pubkey() {
         let td = tempdir().unwrap();

@@ -525,7 +525,7 @@ mod tests {
         let src = include_str!("serve.rs");
 
         // The split below assumes the FIRST marker opens the test module, so the
-        // prefix it keeps is the whole production half. A new `#[cfg(test)]`
+        // prefix it keeps is the whole production half. A new `cfg(test)`-gated
         // helper added ABOVE the read path would silently move that boundary and
         // narrow the guard to a prefix no longer containing the code it polices —
         // a guard that passes by scanning the wrong text. Fail loudly instead.
