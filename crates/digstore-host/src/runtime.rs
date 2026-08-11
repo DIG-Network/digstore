@@ -95,13 +95,6 @@ pub struct HostRuntime {
     /// proves nothing about the deps the production call site constructs. See
     /// [`HostRuntime::rng_is_deterministic`].
     rng_seeded: bool,
-    /// Whether this runtime was built with a host public identity
-    /// ([`HostDeps::bls_public`] was `Some`). Recorded for the same reason as
-    /// [`Self::rng_seeded`]: the identity is not observable through any export
-    /// on the content path, so a caller that wants to assert what the PRODUCTION
-    /// call site actually built has nothing else to ask. See
-    /// [`HostRuntime::has_host_public_key`].
-    host_pubkey_present: bool,
 }
 
 impl HostRuntime {
@@ -145,7 +138,6 @@ impl HostRuntime {
             Module::new(&engine, module_bytes).map_err(|e| HostError::Wasmtime(e.to_string()))?;
 
         let rng_seeded = deps.rng_seed.is_some();
-        let host_pubkey_present = deps.bls_public.is_some();
         let rng = match deps.rng_seed {
             Some(s) => HostRng::from_seed(s),
             None => HostRng::from_entropy(),
@@ -248,7 +240,6 @@ impl HostRuntime {
             limits_cfg: limits,
             _ticker: ticker,
             rng_seeded,
-            host_pubkey_present,
         })
     }
 
@@ -263,8 +254,17 @@ impl HostRuntime {
     /// `true` when this runtime carries a host public identity. Read paths build
     /// runtimes for which this is `false`: serving committed content consults no
     /// identity, so carrying one there is surface with no purpose.
+    ///
+    /// This reads the key the runtime ACTUALLY INSTALLED, not a bool mirrored
+    /// from the incoming [`HostDeps`]. The distinction is the whole value of the
+    /// accessor: a mirror answers "what did the caller pass", so a substitution
+    /// reintroduced inside this constructor — the #2553 defect, one crate below
+    /// the call site — would leave the mirror `false` while the guest was handed
+    /// a key-shaped value through `host_get_public_key`. Every revert-proof built
+    /// on this accessor would stay green through exactly the regression it
+    /// exists to catch.
     pub fn has_host_public_key(&self) -> bool {
-        self.host_pubkey_present
+        self.store.data().host.keys.bls_public.is_some()
     }
 
     /// Set the per-export-call fuel budget. Epoch deadline is added in Task 12.
