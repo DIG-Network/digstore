@@ -548,14 +548,21 @@ mod tests {
         // `load_signing_key` is deliberately absent from this list: `serve_proof`
         // still calls it, and must.
         //
-        // `identity: Some(` and `with_identity(` are the identity-carrying
-        // positions under the `HostDeps { identity: Option<HostIdentity> }` shape.
-        // They replaced `bls_public: Some(` / `bls_secret: Some(`, which those
-        // fields no longer exist to produce — leaving those tokens here would be a
-        // ban that can never fire, green by construction.
+        // The two identity-carrying positions reachable from THIS crate are the
+        // builder call and field assignment. A `HostDeps { identity: Some(..) }`
+        // literal is not one of them — `HostDeps` is `#[non_exhaustive]` and this
+        // is a different crate, so that form is a compile error here and banning
+        // it would be a ban on an unproducible string.
+        //
+        // Field assignment needs its own token because `#[non_exhaustive]`
+        // restricts construction, not assignment: `d.identity = Some(..)` on an
+        // existing value is legal from here and matches neither the builder token
+        // nor the literal one. It is not a live hole either way — the behavioural
+        // `the_read_runtime_carries_no_host_identity` catches it — this scan is
+        // the cheap second leg.
         for banned in [
             "load_host_pubkey",
-            "identity: Some(",
+            ".identity = Some(",
             "with_identity(",
             "[0u8; 48]",
         ] {

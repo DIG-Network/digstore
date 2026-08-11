@@ -17,7 +17,8 @@ use std::sync::Arc;
 use digstore_cli::context::CliContext;
 use digstore_cli::ops::store_ops;
 use digstore_core::{ContentResponse, Decode, Decoder, Urn};
-use digstore_host::{serve_blind, BlindServeConfig};
+use digstore_crypto::bls::BlsSecretKey;
+use digstore_host::{serve_blind, BlindServeConfig, HostError};
 use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path as ObjPath;
@@ -252,4 +253,49 @@ fn s3_url_path_routes_through_object_store() {
     let resp = ContentResponse::decode(&mut dec).expect("decodes as ContentResponse");
     assert!(resp.merkle_proof.verify());
     assert_eq!(resp.merkle_proof.root, fx.trusted_root);
+}
+
+/// A `BlindServeConfig` whose two identity halves disagree must be REFUSED, not
+/// quietly served under the derived half.
+///
+/// `BlindServeConfig` exposes `bls_secret` and `bls_public` as separate public
+/// fields, so a caller can pair a secret with a public half that does not belong
+/// to it. Deriving the public half and ignoring the supplied one would serve
+/// under a different key than the caller believes it advertised — on the
+/// network-facing path, where the whole point of the blind serve is proving the
+/// host's key is in the module's trusted set.
+///
+/// `from_seed` derives both halves and so cannot express the mismatch; the
+/// public field is assigned directly to build it.
+#[test]
+fn a_blind_serve_config_whose_identity_halves_disagree_is_refused() {
+    let (_td, fx) = build_fixture();
+
+    // Control: the correctly-derived pair serves real content. Without it, the
+    // refusal below is equally satisfied by a fixture that cannot serve at all.
+    let ok_cfg = BlindServeConfig::from_seed(fx.store_id, &fx.seed);
+    let served = serve_blind(&fx.module, &fx.retrieval_key, ok_cfg)
+        .expect("a config whose halves agree must serve");
+    assert!(!served.is_empty(), "the control must serve real bytes");
+
+    // Vary exactly ONE thing: the advertised public half now belongs to a
+    // different secret.
+    let mut bad_cfg = BlindServeConfig::from_seed(fx.store_id, &fx.seed);
+    let foreign = BlsSecretKey::from_seed(&[0xABu8; 32])
+        .public_key()
+        .to_bytes();
+    assert!(
+        foreign != bad_cfg.bls_public,
+        "the fixture must actually differ, or this test proves nothing"
+    );
+    bad_cfg.bls_public = foreign;
+
+    let err = serve_blind(&fx.module, &fx.retrieval_key, bad_cfg).expect_err(
+        "a public half that does not belong to the secret must be refused, not \
+         silently replaced by the derived one",
+    );
+    assert!(
+        matches!(err, HostError::Validation(_)),
+        "the refusal must be a validation error naming the disagreement: {err:?}"
+    );
 }
