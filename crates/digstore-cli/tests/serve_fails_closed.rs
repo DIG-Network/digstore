@@ -166,8 +166,7 @@ fn signing_a_proof_fails_closed_when_the_host_signing_key_is_missing() {
     std::fs::remove_file(fx.ctx.dig_dir.join("signing_key.bin")).unwrap();
 
     let err = serve::serve_proof(&fx.ctx, &fx.module_path, &fx.urn, fx.root)
-        .err()
-        .expect("a host with no signing key must refuse to SIGN");
+        .expect_err("a host with no signing key must refuse to SIGN");
 
     let msg = err.to_string();
     assert!(
