@@ -1429,7 +1429,18 @@ fn serialize_keys(keys: &[TrustedHostKey]) -> Vec<StoredKey> {
 
 pub(crate) fn load_trusted_keys(ctx: &CliContext) -> Result<Vec<TrustedHostKey>, CliError> {
     let path = ctx.dig_dir.join("trusted_keys.json");
-    let text = fs::read_to_string(&path).map_err(|e| CliError::Other(e.into()))?;
+    // Name the file. The serve path now REFUSES rather than substituting an
+    // all-zero host key, so this text is what an operator sees when the store's
+    // identity is missing — and a bare "the system cannot find the file
+    // specified", with no path and no subject, sends them looking at the content
+    // instead of at the one file that is gone.
+    let text = fs::read_to_string(&path).map_err(|e| {
+        CliError::Other(anyhow::anyhow!(
+            "cannot read the store's trusted host keys at {} ({e}) — the store may not have \
+             been initialized (`dig init`), or the file was removed",
+            path.display()
+        ))
+    })?;
     let stored: Vec<StoredKey> =
         serde_json::from_str(&text).map_err(|e| CliError::Other(e.into()))?;
     let mut out = Vec::with_capacity(stored.len());

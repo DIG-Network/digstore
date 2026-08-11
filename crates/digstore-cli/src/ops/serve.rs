@@ -406,10 +406,15 @@ mod tests {
 
         let err = serve_content_raw(&ctx, &module_path, &urn)
             .expect_err("a store with no host identity must refuse to serve");
+        // The refusal is only half the value; the other half is that the message
+        // names the file that is gone. A bare io error ("the system cannot find
+        // the file specified") fails just as closed and tells an operator
+        // nothing, so assert the subject, not merely the failure.
         let msg = format!("{err:?}");
         assert!(
-            !msg.contains("attest") && !msg.contains("verify"),
-            "the error must name the missing identity, not a downstream symptom: {msg}"
+            msg.contains("trusted_keys.json"),
+            "the error must name the missing identity file, not a downstream \
+             symptom or a bare io error: {msg}"
         );
     }
 }
