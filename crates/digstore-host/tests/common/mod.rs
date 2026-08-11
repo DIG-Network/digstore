@@ -26,8 +26,8 @@ pub fn test_deps(clock: FixedClock) -> HostDeps {
 
     HostDeps {
         store_id: Bytes32([0u8; 32]),
-        bls_secret: sk,
-        bls_public: pk,
+        bls_secret: Some(sk),
+        bls_public: Some(pk),
         clock: Arc::new(clock),
         chain: Arc::new(chain),
         prover: Arc::new(prover),
