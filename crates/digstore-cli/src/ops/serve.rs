@@ -108,7 +108,19 @@ fn host_deps(store_id: Bytes32, pubkey: Bytes48, secret: BlsSecretKey) -> HostDe
         clock: Arc::new(FixedClock::new(1_700_000_000)),
         chain: Arc::new(chain),
         prover: Arc::new(prover),
-        rng_seed: Some([99u8; 32]),
+        // Draw real OS entropy rather than a constant seed, converging on the
+        // convention `digstore_host::serve_blind` already follows.
+        //
+        // SCOPE, stated honestly: this RNG backs `host_random_bytes`, whose only
+        // live consumer is the guest's oblivious-access cover traffic. The §12
+        // attestation nonce draw is unreachable here — `digstore-guest`'s content
+        // path hardcodes `require_attestation: false` (dighub content is public
+        // and must be servable by any node), so no module this CLI compiles takes
+        // that branch. Nor is this closing a third-party attack: the party the
+        // cover-traffic shuffle hides access patterns from is the HOST, and the
+        // host is what supplies this randomness. The change removes a constant
+        // seed that had no business outside a test fixture.
+        rng_seed: None,
         instance_id: Bytes32([1u8; 32]),
         attestation: None,
     }
@@ -124,12 +136,20 @@ fn instantiate_host(
 ) -> Result<HostRuntime, CliError> {
     let module_bytes = std::fs::read(module_path)
         .map_err(|_| CliError::NotFound(module_path.display().to_string()))?;
-    // §12.2: the host MUST attest with the store's host signing key — the same
-    // key whose public half the compiler embedded as the trusted key. Load the
-    // persisted seed (init wrote `signing_key.bin`) so the guest's attestation
-    // verification accepts this host; otherwise it would (correctly) serve decoys.
-    let secret =
-        store_ops::load_signing_key(ctx).unwrap_or_else(|_| BlsSecretKey::from_seed(&[42u8; 32]));
+    // §12.2: the host attests with the store's host signing key — the same key
+    // whose public half the compiler embedded as the trusted key. Load the
+    // persisted seed that `init` wrote to `signing_key.bin`.
+    //
+    // Note what this key does NOT do on the read path: `digstore-guest`'s content
+    // path hardcodes `require_attestation: false`, so the guest does not verify
+    // this host and would not serve decoys if the key were wrong. The key is
+    // genuinely consumed by `serve_proof` below (§13.7 "one key for both roles").
+    //
+    // FAIL CLOSED anyway: no fallback key. A hardcoded seed is reproducible by
+    // anyone reading this source, so a host holding it carries no identity at
+    // all — surface the missing key instead of degrading into an anonymous host,
+    // and surface it HERE rather than in the proof path that is harder to reach.
+    let secret = store_ops::load_signing_key(ctx)?;
     HostRuntime::new(
         &module_bytes,
         HostImportsConfig::default(),
@@ -155,7 +175,21 @@ pub fn serve_content_raw(
     urn: &Urn,
 ) -> Result<Vec<u8>, CliError> {
     let store_id = urn.store_id;
-    let pubkey = store_ops::load_host_pubkey(ctx).unwrap_or(Bytes48([0u8; 48]));
+    // FAIL CLOSED, same reason as the signing key one line below: a store that
+    // cannot produce its own host identity is a broken store, and an all-zero G1
+    // is not a weaker identity but a nonexistent one.
+    //
+    // Do NOT weaken this on the theory that the old fallback failed closed
+    // downstream anyway. It did not, and the earlier version of this comment
+    // claiming otherwise was the most dangerous line in the file: it read as a
+    // license to restore `unwrap_or(Bytes48([0u8; 48]))`. The guest's content
+    // path hardcodes `require_attestation: false` (see `instantiate_host`), so
+    // the host pubkey is never read here and never checked against any trusted
+    // set. Measured against the released 0.23.0 binary: with `trusted_keys.json`
+    // deleted it exits 0 and serves the content, under an identity that exists
+    // nowhere. Refusing here IS the fix, not a diagnostic nicety layered over a
+    // default that was already safe.
+    let pubkey = store_ops::load_host_pubkey(ctx)?;
     let mut rt = instantiate_host(ctx, module_path, store_id, pubkey)?;
 
     // Drive the module's own serve flow. The request carries the ROOT-INDEPENDENT
@@ -258,8 +292,9 @@ pub fn serve_proof(
     // attestation signing key (init wrote `signing_key.bin`) rather than minting
     // an independent prover key, so node attribution is bound to the attestation
     // identity by construction.
-    let node_sk =
-        store_ops::load_signing_key(ctx).unwrap_or_else(|_| BlsSecretKey::from_seed(&[42u8; 32]));
+    // FAIL CLOSED (see `instantiate_host`): a proof signed by a world-known
+    // fallback key attributes serving work to nobody.
+    let node_sk = store_ops::load_signing_key(ctx)?;
     let node_pk = node_sk.public_key();
     let block = ChiaBlockRef {
         header_hash: Bytes32([0x55u8; 32]),
@@ -281,6 +316,13 @@ pub fn serve_proof(
     // module's embedded §12 attestation trusted-key set, otherwise "one key for
     // both roles" is unenforced. Verify the binding against the persisted trusted
     // keys using the deterministic mock chain for freshness.
+    // `unwrap_or_default()` is DELIBERATE here and is not the fallback-habit
+    // defect the two loads above fix: an EMPTY trusted set is the strictest
+    // possible set, not a permissive one. `verify_node_attested` rejects any
+    // proof whose signer is absent from it (`NodeKeyNotAttested`,
+    // `digstore-prover/src/prover.rs`), so an unreadable `trusted_keys.json`
+    // makes the verification below fail rather than pass. Do not "fix" this into
+    // a `?`; it would change nothing about safety.
     let trusted_node_keys = store_ops::load_trusted_keys(ctx)
         .map(|ks| {
             ks.into_iter()
@@ -295,4 +337,97 @@ pub fn serve_proof(
 
     let _ = module_bytes;
     Ok((proof, root))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a real committed store and return its context, root and module path
+    /// — the fixture both call-site tests below need, because neither can be
+    /// answered by inspecting a helper's return value.
+    fn committed_store() -> (tempfile::TempDir, CliContext, Bytes32, std::path::PathBuf) {
+        let td = tempfile::tempdir().unwrap();
+        let ctx = CliContext::resolve(Some(td.path().to_path_buf()), false, false);
+        store_ops::init_store(&ctx, false, None, None, None, None, None, None).unwrap();
+
+        let f = td.path().join("hello.txt");
+        std::fs::write(&f, b"hello serve").unwrap();
+        store_ops::add_path(&ctx, &f, Some("hello".into())).unwrap();
+        let res = store_ops::commit(&ctx, None, empty_manifest()).unwrap();
+
+        let store_id = ctx.find_store_id().unwrap();
+        let module_path = store_ops::module_path_for(&ctx, &store_id, Some(res.roothash)).unwrap();
+        (td, ctx, store_id, module_path)
+    }
+
+    /// FAIL CLOSED: the runtime `instantiate_host` ACTUALLY BUILDS must never pin
+    /// the host RNG.
+    ///
+    /// Anchored at the call site on purpose. The obvious version of this test
+    /// asserts `host_deps(..).rng_seed.is_none()`, which an attacker-equivalent
+    /// refactor defeats trivially: inline a `HostDeps { rng_seed: Some(..), .. }`
+    /// literal in `instantiate_host` and stop calling `host_deps` at all. The
+    /// helper's contract stays intact, the production path is re-pinned, and the
+    /// test stays green. So we instantiate through the real function and ask the
+    /// runtime what it was built with — `HostRuntime::rng_is_deterministic`
+    /// exists because the RNG is not observable through any export (the miss-path
+    /// decoy is derived from the retrieval key, §14.2, so it is byte-stable
+    /// whatever the RNG does).
+    #[test]
+    fn the_host_instantiate_host_builds_draws_real_entropy() {
+        let (_td, ctx, store_id, module_path) = committed_store();
+        let pubkey = store_ops::load_host_pubkey(&ctx).unwrap();
+
+        let rt = instantiate_host(&ctx, &module_path, store_id, pubkey)
+            .expect("an initialized store instantiates");
+
+        assert!(
+            !rt.rng_is_deterministic(),
+            "the serve runtime must draw OS entropy; a pinned seed makes every \
+             host_random_bytes draw reproducible from this source file"
+        );
+    }
+
+    /// FAIL CLOSED on a missing host PUBLIC key, the sibling of the signing-key
+    /// load one line away in the same function.
+    ///
+    /// Before this, `load_host_pubkey` fell back to an all-zero `Bytes48`, so a
+    /// store whose `trusted_keys.json` had gone missing served on with a host
+    /// identity that does not exist — and it SUCCEEDED. The pre-fix outcome was
+    /// not "an error, misattributed a few layers away"; it was a 200-equivalent.
+    /// Attestation is hardcoded off on the content path, so the zero key was
+    /// never read, let alone rejected. Confirmed against the released 0.23.0
+    /// binary, which serves the file with `trusted_keys.json` deleted.
+    ///
+    /// That is why this has to be a call-site test: the difference it detects is
+    /// served-content versus refusal, which no assertion on `load_host_pubkey`'s
+    /// return value alone would show.
+    #[test]
+    fn a_missing_trusted_key_file_refuses_to_serve() {
+        let (_td, ctx, store_id, module_path) = committed_store();
+        let urn = Urn {
+            chain: "chia".into(),
+            store_id,
+            root_hash: None,
+            resource_key: Some("hello".into()),
+        };
+        // Control: the intact store serves.
+        serve_content_raw(&ctx, &module_path, &urn).expect("an intact store serves");
+
+        std::fs::remove_file(ctx.dig_dir.join("trusted_keys.json")).unwrap();
+
+        let err = serve_content_raw(&ctx, &module_path, &urn)
+            .expect_err("a store with no host identity must refuse to serve");
+        // The refusal is only half the value; the other half is that the message
+        // names the file that is gone. A bare io error ("the system cannot find
+        // the file specified") fails just as closed and tells an operator
+        // nothing, so assert the subject, not merely the failure.
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("trusted_keys.json"),
+            "the error must name the missing identity file, not a downstream \
+             symptom or a bare io error: {msg}"
+        );
+    }
 }

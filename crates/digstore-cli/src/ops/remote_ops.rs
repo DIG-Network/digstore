@@ -66,6 +66,13 @@ pub(crate) fn map_remote_err(e: ClientError) -> CliError {
         ClientError::Transport(msg) => CliError::Network(msg),
         ClientError::Verification(msg) => CliError::VerificationFailed(msg),
         ClientError::Decode(msg) => CliError::Network(format!("decode: {msg}")),
+        // The OS CSPRNG could not supply a §21.9 request nonce, so the request was
+        // refused rather than signed with a predictable one. This is a local fault,
+        // not a remote one — say so, so the operator looks at the right machine.
+        ClientError::Entropy(msg) => CliError::Other(anyhow::anyhow!(
+            "this machine's secure random source is unavailable, so the request could not be \
+             signed safely: {msg}"
+        )),
     }
 }
 

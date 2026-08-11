@@ -9,6 +9,24 @@ use digstore_core::{
     Bytes32, Bytes96, ContentResponse, Decode, Decoder, Encode, MerkleProof, Tombstone,
 };
 
+/// Draw the 32-byte §21.9 per-request nonce from `fill` (the OS CSPRNG in
+/// production; a stub in tests).
+///
+/// SECURITY — fail closed: a nonce is what makes each signed request unique, so
+/// a CSPRNG failure MUST abort the request rather than fall back to a fixed
+/// buffer. Signing a constant nonce would make every request byte-identical to
+/// the server's replay detector and silently void the protection. The `Result`
+/// is what makes the unsafe construction unexpressible: no authed request can be
+/// built without real entropy. Matches `identity.rs` and `digstore-chain`'s
+/// `seed.rs`, which already propagate the same failure.
+fn auth_nonce(
+    fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+) -> Result<[u8; 32], ClientError> {
+    let mut nonce = [0u8; 32];
+    fill(&mut nonce).map_err(|e| ClientError::Entropy(e.to_string()))?;
+    Ok(nonce)
+}
+
 /// Verify that every chunk in a server-supplied delta actually hashes to the
 /// content address it is advertised under. Chunks are content-addressed by
 /// `SHA-256(ciphertext)`, so a server (or MITM) cannot substitute chunk bytes
@@ -217,22 +235,41 @@ impl DigClient {
         req: reqwest::RequestBuilder,
         method: &str,
         store_id: &Bytes32,
-    ) -> reqwest::RequestBuilder {
+    ) -> Result<reqwest::RequestBuilder, ClientError> {
+        self.authed_with(req, method, store_id, getrandom::getrandom)
+    }
+
+    /// [`Self::authed`] with the entropy source injected, so a test can drive the
+    /// REAL header-stamping path under a failing CSPRNG.
+    ///
+    /// This exists because `auth_nonce` returning a `Result` is only half the
+    /// guarantee: the caller must also propagate it. A test that exercises
+    /// `auth_nonce` alone stays green against `auth_nonce(..).unwrap_or([0u8;
+    /// 32])` right here — the exact mutation that restores the vulnerability.
+    /// `authed` is a one-line delegation so there is no second copy of this body
+    /// for such a mutation to hide in.
+    fn authed_with(
+        &self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        store_id: &Bytes32,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+    ) -> Result<reqwest::RequestBuilder, ClientError> {
         let Some(identity) = &self.identity else {
-            return req;
+            return Ok(req);
         };
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let mut nonce = [0u8; 32];
-        let _ = getrandom::getrandom(&mut nonce);
+        let nonce = auth_nonce(fill)?;
         let msg = digstore_crypto::request_signing_message(method, store_id, timestamp, &nonce);
         let sig = (identity.sign)(&msg);
-        req.header("X-Dig-Identity", &identity.pubkey_hex)
+        Ok(req
+            .header("X-Dig-Identity", &identity.pubkey_hex)
             .header("X-Dig-Timestamp", timestamp.to_string())
             .header("X-Dig-Nonce", hex::encode(nonce))
-            .header("X-Dig-Auth", hex::encode(sig.0))
+            .header("X-Dig-Auth", hex::encode(sig.0)))
     }
 
     /// §21.3 fetch: descriptor + root history only.
@@ -243,7 +280,7 @@ impl DigClient {
                 self.http.get(self.url(&format!("/stores/{id}"))),
                 "fetch",
                 store_id,
-            )
+            )?
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?
@@ -257,7 +294,7 @@ impl DigClient {
                 self.http.get(self.url(&format!("/stores/{id}/roots"))),
                 "roots",
                 store_id,
-            )
+            )?
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?
@@ -291,7 +328,7 @@ impl DigClient {
                 self.http.get(self.url(&format!("/stores/{id}/module"))),
                 "module",
                 store_id,
-            )
+            )?
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?;
@@ -344,7 +381,7 @@ impl DigClient {
                             .get(self.url(&format!("/stores/{id}/delta?from={from_h}&to={to_h}"))),
                         "delta",
                         store_id,
-                    )
+                    )?
                     .send()
                     .await
                     .map_err(|e| ClientError::Transport(e.to_string()))?;
@@ -367,7 +404,7 @@ impl DigClient {
             self.http.get(self.url(&format!("/stores/{id}/module"))),
             "module",
             store_id,
-        );
+        )?;
         if let Some(lr) = local_root {
             req = req.header(
                 reqwest::header::IF_NONE_MATCH,
@@ -460,7 +497,7 @@ impl DigClient {
                     .post(self.url(&format!("/stores/{id}/module/upload"))),
                 "push-init",
                 store_id,
-            )
+            )?
             .header("X-Dig-Signature", &sig_hex)
             .json(&init_body);
         if let Some(t) = bearer {
@@ -500,7 +537,7 @@ impl DigClient {
                             .put(self.url(&format!("/stores/{id}/module?root={new_root_hex}"))),
                         "push",
                         store_id,
-                    )
+                    )?
                     .header("X-Dig-Signature", &sig_hex)
                     .header("X-Dig-Upload-Id", &new_root_hex)
                     // §21.4: a node may accept into pending state; the hub ignores this (always
@@ -562,7 +599,7 @@ impl DigClient {
                             .post(self.url(&format!("/stores/{id}/module/complete"))),
                         "push-complete",
                         store_id,
-                    )
+                    )?
                     .header("X-Dig-Signature", &sig_hex)
                     .json(&complete_body);
                 if let Some(t) = bearer {
@@ -606,7 +643,7 @@ impl DigClient {
                 self.http.post(self.url(&format!("/stores/{id}/tombstone"))),
                 "tombstone",
                 store_id,
-            )
+            )?
             .json(&body)
             .send()
             .await
@@ -634,7 +671,7 @@ impl DigClient {
                 self.http.post(self.url(&format!("/stores/{id}/delta"))),
                 "delta",
                 store_id,
-            )
+            )?
             .json(&body)
             .send()
             .await
@@ -1043,5 +1080,77 @@ mod content_tests {
             decode_inclusion_proof("!!!not base64!!!"),
             Err(ClientError::Decode(_))
         ));
+    }
+
+    /// §21.9 FAIL-CLOSED: when the CSPRNG cannot deliver entropy, the nonce is an
+    /// ERROR — never a usable buffer. Discarding the failure would leave the
+    /// caller signing an all-zero nonce, which is a constant, so every request
+    /// would carry the same "unique" value and the replay protection the nonce
+    /// exists to provide would be silently gone.
+    #[test]
+    fn auth_nonce_fails_closed_when_entropy_is_unavailable() {
+        let err = auth_nonce(|_| Err(getrandom::Error::UNSUPPORTED))
+            .expect_err("entropy failure must not yield a nonce");
+        assert!(matches!(err, ClientError::Entropy(_)), "got {err:?}");
+    }
+
+    /// An identified client whose signer records nothing — enough to reach the
+    /// nonce draw in `authed_with`.
+    fn identified_client() -> DigClient {
+        DigClient::new("http://127.0.0.1:1").with_identity(RequestIdentity {
+            pubkey_hex: "ab".repeat(48),
+            sign: Box::new(|_| Bytes96([0u8; 96])),
+        })
+    }
+
+    /// §21.9 FAIL-CLOSED **at the call site**: `authed` must propagate the nonce
+    /// failure, not merely be able to observe one.
+    ///
+    /// `auth_nonce`'s own test proves the helper returns `Err`; it says nothing
+    /// about what the caller does with it. Replace the draw with
+    /// `auth_nonce(..).unwrap_or([0u8; 32])` and that test stays green while
+    /// every request goes back to signing a constant nonce. This test drives the
+    /// real header-stamping path and fails on exactly that mutation.
+    #[test]
+    fn authed_propagates_an_entropy_failure_instead_of_signing_a_constant_nonce() {
+        let client = identified_client();
+        let req = client.http.get("http://127.0.0.1:1/");
+
+        let err = client
+            .authed_with(req, "fetch", &Bytes32([7u8; 32]), |_| {
+                Err(getrandom::Error::UNSUPPORTED)
+            })
+            .expect_err("a request must not be stamped without a real nonce");
+        assert!(matches!(err, ClientError::Entropy(_)), "got {err:?}");
+    }
+
+    /// The control: with entropy available the SAME path stamps the request.
+    /// Without this, the test above is satisfied by an `authed` that always
+    /// errors.
+    #[test]
+    fn authed_stamps_the_request_when_entropy_is_available() {
+        let client = identified_client();
+        let req = client.http.get("http://127.0.0.1:1/");
+
+        let stamped = client.authed_with(req, "fetch", &Bytes32([7u8; 32]), |buf| {
+            buf.fill(0x11);
+            Ok(())
+        });
+        assert!(
+            stamped.is_ok(),
+            "entropy available must yield a signed request"
+        );
+    }
+
+    /// The success path still produces a fresh 32-byte nonce from the supplied
+    /// source (and is not silently zeroed).
+    #[test]
+    fn auth_nonce_uses_the_entropy_it_is_given() {
+        let nonce = auth_nonce(|buf| {
+            buf.fill(0xA5);
+            Ok(())
+        })
+        .expect("entropy available");
+        assert_eq!(nonce, [0xA5u8; 32]);
     }
 }

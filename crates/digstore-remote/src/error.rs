@@ -70,6 +70,11 @@ pub enum ClientError {
     /// actionable diagnostic; the raw HTML is deliberately NOT surfaced.
     #[error("remote returned a non-JSON response ({status}): {hint}")]
     NonJsonResponse { status: u16, hint: String },
+    /// The OS CSPRNG could not supply the entropy a §21.9 request nonce needs.
+    /// The request is REFUSED rather than sent with a predictable nonce, which
+    /// would silently void the replay protection the nonce exists to provide.
+    #[error("could not obtain secure randomness for the request nonce: {0}")]
+    Entropy(String),
 }
 
 #[cfg(test)]
