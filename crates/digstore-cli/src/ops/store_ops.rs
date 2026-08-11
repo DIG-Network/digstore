@@ -1468,10 +1468,17 @@ pub(crate) fn load_host_pubkey(ctx: &CliContext) -> Result<Bytes48, CliError> {
 
 /// Load the host BLS signing key (seed) persisted at init (§12.2).
 ///
-/// The error names the file and the likely cause, because every caller of this
-/// is a serve path that must now REFUSE to run without it: an operator seeing a
-/// bare io error would reasonably look for a content problem instead of a
-/// missing store identity.
+/// Every remaining caller is a path that genuinely CONSUMES the identity —
+/// signing a proof, pushing — so the failure is classified as
+/// [`CliError::IdentityUnavailable`] (`IDENTITY_UNAVAILABLE`, exit 20) rather
+/// than a generic error. Reading committed content does not call this at all
+/// (§13.6): it consumes no identity, so a missing key is not a reason to refuse
+/// a read.
+///
+/// The error names the file and the likely cause because an operator seeing a
+/// bare io error would reasonably look for a content problem instead of a missing
+/// store identity — and a §6.2 machine consumer can branch on the stable code
+/// instead of matching prose.
 ///
 /// The length is validated before the key is derived — `SecretKey::from_seed`
 /// asserts `len >= 32` and therefore ABORTS THE PROCESS on a short seed. A
@@ -1483,12 +1490,12 @@ pub(crate) fn load_signing_key(
     ctx: &CliContext,
 ) -> Result<digstore_crypto::bls::SecretKey, CliError> {
     let path = ctx.dig_dir.join("signing_key.bin");
-    let bytes = fs::read(&path).map_err(|e| {
-        CliError::Other(anyhow::anyhow!(
-            "cannot read the host signing key at {} ({e}) — the store may not have been \
-             initialized (`dig init`), or the key file was removed or is unreadable",
-            path.display()
-        ))
+    let bytes = fs::read(&path).map_err(|e| CliError::IdentityUnavailable {
+        path: path.display().to_string(),
+        detail: format!(
+            "cannot read the host signing key ({e}) — the store may not have been \
+             initialized (`dig init`), or the key file was removed or is unreadable"
+        ),
     })?;
     let seed: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
         CliError::InvalidArgument(format!(
@@ -1903,6 +1910,37 @@ mod tests {
                 "a {short}-byte key must report a corrupt file, got {err:?}"
             );
         }
+    }
+
+    /// An ABSENT key file is classified as `IDENTITY_UNAVAILABLE`, distinctly from
+    /// the corrupt-length cases above.
+    ///
+    /// A §6.2 machine consumer must be able to tell "this store has no identity,
+    /// so it cannot sign" from "something went wrong", because the two have
+    /// different remedies (re-create the identity vs investigate). Before this,
+    /// both arrived as the catch-all `ERROR`/exit 1. The distinction matters more
+    /// now that a missing identity no longer stops a READ (§13.6): the only
+    /// operations that surface it are the ones that genuinely need a signer.
+    #[test]
+    fn an_absent_signing_key_is_classified_as_identity_unavailable() {
+        let (_td, ctx) = ctx(false);
+        fs::remove_file(ctx.dig_dir.join("signing_key.bin")).unwrap();
+
+        let err = load_signing_key(&ctx)
+            .err()
+            .expect("an absent key cannot be loaded");
+        assert!(
+            matches!(err, CliError::IdentityUnavailable { .. }),
+            "an absent identity must be its own class, not the catch-all: {err:?}"
+        );
+        assert_eq!(err.code(), "IDENTITY_UNAVAILABLE");
+        assert_eq!(err.exit_code(), 20);
+        // The path must reach the operator: "store identity unavailable" without
+        // naming the file leaves them guessing which of the two files it was.
+        assert!(
+            format!("{err}").contains("signing_key.bin"),
+            "the message must name the file: {err}"
+        );
     }
 
     /// An OVERLONG key file is equally corrupt. `from_seed` accepts `len >= 32`,
