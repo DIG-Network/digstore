@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.25.0] - 2026-08-11
+
+### Bug Fixes
+- **digstore-remote:** Owner-only Windows ACL + zeroize transient identity seed buffer (#41)- Fail closed on a missing signing key, a pinned host RNG, and an unavailable CSPRNG (#40)- Carry no identity on the read path (#42)
+
 ## [0.23.1] - 2026-08-10
 
 ### Chores
