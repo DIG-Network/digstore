@@ -89,10 +89,11 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
 }
 
-/// Stamp a Windows file with an owner-only, inheritance-blocking DACL, the effective
-/// parity with the Unix `0o600` mode used for the identity seed.
 #[cfg(windows)]
 mod windows_acl {
+    //! Stamp a Windows file with an owner-only, inheritance-blocking DACL — the
+    //! effective parity with the Unix `0o600` mode used for the identity seed.
+    //!
     //! WHY: on Windows a freshly-written file merely INHERITS its directory's DACL.
     //! The identity seed lives under the user's config dir, but a redirected/roaming
     //! `%APPDATA%` or a loosened profile ACL would silently widen read access to the
