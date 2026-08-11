@@ -199,10 +199,14 @@ fn host_deps(cfg: BlindServeConfig, deps: BlindServeDeps) -> Result<HostDeps, Ho
             "BlindServeConfig public half does not belong to its secret half".to_string(),
         ));
     }
-    Ok(
-        HostDeps::new(cfg.store_id, deps.clock, deps.chain, deps.prover, Bytes32([1u8; 32]))
-            .with_identity(identity),
+    Ok(HostDeps::new(
+        cfg.store_id,
+        deps.clock,
+        deps.chain,
+        deps.prover,
+        Bytes32([1u8; 32]),
     )
+    .with_identity(identity))
 }
 
 /// Instantiate the REAL compiled module from `module_bytes` and drive its own
