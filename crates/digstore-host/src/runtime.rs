@@ -54,25 +54,109 @@ impl Drop for EpochTicker {
     }
 }
 
-/// Dependencies injected into a runtime: BLS keys, clock, chain, prover, rng.
+/// A host's BLS identity: the signing half plus the public half it advertises.
+///
+/// The halves are held together and the public one is DERIVED from the secret,
+/// so the three ways an identity can be wrong are all unrepresentable: a secret
+/// with no public half (signs, but nothing can attribute the signature), a
+/// public half with no secret (advertises a key it cannot sign for), and a
+/// mismatched pair (advertises the wrong one). [`HostDeps::identity`] is
+/// therefore an `Option<HostIdentity>` with exactly two meanings —
+/// identity-bearing, or anonymous.
+pub struct HostIdentity {
+    secret: BlsSecretKey,
+    public: Bytes48,
+}
+
+impl HostIdentity {
+    /// Build an identity from its signing key, deriving the public half.
+    pub fn new(secret: BlsSecretKey) -> Self {
+        let public = secret.public_key().to_bytes();
+        HostIdentity { secret, public }
+    }
+
+    /// Build an identity from a 32-byte BLS seed (the `signing_key.bin` written
+    /// by `digstore init`).
+    pub fn from_seed(seed: &[u8]) -> Self {
+        HostIdentity::new(BlsSecretKey::from_seed(seed))
+    }
+
+    /// The public half this identity advertises.
+    pub fn public(&self) -> Bytes48 {
+        self.public
+    }
+
+    /// Consume the identity into its two halves, for a backend that needs both.
+    pub fn into_parts(self) -> (BlsSecretKey, Bytes48) {
+        (self.secret, self.public)
+    }
+}
+
+/// Dependencies injected into a runtime: identity, clock, chain, prover, rng.
+///
+/// Construct with [`HostDeps::new`], which yields an ANONYMOUS host, then opt
+/// into the non-default pieces with the `with_*` builders. Anonymity is the
+/// default deliberately: an identity should be acquired by asking for one, never
+/// by forgetting a field.
+#[non_exhaustive]
 pub struct HostDeps {
     pub store_id: Bytes32,
     /// The host's BLS identity, or `None` for an ANONYMOUS host.
     ///
-    /// Both halves are supplied together or not at all: a secret with no public
-    /// half cannot be attributed, and a public half with no secret cannot sign.
     /// An anonymous host still serves committed content — the guest's content
     /// path does not consult the host identity — it simply cannot attest.
-    pub bls_secret: Option<BlsSecretKey>,
-    pub bls_public: Option<Bytes48>,
+    pub identity: Option<HostIdentity>,
     pub clock: Arc<dyn Clock>,
     pub chain: Arc<dyn ChainSource>,
     pub prover: Arc<dyn Prover>,
     /// `Some(seed)` => deterministic rng (tests); `None` => OS entropy.
     pub rng_seed: Option<[u8; 32]>,
     pub instance_id: Bytes32,
-    /// `None` => default BLS attestation backend built from the BLS keys (§13.6).
+    /// `None` => default BLS attestation backend built from `identity` (§13.6),
+    /// or a refusing backend when there is no identity.
     pub attestation: Option<SharedBackend>,
+}
+
+impl HostDeps {
+    /// Dependencies for an ANONYMOUS host: no identity, OS entropy, and the
+    /// default attestation backend (which refuses, having nobody to speak for).
+    pub fn new(
+        store_id: Bytes32,
+        clock: Arc<dyn Clock>,
+        chain: Arc<dyn ChainSource>,
+        prover: Arc<dyn Prover>,
+        instance_id: Bytes32,
+    ) -> Self {
+        HostDeps {
+            store_id,
+            identity: None,
+            clock,
+            chain,
+            prover,
+            rng_seed: None,
+            instance_id,
+            attestation: None,
+        }
+    }
+
+    /// Give this host a BLS identity, so it can attest and sign.
+    pub fn with_identity(mut self, identity: HostIdentity) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    /// Pin the host RNG to a fixed seed. Deterministic-fixture tests ONLY: a
+    /// seeded RNG makes every `host_random_bytes` draw reproducible.
+    pub fn with_rng_seed(mut self, seed: [u8; 32]) -> Self {
+        self.rng_seed = Some(seed);
+        self
+    }
+
+    /// Replace the attestation backend (§13.6 TEE hook, or a test double).
+    pub fn with_attestation(mut self, backend: SharedBackend) -> Self {
+        self.attestation = Some(backend);
+        self
+    }
 }
 
 /// Combined per-store host state, including the wasmtime resource limiter that
@@ -147,13 +231,14 @@ impl HostRuntime {
         // identity. An anonymous host gets a backend that refuses, never one
         // built from a stand-in key: a placeholder would make every attestation
         // it produced attributable to a key nobody controls.
-        let attestation: SharedBackend = match (deps.attestation, deps.bls_secret, deps.bls_public)
-        {
-            (Some(b), _, _) => b,
-            (None, Some(secret), Some(public)) => {
+        let host_public = deps.identity.as_ref().map(HostIdentity::public);
+        let attestation: SharedBackend = match (deps.attestation, deps.identity) {
+            (Some(backend), _) => backend,
+            (None, Some(identity)) => {
+                let (secret, public) = identity.into_parts();
                 Arc::new(BlsAttestationBackend::new(secret, public))
             }
-            (None, _, _) => Arc::new(UnavailableAttestationBackend),
+            (None, None) => Arc::new(UnavailableAttestationBackend),
         };
 
         let host = HostState {
@@ -161,7 +246,7 @@ impl HostRuntime {
             config: config.clone(),
             return_buffer: ReturnBuffer::new(&config),
             keys: Arc::new(HostKeys {
-                bls_public: deps.bls_public,
+                bls_public: host_public,
             }),
             attestation,
             clock: deps.clock,

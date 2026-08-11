@@ -22,7 +22,7 @@ pub use clock::{Clock, FixedClock, SystemClock};
 pub use config::{ExecutionLimits, MAX_MEMORY_BYTES, WASM_PAGE_SIZE};
 pub use error::HostError;
 pub use random::HostRng;
-pub use runtime::{HostDeps, HostRuntime, RuntimeState};
+pub use runtime::{HostDeps, HostIdentity, HostRuntime, RuntimeState};
 pub use serve_blind::{
     request_for_retrieval_key, serve_blind, serve_blind_with, BlindServeConfig, BlindServeDeps,
 };

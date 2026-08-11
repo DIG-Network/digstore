@@ -113,30 +113,29 @@ fn host_deps(store_id: Bytes32) -> HostDeps {
     };
     let chain = MockChainSource::new(vec![block.clone()], 1_700_000_000);
     let prover = MockProver::new(prover_sk, prover_pk, block);
-    HostDeps {
+    // ANONYMOUS: see this function's doc comment. `HostDeps::new` carries no
+    // identity, and this path never calls `with_identity` — absence, not a
+    // placeholder.
+    //
+    // The RNG is left at its default of real OS entropy rather than a constant
+    // seed, converging on the convention `digstore_host::serve_blind` follows.
+    //
+    // SCOPE, stated honestly: this RNG backs `host_random_bytes`, whose only
+    // live consumer is the guest's oblivious-access cover traffic. The §12
+    // attestation nonce draw is unreachable here — `digstore-guest`'s content
+    // path hardcodes `require_attestation: false` (dighub content is public
+    // and must be servable by any node), so no module this CLI compiles takes
+    // that branch. Nor is this closing a third-party attack: the party the
+    // cover-traffic shuffle hides access patterns from is the HOST, and the
+    // host is what supplies this randomness. The change removes a constant
+    // seed that had no business outside a test fixture.
+    HostDeps::new(
         store_id,
-        // ANONYMOUS: see this function's doc comment. Absence, not a placeholder.
-        bls_secret: None,
-        bls_public: None,
-        clock: Arc::new(FixedClock::new(1_700_000_000)),
-        chain: Arc::new(chain),
-        prover: Arc::new(prover),
-        // Draw real OS entropy rather than a constant seed, converging on the
-        // convention `digstore_host::serve_blind` already follows.
-        //
-        // SCOPE, stated honestly: this RNG backs `host_random_bytes`, whose only
-        // live consumer is the guest's oblivious-access cover traffic. The §12
-        // attestation nonce draw is unreachable here — `digstore-guest`'s content
-        // path hardcodes `require_attestation: false` (dighub content is public
-        // and must be servable by any node), so no module this CLI compiles takes
-        // that branch. Nor is this closing a third-party attack: the party the
-        // cover-traffic shuffle hides access patterns from is the HOST, and the
-        // host is what supplies this randomness. The change removes a constant
-        // seed that had no business outside a test fixture.
-        rng_seed: None,
-        instance_id: Bytes32([1u8; 32]),
-        attestation: None,
-    }
+        Arc::new(FixedClock::new(1_700_000_000)),
+        Arc::new(chain),
+        Arc::new(prover),
+        Bytes32([1u8; 32]),
+    )
 }
 
 /// Instantiate the real host runtime over `module_path` (real wasmtime load /
@@ -441,7 +440,7 @@ mod tests {
     ///
     /// Anchored at the call site for the same reason as the RNG test above: an
     /// assertion on `host_deps(..)`'s return value is defeated by inlining a
-    /// `HostDeps { bls_public: Some(..), .. }` literal into `instantiate_host`.
+    /// `.with_identity(..)` call into `instantiate_host`.
     /// The identity is not observable through any export on the content path, so
     /// `HostRuntime::has_host_public_key` exists to answer this.
     #[test]
@@ -500,8 +499,18 @@ mod tests {
     /// is substituted, so it catches a restored `unwrap_or(Bytes48([0u8; 48]))`.
     /// What it CANNOT catch is a re-added *refusal*: a runtime that never gets
     /// built because the read aborted earlier still trivially "carries no
-    /// identity". This leg catches that by asserting the read path never reaches
-    /// for the identity in the first place.
+    /// identity".
+    ///
+    /// SCOPE, stated exactly, because the previous wording overstated it: this
+    /// leg catches a re-added refusal only in the `load_host_pubkey` form. It
+    /// cannot catch the `load_signing_key` form — that token is deliberately
+    /// ALLOWED below, since `serve_proof` lives in this same file and must keep
+    /// calling it. The test that actually covers a refusal of any shape is the
+    /// behavioural
+    /// [`a_store_with_no_identity_still_serves_committed_content`], which deletes
+    /// the identity files and demands real plaintext back; its control against
+    /// over-relaxation is
+    /// [`serve_proof_still_refuses_without_a_signing_key`].
     ///
     /// The banned tokens are the identity-carrying positions specifically, not
     /// seeds in general: `host_deps`'s MOCK PROVER key is a legitimate
@@ -509,20 +518,45 @@ mod tests {
     /// blanket seed ban here would be a false failure that invites deletion.
     #[test]
     fn the_read_path_never_reaches_for_the_store_identity() {
+        // ONE literal, used for both the count assertion and the split, so that
+        // naming the marker here does not itself change the count.
+        const TEST_MODULE_MARKER: &str = "#[cfg(test)]";
+
         let src = include_str!("serve.rs");
+
+        // The split below assumes the FIRST marker opens the test module, so the
+        // prefix it keeps is the whole production half. A new `#[cfg(test)]`
+        // helper added ABOVE the read path would silently move that boundary and
+        // narrow the guard to a prefix no longer containing the code it polices —
+        // a guard that passes by scanning the wrong text. Fail loudly instead.
+        let marker_count = src.matches(TEST_MODULE_MARKER).count();
+        assert_eq!(
+            marker_count, 2,
+            "expected exactly 2 `{TEST_MODULE_MARKER}` occurrences in serve.rs \
+             (the test-module attribute + this test's own marker literal), found \
+             {marker_count}. A new one was added: re-check that the split below \
+             still yields the WHOLE production half, then update this count."
+        );
+
         // Cut the test module off so this file's own doc comments and fixtures do
         // not match themselves.
         let production = src
-            .split("#[cfg(test)]")
+            .split(TEST_MODULE_MARKER)
             .next()
             .expect("this file has a test module");
 
         // `load_signing_key` is deliberately absent from this list: `serve_proof`
         // still calls it, and must.
+        //
+        // `identity: Some(` and `with_identity(` are the identity-carrying
+        // positions under the `HostDeps { identity: Option<HostIdentity> }` shape.
+        // They replaced `bls_public: Some(` / `bls_secret: Some(`, which those
+        // fields no longer exist to produce — leaving those tokens here would be a
+        // ban that can never fire, green by construction.
         for banned in [
             "load_host_pubkey",
-            "bls_public: Some(",
-            "bls_secret: Some(",
+            "identity: Some(",
+            "with_identity(",
             "[0u8; 48]",
         ] {
             assert!(

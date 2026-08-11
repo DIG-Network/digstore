@@ -25,7 +25,7 @@ use digstore_core::serving::concat_output;
 use digstore_core::{Bytes32, Bytes48, ChiaBlockRef, ContentResponse, Decode, Decoder, Urn};
 use digstore_crypto::bls::BlsSecretKey;
 use digstore_crypto::{derive_decryption_key, encrypt_chunk};
-use digstore_host::{ExecutionLimits, FixedClock, HostDeps, HostRuntime};
+use digstore_host::{ExecutionLimits, FixedClock, HostDeps, HostIdentity, HostRuntime};
 use digstore_prover::{MockChainSource, MockProver};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -76,7 +76,6 @@ impl<'a> ResourceView for FixtureResourceRef<'a> {
 
 fn host_deps(store_id: Bytes32) -> HostDeps {
     let sk = BlsSecretKey::from_seed(&[42u8; 32]);
-    let pk: Bytes48 = sk.public_key().to_bytes();
     let prover_sk = BlsSecretKey::from_seed(&[7u8; 32]);
     let prover_pk = prover_sk.public_key();
     let block = ChiaBlockRef {
@@ -86,17 +85,15 @@ fn host_deps(store_id: Bytes32) -> HostDeps {
     };
     let chain = MockChainSource::new(vec![block.clone()], 1_700_000_000);
     let prover = MockProver::new(prover_sk, prover_pk, block);
-    HostDeps {
+    HostDeps::new(
         store_id,
-        bls_secret: Some(sk),
-        bls_public: Some(pk),
-        clock: Arc::new(FixedClock::new(1_700_000_000)),
-        chain: Arc::new(chain),
-        prover: Arc::new(prover),
-        rng_seed: Some([99u8; 32]),
-        instance_id: Bytes32([1u8; 32]),
-        attestation: None,
-    }
+        Arc::new(FixedClock::new(1_700_000_000)),
+        Arc::new(chain),
+        Arc::new(prover),
+        Bytes32([1u8; 32]),
+    )
+    .with_identity(HostIdentity::new(sk))
+    .with_rng_seed([99u8; 32])
 }
 
 fn host_cfg() -> HostImportsConfig {

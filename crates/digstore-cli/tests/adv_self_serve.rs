@@ -18,7 +18,7 @@ use digstore_cli::ops::{serve, store_ops};
 use digstore_core::config::HostImportsConfig;
 use digstore_core::{Bytes32, ChiaBlockRef, ContentResponse, Decode, Decoder, Urn};
 use digstore_crypto::bls::BlsSecretKey;
-use digstore_host::{ExecutionLimits, FixedClock, HostDeps, HostRuntime};
+use digstore_host::{ExecutionLimits, FixedClock, HostDeps, HostIdentity, HostRuntime};
 use digstore_prover::{MockChainSource, MockProver};
 
 fn host_deps(store_id: Bytes32, signing_seed: &[u8]) -> HostDeps {
@@ -27,7 +27,6 @@ fn host_deps(store_id: Bytes32, signing_seed: &[u8]) -> HostDeps {
     // it from the persisted seed (`signing_key.bin`) so the guest's attestation
     // verification accepts this host (otherwise it serves decoys, correctly).
     let sk = BlsSecretKey::from_seed(signing_seed);
-    let pk = sk.public_key().to_bytes();
     let prover_sk = BlsSecretKey::from_seed(&[7u8; 32]);
     let prover_pk = prover_sk.public_key();
     let block = ChiaBlockRef {
@@ -37,17 +36,15 @@ fn host_deps(store_id: Bytes32, signing_seed: &[u8]) -> HostDeps {
     };
     let chain = MockChainSource::new(vec![block.clone()], 1_700_000_000);
     let prover = MockProver::new(prover_sk, prover_pk, block);
-    HostDeps {
+    HostDeps::new(
         store_id,
-        bls_secret: Some(sk),
-        bls_public: Some(pk),
-        clock: Arc::new(FixedClock::new(1_700_000_000)),
-        chain: Arc::new(chain),
-        prover: Arc::new(prover),
-        rng_seed: Some([99u8; 32]),
-        instance_id: Bytes32([1u8; 32]),
-        attestation: None,
-    }
+        Arc::new(FixedClock::new(1_700_000_000)),
+        Arc::new(chain),
+        Arc::new(prover),
+        Bytes32([1u8; 32]),
+    )
+    .with_identity(HostIdentity::new(sk))
+    .with_rng_seed([99u8; 32])
 }
 
 /// The whole D6 promise in one test, with loud printed evidence.

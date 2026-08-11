@@ -1,8 +1,9 @@
 use digstore_core::config::HostImportsConfig;
+use digstore_core::ErrorCode;
 use digstore_host::{ExecutionLimits, FixedClock, HostError, HostRuntime};
 
 mod common;
-use common::test_deps;
+use common::{anonymous_test_deps, test_deps};
 
 #[test]
 fn missing_data_exports_report_missing_export() {
@@ -108,6 +109,77 @@ fn host_public_key_returns_48_bytes() {
     let mut rt = probe_runtime(FixedClock::new(100));
     let n = rt.call_i32_export("probe_pubkey").unwrap();
     assert_eq!(n, 48);
+}
+
+/// A host built with NO identity must answer the guest with an absence, from a
+/// REAL `HostRuntime` — the arm `HostRuntime::new` selects when `identity` is
+/// `None`.
+///
+/// Why it is asserted here and on observable behaviour rather than on the
+/// backend's type: substituting
+/// `BlsAttestationBackend::new(BlsSecretKey::from_seed(&[42u8; 32]), ..)` for
+/// `UnavailableAttestationBackend` inside that arm reconstitutes #2553's
+/// world-known key one crate below the call site, and every other test in the
+/// repo stays green through it. `teehook`'s test drives the backend in
+/// isolation, the guest proof test drives a double, and
+/// `has_host_public_key` reads `HostKeys::bls_public`, which this arm does not
+/// set. Only an attestation actually produced by an anonymous runtime can tell
+/// the two apart — a substituted key SIGNS, so this test goes red.
+///
+/// Both halves matter: the pubkey leg catches a key handed out for free, and the
+/// attest leg catches a signature produced under a key nobody controls.
+#[test]
+fn an_anonymous_runtime_hands_out_no_key_and_signs_nothing() {
+    let module_bytes = wat::parse_str(include_str!("fixtures/wat/import_probe.wat")).unwrap();
+    let mut rt = HostRuntime::new(
+        &module_bytes,
+        cfg(),
+        ExecutionLimits::default(),
+        anonymous_test_deps(FixedClock::new(1_700_000_000)),
+    )
+    .expect("an anonymous host still instantiates: reading consumes no identity");
+
+    assert!(
+        !rt.has_host_public_key(),
+        "an anonymous runtime must install no public key"
+    );
+
+    // No key to hand out. NotFound, never 48 bytes of anything.
+    let pubkey_result = rt.call_i32_export("probe_pubkey").unwrap();
+    assert_eq!(
+        pubkey_result,
+        ErrorCode::NotFound as i32,
+        "an anonymous host must report NotFound, not return key-shaped bytes"
+    );
+
+    // Nobody to speak for. The attestation must FAIL rather than be signed under
+    // a stand-in key: a length here is a produced, attributable signature.
+    write_challenge(&mut rt, 4096);
+    let attest_result = rt.call_i32_export_1("probe_attest", 4096).unwrap();
+    assert_eq!(
+        attest_result,
+        ErrorCode::AttestationFailed as i32,
+        "an anonymous host must refuse to attest; a non-negative result means it \
+         signed the challenge under some key, which it does not have"
+    );
+}
+
+/// The control for the test above: the SAME runtime, varying only the identity,
+/// does produce a key and an attestation. Without it, an anonymous-host test is
+/// equally satisfied by a runtime that attests for nobody and by one that is
+/// simply broken.
+#[test]
+fn the_identity_bearing_control_does_produce_a_key_and_an_attestation() {
+    let mut rt = probe_runtime(FixedClock::new(1_700_000_000));
+
+    assert!(rt.has_host_public_key());
+    assert_eq!(rt.call_i32_export("probe_pubkey").unwrap(), 48);
+
+    write_challenge(&mut rt, 4096);
+    assert_eq!(
+        rt.call_i32_export_1("probe_attest", 4096).unwrap() as usize,
+        ATTESTATION_LEN
+    );
 }
 
 #[test]

@@ -37,7 +37,7 @@ use digstore_prover::{ChainSource, MockChainSource, MockProver, Prover};
 use crate::clock::{Clock, FixedClock};
 use crate::config::ExecutionLimits;
 use crate::error::HostError;
-use crate::runtime::{HostDeps, HostRuntime};
+use crate::runtime::{HostDeps, HostIdentity, HostRuntime};
 
 /// Fixed deterministic mock-chain block used by the default blind serve path.
 /// The host never consults a live chain to serve content with the mock trio;
@@ -180,25 +180,29 @@ impl BlindServeDeps {
 /// Build [`HostDeps`] for the blind serve path from the store identity in `cfg`
 /// and the injected proof backend / chain / clock in `deps`, wiring the host's
 /// BLS identity in so attestation passes iff that key is trusted by the module.
-fn host_deps(cfg: BlindServeConfig, deps: BlindServeDeps) -> HostDeps {
-    HostDeps {
-        store_id: cfg.store_id,
-        // `BlindServeConfig` REQUIRES an identity, so this path is never
-        // anonymous: the blind serve exists to prove the host's key is in the
-        // module's trusted set.
-        bls_secret: Some(cfg.bls_secret),
-        bls_public: Some(cfg.bls_public),
-        clock: deps.clock,
-        chain: deps.chain,
-        prover: deps.prover,
-        // SECURITY: use real OS entropy, not a hardcoded seed. The host RNG seeds
-        // attestation challenge nonces and the indistinguishable decoys returned
-        // on a retrieval miss; a predictable seed would let an observer tell a
-        // decoy from real content, defeating oblivious serving.
-        rng_seed: None,
-        instance_id: Bytes32([1u8; 32]),
-        attestation: None,
+///
+/// Errors when `cfg`'s two identity halves disagree. `BlindServeConfig` carries
+/// them as separate public fields, so a caller CAN pair a secret with a public
+/// half that does not belong to it; deriving the public half here would silently
+/// serve under a different key than the one the caller believes it advertised.
+///
+/// SECURITY: the host RNG draws real OS entropy rather than a fixed seed. It
+/// seeds attestation challenge nonces and the indistinguishable decoys returned
+/// on a retrieval miss; a predictable seed would let an observer tell a decoy
+/// from real content, defeating oblivious serving.
+fn host_deps(cfg: BlindServeConfig, deps: BlindServeDeps) -> Result<HostDeps, HostError> {
+    // `BlindServeConfig` REQUIRES an identity, so this path is never anonymous:
+    // the blind serve exists to prove the host's key is in the module's trusted set.
+    let identity = HostIdentity::new(cfg.bls_secret);
+    if identity.public() != cfg.bls_public {
+        return Err(HostError::Validation(
+            "BlindServeConfig public half does not belong to its secret half".to_string(),
+        ));
     }
+    Ok(
+        HostDeps::new(cfg.store_id, deps.clock, deps.chain, deps.prover, Bytes32([1u8; 32]))
+            .with_identity(identity),
+    )
 }
 
 /// Instantiate the REAL compiled module from `module_bytes` and drive its own
@@ -233,7 +237,7 @@ pub fn serve_blind_with(
         module_bytes,
         HostImportsConfig::default(),
         ExecutionLimits::default(),
-        host_deps(cfg, deps),
+        host_deps(cfg, deps)?,
     )?;
     let request = request_for_retrieval_key(retrieval_key);
     rt.serve_content(&request)
