@@ -1313,7 +1313,7 @@ mod tests {
         use chia_sdk_test::Simulator;
         use chia_wallet_sdk::driver::Launcher;
 
-        // A recent mainnet height so run_spendbundle applies the CURRENT (post-softfork) cost flags.
+        // A recent mainnet height (the `hard_fork2_height` argument is inert in both SDK versions).
         const HEIGHT: u32 = 6_000_000;
 
         // chia-consensus 0.36.1 dropped `run_spendbundle`'s `prev_tx_height` parameter: the
@@ -1327,7 +1327,11 @@ mod tests {
             get_flags_for_height_and_constants(HEIGHT, &chia_sdk_types::MAINNET_CONSTANTS);
         assert_eq!(
             height_flags, 0,
-            "mainnet hard fork 2 is now active at or below height {HEIGHT}; re-verify the              cost bound under the new flags"
+            concat!(
+                "mainnet hard fork 2 is now active at or below height {}; ",
+                "re-verify the cost bound under the new flags"
+            ),
+            HEIGHT
         );
         let softfork_flags = height_flags;
 

@@ -511,8 +511,9 @@ mod tests {
         let b = dig_cat_puzzle_hash(keys.owner_puzzle_hash);
         assert_eq!(a, b);
         assert_eq!(a.to_bytes().len(), 32);
-        // Print the value so it can be pinned as a golden in a later task.
-        println!("ABANDON dig_cat_puzzle_hash = {}", hex::encode(a));
+        // Pinned golden value (derived from ABANDON mnemonic).
+        const DIG_CAT_PUZZLE_HASH_GOLDEN: &str = "1a0fb6b58621fb2fa657b1b0b6c75bd34a7655b463889aad17fe9425b1a9b764";
+        assert_eq!(hex::encode(a), DIG_CAT_PUZZLE_HASH_GOLDEN);
     }
 
     #[tokio::test]
