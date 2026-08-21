@@ -1046,6 +1046,30 @@ mod tests {
     use super::*;
     use crate::keys::derive_wallet_keys;
 
+    /// The two pinned hashes above are hard-coded rather than read from `chia_puzzles`, so
+    /// nothing else in this crate would notice if a chia uplift moved them. `SINGLETON_LAUNCHER_PH`
+    /// gates whether a CREATE_COIN is recognised as a store launcher at all, and
+    /// `DATASTORE_LAUNCHER_HINT` is the compatibility memo chip35 and datalayer tooling match on,
+    /// so a silent drift would make every store on chain undiscoverable. Both are cross-checked
+    /// against their canonical derivations: the launcher hash against the value the SDK itself
+    /// carries, and the hint against `sha256("datastore")`.
+    #[test]
+    fn pinned_launcher_hashes_match_their_canonical_derivations() {
+        assert_eq!(
+            SINGLETON_LAUNCHER_PH,
+            Bytes32::new(chia_puzzles::SINGLETON_LAUNCHER_HASH),
+            "the pinned singleton launcher puzzle hash diverged from chia_puzzles"
+        );
+
+        let mut hasher = chia_sha2::Sha256::new();
+        hasher.update(b"datastore");
+        assert_eq!(
+            DATASTORE_LAUNCHER_HINT,
+            Bytes32::new(hasher.finalize()),
+            "the datastore launcher hint is not sha256(\"datastore\")"
+        );
+    }
+
     const ABANDON: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 
     #[test]
@@ -2658,7 +2682,7 @@ mod classify_tests {
     use super::*;
     use crate::coinset::mock::MockChain;
     use crate::coinset::CoinInfo;
-    use chia::puzzles::Memos;
+    use chia_puzzle_types::Memos;
     use chia_sdk_test::Simulator;
     use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
 

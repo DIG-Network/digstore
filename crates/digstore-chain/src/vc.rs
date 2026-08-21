@@ -29,12 +29,12 @@
 //! note returned by [`vc_transfer_unsupported`].
 
 use crate::error::{ChainError, Result};
-use chia::clvm_utils::TreeHash;
 use chia_protocol::{Bytes32, Coin, CoinSpend};
 use chia_wallet_sdk::driver::{
     Launcher, SpendContext, Verification, VerificationAsserter, VerifiedData,
 };
 use chia_wallet_sdk::prelude::ToTreeHash;
+use clvm_utils::TreeHash;
 
 /// The credential payload an issuer attests: a version, the subject `asset_id` (what the
 /// credential is ABOUT — e.g. a CAT/NFT/store launcher id), a `data_hash` committing to
@@ -231,8 +231,8 @@ pub fn vc_launcher_coin(did_coin_id: Bytes32) -> Coin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chia::puzzles::Memos;
     use chia_protocol::Bytes;
+    use chia_puzzle_types::Memos;
     use chia_puzzles::SINGLETON_LAUNCHER_HASH;
     use chia_sdk_test::Simulator;
     use chia_wallet_sdk::driver::{

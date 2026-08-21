@@ -26,38 +26,46 @@ dirs = "5"
 # init/commit/deploy spend paths so ordering + the coin cap + NeedsConsolidation are
 # shared across the ecosystem (never hand-rolled — §4.1 / Appendix B). The engine seam
 # speaks in `chia_protocol::Coin` natively; engine-only (this crate never signs).
-dig-wallet-backend = { version = "0.4", default-features = false, features = ["engine"] }
-datalayer-driver = "3"
-chia = "0.26"
-chia-protocol = "0.26"
-chia-sha2 = "0.26"
-chia-sdk-coinset = "0.30"
+dig-wallet-backend = { version = "0.29", default-features = false, features = ["engine"] }
+datalayer-driver = "4"
+# The `chia` umbrella crate has no 0.36 line (it jumps straight from 0.32 to 0.42), so the
+# facades it used to provide are depended on directly, each pinned to the 0.36.1 line that
+# chia-wallet-sdk 0.34 resolves: BLS keys, the consensus cost model, puzzle types (Memos,
+# NFT metadata, offer payments), secp keys for vaults, and CLVM tree hashing.
+chia-bls = "0.36.1"
+chia-consensus = "0.36.1"
+chia-puzzle-types = "0.36.1"
+chia-secp = "0.36.1"
+clvm-utils = "0.36.1"
+chia-protocol = "0.36.1"
+chia-sha2 = "0.36.1"
+chia-sdk-coinset = "0.34"
 # chip-0035 exposes the DataLayer driver primitives (Launcher::mint_datastore, etc.) so we
 # can replicate chip35's mint with the digstore-scoped owner hint memo (datalayer_driver's
 # mint_store hardcodes a single launcher hint and exposes no hint parameter).
 # `offer-compression` decodes/encodes bech32 `offer1…` strings (chia_takeOffer); `chip-0035`
 # exposes the DataLayer driver primitives.
-chia-wallet-sdk = { version = "0.30", features = ["chip-0035", "offer-compression"] }
+chia-wallet-sdk = { version = "0.34", features = ["chip-0035", "offer-compression"] }
 hex = "0.4"
 hex-literal = "0.4"
 indexmap = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
 # Canonical `DIG_ASSET_ID` source (#969) — never a local hex-literal copy (Appendix B).
-dig-constants = "0.5"
+dig-constants = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
 # Decode a built coin spend's conditions in the send tests (verify the payment output).
-clvmr = "0.14"
-clvm-traits = "0.26"
+clvmr = "0.16.2"
+clvm-traits = "0.36.1"
 # Offer take-flow round-trip test: build a maker offer (NFT-for-DIG-CAT) and accept it
 # end-to-end in the in-process Chia simulator, validating the assembled spend bundle.
-chia-sdk-test = "0.30"
-chia-puzzles = "0.20"
+chia-sdk-test = "0.34"
+chia-puzzles = "0.20.3"
 # #231 cost-bound proof: measure a batch's real CLVM cost via the Chia consensus cost model
-# (`chia::consensus::run_spendbundle`, available through the `chia` crate's default `consensus`
-# feature) against the canonical MAINNET_CONSTANTS, to assert the per-item cost estimate is
+# (`chia_consensus::spendbundle_conditions::run_spendbundle`) against the canonical
+# MAINNET_CONSTANTS, to assert the per-item cost estimate is
 # conservative. clvmr is already a dev-dep (the single locked version the consensus crate uses).
-chia-sdk-types = "0.30"
+chia-sdk-types = "0.34"
 anyhow = "1"

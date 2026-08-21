@@ -5,7 +5,7 @@
 
 use crate::error::{ChainError, Result};
 use bip39::Mnemonic;
-use chia::puzzles::{standard::StandardArgs, DeriveSynthetic};
+use chia_puzzle_types::{standard::StandardArgs, DeriveSynthetic};
 use datalayer_driver::{
     master_public_key_to_first_puzzle_hash, master_secret_key_to_wallet_synthetic_secret_key,
     master_to_wallet_unhardened, puzzle_hash_to_address, secret_key_to_public_key, Bytes32,

@@ -25,6 +25,12 @@ ignore = [
     "RUSTSEC-2025-0052", # async-std: discontinued (httpmock dev-dependency, tests only)
     "RUSTSEC-2025-0055", # tracing/ANSI-escape log-injection advisory (transitive)
     "RUSTSEC-2025-0119", # number_prefix: unmaintained (transitive via indicatif progress bars; display-only)
+    # bincode: unmaintained. Pulled TRANSITIVELY as bincode 2.0.1 by chia-sdk-test 0.34,
+    # which chia-wallet-sdk 0.34 depends on unconditionally. It reaches this workspace only
+    # through the SDK internals — no crate here serializes with bincode, and an unmaintained
+    # advisory carries no known vulnerability. There is no drop-in fix available to us: the
+    # dependency is chia-wallet-sdk's to change. RE-EVALUATE when the SDK drops or replaces it.
+    "RUSTSEC-2025-0141",
     # quick-xml <0.41.0: two unbounded-allocation DoS advisories in the XML namespace
     # parser (a start tag declaring a huge number of namespace bindings / duplicate
     # attributes allocates without a cap). Pulled TRANSITIVELY as quick-xml 0.37.5 via

@@ -24,8 +24,8 @@ use crate::coinset::ChainReads;
 use crate::dig::{treasury_inner_puzzle_hash, DIG_ASSET_ID};
 use crate::error::{ChainError, Result};
 use crate::keys::{IndexedKeys, WalletKeys};
-use chia::puzzles::cat::CatArgs;
 use chia_protocol::{Bytes32, CoinSpend, SpendBundle};
+use chia_puzzle_types::cat::CatArgs;
 use chia_wallet_sdk::driver::{Action, Cat, Id, Puzzle, Relation, SpendContext, Spends};
 use chia_wallet_sdk::prelude::TreeHash;
 use datalayer_driver::{sign_coin_spends, PublicKey};
@@ -317,7 +317,7 @@ pub fn build_dig_store_payment(
     // Derive the buyer's inner (owner) puzzle hash from the synthetic key — the change
     // destination + inner-spend authorizer (byte-mirror of chip35's StandardArgs curry).
     let owner_puzzle_hash: Bytes32 =
-        chia::puzzles::standard::StandardArgs::curry_tree_hash(buyer_synthetic_key).into();
+        chia_puzzle_types::standard::StandardArgs::curry_tree_hash(buyer_synthetic_key).into();
     build_dig_payment_inner(
         owner_puzzle_hash,
         indexmap! { owner_puzzle_hash => buyer_synthetic_key },
@@ -511,8 +511,10 @@ mod tests {
         let b = dig_cat_puzzle_hash(keys.owner_puzzle_hash);
         assert_eq!(a, b);
         assert_eq!(a.to_bytes().len(), 32);
-        // Print the value so it can be pinned as a golden in a later task.
-        println!("ABANDON dig_cat_puzzle_hash = {}", hex::encode(a));
+        // Pinned golden value (derived from ABANDON mnemonic).
+        const DIG_CAT_PUZZLE_HASH_GOLDEN: &str =
+            "1a0fb6b58621fb2fa657b1b0b6c75bd34a7655b463889aad17fe9425b1a9b764";
+        assert_eq!(hex::encode(a), DIG_CAT_PUZZLE_HASH_GOLDEN);
     }
 
     #[tokio::test]
@@ -744,9 +746,10 @@ mod tests {
         let xch = sim.new_coin(owner_ph, amount);
         let p2 = StandardLayer::new(owner_pk);
         let hint = ctx.hint(owner_ph)?;
-        let (issue_cat, cats) = Cat::issue_with_coin(
+        let (issue_cat, cats) = Cat::single_issuance(
             ctx,
             xch.coin_id(),
+            None,
             amount,
             Conditions::new().create_coin(owner_ph, amount, hint),
         )?;
