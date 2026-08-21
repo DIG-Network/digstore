@@ -17,7 +17,7 @@ use std::collections::HashSet;
 
 use crate::error::{ChainError, Result};
 use crate::wallet::ScannedWallet;
-use chia::puzzles::Memos;
+use chia_puzzle_types::Memos;
 use chia_wallet_sdk::driver::{SpendContext, StandardLayer};
 use chia_wallet_sdk::types::Conditions;
 use datalayer_driver::{

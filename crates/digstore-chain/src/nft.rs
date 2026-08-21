@@ -546,7 +546,7 @@ mod tests {
     use super::*;
     use crate::coinset::mock::MockChain;
     use crate::keys::derive_indexed_keys;
-    use chia::puzzles::nft::NftMetadata;
+    use chia_puzzle_types::nft::NftMetadata;
     use chia_protocol::SpendBundle;
     use chia_sdk_test::Simulator;
     use chia_wallet_sdk::driver::Launcher;
@@ -831,7 +831,7 @@ mod tests {
     /// the CLI `nft mint --did` closes (no manual DID spend).
     #[test]
     fn build_nft_mint_with_did_validates_on_simulator() -> anyhow::Result<()> {
-        use chia::puzzles::nft::NftMetadata;
+        use chia_puzzle_types::nft::NftMetadata;
 
         let mut sim = Simulator::new();
         let ctx = &mut SpendContext::new();
@@ -899,7 +899,7 @@ mod tests {
     /// reads, no third-party indexer. `list_collections` groups it under its DID.
     #[tokio::test]
     async fn read_collection_finds_did_attributed_items() -> anyhow::Result<()> {
-        use chia::puzzles::nft::NftMetadata;
+        use chia_puzzle_types::nft::NftMetadata;
 
         let mut sim = Simulator::new();
         let ctx = &mut SpendContext::new();
@@ -962,7 +962,7 @@ mod tests {
     /// reconstructed-DID production path.)
     #[test]
     fn build_nft_mint_with_did_produces_attributed_spends() -> anyhow::Result<()> {
-        use chia::puzzles::nft::NftMetadata;
+        use chia_puzzle_types::nft::NftMetadata;
 
         let mut sim = Simulator::new();
         let ctx = &mut SpendContext::new();

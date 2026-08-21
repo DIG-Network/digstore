@@ -22,8 +22,8 @@
 // TODO(#34 at scale): CSV/large-JSON manifest ingest + generative trait composition + rarity tables.
 // TODO(#40 drop mechanics): delayed reveal, allowlist/claim gating, phased scheduling, lazy mint.
 
-use chia::puzzles::nft::NftMetadata;
-use chia::puzzles::Memos;
+use chia_puzzle_types::nft::NftMetadata;
+use chia_puzzle_types::Memos;
 use chia_protocol::{Bytes32, Coin, CoinSpend, Program};
 use chia_wallet_sdk::driver::{
     Did, IntermediateLauncher, NftMint, SingletonInfo, SpendContext, StandardLayer,
@@ -1306,8 +1306,10 @@ mod tests {
     /// this test fails, forcing the constant back up.
     #[test]
     fn est_cost_per_item_is_conservative() -> anyhow::Result<()> {
-        use chia::consensus::owned_conditions::OwnedSpendBundleConditions;
-        use chia::consensus::spendbundle_conditions::run_spendbundle;
+        use chia_consensus::flags::MEMPOOL_MODE;
+        use chia_consensus::owned_conditions::OwnedSpendBundleConditions;
+        use chia_consensus::spendbundle_conditions::run_spendbundle;
+        use chia_consensus::spendbundle_validation::get_flags_for_height_and_constants;
         use chia_sdk_test::Simulator;
         use chia_wallet_sdk::driver::Launcher;
 
@@ -1321,8 +1323,8 @@ mod tests {
                 &mut a,
                 bundle,
                 MAX_BLOCK_COST_CLVM,
-                HEIGHT,
-                0,
+                get_flags_for_height_and_constants(HEIGHT, &chia_sdk_types::MAINNET_CONSTANTS)
+                    | MEMPOOL_MODE,
                 &chia_sdk_types::MAINNET_CONSTANTS,
             )
             .expect("batch bundle must validate under the consensus cost model");
