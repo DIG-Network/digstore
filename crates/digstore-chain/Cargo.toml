@@ -28,9 +28,10 @@ dirs = "5"
 # speaks in `chia_protocol::Coin` natively; engine-only (this crate never signs).
 dig-wallet-backend = { version = "0.29", default-features = false, features = ["engine"] }
 datalayer-driver = "4"
-# The `chia` umbrella crate has no 0.36 line (it jumps 0.32 -> 0.42), so the three
-# facades it provided are depended on directly at the 0.36.1 line chia-wallet-sdk 0.34
-# resolves: puzzle types (Memos, NFT metadata, offer payments) and CLVM tree hashing.
+# The `chia` umbrella crate has no 0.36 line (it jumps straight from 0.32 to 0.42), so the
+# facades it used to provide are depended on directly, each pinned to the 0.36.1 line that
+# chia-wallet-sdk 0.34 resolves: BLS keys, the consensus cost model, puzzle types (Memos,
+# NFT metadata, offer payments), secp keys for vaults, and CLVM tree hashing.
 chia-bls = "0.36.1"
 chia-consensus = "0.36.1"
 chia-puzzle-types = "0.36.1"
@@ -63,8 +64,8 @@ clvm-traits = "0.36.1"
 chia-sdk-test = "0.34"
 chia-puzzles = "0.20.3"
 # #231 cost-bound proof: measure a batch's real CLVM cost via the Chia consensus cost model
-# (`chia::consensus::run_spendbundle`, available through the `chia` crate's default `consensus`
-# feature) against the canonical MAINNET_CONSTANTS, to assert the per-item cost estimate is
+# (`chia_consensus::spendbundle_conditions::run_spendbundle`) against the canonical
+# MAINNET_CONSTANTS, to assert the per-item cost estimate is
 # conservative. clvmr is already a dev-dep (the single locked version the consensus crate uses).
 chia-sdk-types = "0.34"
 anyhow = "1"
