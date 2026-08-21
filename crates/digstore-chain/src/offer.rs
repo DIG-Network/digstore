@@ -24,9 +24,9 @@
 
 use crate::error::{ChainError, Result};
 use crate::keys::IndexedKeys;
+use chia_protocol::{Bytes32, Coin, SpendBundle};
 use chia_puzzle_types::offer::{NotarizedPayment, Payment};
 use chia_puzzle_types::Memos;
-use chia_protocol::{Bytes32, Coin, SpendBundle};
 use chia_wallet_sdk::driver::{
     decode_offer, encode_offer, Action, AssetInfo, Cat, CatAssetInfo, Id, Offer, Relation,
     RequestedPayments, SpendContext, Spends,

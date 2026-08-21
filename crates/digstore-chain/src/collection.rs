@@ -22,9 +22,9 @@
 // TODO(#34 at scale): CSV/large-JSON manifest ingest + generative trait composition + rarity tables.
 // TODO(#40 drop mechanics): delayed reveal, allowlist/claim gating, phased scheduling, lazy mint.
 
+use chia_protocol::{Bytes32, Coin, CoinSpend, Program};
 use chia_puzzle_types::nft::NftMetadata;
 use chia_puzzle_types::Memos;
-use chia_protocol::{Bytes32, Coin, CoinSpend, Program};
 use chia_wallet_sdk::driver::{
     Did, IntermediateLauncher, NftMint, SingletonInfo, SpendContext, StandardLayer,
 };
@@ -1316,6 +1316,21 @@ mod tests {
         // A recent mainnet height so run_spendbundle applies the CURRENT (post-softfork) cost flags.
         const HEIGHT: u32 = 6_000_000;
 
+        // chia-consensus 0.36.1 dropped `run_spendbundle`'s `prev_tx_height` parameter: the
+        // caller now composes the flags the old signature derived internally from the height.
+        // `get_flags_for_height_and_constants` only sets bits at `height >= hard_fork2_height`,
+        // which mainnet has NOT reached, so the height contributes nothing today and the
+        // measurement runs under plain mempool rules. Pinning that keeps the bound honest: if
+        // hard fork 2 activates below HEIGHT the flags change, the cost model changes with them,
+        // and this assertion fails rather than letting the proof drift onto a different model.
+        let height_flags =
+            get_flags_for_height_and_constants(HEIGHT, &chia_sdk_types::MAINNET_CONSTANTS);
+        assert_eq!(
+            height_flags, 0,
+            "mainnet hard fork 2 is now active at or below height {HEIGHT}; re-verify the              cost bound under the new flags"
+        );
+        let softfork_flags = height_flags;
+
         // Measure a bundle's real total CLVM cost under the mainnet consensus cost model.
         let measure = |bundle: &chia_protocol::SpendBundle| -> u64 {
             let mut a = clvmr::Allocator::new();
@@ -1323,8 +1338,7 @@ mod tests {
                 &mut a,
                 bundle,
                 MAX_BLOCK_COST_CLVM,
-                get_flags_for_height_and_constants(HEIGHT, &chia_sdk_types::MAINNET_CONSTANTS)
-                    | MEMPOOL_MODE,
+                softfork_flags | MEMPOOL_MODE,
                 &chia_sdk_types::MAINNET_CONSTANTS,
             )
             .expect("batch bundle must validate under the consensus cost model");
