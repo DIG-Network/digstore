@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.26.0] - 2026-08-22
+
+### Build
+- **digstore-chain:** Chia-wallet-sdk 0.30 -> 0.34 (#45)
+
 ## [0.25.0] - 2026-08-11
 
 ### Bug Fixes
