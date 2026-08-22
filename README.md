@@ -70,8 +70,9 @@ dig-store update --check  # just report whether a newer release exists
 Prefer the installer above. If you grab the raw per-OS binary from the
 [Releases](https://github.com/DIG-Network/digs/releases) page instead, pick
 the file for your CPU — **`dig-store-<ver>-macos-arm64`** (Apple Silicon: M1/M2/M3)
-or **`dig-store-<ver>-macos-x64`** (Intel Mac); **`dig-store-<ver>-linux-x64`** (or
-the `aarch64-unknown-linux-gnu.tar.gz` for ARM Linux). A macOS/Linux binary has
+or **`dig-store-<ver>-macos-x64`** (Intel Mac); **`dig-store-<ver>-linux-x64`** or
+**`dig-store-<ver>-linux-arm64`** (ARM Linux — the matching
+`aarch64-unknown-linux-gnu.tar.gz` is also published, for apt). A macOS/Linux binary has
 **no file extension — that's normal**, not a broken download.
 
 Downloaded binaries lose their exec bit, and macOS quarantines an unsigned
