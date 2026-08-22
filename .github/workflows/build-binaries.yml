@@ -75,8 +75,13 @@ jobs:
           - os: ubuntu-24.04-arm # native arm64 Linux runner
             target: aarch64-unknown-linux-gnu
             bin: dig-store
-            # apt builds an arm64 .deb from this; the universal installer does not
-            # resolve a linux-arm64 RawBinary today, so only the tarball is needed.
+            # Bare binary for dig-updater, whose feed resolver has been searching for
+            # `digstore-<ver>-linux-arm64` all along and finding nothing (dig_ecosystem#2126).
+            # NOT yet for the universal installer: dig-installer's `os_arch_tokens` maps every
+            # Linux target to the x64 slugs, so it cannot select this asset until that is fixed
+            # (the installer half of the arm64 platform floor)…
+            out_name: linux-arm64
+            # …PLUS a .tar.gz apt builds the arm64 .deb from.
             tarball_arch: aarch64-unknown-linux-gnu
           # Both macOS arches build on the fast Apple-silicon macos-14 runner; the Intel binary is
           # CROSS-COMPILED there (host arm64 → target x86_64-apple-darwin). The one native C dep in
@@ -179,3 +184,84 @@ jobs:
           name: dig-store-assets-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Prove the arm64 leg produced arm64 binaries that RUN on arm64 — compiling is
+  # not evidence. This job has no `continue-on-error` and no skippable `if:`, and
+  # every caller's publish job waits on the whole reusable workflow, so a failure
+  # here stops anything being attached to a release (dig_ecosystem#2126).
+  #
+  # Two details make it discriminate rather than merely pass:
+  #
+  #   * the EXACT-COUNT assertion runs FIRST. `if-no-files-found: error` is
+  #     satisfied by a short `dist/`, so a staging step that silently stopped
+  #     naming one asset would otherwise be iterated over without complaint.
+  #   * the ELF machine check is SEPARATE from execution. GitHub's arm64 runners
+  #     have binfmt/qemu registered, so an x86-64 binary executes perfectly well
+  #     under an arm64 filename — running it proves liveness, not architecture.
+  #     Both checks are required; neither substitutes for the other.
+  #
+  # Execution happens inside a bare `ubuntu:24.04` arm64 container with no Rust
+  # toolchain and none of the runner's build residue, so a binary that quietly
+  # depends on something only the builder had fails here rather than at a user.
+  verify-linux-arm64:
+    name: Verify linux-arm64 binaries are arm64 and run
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Download the arm64 build's staged assets
+        uses: actions/download-artifact@v4
+        with:
+          name: dig-store-assets-aarch64-unknown-linux-gnu
+          path: dist
+
+      - name: Assert the exact asset set, then architecture, then execution
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # (1) COUNT + NAMES first: five assets, named character-for-character as
+          #     their consumers search for them. `digstore-<ver>-linux-arm64` is the
+          #     stem dig-updater's feed resolver builds for (os=linux, arch=arm64,
+          #     RawBinary) — a one-character drift there is invisible until an
+          #     update silently never arrives.
+          expected=(
+            "dig-store-${VERSION}-linux-arm64"
+            "digstore-${VERSION}-linux-arm64"
+            "digs-${VERSION}-linux-arm64"
+            "dig-store-${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
+            "digstore-${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
+          )
+          actual=$(find dist -type f -printf '%f\n' | sort)
+          wanted=$(printf '%s\n' "${expected[@]}" | sort)
+          if [ "$actual" != "$wanted" ]; then
+            echo "::error::staged asset set does not match the expected set"
+            diff <(echo "$wanted") <(echo "$actual") || true
+            exit 1
+          fi
+          echo "asset set matches (${#expected[@]} files)"
+
+          # (2) ARCHITECTURE, read out of the ELF header — independent of whether
+          #     the thing can be executed at all.
+          for b in dig-store digstore digs; do
+            f="dist/${b}-${VERSION}-linux-arm64"
+            chmod +x "$f"
+            out=$(file -b "$f")
+            echo "$b: $out"
+            case "$out" in
+              *"ARM aarch64"*) ;;
+              *) echo "::error::$f is not an ARM aarch64 ELF: $out"; exit 1 ;;
+            esac
+          done
+
+          # (3) EXECUTION, in a bare arm64 ubuntu:24.04 with no toolchain.
+          docker run --rm --platform linux/arm64 -v "$PWD/dist:/dist:ro" ubuntu:24.04 \
+            bash -eu -c '
+              for b in dig-store digstore digs; do
+                f="/dist/${b}-'"${VERSION}"'-linux-arm64"
+                echo "--- $f --version"
+                "$f" --version
+              done
+            '

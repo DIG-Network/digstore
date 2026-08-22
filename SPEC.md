@@ -631,7 +631,19 @@ The cross-OS build lives once in `.github/workflows/build-binaries.yml` (`on: wo
 `version` + `ref`). Both `release.yml` (stable) and the nightly channel call it, so the two paths
 can never diverge. It builds `dig-store` + the `digs` alias for `windows-x64`, `linux-x64`,
 `linux-arm64` (native `ubuntu-24.04-arm` runner), `macos-arm64`, and `macos-x64`, in the two asset
-shapes (bare per-OS binaries + apt `.tar.gz`). BUILD PREREQ (§3.5 / BINDING contract D6): the
+shapes (bare per-OS binaries + apt `.tar.gz`). Every Linux arch publishes BOTH shapes: the bare
+`linux-arm64` binaries are what `dig-updater`'s feed resolves for `(linux, arm64)`, so omitting them
+leaves an arm64 host with a tarball apt can package and no update path at all.
+
+The arm64 leg carries a mandatory `verify-linux-arm64` job (no `continue-on-error`, no skippable
+`if:`) that every caller's publish waits on. It asserts the EXACT staged asset set before inspecting
+any file — `if-no-files-found: error` is satisfied by a short `dist/`, so a count check must come
+first — then reads `ARM aarch64` out of each ELF header, then executes each binary in a bare
+`ubuntu:24.04` arm64 container with no toolchain. The architecture and execution checks are separate
+because the runner has binfmt/qemu registered: an x86-64 binary runs perfectly well under an arm64
+filename, so execution alone proves liveness, not architecture.
+
+BUILD PREREQ (§3.5 / BINDING contract D6): the
 `digstore-guest` wasm is built for `wasm32-unknown-unknown` BEFORE the CLI on every leg, because
 `digstore-cli`'s `build.rs` embeds it.
 
