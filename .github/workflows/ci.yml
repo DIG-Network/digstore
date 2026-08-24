@@ -215,3 +215,18 @@ jobs:
       # audit step would be redundant. License compliance is deferred (see deny.toml).
       - name: cargo deny check
         run: cargo deny check advisories bans sources
+
+  publishable:
+    name: publishable crates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # `digstore-core` and `digstore-chain` are published to crates.io, so their
+      # sibling dependency must carry a real version alongside its path — and that
+      # version must track the workspace bump. Nothing else couples the two numbers.
+      - name: Workspace dependency versions track the workspace version
+        run: bash scripts/check-workspace-dep-versions.sh
