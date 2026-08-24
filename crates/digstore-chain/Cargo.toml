@@ -3,12 +3,16 @@ name = "digstore-chain"
 version.workspace = true
 edition = "2021"
 license.workspace = true
+description = "Chia on-chain layer for the DIG Network store (.dig) format: seed/key management, store anchoring via CHIP-0035 DataLayer singletons, DIG CAT payments, offers, and coinset queries."
+repository = "https://github.com/DIG-Network/digs"
+keywords = ["dig", "chia", "datalayer", "chip-0035", "blockchain"]
+categories = ["cryptography::cryptocurrencies", "api-bindings"]
 
 [dependencies]
 # The canonical `Capsule` (storeId:rootHash) identity. Store discovery returns the
 # current + historical capsules of a user's stores, so the return types speak in the
 # one ecosystem-wide capsule type rather than re-inventing the pair.
-digstore-core = { path = "../digstore-core" }
+digstore-core = { workspace = true }
 async-trait = "0.1"
 bip39 = { version = "2", features = ["rand"] }
 argon2 = "0.5"
@@ -26,6 +30,7 @@ dirs = "5"
 # init/commit/deploy spend paths so ordering + the coin cap + NeedsConsolidation are
 # shared across the ecosystem (never hand-rolled — §4.1 / Appendix B). The engine seam
 # speaks in `chia_protocol::Coin` natively; engine-only (this crate never signs).
+# Held at 0.29.0 — 0.29.1 splits `dig-constants` in two; see the note on that dep below.
 dig-wallet-backend = { version = "0.29", default-features = false, features = ["engine"] }
 datalayer-driver = "4"
 # The `chia` umbrella crate has no 0.36 line (it jumps straight from 0.32 to 0.42), so the
@@ -52,6 +57,20 @@ indexmap = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
 # Canonical `DIG_ASSET_ID` source (#969) — never a local hex-literal copy (Appendix B).
+#
+# HELD at 0.10, and `dig-wallet-backend` held at 0.29.0, deliberately — against the usual
+# bring-deps-to-latest rule, because here the latest versions SPLIT the tree instead of
+# advancing it.
+#
+# `dig-wallet-backend` 0.29.1 declares `dig-constants ^0.11` while still depending on
+# `dig-tips` 0.2.0, whose own latest release pins `dig-constants ^0.10`. Those two
+# requirements cannot be satisfied by one version, so adopting 0.29.1 resolves
+# `dig-constants` TWICE and the spend path ends up holding two copies of the crate that
+# owns `DIG_ASSET_ID`. Both lines agree on the asset id today, so nothing is mis-spent —
+# but a constants crate resolving twice is a divergence waiting to happen, and one line
+# per family beats the highest version number.
+#
+# Unblocked by a `dig-tips` release onto `dig-constants` 0.11; then both can move together.
 dig-constants = "0.10"
 
 [dev-dependencies]

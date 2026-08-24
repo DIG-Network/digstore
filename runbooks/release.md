@@ -84,6 +84,38 @@ Actions → **Nightly + stable release** → **Run workflow** → `channel: nigh
 | `release.yml` | `push: tags: v*` (+ dispatch canary) | Builds + publishes the stable Release + the S3 hub-worker binary for a `vX.Y.Z` tag. |
 | `build-binaries.yml` | `workflow_call` | Reusable cross-OS build (guest-wasm prereq + `digs`); both channels call it. |
 | `ci.yml` | PR + push to main | fmt/clippy/test/coverage (pre-merge). NOTE: `ubuntu-latest` + `windows-latest` — macOS builds are first exercised by the nightly channel / release, not PR CI (SPEC §12). |
+| `publish-crate.yml` | `push: tags: digstore-crates-v*` / `digstore-core-v*` (+ dispatch) | Publishes the LIBRARY crates to crates.io, bottom-up. |
+
+## Publishing the library crates to crates.io
+
+Two crates in this workspace are consumed by other repos as libraries and so are
+published to crates.io: **`digstore-core`** (format + read-crypto primitives) and
+**`digstore-chain`** (the Chia on-chain layer). The binary release above is a separate
+pipeline on the `v*` tag namespace; these ride `digstore-crates-v*` so a binary release
+never re-attempts a crate publish.
+
+**The order is not a preference.** `digstore-chain` depends on `digstore-core`, and
+crates.io refuses to accept a crate whose dependency is not already on the registry — so
+`publish-chain` runs `needs: publish-core`. Publishing them independently fails.
+
+```bash
+# Normal path: merge the version bump, then dispatch (no hand-pushed tag needed).
+gh workflow run publish-crate.yml --repo DIG-Network/digs --ref main
+
+# Verify from the INDEX, not from the workflow log — a green publish job is not a
+# published crate. The User-Agent is REQUIRED: without it crates.io answers in a way
+# that is indistinguishable from "this crate does not exist".
+curl -sH 'User-Agent: dig-loop' https://index.crates.io/di/gs/digstore-core  | tail -1
+curl -sH 'User-Agent: dig-loop' https://index.crates.io/di/gs/digstore-chain | tail -1
+```
+
+Both crates inherit `[workspace.package].version`, and the sibling dependency in
+`[workspace.dependencies]` must declare that same version — `scripts/check-workspace-dep-versions.sh`
+enforces it in CI, so a release bump cannot leave a published crate pointing at the
+previous version of its sibling.
+
+The publish is idempotent: `scripts/publish-crate.sh` skips a version already on the
+registry rather than failing red, so a re-run or a stray tag is a safe no-op.
 
 ## Local build (dev)
 

@@ -5,10 +5,20 @@ exclude = ["crates/digstore-prover/guest", "crates/dig-client-wasm"]
 
 [workspace.package]
 edition = "2021"
-version = "0.27.0"
+version = "0.28.0"
 license = "GPL-2.0-only"
 
 [workspace.dependencies]
+# The in-repo library crates are declared here with BOTH a path and a version so the
+# publishable ones (`digstore-core`, `digstore-chain`) carry a real crates.io dependency
+# in their published manifest — cargo refuses to publish a bare `path` dep. Locally the
+# path always wins; the version is what downstream consumers resolve.
+#
+# The version MUST equal `[workspace.package].version`, because every member inherits
+# that value. `scripts/check-workspace-dep-versions.sh` enforces it in CI, so a release
+# bump can never silently leave a published crate pointing at the previous version.
+digstore-core = { path = "crates/digstore-core", version = "0.28.0" }
+
 sha2 = "0.10"
 proptest = "1"
 hex = "0.4"
