@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.28.0] - 2026-08-25
+
+### Build
+- **digstore-chain:** Publish digstore-chain to crates.io (#50)
+
 ## [0.27.0] - 2026-08-22
 
 ### Features
