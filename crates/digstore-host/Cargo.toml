@@ -1,14 +1,14 @@
 [package]
 name = "digstore-host"
 license = "GPL-2.0-only"
-version = "0.3.0"
+version.workspace = true
 edition = "2021"
 description = "wasmtime runtime for serving compiled Digstore WASM modules (paper 6.3, 6.4, 18)."
 
 [dependencies]
-digstore-core = { path = "../digstore-core" }
-digstore-crypto = { path = "../digstore-crypto" }
-digstore-prover = { path = "../digstore-prover" }
+digstore-core = { workspace = true }
+digstore-crypto = { workspace = true }
+digstore-prover = { workspace = true }
 wasmtime = { version = "47.0.3", default-features = false, features = ["std", "cranelift", "runtime", "gc", "gc-drc", "gc-null", "threads", "pooling-allocator", "parallel-compilation"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 rand = "0.8"
@@ -46,7 +46,7 @@ required-features = ["dighost"]
 [dev-dependencies]
 wat = "1"
 httpmock = "0.7"
-digstore-cli = { path = "../digstore-cli" }
+digstore-cli = { workspace = true }
 tempfile = "3"
 object_store = { version = "0.11", features = ["aws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

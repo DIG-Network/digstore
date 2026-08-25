@@ -14,7 +14,7 @@ native-test = ["std", "digstore-core/std"]
 std = []
 
 [dependencies]
-digstore-core = { path = "../digstore-core", default-features = false }
+digstore-core = { workspace = true, default-features = false }
 bls12_381 = { version = "0.8", default-features = false, features = ["alloc", "pairings", "groups", "experimental"] }
 rsa = { version = "0.9", default-features = false, features = ["sha2"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
@@ -29,7 +29,7 @@ base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
-digstore-crypto = { path = "../digstore-crypto" }
+digstore-crypto = { workspace = true }
 serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
 hex = "0.4"
 wasmparser = "0.221"

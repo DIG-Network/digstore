@@ -1,11 +1,12 @@
 [package]
 name = "digstore-chunker"
 license = "GPL-2.0-only"
+description = "Deterministic gear-based content-defined chunking (FastCDC line) for digstore."
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-digstore-core = { path = "../digstore-core" }
+digstore-core = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
