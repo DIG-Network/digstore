@@ -19,6 +19,12 @@ license = "GPL-2.0-only"
 # and `digstore-chain`. Two members are nonetheless NOT published — see the
 # `# NC-7 exception:` comments on `digstore-stage` and `digstore-prover`.
 #
+# `digstore-compiler` is deliberately ABSENT from this table. Its package version is the
+# spec-mandated COMPILER VERSION (`COMPILER_VERSION = env!("CARGO_PKG_VERSION")`, stamped into
+# every compiled `.dig` as `outcome.detail.compiler_version`), so it is a store-format constant
+# and cannot follow the workspace release version. Its dependents declare it explicitly with
+# that version instead.
+#
 # The version MUST equal `[workspace.package].version`, because every member inherits
 # that value. `scripts/check-workspace-dep-versions.sh` enforces it in CI, so a release
 # bump can never silently leave a published crate pointing at the previous version.
@@ -29,7 +35,6 @@ digstore-crypto = { path = "crates/digstore-crypto", version = "0.29.0" }
 digstore-store = { path = "crates/digstore-store", version = "0.29.0" }
 digstore-prover = { path = "crates/digstore-prover", version = "0.29.0" }
 digstore-host = { path = "crates/digstore-host", version = "0.29.0" }
-digstore-compiler = { path = "crates/digstore-compiler", version = "0.29.0" }
 digstore-stage = { path = "crates/digstore-stage", version = "0.29.0" }
 digstore-remote = { path = "crates/digstore-remote", version = "0.29.0" }
 digstore-cli = { path = "crates/digstore-cli", version = "0.29.0" }

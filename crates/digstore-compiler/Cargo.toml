@@ -1,7 +1,10 @@
 [package]
 name = "digstore-compiler"
 license = "GPL-2.0-only"
-version.workspace = true
+# SPEC 5: "Compiler version 1.0.0". This is NOT a release number — `COMPILER_VERSION` is
+# `env!("CARGO_PKG_VERSION")` and is recorded into every compiled `.dig`, so changing it
+# changes the store format. It deliberately does not follow the workspace version.
+version = "1.0.0"
 edition = "2021"
 description = "dig-compiler: deterministic transform from on-disk generations to a self-serving WASM module (paper 5, 8.3, 17.1, 19)."
 

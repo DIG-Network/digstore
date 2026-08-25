@@ -31,7 +31,9 @@ rpassword = "7"
 zeroize = "1"
 digstore-store = { workspace = true }
 digstore-chunker = { workspace = true }
-digstore-compiler = { workspace = true }
+# Pinned to the SPEC compiler version, not the workspace version — see the note in the
+# root `[workspace.dependencies]`.
+digstore-compiler = { path = "../digstore-compiler", version = "1.0.0" }
 digstore-stage = { workspace = true }
 digstore-host = { workspace = true }
 digstore-prover = { workspace = true }

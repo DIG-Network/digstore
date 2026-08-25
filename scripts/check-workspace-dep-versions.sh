@@ -13,7 +13,7 @@ set -euo pipefail
 MANIFEST="${1:-Cargo.toml}"
 
 read -r -d '' PY <<'PYEOF' || true
-import re, sys, tomllib
+import pathlib, sys, tomllib
 
 manifest = sys.argv[1]
 with open(manifest, "rb") as fh:
@@ -41,6 +41,53 @@ if failures:
     sys.exit(1)
 
 print(f"{manifest}: all in-repo workspace dependencies declare version {expected}")
+
+# ── Member-declared in-repo path deps must name the target crate's ACTUAL package version. ──
+root = pathlib.Path(manifest).parent
+member_failures = []
+checked = 0
+for member in workspace.get("members", []):
+    member_manifest = root / member / "Cargo.toml"
+    if not member_manifest.is_file():
+        continue
+    with open(member_manifest, "rb") as fh:
+        member_doc = tomllib.load(fh)
+    # A member that never publishes may declare siblings however it likes; only a crate that
+    # ships to crates.io needs a version on every in-repo dependency.
+    if member_doc.get("package", {}).get("publish", True) is False:
+        continue
+    for section in ("dependencies", "dev-dependencies", "build-dependencies"):
+        for name, spec in member_doc.get(section, {}).items():
+            if not isinstance(spec, dict) or "path" not in spec:
+                continue
+            target_manifest = (member_manifest.parent / spec["path"] / "Cargo.toml").resolve()
+            if not target_manifest.is_file():
+                continue
+            with open(target_manifest, "rb") as fh:
+                target_doc = tomllib.load(fh)
+            target_pkg = target_doc.get("package", {})
+            actual = target_pkg.get("version")
+            # A member inheriting `version.workspace = true` carries the workspace version.
+            if not isinstance(actual, str):
+                actual = expected
+            declared = spec.get("version")
+            checked += 1
+            if declared is None:
+                member_failures.append(
+                    f"  {member} [{section}] {name}: bare `path` with no `version`, but "
+                    f"{member} publishes — cargo refuses such a dependency")
+            elif declared != actual:
+                member_failures.append(
+                    f"  {member} [{section}] {name}: declares {declared!r}, "
+                    f"but {name} carries {actual!r}")
+
+if member_failures:
+    print(f"{manifest}: member-declared in-repo dependency versions are out of step:",
+          file=sys.stderr)
+    print(chr(10).join(member_failures), file=sys.stderr)
+    sys.exit(1)
+
+print(f"{manifest}: {checked} member-declared in-repo path deps all name a real version")
 PYEOF
 
 python3 -c "$PY" "$MANIFEST"

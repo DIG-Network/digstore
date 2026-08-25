@@ -5,6 +5,23 @@ version.workspace = true
 edition = "2021"
 description = "Execution proofs and Chia chain anchoring for digstore (§13)."
 
+# NC-7 exception: digstore-prover is NOT published to crates.io. Tracked by
+# https://github.com/DIG-Network/digs/issues/54.
+#
+# The optional `risc0` feature depends on `digstore-guest-risc0 = { path = "guest" }`, a risc0 zkVM
+# guest that is EXCLUDED from this workspace (see `[workspace].exclude`) and is absent from
+# crates.io (index HTTP 404). Cargo requires a version on every dependency when packaging —
+# optional ones included — and, per its own diagnostic, "the `path` specification will be removed
+# from the dependency declaration" so the published crate resolves that name FROM CRATES.IO.
+#
+# That makes adding a version actively unsafe rather than merely insufficient: `digstore-guest-risc0`
+# is an unregistered name, so the published manifest would bind the ZK proving guest to whatever
+# any third party later publishes under it.
+#
+# Publishing this crate needs a shape decision (publish the guest as a real crate, or drop the
+# risc0 feature from the published manifest) — not a flag.
+publish = false
+
 [dependencies]
 digstore-core = { workspace = true }
 digstore-crypto = { workspace = true }
