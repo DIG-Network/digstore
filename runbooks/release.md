@@ -88,11 +88,33 @@ Actions → **Nightly + stable release** → **Run workflow** → `channel: nigh
 
 ## Publishing the library crates to crates.io
 
-Two crates in this workspace are consumed by other repos as libraries and so are
-published to crates.io: **`digstore-core`** (format + read-crypto primitives) and
-**`digstore-chain`** (the Chia on-chain layer). The binary release above is a separate
-pipeline on the `v*` tag namespace; these ride `digstore-crates-v*` so a binary release
-never re-attempts a crate publish.
+Two crates are live on crates.io today: **`digstore-core`** (format + read-crypto
+primitives) and **`digstore-chain`** (the Chia on-chain layer). The binary release above is a
+separate pipeline on the `v*` tag namespace; these ride `digstore-crates-v*` so a binary
+release never re-attempts a crate publish.
+
+### Which members can publish, and which cannot
+
+Every member now declares its in-repo dependencies with a real `version` (via
+`[workspace.dependencies]`), which is what `cargo publish` requires — so the mechanical
+blocker that once limited publishing to `core` and `chain` is gone. Two members are still
+`publish = false`, each for a reason that a manifest edit cannot fix:
+
+| Crate | Status | Why |
+|---|---|---|
+| `digstore-core`, `digstore-chain` | live on crates.io | — |
+| `digstore-crypto`, `digstore-chunker` | ready; `cargo package --locked` verified | — |
+| `digstore-store`, `digstore-host`, `digstore-remote`, `digstore-compiler`, `digstore-cli` | ready, but gated on the two below and on release-first ordering | a crate cannot publish before its dependencies are on the registry |
+| **`digstore-stage`** | **`publish = false`** | its `build.rs` embeds the guest wasm from `<workspace>/target/...`, which is a build artifact and is NOT in the published `.crate`, so a registry build panics. DIG-Network/digs#53 |
+| **`digstore-prover`** | **`publish = false`** | the optional `risc0` feature depends on `digstore-guest-risc0`, which is workspace-excluded and unregistered on crates.io. DIG-Network/digs#54 |
+| `digstore-guest` | `publish = false` | compiled to wasm as a build artifact, not consumed as a library |
+
+`digstore-cli` transitively needs `digstore-stage`, so the CLI cannot publish until #53 is
+resolved.
+
+**Do not work around a `publish = false` with `--allow-dirty` or by adding a version to a
+bare path dep.** Both crates fail for reasons the published artifact would inherit; the
+version key is the symptom, not the cause.
 
 **The order is not a preference.** `digstore-chain` depends on `digstore-core`, and
 crates.io refuses to accept a crate whose dependency is not already on the registry — so
@@ -109,10 +131,17 @@ curl -sH 'User-Agent: dig-loop' https://index.crates.io/di/gs/digstore-core  | t
 curl -sH 'User-Agent: dig-loop' https://index.crates.io/di/gs/digstore-chain | tail -1
 ```
 
-Both crates inherit `[workspace.package].version`, and the sibling dependency in
+Members inherit `[workspace.package].version`, and every in-repo sibling dependency in
 `[workspace.dependencies]` must declare that same version — `scripts/check-workspace-dep-versions.sh`
 enforces it in CI, so a release bump cannot leave a published crate pointing at the
 previous version of its sibling.
+
+**`digstore-compiler` is the one deliberate exception.** Its package version is the
+spec-mandated COMPILER VERSION (`COMPILER_VERSION = env!("CARGO_PKG_VERSION")`, recorded into
+every compiled `.dig` as `outcome.detail.compiler_version`), so it is a store-format constant
+and must NOT follow the workspace release version. It is therefore absent from
+`[workspace.dependencies]` and pinned explicitly by its dependents; the same script checks
+that those pins name the version the crate actually carries.
 
 The publish is idempotent: `scripts/publish-crate.sh` skips a version already on the
 registry rather than failing red, so a re-run or a stray tag is a safe no-op.
