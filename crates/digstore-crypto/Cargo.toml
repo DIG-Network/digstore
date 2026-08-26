@@ -1,7 +1,7 @@
 [package]
 name = "digstore-crypto"
 license = "GPL-2.0-only"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Host-side cryptography for Digstore: URN key derivation, AES-256-GCM chunk encryption, and Chia AugScheme BLS."
 
@@ -12,7 +12,12 @@ description = "Host-side cryptography for Digstore: URN key derivation, AES-256-
 # no longer direct deps here — they come transitively through `digstore-core`.
 digstore-core = { path = "../digstore-core" }
 sha2 = "0.10"
-chia-bls = "=0.45.0"
+# Held on the 0.36.1 line — the ceiling `chia-wallet-sdk` resolves (its latest is 0.36.0).
+# The 0.4x primitives on crates.io are unreachable while the SDK sits there, and this crate
+# must agree byte-for-byte with `digstore-chain`, which speaks the SDK's own BLS types.
+# The frozen AugScheme known-answer vectors in `tests/fixtures/bls_vectors.json` pin the
+# cryptographic output across any future move of this line.
+chia-bls = "0.36.1"
 hex = "0.4"
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }

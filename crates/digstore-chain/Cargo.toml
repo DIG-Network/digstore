@@ -44,6 +44,24 @@ chia-secp = "0.36.1"
 clvm-utils = "0.36.1"
 chia-protocol = "0.36.1"
 chia-sha2 = "0.36.1"
+# The `chia-sdk-*` / `chia-wallet-sdk` declarations below are HELD at 0.34, deliberately,
+# even though the SDK ceiling is 0.36.0 — for the same reason `dig-constants` is held at
+# 0.10: here the higher version SPLITS the tree instead of advancing it.
+#
+# `datalayer-driver` 4.0.0 is the latest published release and hard-requires
+# `chia-wallet-sdk ^0.34.0`. It is not an optional dep: this crate passes its DataLayer
+# singleton types straight across the SDK boundary, so moving only this crate to 0.36
+# resolves `chia-sdk-driver` TWICE and `singleton.rs` then holds datalayer-driver's 0.34
+# `DataStore` where the 0.36 `Datastore<DataStoreMetadata>` is expected. That does not
+# compile, and bridging the two lines with a shim would be the byte-drift class §4.1
+# exists to prevent.
+#
+# The rest of the family has already moved: `dig-wallet-backend` 0.31.0, `dig-cat` /
+# `dig-tips` / `dig-offers` 0.3.0 and `dig-options` 0.4.0 all declare
+# `chia-wallet-sdk ^0.36`. `datalayer-driver` is the sole remaining holdout.
+#
+# Unblocked by a `datalayer-driver` release onto `chia-wallet-sdk` 0.36; then this crate
+# and `dig-wallet-backend` move together in one cascade.
 chia-sdk-coinset = "0.34"
 # chip-0035 exposes the DataLayer driver primitives (Launcher::mint_datastore, etc.) so we
 # can replicate chip35's mint with the digstore-scoped owner hint memo (datalayer_driver's

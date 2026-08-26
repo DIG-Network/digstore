@@ -1180,22 +1180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chia-bls"
-version = "0.45.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edf90111a4cbe2e0f6fe73e5e1323d0c1c87ba9cad0bb0a11447b5a886570796"
-dependencies = [
- "blst",
- "chia-sha2 0.45.1",
- "chia-traits 0.45.1",
- "hex",
- "hkdf",
- "linked-hash-map",
- "sha2 0.10.9",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "chia-consensus"
 version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1515,15 +1499,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chia-sha2"
-version = "0.45.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d350d145e0fb77f5ffe23ee3eccd3f5a3f7f7cab45d71e6b93cae5fff620ef8"
-dependencies = [
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "chia-ssl"
 version = "0.42.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1566,17 +1541,6 @@ checksum = "e012b4d5336fe5457be5157a655208a9671a41bd41c3fc72ac59c56073c21c18"
 dependencies = [
  "chia-sha2 0.42.1",
  "chia_streamable_macro 0.42.1",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "chia-traits"
-version = "0.45.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "992b6c6829525e8a24187751414825ea5d406de486f75a58c344e870c39b239d"
-dependencies = [
- "chia-sha2 0.45.1",
- "chia_streamable_macro 0.45.1",
  "thiserror 2.0.18",
 ]
 
@@ -1638,18 +1602,6 @@ name = "chia_streamable_macro"
 version = "0.42.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9567c7e8fe38b640aeeb4af3c0e04f4f6938a438a2506b39bb93d39e0a23e1a9"
-dependencies = [
- "proc-macro-crate 1.3.1",
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "chia_streamable_macro"
-version = "0.45.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76381b05f6f80fce4744357389256a713f1300a536304c87fd24cac830a5c97e"
 dependencies = [
  "proc-macro-crate 1.3.1",
  "proc-macro2",
@@ -2675,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chain"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2717,7 +2669,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chunker"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "digstore-core",
  "hex",
@@ -2727,7 +2679,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-cli"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
@@ -2796,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-core"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "aes-gcm-siv",
  "hex",
@@ -2808,9 +2760,9 @@ dependencies = [
 
 [[package]]
 name = "digstore-crypto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "chia-bls 0.45.0",
+ "chia-bls 0.36.1",
  "digstore-core",
  "hex",
  "serde",
@@ -2893,7 +2845,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-remote"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2953,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-subscription"
-version = "0.28.0"
+version = "0.28.1"
 dependencies = [
  "async-trait",
  "digstore-core",
@@ -6749,7 +6701,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
