@@ -30,12 +30,14 @@ dirs = "5"
 # init/commit/deploy spend paths so ordering + the coin cap + NeedsConsolidation are
 # shared across the ecosystem (never hand-rolled — §4.1 / Appendix B). The engine seam
 # speaks in `chia_protocol::Coin` natively; engine-only (this crate never signs).
-# Held at 0.29.0 — 0.29.1 splits `dig-constants` in two; see the note on that dep below.
-dig-wallet-backend = { version = "0.29", default-features = false, features = ["engine"] }
-datalayer-driver = "4"
+dig-wallet-backend = { version = "0.31", default-features = false, features = ["engine"] }
+# 5.0.0 is the first release built against `chia-wallet-sdk` 0.36; it re-exports the
+# DataLayer singleton types this crate passes across the SDK boundary, so it and the
+# `chia-sdk-*` declarations below must move as one — see the note there.
+datalayer-driver = "5"
 # The `chia` umbrella crate has no 0.36 line (it jumps straight from 0.32 to 0.42), so the
 # facades it used to provide are depended on directly, each pinned to the 0.36.1 line that
-# chia-wallet-sdk 0.34 resolves: BLS keys, the consensus cost model, puzzle types (Memos,
+# chia-wallet-sdk 0.36 resolves: BLS keys, the consensus cost model, puzzle types (Memos,
 # NFT metadata, offer payments), secp keys for vaults, and CLVM tree hashing.
 chia-bls = "0.36.1"
 chia-consensus = "0.36.1"
@@ -44,31 +46,20 @@ chia-secp = "0.36.1"
 clvm-utils = "0.36.1"
 chia-protocol = "0.36.1"
 chia-sha2 = "0.36.1"
-# The `chia-sdk-*` / `chia-wallet-sdk` declarations below are HELD at 0.34, deliberately,
-# even though the SDK ceiling is 0.36.0 — for the same reason `dig-constants` is held at
-# 0.10: here the higher version SPLITS the tree instead of advancing it.
-#
-# `datalayer-driver` 4.0.0 is the latest published release and hard-requires
-# `chia-wallet-sdk ^0.34.0`. It is not an optional dep: this crate passes its DataLayer
-# singleton types straight across the SDK boundary, so moving only this crate to 0.36
-# resolves `chia-sdk-driver` TWICE and `singleton.rs` then holds datalayer-driver's 0.34
-# `DataStore` where the 0.36 `Datastore<DataStoreMetadata>` is expected. That does not
-# compile, and bridging the two lines with a shim would be the byte-drift class §4.1
-# exists to prevent.
-#
-# The rest of the family has already moved: `dig-wallet-backend` 0.31.0, `dig-cat` /
-# `dig-tips` / `dig-offers` 0.3.0 and `dig-options` 0.4.0 all declare
-# `chia-wallet-sdk ^0.36`. `datalayer-driver` is the sole remaining holdout.
-#
-# Unblocked by a `datalayer-driver` release onto `chia-wallet-sdk` 0.36; then this crate
-# and `dig-wallet-backend` move together in one cascade.
-chia-sdk-coinset = "0.34"
+# The `chia-sdk-*` / `chia-wallet-sdk` declarations here move as ONE set with
+# `datalayer-driver` above. This crate passes DataLayer singleton types straight across the
+# SDK boundary, so a version skew between the driver and the SDK resolves `chia-sdk-driver`
+# twice and `singleton.rs` ends up holding one line's `Datastore` where the other line's is
+# expected. `datalayer-driver` 5.0.0 requires `chia-wallet-sdk ^0.36.0`, which is what puts
+# the whole family — driver, SDK, `dig-wallet-backend` 0.31, `dig-tips` 0.3,
+# `dig-constants` 0.11 — on the single 0.36 line.
+chia-sdk-coinset = "0.36"
 # chip-0035 exposes the DataLayer driver primitives (Launcher::mint_datastore, etc.) so we
 # can replicate chip35's mint with the digstore-scoped owner hint memo (datalayer_driver's
 # mint_store hardcodes a single launcher hint and exposes no hint parameter).
 # `offer-compression` decodes/encodes bech32 `offer1…` strings (chia_takeOffer); `chip-0035`
 # exposes the DataLayer driver primitives.
-chia-wallet-sdk = { version = "0.34", features = ["chip-0035", "offer-compression"] }
+chia-wallet-sdk = { version = "0.36", features = ["chip-0035", "offer-compression"] }
 hex = "0.4"
 hex-literal = "0.4"
 indexmap = "2"
@@ -76,20 +67,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
 # Canonical `DIG_ASSET_ID` source (#969) — never a local hex-literal copy (Appendix B).
 #
-# HELD at 0.10, and `dig-wallet-backend` held at 0.29.0, deliberately — against the usual
-# bring-deps-to-latest rule, because here the latest versions SPLIT the tree instead of
-# advancing it.
-#
-# `dig-wallet-backend` 0.29.1 declares `dig-constants ^0.11` while still depending on
-# `dig-tips` 0.2.0, whose own latest release pins `dig-constants ^0.10`. Those two
-# requirements cannot be satisfied by one version, so adopting 0.29.1 resolves
-# `dig-constants` TWICE and the spend path ends up holding two copies of the crate that
-# owns `DIG_ASSET_ID`. Both lines agree on the asset id today, so nothing is mis-spent —
-# but a constants crate resolving twice is a divergence waiting to happen, and one line
-# per family beats the highest version number.
-#
-# Unblocked by a `dig-tips` release onto `dig-constants` 0.11; then both can move together.
-dig-constants = "0.10"
+# 0.11 is the single line the whole family now agrees on: `dig-wallet-backend` 0.31 and
+# `dig-tips` 0.3 both declare `dig-constants ^0.11`, so the crate that owns `DIG_ASSET_ID`
+# resolves exactly once. The earlier 0.10 hold existed only because `dig-tips` 0.2 pinned
+# ^0.10 while `dig-wallet-backend` already wanted ^0.11.
+dig-constants = "0.11"
 
 [dev-dependencies]
 tempfile = "3"
@@ -98,11 +80,11 @@ clvmr = "0.16.2"
 clvm-traits = "0.36.1"
 # Offer take-flow round-trip test: build a maker offer (NFT-for-DIG-CAT) and accept it
 # end-to-end in the in-process Chia simulator, validating the assembled spend bundle.
-chia-sdk-test = "0.34"
+chia-sdk-test = "0.36"
 chia-puzzles = "0.20.3"
 # #231 cost-bound proof: measure a batch's real CLVM cost via the Chia consensus cost model
 # (`chia_consensus::spendbundle_conditions::run_spendbundle`) against the canonical
 # MAINNET_CONSTANTS, to assert the per-item cost estimate is
 # conservative. clvmr is already a dev-dep (the single locked version the consensus crate uses).
-chia-sdk-types = "0.34"
+chia-sdk-types = "0.36"
 anyhow = "1"

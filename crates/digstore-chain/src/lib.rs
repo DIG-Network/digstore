@@ -25,7 +25,13 @@ pub mod singleton;
 pub mod streaming;
 pub mod unlock;
 pub mod vault;
-pub mod vc;
+// NOTE: there is deliberately no `vc` module. It wrapped the chia-wallet-sdk verification
+// layer (`Verification` / `VerifiedData` / `VerificationAsserter`), which upstream REMOVED
+// in 0.36 with no replacement — `chia-sdk-driver`'s `primitives/action_layer/verification*`
+// files are gone while the rest of the action layer survives, so the removal is deliberate
+// and the on-chain primitive the module attested against no longer ships. Re-deriving those
+// puzzles here would be a rival implementation of removed upstream CLVM (Appendix B), so the
+// surface is withdrawn rather than faked. It had no callers anywhere in the ecosystem.
 pub mod wallet;
 
 pub use error::{ChainError, Result};

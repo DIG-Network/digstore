@@ -46,7 +46,9 @@ chia-protocol = "0.36.1"
 # LIBRARY crate (NC-9, triple-gated); this CLI is a thin consumer of `dig_store::get_store_status`,
 # reading through a coinset-backed adapter over the canonical `dig_chainsource_interface::ChainSource`
 # trait. NEVER re-implement the status/lineage logic here.
-dig-store = "0.7"
+# 0.8 is the release that moved onto `chia-wallet-sdk` 0.36; holding 0.7 would keep the
+# workspace resolving the SDK twice once `digstore-chain` is on the 0.36 line.
+dig-store = "0.8"
 dig-chainsource-interface = "0.3"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time"] }

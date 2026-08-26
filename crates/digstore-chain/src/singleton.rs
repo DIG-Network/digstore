@@ -10,15 +10,15 @@ use chia_wallet_sdk::types::{conditions::CreateCoin, Condition, Conditions};
 use datalayer_driver::{
     add_fee, admin_delegated_puzzle_from_key, melt_store, oracle_delegated_puzzle as dl_oracle_dp,
     sign_coin_spends, update_store_metadata, update_store_ownership, Bytes32, Coin, CoinSpend,
-    DataStoreInnerSpend, DataStoreMetadata, SpendBundle, SuccessResponse,
+    DataStoreInnerSpend, DatastoreMetadata, SpendBundle, SuccessResponse,
 };
 
 /// Re-export the datalayer types that appear in this module's public builder
 /// signatures, so downstream crates (the in-process `dig-wallet`) can name a
-/// `DataStore` / `DelegatedPuzzle` / `PublicKey` WITHOUT taking a direct
+/// `Datastore` / `DelegatedPuzzle` / `PublicKey` WITHOUT taking a direct
 /// `datalayer-driver` dependency — they speak the store-spend surface through
 /// `digstore-chain` (the byte-mirror of chip35), keeping the one-builder-source rule.
-pub use datalayer_driver::{DataStore, DelegatedPuzzle, PublicKey};
+pub use datalayer_driver::{Datastore, DelegatedPuzzle, PublicKey};
 
 /// An XCH coin tagged with the wallet address it belongs to, so the spend can
 /// be built with the correct `synthetic_pk` (each address has its own key).
@@ -97,7 +97,7 @@ fn mint_store_digstore(
 
     let (launch_singleton, datastore) = Launcher::new(lead_coin_name, 1).mint_datastore(
         &mut ctx,
-        DataStoreMetadata {
+        DatastoreMetadata {
             root_hash,
             label,
             description,
@@ -166,7 +166,7 @@ fn mint_store_digstore_multi(
     label: Option<String>,
     description: Option<String>,
     change_ph: Bytes32, // index 0 owner_puzzle_hash — change consolidates here
-    owner_puzzle_hash: Bytes32, // store owner (index 0); used in the owner hint + DataStore
+    owner_puzzle_hash: Bytes32, // store owner (index 0); used in the owner hint + Datastore
     delegated_puzzles: Vec<DelegatedPuzzle>,
     fee: u64,
 ) -> std::result::Result<SuccessResponse, DriverError> {
@@ -199,7 +199,7 @@ fn mint_store_digstore_multi(
     // Mint the singleton from the lead coin.
     let (launch_singleton, datastore) = Launcher::new(lead_coin_name, 1).mint_datastore(
         &mut ctx,
-        DataStoreMetadata {
+        DatastoreMetadata {
             root_hash,
             label,
             description,
@@ -253,7 +253,7 @@ fn mint_store_digstore_multi(
 pub struct MintBuild {
     pub bundle: SpendBundle,
     pub launcher_id: Bytes32,
-    pub datastore: DataStore,
+    pub datastore: Datastore,
 }
 
 /// The UNSIGNED mint: the raw coin spends plus the ids derived from them. Used
@@ -262,7 +262,7 @@ pub struct MintBuild {
 pub struct MintUnsigned {
     pub coin_spends: Vec<CoinSpend>,
     pub launcher_id: Bytes32,
-    pub datastore: DataStore,
+    pub datastore: Datastore,
 }
 
 /// Builds the UNSIGNED mint coin spends for an owner-only empty/initial store with
@@ -313,7 +313,7 @@ pub fn build_mint_unsigned(
 /// fragmented to cover the mint within the cap it returns
 /// [`ChainError::NeedsConsolidation`] (the CLI consolidates + retries). Change
 /// consolidates to `change_ph` (index 0's `owner_puzzle_hash`). The store owner (in
-/// DataStore metadata) is also `change_ph`.
+/// Datastore metadata) is also `change_ph`.
 pub fn build_mint_unsigned_multi(
     all_coins: &[CoinWithKey],
     change_ph: Bytes32,
@@ -413,7 +413,7 @@ pub fn build_mint(
 pub struct UpdateBuild {
     pub bundle: SpendBundle,
     pub new_coin_id: Bytes32,
-    pub datastore: DataStore,
+    pub datastore: Datastore,
 }
 
 /// The UNSIGNED root update: raw coin spends (singleton + fee) plus derived ids.
@@ -421,7 +421,7 @@ pub struct UpdateBuild {
 pub struct UpdateUnsigned {
     pub coin_spends: Vec<CoinSpend>,
     pub new_coin_id: Bytes32,
-    pub datastore: DataStore,
+    pub datastore: Datastore,
 }
 
 /// Builds the UNSIGNED owner-authorized update of `store`'s root to `new_root`
@@ -432,7 +432,7 @@ pub struct UpdateUnsigned {
 /// Single-address variant (all fee coins share one synthetic key).
 pub fn build_update_unsigned(
     keys: &WalletKeys,
-    store: DataStore,
+    store: Datastore,
     new_root: Bytes32,
     label: Option<String>,
     description: Option<String>,
@@ -478,7 +478,7 @@ pub fn build_update_unsigned(
 /// selected and `add_fee` is skipped.
 pub fn build_update_unsigned_multi(
     owner_pk: PublicKey,
-    store: DataStore,
+    store: Datastore,
     new_root: Bytes32,
     label: Option<String>,
     description: Option<String>,
@@ -618,7 +618,7 @@ pub fn oracle_delegated_puzzle(oracle_puzzle_hash: Bytes32, oracle_fee: u64) -> 
 #[allow(clippy::too_many_arguments)]
 pub fn build_update_unsigned_writer(
     writer_synthetic_pk: PublicKey,
-    store: DataStore,
+    store: Datastore,
     new_root: Bytes32,
     label: Option<String>,
     description: Option<String>,
@@ -663,7 +663,7 @@ pub fn build_update_unsigned_writer(
 /// `fee_coins` are the wallet's spendable XCH coins for the fee; `fee` mojos.
 pub fn build_update(
     keys: &WalletKeys,
-    store: DataStore,
+    store: Datastore,
     new_root: Bytes32,
     label: Option<String>,
     description: Option<String>,
@@ -709,14 +709,14 @@ pub struct MeltUnsigned {
 /// fee, so no DIG payment and no extra fee coin are required.
 ///
 /// **Pure: does NOT sign or broadcast.** The caller signs with the owner key.
-pub fn build_melt_unsigned(keys: &WalletKeys, store: DataStore) -> Result<MeltUnsigned> {
+pub fn build_melt_unsigned(keys: &WalletKeys, store: Datastore) -> Result<MeltUnsigned> {
     let coin_spends = melt_store(store, keys.synthetic_pk)
         .map_err(|e| ChainError::Chain(format!("melt_store: {e}")))?;
     Ok(MeltUnsigned { coin_spends })
 }
 
 /// Builds + signs an owner-authorized melt of `store`. See [`build_melt_unsigned`].
-pub fn build_melt(keys: &WalletKeys, store: DataStore) -> Result<MeltBuild> {
+pub fn build_melt(keys: &WalletKeys, store: Datastore) -> Result<MeltBuild> {
     let MeltUnsigned { coin_spends } = build_melt_unsigned(keys, store)?;
     let signature = sign_coin_spends(
         &coin_spends,
@@ -733,7 +733,7 @@ pub fn build_melt(keys: &WalletKeys, store: DataStore) -> Result<MeltBuild> {
 pub struct OwnershipBuild {
     pub bundle: SpendBundle,
     pub new_coin_id: Bytes32,
-    pub datastore: DataStore,
+    pub datastore: Datastore,
 }
 
 /// The UNSIGNED ownership/delegation update: the raw singleton spend that re-targets
@@ -742,7 +742,7 @@ pub struct OwnershipBuild {
 pub struct OwnershipUnsigned {
     pub coin_spends: Vec<CoinSpend>,
     pub new_coin_id: Bytes32,
-    pub datastore: DataStore,
+    pub datastore: Datastore,
 }
 
 /// Builds the UNSIGNED owner-authorized update of `store`'s OWNERSHIP — re-targets the
@@ -762,7 +762,7 @@ pub struct OwnershipUnsigned {
 /// spent by the owner key. **Pure: does NOT sign or broadcast.**
 pub fn build_update_ownership_unsigned(
     keys: &WalletKeys,
-    store: DataStore,
+    store: Datastore,
     new_owner_ph: Bytes32,
     new_delegated_puzzles: Vec<DelegatedPuzzle>,
     fee_coins: &[Coin],
@@ -801,7 +801,7 @@ pub fn build_update_ownership_unsigned(
 /// [`build_update_ownership_unsigned`].
 pub fn build_update_ownership(
     keys: &WalletKeys,
-    store: DataStore,
+    store: Datastore,
     new_owner_ph: Bytes32,
     new_delegated_puzzles: Vec<DelegatedPuzzle>,
     fee_coins: &[Coin],
@@ -844,7 +844,7 @@ pub fn build_update_ownership(
 ///
 /// The invariant that makes this safe: **corrupt is never melt.** A `Melted` is
 /// returned ONLY when a singleton coin that genuinely parsed as a datastore was
-/// SPENT and its spend, parsed by `DataStore::from_spend`, returned
+/// SPENT and its spend, parsed by `Datastore::from_spend`, returned
 /// `Err(DriverError::MissingChild)` — the exact on-chain signature of an
 /// owner-authorized melt (a valid datastore-singleton spend that recreates no
 /// odd-amount child). Every other outcome stays an `Err`, never `Melted`: a
@@ -856,14 +856,14 @@ pub fn build_update_ownership(
 #[derive(Debug)]
 pub enum SingletonTerminal {
     /// The launcher was spent and the forward walk reached an UNSPENT tip — the
-    /// store is live and spendable. Carries the current [`DataStore`] (boxed: it is
+    /// store is live and spendable. Carries the current [`Datastore`] (boxed: it is
     /// far larger than the other variants, so boxing keeps the enum compact).
-    Live(Box<DataStore>),
+    Live(Box<Datastore>),
     /// The launcher coin exists on-chain but is still UNSPENT: the store was
     /// never minted (no eve singleton was ever created). NOT a melt.
     NeverMinted,
     /// The launcher was spent and the walk reached a datastore singleton coin
-    /// that was SPENT with `DataStore::from_spend` returning
+    /// that was SPENT with `Datastore::from_spend` returning
     /// `Err(DriverError::MissingChild)` (a valid datastore-singleton spend
     /// recreating no odd-amount child) — an owner-authorized MELT, permanently
     /// retiring the store.
@@ -888,7 +888,7 @@ pub enum SingletonTerminal {
 /// single walker upholds the canonical-crate rule: a second lineage walker anywhere
 /// in the ecosystem is a byte-drift bug on a custody path.
 ///
-/// `DataStore::from_spend(ctx, spend, delegated)` returns the CHILD datastore created
+/// `Datastore::from_spend(ctx, spend, delegated)` returns the CHILD datastore created
 /// by spending `spend.coin`, so we walk launcher → eve → … forward until either a
 /// singleton coin is still unspent (`Live`) or a spent coin's spend yields no child
 /// (`Melted`). Every genuine chain-read failure and every unparseable spend returns
@@ -917,7 +917,7 @@ async fn walk_singleton_terminal(
     // A launcher spend that does NOT yield a datastore is a corrupt / non-store
     // launcher — NOT a melt. Only a spend of a coin that already parsed as a
     // datastore (in the loop below) can be a melt.
-    let mut store = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &launcher_spend, &[])
+    let mut store = Datastore::<DatastoreMetadata>::from_spend(&mut ctx, &launcher_spend, &[])
         .map_err(|e| ChainError::Chain(format!("parse eve store: {e}")))?
         .ok_or_else(|| ChainError::Chain("launcher spend is not a datastore".into()))?;
 
@@ -958,7 +958,7 @@ async fn walk_singleton_terminal(
         // signature of an owner-authorized melt. Every other error (unparseable
         // puzzle, CLVM failure, an intermediate that isn't a datastore at all) is a
         // corrupt/unexpected chain and MUST stay `Err` — corrupt is never melt.
-        match DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &spend, &delegated) {
+        match Datastore::<DatastoreMetadata>::from_spend(&mut ctx, &spend, &delegated) {
             // The spent singleton produced a datastore child: keep walking.
             Ok(Some(child)) => store = child,
             // The spend parsed but is not a datastore singleton at all — a corrupt /
@@ -989,7 +989,7 @@ async fn walk_singleton_terminal(
 /// only coinset reads (coin records + puzzle/solution), following the singleton
 /// lineage. No P2P peer required. Owner-only stores carry no delegated puzzles.
 ///
-/// `DataStore::from_spend(ctx, spend, delegated)` returns the CHILD datastore
+/// `Datastore::from_spend(ctx, spend, delegated)` returns the CHILD datastore
 /// created by spending `spend.coin`, so we walk launcher -> eve -> ... forward
 /// until we reach a singleton coin that is still unspent.
 ///
@@ -997,7 +997,7 @@ async fn walk_singleton_terminal(
 /// never-minted launcher or a melted lineage still returns [`ChainError::Chain`]
 /// with the same message. Callers that need to DISTINGUISH those terminal states
 /// (e.g. melt propagation) MUST use [`classify_singleton`] instead.
-pub async fn sync_datastore(chain: &dyn ChainReads, launcher_id: Bytes32) -> Result<DataStore> {
+pub async fn sync_datastore(chain: &dyn ChainReads, launcher_id: Bytes32) -> Result<Datastore> {
     match walk_singleton_terminal(chain, launcher_id).await? {
         SingletonTerminal::Live(store) => Ok(*store),
         SingletonTerminal::NeverMinted => Err(ChainError::Chain(
@@ -1074,10 +1074,10 @@ mod tests {
 
     #[test]
     fn build_update_errors_with_empty_fee_coins_and_nonzero_fee() {
-        // Constructing a real DataStore requires going through mint_store; skip
+        // Constructing a real Datastore requires going through mint_store; skip
         // that here and just confirm select_coins rejects the empty coin list
         // before we even reach update_store_metadata.  We do this by calling
-        // build_mint first to get a valid DataStore, then immediately feeding it
+        // build_mint first to get a valid Datastore, then immediately feeding it
         // to build_update with no fee coins.
         let keys = derive_wallet_keys(ABANDON).unwrap();
         let coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1_000_000);
@@ -1109,7 +1109,7 @@ mod tests {
     #[test]
     fn build_mint_embeds_label_and_description_in_metadata() {
         // The on-chain project name (label) + description must land in the singleton's
-        // DataStoreMetadata, not be dropped — this is the write half of the feature.
+        // DatastoreMetadata, not be dropped — this is the write half of the feature.
         let keys = derive_wallet_keys(ABANDON).unwrap();
         let coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1_000_000);
         let mb = build_mint(
@@ -1160,7 +1160,7 @@ mod tests {
 
         let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
             ctx,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: Bytes32::default(),
                 label: Some("site".into()),
                 description: None,
@@ -1219,7 +1219,7 @@ mod tests {
         // Mint WITHOUT the writer's delegated puzzle.
         let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
             ctx,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: Bytes32::default(),
                 label: None,
                 description: None,
@@ -1295,7 +1295,7 @@ mod tests {
         let owner_p2 = StandardLayer::new(owner.pk);
         let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
             ctx,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: Bytes32::default(),
                 label: None,
                 description: None,
@@ -1345,7 +1345,7 @@ mod tests {
         let writer = sim.bls(0);
         let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
             ctx,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: Bytes32::default(),
                 label: Some("site".into()),
                 description: None,
@@ -1417,7 +1417,7 @@ mod tests {
         let writer_b = sim.bls(0);
         let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
             ctx,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: Bytes32::default(),
                 label: Some("site".into()),
                 description: None,
@@ -1550,7 +1550,7 @@ mod tests {
         let recipient = sim.bls(0);
         let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
             ctx,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: Bytes32::default(),
                 label: None,
                 description: None,
@@ -1609,7 +1609,7 @@ pub async fn current_root(chain: &dyn ChainReads, launcher_id: Bytes32) -> Resul
 /// # Identity is anchored on the launcher coin — NEVER the curried `launcher_id`
 /// The current unspent singleton is discovered with one
 /// [`unspent_coins_by_hint`](ChainReads::unspent_coins_by_hint) query on `store_id`. A hint
-/// is an attacker-controllable CREATE_COIN memo, and `DataStore::from_spend` reads
+/// is an attacker-controllable CREATE_COIN memo, and `Datastore::from_spend` reads
 /// `launcher_id` STRAIGHT from a spend's curried `SingletonLayer` — Chia's singleton
 /// top-layer does not bind that curried value to the real launcher coin. So a coin merely
 /// discovered by hint whose curried `launcher_id == store_id` is NOT proof of identity: an
@@ -1669,7 +1669,7 @@ pub async fn verify_pinned_root(
         // The parent's own creation memos carry its delegated-puzzle set, so from_spend
         // reconstructs the child without a caller-supplied delegated list (`&[]`).
         let Ok(Some(store)) =
-            DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &parent_spend, &[])
+            Datastore::<DatastoreMetadata>::from_spend(&mut ctx, &parent_spend, &[])
         else {
             continue;
         };
@@ -1746,7 +1746,7 @@ async fn tip_descends_from_launcher(
                 .await
             {
                 if let Ok(Some(hop_store)) =
-                    DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &spend, &[])
+                    Datastore::<DatastoreMetadata>::from_spend(&mut ctx, &spend, &[])
                 {
                     if hop_store.info.launcher_id != store_id {
                         return Ok(false); // a parseable hop that curries a different store
@@ -1850,14 +1850,14 @@ pub struct StoreHistory {
 /// eve → … → current unspent singleton; each visited singleton's root becomes one
 /// [`Capsule`](digstore_core::Capsule) `(launcher_id, root)`. The returned
 /// `current` capsule is `(launcher_id, current_root)` (== the last history entry),
-/// and the returned [`DataStore`] is the live, spendable singleton.
+/// and the returned [`Datastore`] is the live, spendable singleton.
 ///
-/// Returns `(DataStore, StoreHistory)` so callers get both the spendable handle
+/// Returns `(Datastore, StoreHistory)` so callers get both the spendable handle
 /// (for further updates) and the audit-grade capsule lineage.
 pub async fn sync_datastore_with_history(
     chain: &dyn ChainReads,
     launcher_id: Bytes32,
-) -> Result<(DataStore, StoreHistory)> {
+) -> Result<(Datastore, StoreHistory)> {
     let mut ctx = SpendContext::new();
     let store_id = core_bytes32(launcher_id);
 
@@ -1876,13 +1876,13 @@ pub async fn sync_datastore_with_history(
         .await?
         .ok_or_else(|| ChainError::Chain("launcher spend not found".into()))?;
 
-    let mut store = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &launcher_spend, &[])
+    let mut store = Datastore::<DatastoreMetadata>::from_spend(&mut ctx, &launcher_spend, &[])
         .map_err(|e| ChainError::Chain(format!("parse eve store: {e}")))?
         .ok_or_else(|| ChainError::Chain("launcher spend is not a datastore".into()))?;
 
     // Collect each hop's root as a capsule, in order.
     let mut history: Vec<digstore_core::Capsule> = Vec::new();
-    let mut push_capsule = |store: &DataStore| {
+    let mut push_capsule = |store: &Datastore| {
         history.push(digstore_core::Capsule {
             store_id,
             root_hash: core_bytes32(store.info.metadata.root_hash),
@@ -1918,7 +1918,7 @@ pub async fn sync_datastore_with_history(
             .await?
             .ok_or_else(|| ChainError::Chain("singleton spend not found".into()))?;
         let delegated: Vec<DelegatedPuzzle> = store.info.delegated_puzzles.clone();
-        store = DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &spend, &delegated)
+        store = Datastore::<DatastoreMetadata>::from_spend(&mut ctx, &spend, &delegated)
             .map_err(|e| ChainError::Chain(format!("parse next store: {e}")))?
             .ok_or_else(|| ChainError::Chain("singleton spend did not yield a store".into()))?;
     }
@@ -2140,7 +2140,7 @@ mod discovery_tests {
 
         // Advance the store's root with no fee (the multi variant skips fee-coin
         // selection when fee == 0, so the test needs no extra funding coin).
-        let update_no_fee = |store: DataStore, new_root: Bytes32| {
+        let update_no_fee = |store: Datastore, new_root: Bytes32| {
             build_update_unsigned_multi(keys.synthetic_pk, store, new_root, None, None, &[], 0)
                 .unwrap()
         };
@@ -2244,7 +2244,7 @@ mod verify_pinned_root_tests {
         let root0 = Bytes32::new([0x10; 32]);
         let (launch, eve) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
             ctx,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: root0,
                 label: None,
                 description: None,
@@ -2426,7 +2426,7 @@ mod verify_pinned_root_tests {
     /// SECURITY (issue #1473): a forged singleton that curries `launcher_id == store_id`
     /// but does NOT descend from the launcher coin (coin_id == store_id) MUST be rejected.
     ///
-    /// `DataStore::from_spend` reads `launcher_id` straight from the parent's curried
+    /// `Datastore::from_spend` reads `launcher_id` straight from the parent's curried
     /// `SingletonLayer`, and Chia's singleton top-layer does not bind that curried value to
     /// the real launcher coin. So an attacker can construct a spend that from_spends to
     /// `launcher_id == store_id` + `root == R_evil` from a coin whose id != store_id, hint
@@ -2435,7 +2435,7 @@ mod verify_pinned_root_tests {
     /// verify anchors identity on the unforgeable launcher coin, so this must fail closed.
     #[tokio::test]
     async fn impostor_singleton_rejected() -> anyhow::Result<()> {
-        use datalayer_driver::{DataStoreInfo, EveProof, Proof};
+        use datalayer_driver::{DatastoreInfo, EveProof, Proof};
 
         let mut sim = Simulator::new();
         let attacker = sim.bls(1);
@@ -2450,9 +2450,9 @@ mod verify_pinned_root_tests {
         let attacker_ancestor = Bytes32::new([0xcc; 32]);
 
         // Forge a singleton currying launcher_id = store_id from an attacker-owned coin.
-        let info = DataStoreInfo::new(
+        let info = DatastoreInfo::new(
             store_id,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: r_parent,
                 label: None,
                 description: None,
@@ -2467,7 +2467,7 @@ mod verify_pinned_root_tests {
             parent_parent_coin_info: attacker_ancestor,
             parent_amount: 1,
         });
-        let impostor_parent = DataStore::new(impostor_parent_coin, proof, info);
+        let impostor_parent = Datastore::new(impostor_parent_coin, proof, info);
 
         let up = update_store_metadata(
             impostor_parent,
@@ -2486,7 +2486,7 @@ mod verify_pinned_root_tests {
         // and root==R_evil — a convincing forgery.
         let mut ctx = SpendContext::new();
         let parsed =
-            DataStore::<DataStoreMetadata>::from_spend(&mut ctx, &forged_parent_spend, &[])
+            Datastore::<DatastoreMetadata>::from_spend(&mut ctx, &forged_parent_spend, &[])
                 .map_err(|e| anyhow::anyhow!("parse forged spend: {e}"))?
                 .expect("forged spend parses as a datastore");
         assert_eq!(
@@ -2557,7 +2557,7 @@ mod verify_pinned_root_tests {
     /// still verify while the impostor root is rejected.
     #[tokio::test]
     async fn genuine_root_served_impostor_rejected_when_both_hinted() -> anyhow::Result<()> {
-        use datalayer_driver::{DataStoreInfo, EveProof, Proof};
+        use datalayer_driver::{DatastoreInfo, EveProof, Proof};
 
         let mut sim = Simulator::new();
         let lin = build_three_gen_store(&mut sim)?;
@@ -2570,9 +2570,9 @@ mod verify_pinned_root_tests {
         let attacker_ph: Bytes32 = attacker.puzzle_hash;
         let attacker_ancestor = Bytes32::new([0x7c; 32]);
         let r_evil = Bytes32::new([0xee; 32]);
-        let info = DataStoreInfo::new(
+        let info = DatastoreInfo::new(
             lin.store_id,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: Bytes32::new([0x71; 32]),
                 label: None,
                 description: None,
@@ -2583,7 +2583,7 @@ mod verify_pinned_root_tests {
             vec![],
         );
         let impostor_parent_coin = Coin::new(attacker_ancestor, attacker_ph, 1);
-        let impostor_parent = DataStore::new(
+        let impostor_parent = Datastore::new(
             impostor_parent_coin,
             Proof::Eve(EveProof {
                 parent_parent_coin_info: attacker_ancestor,
@@ -2713,18 +2713,18 @@ mod classify_tests {
         }
     }
 
-    /// Mint an owner-only store (root0). Returns (store_id, eve DataStore) with every
+    /// Mint an owner-only store (root0). Returns (store_id, eve Datastore) with every
     /// spend applied on `sim`.
     fn mint_store_on_sim(
         sim: &mut Simulator,
         ctx: &mut SpendContext,
         root0: Bytes32,
-    ) -> anyhow::Result<(Bytes32, DataStore, chia_sdk_test::BlsPairWithCoin)> {
+    ) -> anyhow::Result<(Bytes32, Datastore, chia_sdk_test::BlsPairWithCoin)> {
         let owner = sim.bls(3);
         let owner_p2 = StandardLayer::new(owner.pk);
         let (launch, eve) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
             ctx,
-            DataStoreMetadata {
+            DatastoreMetadata {
                 root_hash: root0,
                 label: None,
                 description: None,
@@ -2965,6 +2965,112 @@ mod classify_tests {
         match err {
             ChainError::Chain(msg) => assert!(msg.contains("not found"), "got: {msg}"),
             other => panic!("expected Chain error, got {other:?}"),
+        }
+    }
+}
+
+/// Conformance tests for the ORACLE-FEE MEMO, the one attacker-controllable numeric value
+/// the singleton lineage walk parses.
+///
+/// Every `Datastore::from_spend` call in this module — the forward walk, the backward
+/// verify, `sync_datastore` — reconstructs a generation's delegated-puzzle set by running
+/// [`DelegatedPuzzle::from_memos`] over CREATE_COIN memos that came off chain, i.e. from
+/// whoever spent the parent coin. The oracle fee is the only field in that set that becomes
+/// a NUMBER rather than a hash, so it is the only one where a coercion can turn hostile
+/// bytes into a plausible-looking value instead of a refusal.
+///
+/// These tests pin the refusal from BOTH sides: an honest in-range fee must still parse to
+/// exactly itself (the control), and each of the four hostile encodings must be refused or
+/// normalised to zero — never coerced into a different finite fee.
+#[cfg(test)]
+mod oracle_fee_memo {
+    use chia_protocol::Bytes;
+    use chia_wallet_sdk::driver::DriverError;
+    use datalayer_driver::DelegatedPuzzle;
+
+    /// `HintType::OraclePuzzle`, the memo tag that selects the fee-carrying branch.
+    const ORACLE_HINT: u8 = 3;
+
+    /// Build the memo list `from_memos` expects: `[hint_tag, puzzle_hash, fee_bytes]`.
+    fn oracle_memos(fee_bytes: Vec<u8>) -> Vec<Bytes> {
+        vec![
+            Bytes::new(vec![ORACLE_HINT]),
+            Bytes::new(vec![0xAB; 32]),
+            Bytes::new(fee_bytes),
+        ]
+    }
+
+    /// CONTROL — an honest fee still parses, and to exactly itself. Without this the
+    /// hostile cases below would also pass against a parser that refused everything.
+    #[test]
+    fn an_in_range_fee_parses_to_exactly_itself() {
+        // 1000 mojos, big-endian signed: a single 0x03E8 pair with no sign bit set.
+        let mut memos = oracle_memos(vec![0x03, 0xE8]);
+        let parsed = DelegatedPuzzle::from_memos(&mut memos).expect("an honest fee must parse");
+        match parsed {
+            DelegatedPuzzle::Oracle(_, fee) => assert_eq!(fee, 1000),
+            other => panic!("expected an Oracle delegated puzzle, got {other:?}"),
+        }
+    }
+
+    /// A fee that does not FIT in `u64` must be REFUSED, never truncated to its low digit.
+    ///
+    /// This is the money case. The chosen value is `2^64 + 1000`: too large to be a fee,
+    /// but whose low 64-bit digit is exactly the control's plausible `1000`. A parser that
+    /// keeps only the low digit therefore does not fail loudly — it reports a perfectly
+    /// ordinary fee that the spender never encoded, and the walk records a wrong on-chain
+    /// value. Asserting `Err` alone would not distinguish the two parsers; asserting that
+    /// the result is not the *believable* `1000` is what makes this test load-bearing.
+    #[test]
+    fn a_fee_above_u64_is_refused_not_truncated_to_its_low_digit() {
+        // 2^64 + 1000, big-endian: 0x01 followed by eight bytes holding 1000.
+        let mut memos = oracle_memos(vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xE8]);
+        match DelegatedPuzzle::from_memos(&mut memos) {
+            Err(DriverError::InvalidMemo) => {}
+            Ok(DelegatedPuzzle::Oracle(_, fee)) => panic!(
+                "an over-u64 oracle fee was coerced to {fee} instead of being refused \
+                 (a truncating parser reports the plausible low digit 1000)"
+            ),
+            other => panic!("expected InvalidMemo, got {other:?}"),
+        }
+    }
+
+    /// A NEGATIVE fee must be REFUSED, not silently read as its positive magnitude.
+    /// `0xFF` is `-1` in the big-endian signed encoding the parser uses; a parser that
+    /// discards the sign reports a fee of `1`.
+    #[test]
+    fn a_negative_fee_is_refused_not_read_as_its_magnitude() {
+        let mut memos = oracle_memos(vec![0xFF]);
+        match DelegatedPuzzle::from_memos(&mut memos) {
+            Err(DriverError::InvalidMemo) => {}
+            Ok(DelegatedPuzzle::Oracle(_, fee)) => {
+                panic!("a negative oracle fee was accepted as {fee}")
+            }
+            other => panic!("expected InvalidMemo, got {other:?}"),
+        }
+    }
+
+    /// An EMPTY fee memo is a well-formed "no fee" and must parse to zero — not panic.
+    /// A panic here is worse than a rejection: it aborts the lineage walk of an otherwise
+    /// valid store, and it is reachable from any spend an attacker can author.
+    #[test]
+    fn an_empty_fee_memo_is_zero_not_a_panic() {
+        let mut memos = oracle_memos(Vec::new());
+        match DelegatedPuzzle::from_memos(&mut memos).expect("an empty fee memo must parse") {
+            DelegatedPuzzle::Oracle(_, fee) => assert_eq!(fee, 0),
+            other => panic!("expected an Oracle delegated puzzle, got {other:?}"),
+        }
+    }
+
+    /// An EXPLICITLY ZERO-ENCODED fee (`0x00`) must also parse to zero, not panic. This is
+    /// a different input from the empty memo above — it has a byte — and it reached a
+    /// different code path in the parser that produced no digits for a zero magnitude.
+    #[test]
+    fn an_explicit_zero_fee_memo_is_zero_not_a_panic() {
+        let mut memos = oracle_memos(vec![0x00]);
+        match DelegatedPuzzle::from_memos(&mut memos).expect("a zero fee memo must parse") {
+            DelegatedPuzzle::Oracle(_, fee) => assert_eq!(fee, 0),
+            other => panic!("expected an Oracle delegated puzzle, got {other:?}"),
         }
     }
 }
