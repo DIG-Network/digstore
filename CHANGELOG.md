@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.29.0] - 2026-08-27
+
+### Bug Fixes
+- **crypto:** Bring chia-bls onto the chia-wallet-sdk ceiling (0.36.1) (#57)
+
+### Chores
+- **deps:** Bring digstore-chain onto the chia-wallet-sdk 0.36 line (#59)
+
 ## [0.28.0] - 2026-08-25
 
 ### Build
