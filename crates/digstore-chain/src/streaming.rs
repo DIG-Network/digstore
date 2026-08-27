@@ -472,8 +472,16 @@ mod tests {
 
         // Claw back at the quarter point. The payer supplies a real 0-mojo coin at the
         // clawback address to carry the authorizing message.
+        //
+        // The clawback spend carries ASSERT_BEFORE_SECONDS_ABSOLUTE(claw_time), which is
+        // satisfied only by a block STRICTLY EARLIER than `claw_time` — so the block is
+        // timestamped one second before it. (Through chia-sdk-test 0.34 this test set the
+        // block to exactly `claw_time` and passed, because that simulator rejected only
+        // `bound < timestamp` and so let the equal case through; 0.36 rejects
+        // `bound <= timestamp`, which is the mainnet rule. The product code is unchanged —
+        // the old fixture was relying on a simulator that was one second too permissive.)
         let claw_time = 1_250u64;
-        sim.set_next_timestamp(claw_time)?;
+        sim.set_next_timestamp(claw_time - 1)?;
         let message_coin = sim.new_coin(payer.owner_puzzle_hash, 0);
         let clawback = build_stream_clawback(&stream, &payer, message_coin, claw_time, true)?;
         sim.new_transaction(clawback)?;
