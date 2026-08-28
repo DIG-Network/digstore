@@ -103,7 +103,7 @@ blocker that once limited publishing to `core` and `chain` is gone. Two members 
 | Crate | Status | Why |
 |---|---|---|
 | `digstore-core`, `digstore-chain` | live on crates.io | — |
-| `digstore-crypto`, `digstore-chunker` | ready; `cargo package --locked` verified | — |
+| `digstore-crypto`, `digstore-chunker`, `digstore-subscription`, `dig-resolver` | ready; `cargo package` verified — they need no unpublished sibling | — |
 | `digstore-store`, `digstore-host`, `digstore-remote`, `digstore-compiler`, `digstore-cli` | ready, but gated on the two below and on release-first ordering | a crate cannot publish before its dependencies are on the registry |
 | **`digstore-stage`** | **`publish = false`** | its `build.rs` embeds the guest wasm from `<workspace>/target/...`, which is a build artifact and is NOT in the published `.crate`, so a registry build panics. DIG-Network/digs#53 |
 | **`digstore-prover`** | **`publish = false`** | the optional `risc0` feature depends on `digstore-guest-risc0`, which is workspace-excluded and unregistered on crates.io. DIG-Network/digs#54 |
