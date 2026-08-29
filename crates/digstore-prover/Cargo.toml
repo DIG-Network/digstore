@@ -20,6 +20,17 @@ description = "Execution proofs and Chia chain anchoring for digstore (§13)."
 # locates it through `[package.metadata.risc0] methods = ["guest"]` — a
 # directory path, not a Cargo dependency edge. Removing the entry therefore
 # restores publishability without touching what the `risc0` feature does.
+#
+# KNOWN LIMITATION of the published artifact, measured with `cargo package --list`:
+# `guest/` is a nested package, and cargo excludes nested packages from a `.crate`
+# unconditionally — an explicit `include = ["guest/**"]` does NOT override this. So a
+# REGISTRY consumer that turns on `risc0` gets a `build.rs` whose `embed_methods()` has no
+# guest directory to compile. The DEFAULT feature set — which is what every consumer in this
+# ecosystem uses, and what `digstore-host` needs — is unaffected and fully sound from the
+# registry. `risc0` is opt-in and already requires an out-of-band RISC0 toolchain
+# (`rzup`/`r0vm`) that no CI here installs, so it is not reachable from a registry build
+# either way. Making it registry-reachable needs the guest published as its own crate; that
+# is a shape decision, not a flag, and it does not gate this crate's publishability.
 
 [dependencies]
 digstore-core = { workspace = true }

@@ -73,6 +73,14 @@ for member in workspace.get("members", []):
             declared = spec.get("version")
             checked += 1
             if declared is None:
+                # A version-less DEV-dependency is legal in a published crate: cargo drops
+                # it from the published manifest entirely rather than refusing the package.
+                # That is load-bearing here — digstore-host dev-depends on digstore-cli,
+                # which depends back on digstore-host, so a versioned dev-dep would be a
+                # cyclic registry dependency that can never resolve on a first publish.
+                # Only a normal or build dependency must carry a version.
+                if section == "dev-dependencies":
+                    continue
                 member_failures.append(
                     f"  {member} [{section}] {name}: bare `path` with no `version`, but "
                     f"{member} publishes — cargo refuses such a dependency")
