@@ -16,8 +16,8 @@ license = "GPL-2.0-only"
 #
 # Members reference each other as `{ workspace = true }` rather than `{ path = "../x" }`,
 # which is what makes the whole workspace publishable instead of only `digstore-core`
-# and `digstore-chain`. Three members are nonetheless NOT published — see the
-# `# NC-7 exception:` comments on `digstore-stage`, `digstore-prover`, and `digstore-guest`.
+# and `digstore-chain`. Two members are nonetheless NOT published — see the
+# `# NC-7 exception:` comments on `digstore-stage` (#53) and `digstore-guest`.
 #
 # `digstore-compiler` is deliberately ABSENT from this table. Its package version is the
 # spec-mandated COMPILER VERSION (`COMPILER_VERSION = env!("CARGO_PKG_VERSION")`, stamped into

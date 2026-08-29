@@ -46,7 +46,11 @@ required-features = ["dighost"]
 [dev-dependencies]
 wat = "1"
 httpmock = "0.7"
-digstore-cli = { workspace = true }
+# PATH-ONLY, deliberately no version: digstore-cli depends on digstore-host, so a
+# versioned dev-dep here would be a cyclic registry dependency that can never resolve
+# on a first publish. Cargo drops a version-less dev-dep from the published manifest
+# entirely, which is exactly what makes this crate packageable.
+digstore-cli = { path = "../digstore-cli" }
 tempfile = "3"
 object_store = { version = "0.11", features = ["aws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

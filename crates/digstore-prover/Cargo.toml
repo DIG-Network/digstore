@@ -5,25 +5,21 @@ version.workspace = true
 edition = "2021"
 description = "Execution proofs and Chia chain anchoring for digstore (§13)."
 
-# NC-7 exception: digstore-prover is NOT published to crates.io. Tracked by
-# https://github.com/DIG-Network/digs/issues/54.
-# 
-# The optional `risc0` feature depends on `digstore-guest-risc0 = { path = "guest" }`, a risc0 zkVM
-# guest that is EXCLUDED from this workspace (see `[workspace].exclude`) and is absent from
-# crates.io (index HTTP 404). Cargo requires a version on every dependency when packaging —
-# optional ones included — and, per its own diagnostic, "the `path` specification will be removed
-# from the dependency declaration" so the published crate resolves that name FROM CRATES.IO.
+# NC-7: this crate publishes to crates.io. `digstore-host` depends on it as a
+# non-optional runtime dependency (`ChainSource`/`Prover` are used from
+# `runtime.rs`, `state.rs` and `serve_blind.rs`), so the whole dependent chain
+# — digstore-host, digstore-cli, digstore-compiler, digstore-remote — is
+# publishable only if this crate is.
 #
-# This exception cascades: digstore-host depends on digstore-prover (non-optional), and
-# digstore-host is a dependency of digstore-cli, digstore-compiler, and digstore-remote. Those
-# four crates cannot be published until this one is resolved.
-# That makes adding a version actively unsafe rather than merely insufficient: `digstore-guest-risc0`
-# is an unregistered name, so the published manifest would bind the ZK proving guest to whatever
-# any third party later publishes under it.
-#
-# Publishing this crate needs a shape decision (publish the guest as a real crate, or drop the
-# risc0 feature from the published manifest) — not a flag.
-publish = false
+# The former blocker was a `digstore-guest-risc0 = { path = "guest" }` entry
+# under the optional `risc0` feature. Cargo demands a version on every
+# dependency when packaging, optional ones included, and that guest is absent
+# from crates.io — so the entry made the crate permanently unpublishable.
+# It was also DEAD: nothing in `src/` names `digstore_guest_risc0`. The zkVM
+# guest is consumed by `risc0-build::embed_methods()` in `build.rs`, which
+# locates it through `[package.metadata.risc0] methods = ["guest"]` — a
+# directory path, not a Cargo dependency edge. Removing the entry therefore
+# restores publishability without touching what the `risc0` feature does.
 
 [dependencies]
 digstore-core = { workspace = true }
@@ -35,7 +31,6 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 
 # risc0 backend (real ZK) — all optional, all referenced by the `risc0` feature below
 risc0-zkvm = { version = "1.2", optional = true }
-digstore-guest-risc0 = { path = "guest", optional = true }
 bincode = { version = "1", optional = true }
 
 [build-dependencies]
@@ -43,7 +38,7 @@ risc0-build = { version = "1.2", optional = true }
 
 [features]
 default = []
-risc0 = ["dep:risc0-zkvm", "dep:digstore-guest-risc0", "dep:bincode", "dep:risc0-build"]
+risc0 = ["dep:risc0-zkvm", "dep:bincode", "dep:risc0-build"]
 hardware-attest = []
 
 [dev-dependencies]
