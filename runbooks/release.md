@@ -88,11 +88,53 @@ Actions → **Nightly + stable release** → **Run workflow** → `channel: nigh
 
 ## Publishing the library crates to crates.io
 
-Two crates in this workspace are consumed by other repos as libraries and so are
-published to crates.io: **`digstore-core`** (format + read-crypto primitives) and
-**`digstore-chain`** (the Chia on-chain layer). The binary release above is a separate
-pipeline on the `v*` tag namespace; these ride `digstore-crates-v*` so a binary release
-never re-attempts a crate publish.
+Two crates are live on crates.io today: **`digstore-core`** (format + read-crypto
+primitives) and **`digstore-chain`** (the Chia on-chain layer). The binary release above is a
+separate pipeline on the `v*` tag namespace; these ride `digstore-crates-v*` so a binary
+release never re-attempts a crate publish.
+
+### Which members can publish, and which cannot
+
+Every member declares its in-repo dependencies with a real `version` (via
+`[workspace.dependencies]`), which is what `cargo publish` requires. Measured with
+`cargo package --no-verify -p <crate>` on every member: each one either packages or fails
+with a release-first ORDERING error (`failed to select a version for the requirement
+digstore-* = "^<workspace version>"`, `no matching package named <sibling> found`). No
+member fails manifest verification any more. That distinction is the whole point — an
+ordering failure clears itself as the bottom of the graph reaches the registry; a manifest
+failure never does.
+
+| Crate | Status | Why |
+|---|---|---|
+| `digstore-core` | packages cleanly; live on crates.io | — |
+| `digstore-chain`, `digstore-crypto`, `digstore-chunker`, `digstore-store`, `digstore-subscription`, `dig-resolver`, `digstore-prover`, `digstore-host`, `digstore-remote`, `digstore-compiler` | ready; blocked ONLY on release-first ordering | a crate cannot publish before its dependencies are on the registry |
+| **`digstore-cli`** | ready except for `digstore-stage` | it depends on `digstore-stage`, which is `publish = false`. DIG-Network/digs#53 |
+| **`digstore-stage`** | **`publish = false`** | its `build.rs` embeds the guest wasm from `<workspace>/target/...`, which is a build artifact and is NOT in the published `.crate`, so a registry build panics. DIG-Network/digs#53 |
+| `digstore-guest` | `publish = false` | compiled to wasm as a build artifact, never consumed as a library; its `path` deps are deliberately version-less so `default-features = false` survives (see the note in its manifest) |
+
+`digstore-prover` used to be `publish = false` and took `digstore-host`, `digstore-cli`,
+`digstore-compiler` and `digstore-remote` down with it, because `digstore-host` names its
+`ChainSource`/`Prover` traits from `runtime.rs`, `state.rs` and `serve_blind.rs` — a genuine
+runtime dependency that cannot be demoted to a dev-dependency. The blocker was a single dead
+manifest line: the optional `risc0` feature declared `digstore-guest-risc0 = { path = "guest" }`,
+an unregistered crate, and cargo demands a version on every dependency when packaging. Nothing
+under `crates/digstore-prover/src/` ever named it — `risc0-build::embed_methods()` finds the guest
+through `[package.metadata.risc0] methods = ["guest"]`, a directory path rather than a dependency
+edge — so removing the entry restored publishability without altering the feature.
+
+`digstore-prover`'s opt-in `risc0` feature is NOT reachable from a registry build: `guest/`
+is a nested package, and cargo excludes nested packages from a `.crate` unconditionally —
+an explicit `include = ["guest/**"]` does not override it (measured with
+`cargo package --list`). The default feature set, which is what `digstore-host` and every
+consumer here use, is unaffected. `risc0` also requires an out-of-band RISC0 toolchain
+(`rzup`/`r0vm`) that no CI installs, so nothing regresses. Making it registry-reachable
+means publishing the guest as its own crate.
+
+**Do not "fix" a version-less path dep by inventing a version.** `digstore-guest-risc0` is an
+unregistered name; adding a version would bind the ZK proving guest to whatever a third party
+later publishes under it. Where a version-less dev-dependency is correct — `digstore-host`'s
+dev-dep on `digstore-cli`, which would otherwise be a cyclic registry dependency — cargo drops
+it from the published manifest, which is exactly the desired behaviour.
 
 **The order is not a preference.** `digstore-chain` depends on `digstore-core`, and
 crates.io refuses to accept a crate whose dependency is not already on the registry — so
@@ -109,10 +151,17 @@ curl -sH 'User-Agent: dig-loop' https://index.crates.io/di/gs/digstore-core  | t
 curl -sH 'User-Agent: dig-loop' https://index.crates.io/di/gs/digstore-chain | tail -1
 ```
 
-Both crates inherit `[workspace.package].version`, and the sibling dependency in
+Members inherit `[workspace.package].version`, and every in-repo sibling dependency in
 `[workspace.dependencies]` must declare that same version — `scripts/check-workspace-dep-versions.sh`
 enforces it in CI, so a release bump cannot leave a published crate pointing at the
 previous version of its sibling.
+
+**`digstore-compiler` is the one deliberate exception.** Its package version is the
+spec-mandated COMPILER VERSION (`COMPILER_VERSION = env!("CARGO_PKG_VERSION")`, recorded into
+every compiled `.dig` as `outcome.detail.compiler_version`), so it is a store-format constant
+and must NOT follow the workspace release version. It is therefore absent from
+`[workspace.dependencies]` and pinned explicitly by its dependents; the same script checks
+that those pins name the version the crate actually carries.
 
 The publish is idempotent: `scripts/publish-crate.sh` skips a version already on the
 registry rather than failing red, so a re-run or a stray tag is a safe no-op.

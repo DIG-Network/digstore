@@ -3,16 +3,17 @@ name = "digstore-remote"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Digstore HTTPS remote protocol client and server (paper 21)."
 
 [lib]
 name = "digstore_remote"
 path = "src/lib.rs"
 
 [dependencies]
-digstore-core = { path = "../digstore-core" }
-digstore-store = { path = "../digstore-store" }
-digstore-host = { path = "../digstore-host" }
-digstore-crypto = { path = "../digstore-crypto" }
+digstore-core = { workspace = true }
+digstore-store = { workspace = true }
+digstore-host = { workspace = true }
+digstore-crypto = { workspace = true }
 axum = { version = "0.7", features = ["http1", "json", "tokio", "query"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 tower = { version = "0.4", features = ["util"] }

@@ -1,13 +1,16 @@
 [package]
 name = "digstore-compiler"
 license = "GPL-2.0-only"
+# SPEC 5: "Compiler version 1.0.0". This is NOT a release number — `COMPILER_VERSION` is
+# `env!("CARGO_PKG_VERSION")` and is recorded into every compiled `.dig`, so changing it
+# changes the store format. It deliberately does not follow the workspace version.
 version = "1.0.0"
 edition = "2021"
 description = "dig-compiler: deterministic transform from on-disk generations to a self-serving WASM module (paper 5, 8.3, 17.1, 19)."
 
 [dependencies]
-digstore-core = { path = "../digstore-core" }
-digstore-store = { path = "../digstore-store" }
+digstore-core = { workspace = true }
+digstore-store = { workspace = true }
 # `wasmparser` feature enables `wasm_encoder::reencode` (operator round-trip),
 # used by the §17.1 obfuscation pass to decode + re-encode the code section.
 wasm-encoder = { version = "0.221", features = ["wasmparser"] }
@@ -24,6 +27,6 @@ wat = "1"
 wasmtime = "47.0.3"
 wasmparser = "0.221"
 wat = "1"
-digstore-host = { path = "../digstore-host" }
-digstore-prover = { path = "../digstore-prover" }
-digstore-crypto = { path = "../digstore-crypto" }
+digstore-host = { workspace = true }
+digstore-prover = { workspace = true }
+digstore-crypto = { workspace = true }

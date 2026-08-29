@@ -1,6 +1,7 @@
 [package]
 name = "digstore-cli"
 license = "GPL-2.0-only"
+description = "The digstore command-line interface (`dig-store` / `digs`)."
 version.workspace = true
 edition = "2021"
 
@@ -24,18 +25,20 @@ name = "digstore_cli"
 path = "src/lib.rs"
 
 [dependencies]
-digstore-core = { path = "../digstore-core" }
-digstore-chain = { path = "../digstore-chain" }
+digstore-core = { workspace = true }
+digstore-chain = { workspace = true }
 rpassword = "7"
 zeroize = "1"
-digstore-store = { path = "../digstore-store" }
-digstore-chunker = { path = "../digstore-chunker" }
-digstore-compiler = { path = "../digstore-compiler" }
-digstore-stage = { path = "../digstore-stage" }
-digstore-host = { path = "../digstore-host" }
-digstore-prover = { path = "../digstore-prover" }
-digstore-remote = { path = "../digstore-remote" }
-digstore-crypto = { path = "../digstore-crypto" }
+digstore-store = { workspace = true }
+digstore-chunker = { workspace = true }
+# Pinned to the SPEC compiler version, not the workspace version — see the note in the
+# root `[workspace.dependencies]`.
+digstore-compiler = { path = "../digstore-compiler", version = "1.0.0" }
+digstore-stage = { workspace = true }
+digstore-host = { workspace = true }
+digstore-prover = { workspace = true }
+digstore-remote = { workspace = true }
+digstore-crypto = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 clap_mangen = "0.2"

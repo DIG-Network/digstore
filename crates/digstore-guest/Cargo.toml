@@ -4,6 +4,12 @@ license = "GPL-2.0-only"
 version = "0.1.0"
 edition = "2021"
 
+# Not published: this crate exists to be COMPILED TO WASM as a build artifact
+# (`cargo build -p digstore-guest --target wasm32-unknown-unknown --release`), which
+# `digstore-stage` then embeds. It is a `no_std` wasm guest and is not a consumable library, so
+# it declares its siblings by bare `path` on purpose.
+publish = false
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -14,6 +20,10 @@ native-test = ["std", "digstore-core/std"]
 std = []
 
 [dependencies]
+# NOT `{ workspace = true }`: a member-level `default-features = false` is IGNORED unless the
+# workspace entry also sets it, which silently pulls `std` into this `no_std` wasm guest and
+# fails the build with a duplicate `panic_impl` lang item. Declared explicitly so the
+# no-default-features resolution is local and cannot be undone from the root manifest.
 digstore-core = { path = "../digstore-core", default-features = false }
 bls12_381 = { version = "0.8", default-features = false, features = ["alloc", "pairings", "groups", "experimental"] }
 rsa = { version = "0.9", default-features = false, features = ["sha2"] }

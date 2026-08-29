@@ -5,19 +5,40 @@ exclude = ["crates/digstore-prover/guest", "crates/dig-client-wasm"]
 
 [workspace.package]
 edition = "2021"
-version = "0.29.0"
+version = "0.29.1"
 license = "GPL-2.0-only"
 
 [workspace.dependencies]
-# The in-repo library crates are declared here with BOTH a path and a version so the
-# publishable ones (`digstore-core`, `digstore-chain`) carry a real crates.io dependency
-# in their published manifest — cargo refuses to publish a bare `path` dep. Locally the
-# path always wins; the version is what downstream consumers resolve.
+# Every in-repo library crate is declared here with BOTH a path and a version, so that
+# each one carries a real crates.io dependency in its published manifest — cargo refuses
+# to publish a bare `path` dep. Locally the path always wins; the version is what
+# downstream consumers resolve.
+#
+# Members reference each other as `{ workspace = true }` rather than `{ path = "../x" }`,
+# which is what makes the whole workspace publishable instead of only `digstore-core`
+# and `digstore-chain`. Two members are nonetheless NOT published — see the
+# `# NC-7 exception:` comments on `digstore-stage` (#53) and `digstore-guest`.
+#
+# `digstore-compiler` is deliberately ABSENT from this table. Its package version is the
+# spec-mandated COMPILER VERSION (`COMPILER_VERSION = env!("CARGO_PKG_VERSION")`, stamped into
+# every compiled `.dig` as `outcome.detail.compiler_version`), so it is a store-format constant
+# and cannot follow the workspace release version. Its dependents declare it explicitly with
+# that version instead.
 #
 # The version MUST equal `[workspace.package].version`, because every member inherits
 # that value. `scripts/check-workspace-dep-versions.sh` enforces it in CI, so a release
 # bump can never silently leave a published crate pointing at the previous version.
-digstore-core = { path = "crates/digstore-core", version = "0.29.0" }
+digstore-core = { path = "crates/digstore-core", version = "0.29.1" }
+digstore-chain = { path = "crates/digstore-chain", version = "0.29.1" }
+digstore-chunker = { path = "crates/digstore-chunker", version = "0.29.1" }
+digstore-crypto = { path = "crates/digstore-crypto", version = "0.29.1" }
+digstore-store = { path = "crates/digstore-store", version = "0.29.1" }
+digstore-prover = { path = "crates/digstore-prover", version = "0.29.1" }
+digstore-host = { path = "crates/digstore-host", version = "0.29.1" }
+digstore-stage = { path = "crates/digstore-stage", version = "0.29.1" }
+digstore-remote = { path = "crates/digstore-remote", version = "0.29.1" }
+digstore-cli = { path = "crates/digstore-cli", version = "0.29.1" }
+digstore-subscription = { path = "crates/digstore-subscription", version = "0.29.1" }
 
 sha2 = "0.10"
 proptest = "1"

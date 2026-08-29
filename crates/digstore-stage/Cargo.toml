@@ -1,20 +1,48 @@
 [package]
 name = "digstore-stage"
 license = "GPL-2.0-only"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Context-free stage→compile engine: turn an in-memory file set (or a folder) into a self-serving Digstore capsule (.dig module) — the SAME pipeline the CLI `commit`/`compile`/`deploy` use, callable in-process by the DIG Browser's native dig-node (no CLI binary)."
+
+# NC-7 exception: digstore-stage is NOT published to crates.io. Tracked by
+# https://github.com/DIG-Network/digs/issues/53.
+#
+# `build.rs` embeds the REAL guest wasm (BINDING contract D6) by reading it from the sibling
+# build artifact at `<workspace>/target/wasm32-unknown-unknown/release/digstore_guest.wasm`, and
+# PANICS when it is absent. That artifact is a build product, so it is not — and cannot be — part
+# of the published .crate: `cargo package --list` for this crate reports exactly `build.rs` and
+# `src/lib.rs`. For a registry consumer the manifest dir is
+# `~/.cargo/registry/src/<index>/digstore-stage-<ver>/`, so the `../../target/...` default resolves
+# under the registry source root and never exists.
+#
+# Measured, not assumed: running this exact `build.rs` in a reproduction of the packaged file list
+# panics with "digstore-stage requires the real guest wasm at ... (os error 3)".
+#
+# This exception cascades: digstore-cli depends on digstore-stage, and digstore-cli is a dependent
+# of digstore-host (which also depends on digstore-prover, blocking cli further). The CLI cannot be
+# published until this issue is resolved.
+#
+# So a published digstore-stage would fail to build for every consumer out of the box. The
+# `DIGSTORE_GUEST_WASM` override documented above is a workaround for GIT-dependency builds; it is
+# not a registry-safe mechanism, because it requires every downstream consumer to source and pass a
+# matching wasm. Publishing this crate needs a shape decision (ship a verified wasm inside the
+# package, or build the guest from packaged source) — not a flag. Until then, refuse mechanically
+# rather than relying on a comment.
+publish = false
 
 [lib]
 name = "digstore_stage"
 path = "src/lib.rs"
 
 [dependencies]
-digstore-core = { path = "../digstore-core" }
-digstore-store = { path = "../digstore-store" }
-digstore-chunker = { path = "../digstore-chunker" }
-digstore-crypto = { path = "../digstore-crypto" }
-digstore-compiler = { path = "../digstore-compiler" }
+digstore-core = { workspace = true }
+digstore-store = { workspace = true }
+digstore-chunker = { workspace = true }
+digstore-crypto = { workspace = true }
+# Pinned to the SPEC compiler version, not the workspace version — see the note in the
+# root `[workspace.dependencies]`.
+digstore-compiler = { path = "../digstore-compiler", version = "1.0.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"

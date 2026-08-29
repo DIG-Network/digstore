@@ -19,7 +19,7 @@ path = "src/lib.rs"
 # type rather than re-inventing the pair. This is the crate's ONLY runtime dependency:
 # the primitive is a networkless leaf so any consumer (node, resolver, SDK) can follow a
 # store without dragging in the spend-heavy `digstore-chain` crate.
-digstore-core = { path = "../digstore-core" }
+digstore-core = { workspace = true }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

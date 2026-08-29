@@ -225,8 +225,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # `digstore-core` and `digstore-chain` are published to crates.io, so their
-      # sibling dependency must carry a real version alongside its path — and that
-      # version must track the workspace bump. Nothing else couples the two numbers.
+      # Every publishable member declares its in-repo siblings with a real version
+      # alongside the path, and that version must track the workspace bump. Nothing
+      # else couples the two numbers, so a release bump could otherwise leave a
+      # published crate pointing at the previous version of its sibling.
+      #
+      # The script checks BOTH couplings: the `[workspace.dependencies]` table, and
+      # deps a member declares by path directly. `digstore-compiler` needs the second
+      # leg — its package version is the spec-mandated COMPILER VERSION stamped into
+      # every compiled `.dig`, so it cannot follow the workspace version and is pinned
+      # by hand at each call site.
       - name: Workspace dependency versions track the workspace version
         run: bash scripts/check-workspace-dep-versions.sh
