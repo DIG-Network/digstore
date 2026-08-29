@@ -19,6 +19,10 @@ description = "Context-free stage→compile engine: turn an in-memory file set (
 # Measured, not assumed: running this exact `build.rs` in a reproduction of the packaged file list
 # panics with "digstore-stage requires the real guest wasm at ... (os error 3)".
 #
+# This exception cascades: digstore-cli depends on digstore-stage, and digstore-cli is a dependent
+# of digstore-host (which also depends on digstore-prover, blocking cli further). The CLI cannot be
+# published until this issue is resolved.
+#
 # So a published digstore-stage would fail to build for every consumer out of the box. The
 # `DIGSTORE_GUEST_WASM` override documented above is a workaround for GIT-dependency builds; it is
 # not a registry-safe mechanism, because it requires every downstream consumer to source and pass a

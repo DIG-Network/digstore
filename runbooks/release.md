@@ -97,7 +97,7 @@ release never re-attempts a crate publish.
 
 Every member now declares its in-repo dependencies with a real `version` (via
 `[workspace.dependencies]`), which is what `cargo publish` requires — so the mechanical
-blocker that once limited publishing to `core` and `chain` is gone. Two members are still
+blocker that once limited publishing to `core` and `chain` is gone. Three members are still
 `publish = false`, each for a reason that a manifest edit cannot fix:
 
 | Crate | Status | Why |
