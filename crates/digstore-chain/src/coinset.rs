@@ -20,7 +20,7 @@
 
 use crate::error::{ChainError, Result};
 use chia_protocol::{Bytes32, Coin, CoinSpend, SpendBundle};
-use chia_sdk_coinset::ChiaRpcClient;
+use chia_sdk_coinset::{ChiaRpcClient, GetCoinRecordsResponse};
 use std::future::Future;
 use std::time::Duration;
 
@@ -330,6 +330,84 @@ fn map_coin_record(cr: chia_sdk_coinset::CoinRecord) -> CoinInfo {
     }
 }
 
+/// Bound on how many coinset-truncated pages [`drain_coin_record_pages`] follows for
+/// ONE logical coin-record query, before refusing to answer at all (#47).
+///
+/// coinset truncates a SINGLE page at its own server-side `scan_max_keys_per_stream`
+/// limit; this bounds how many such pages this crate will chase for one caller. A
+/// store's owner-discovery hint is PUBLIC and needs no key, so dust-spamming it past
+/// coinset's per-page limit is a cost-free way to push a naive "follow every cursor"
+/// loop toward unbounded outbound requests — an amplification/denial surface in its
+/// own right, independent of the truncation bug this constant's caller fixes. Chosen
+/// generously (no honest account is remotely close to it) while still bounding the
+/// worst case: each page already retries transiently through [`Coinset::call`], so one
+/// logical read issues at most `MAX_COIN_RECORD_PAGES * RetryConfig::max_attempts`
+/// coinset requests before failing closed, never an unbounded number.
+const MAX_COIN_RECORD_PAGES: usize = 1024;
+
+/// Drive a `get_coin_records_by_*` query to a COMPLETE answer, refusing to treat a
+/// coinset-truncated page as the whole one (#47).
+///
+/// coinset silently truncates a response at `scan_max_keys_per_stream` and signals it
+/// via `truncated: Some(true)` + `next_cursor` (chia-sdk-coinset 0.34+, absent from
+/// older Chia full-node responses). Accepting that page as complete under-reports live
+/// coin state — a store launcher can fall past the cut and disappear, a balance/UTXO
+/// scan can miss real coins, a spend can be built on a partial set — with no error and
+/// no warning. This is the ONE place every coin-record call site resolves that, so the
+/// five `ChainReads::Coinset` methods below share one page-following loop rather than
+/// five near-identical copies of it.
+///
+/// `label` names the RPC for error messages (preserving the existing `"<method>:
+/// <error>"` shape). `fetch_page(cursor)` issues ONE page — `None` for the first,
+/// `Some(next_cursor)` for every subsequent one — and is expected to route through
+/// [`Coinset::call`] itself, so a transient failure retries just that page, not the
+/// whole scan.
+///
+/// Fails CLOSED (a [`ChainError`], never a partial `Vec`) when:
+/// - a page is truncated but carries no `next_cursor` to resume from (coinset breaking
+///   its own contract), or
+/// - [`MAX_COIN_RECORD_PAGES`] is exceeded without a complete answer — the pagination
+///   bound; an unbounded follow-the-cursor loop against a remote is its own denial
+///   surface, since the query itself needs no key.
+async fn drain_coin_record_pages<F, Fut>(
+    label: &str,
+    mut fetch_page: F,
+) -> Result<Vec<chia_sdk_coinset::CoinRecord>>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: Future<Output = Result<GetCoinRecordsResponse>>,
+{
+    let mut records = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    for _ in 0..MAX_COIN_RECORD_PAGES {
+        let resp = fetch_page(cursor.take()).await?;
+
+        if !resp.success {
+            return Err(ChainError::Chain(format!("{label} failed: {:?}", resp.error)));
+        }
+        let page = resp.coin_records.ok_or_else(|| {
+            ChainError::Chain(format!("{label}: success=true but coin_records absent"))
+        })?;
+        records.extend(page);
+
+        if resp.truncated != Some(true) {
+            return Ok(records);
+        }
+        cursor = resp.next_cursor;
+        if cursor.is_none() {
+            return Err(ChainError::Chain(format!(
+                "{label}: truncated=true but next_cursor is absent — cannot resume the scan"
+            )));
+        }
+    }
+
+    Err(ChainError::Chain(format!(
+        "{label}: exceeded {MAX_COIN_RECORD_PAGES} pages without a complete answer — refusing \
+         to return a partial coin-record set"
+    )))
+}
+
 /// Minimal chain interface anchoring needs (reads + broadcast).
 #[async_trait::async_trait]
 pub trait ChainReads: Send + Sync {
@@ -475,31 +553,20 @@ impl Coinset {
 #[async_trait::async_trait]
 impl ChainReads for Coinset {
     async fn unspent_coins(&self, puzzle_hash: Bytes32) -> Result<Vec<Coin>> {
-        let resp = self
-            .call("get_coin_records_by_puzzle_hashes", || {
+        let label = "get_coin_records_by_puzzle_hashes";
+        let coin_records = drain_coin_record_pages(label, move |cursor| {
+            self.call(label, move || {
                 self.client.get_coin_records_by_puzzle_hashes(
                     vec![puzzle_hash],
                     None,
                     None,
                     Some(false),
-                    None,
+                    cursor.clone(),
                 )
             })
-            .await?;
+        })
+        .await?;
 
-        if !resp.success {
-            return Err(ChainError::Chain(format!(
-                "get_coin_records_by_puzzle_hashes failed: {:?}",
-                resp.error
-            )));
-        }
-
-        let coin_records = resp.coin_records.ok_or_else(|| {
-            ChainError::Chain(
-                "get_coin_records_by_puzzle_hashes: success=true but coin_records absent"
-                    .to_string(),
-            )
-        })?;
         let coins = coin_records
             .into_iter()
             .filter(|cr| !cr.spent)
@@ -510,25 +577,15 @@ impl ChainReads for Coinset {
     }
 
     async fn unspent_coins_by_hint(&self, hint: Bytes32) -> Result<Vec<Coin>> {
-        let resp = self
-            .call("get_coin_records_by_hint", || {
+        let label = "get_coin_records_by_hint";
+        let coin_records = drain_coin_record_pages(label, move |cursor| {
+            self.call(label, move || {
                 self.client
-                    .get_coin_records_by_hint(hint, None, None, Some(false), None)
+                    .get_coin_records_by_hint(hint, None, None, Some(false), cursor.clone())
             })
-            .await?;
+        })
+        .await?;
 
-        if !resp.success {
-            return Err(ChainError::Chain(format!(
-                "get_coin_records_by_hint failed: {:?}",
-                resp.error
-            )));
-        }
-
-        let coin_records = resp.coin_records.ok_or_else(|| {
-            ChainError::Chain(
-                "get_coin_records_by_hint: success=true but coin_records absent".to_string(),
-            )
-        })?;
         // include_spent_coins=false already filters at the node, but guard anyway so
         // a node that ignores the flag can't surface spent coins as "unspent".
         let coins = coin_records
@@ -545,30 +602,19 @@ impl ChainReads for Coinset {
         puzzle_hash: Bytes32,
         include_spent: bool,
     ) -> Result<Vec<CoinRecord>> {
-        let resp = self
-            .call("get_coin_records_by_puzzle_hash", || {
+        let label = "get_coin_records_by_puzzle_hash";
+        let coin_records = drain_coin_record_pages(label, move |cursor| {
+            self.call(label, move || {
                 self.client.get_coin_records_by_puzzle_hash(
                     puzzle_hash,
                     None,
                     None,
                     Some(include_spent),
-                    None,
+                    cursor.clone(),
                 )
             })
-            .await?;
-
-        if !resp.success {
-            return Err(ChainError::Chain(format!(
-                "get_coin_records_by_puzzle_hash failed: {:?}",
-                resp.error
-            )));
-        }
-
-        let coin_records = resp.coin_records.ok_or_else(|| {
-            ChainError::Chain(
-                "get_coin_records_by_puzzle_hash: success=true but coin_records absent".to_string(),
-            )
-        })?;
+        })
+        .await?;
 
         Ok(coin_records.into_iter().map(map_coin_record).collect())
     }
@@ -578,25 +624,19 @@ impl ChainReads for Coinset {
         hint: Bytes32,
         include_spent: bool,
     ) -> Result<Vec<CoinRecord>> {
-        let resp = self
-            .call("get_coin_records_by_hint", || {
-                self.client
-                    .get_coin_records_by_hint(hint, None, None, Some(include_spent), None)
+        let label = "get_coin_records_by_hint";
+        let coin_records = drain_coin_record_pages(label, move |cursor| {
+            self.call(label, move || {
+                self.client.get_coin_records_by_hint(
+                    hint,
+                    None,
+                    None,
+                    Some(include_spent),
+                    cursor.clone(),
+                )
             })
-            .await?;
-
-        if !resp.success {
-            return Err(ChainError::Chain(format!(
-                "get_coin_records_by_hint failed: {:?}",
-                resp.error
-            )));
-        }
-
-        let coin_records = resp.coin_records.ok_or_else(|| {
-            ChainError::Chain(
-                "get_coin_records_by_hint: success=true but coin_records absent".to_string(),
-            )
-        })?;
+        })
+        .await?;
 
         Ok(coin_records.into_iter().map(map_coin_record).collect())
     }
@@ -606,30 +646,19 @@ impl ChainReads for Coinset {
         parent_ids: &[Bytes32],
         include_spent: bool,
     ) -> Result<Vec<CoinRecord>> {
-        let resp = self
-            .call("get_coin_records_by_parent_ids", || {
+        let label = "get_coin_records_by_parent_ids";
+        let coin_records = drain_coin_record_pages(label, move |cursor| {
+            self.call(label, move || {
                 self.client.get_coin_records_by_parent_ids(
                     parent_ids.to_vec(),
                     None,
                     None,
                     Some(include_spent),
-                    None,
+                    cursor.clone(),
                 )
             })
-            .await?;
-
-        if !resp.success {
-            return Err(ChainError::Chain(format!(
-                "get_coin_records_by_parent_ids failed: {:?}",
-                resp.error
-            )));
-        }
-
-        let coin_records = resp.coin_records.ok_or_else(|| {
-            ChainError::Chain(
-                "get_coin_records_by_parent_ids: success=true but coin_records absent".to_string(),
-            )
-        })?;
+        })
+        .await?;
 
         Ok(coin_records.into_iter().map(map_coin_record).collect())
     }
