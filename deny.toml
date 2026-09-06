@@ -20,10 +20,8 @@ ignore = [
     # signature verification. Accepted; RE-EVALUATE if `rsa` is ever used to
     # decrypt (e.g. RSA-OAEP/PKCS#1 v1.5 decryption) in any crate.
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2024-0388", # derivative: unmaintained (arkworks/risc0 proof stack)
     "RUSTSEC-2024-0436", # paste: no longer maintained (transitive)
     "RUSTSEC-2025-0052", # async-std: discontinued (httpmock dev-dependency, tests only)
-    "RUSTSEC-2025-0055", # tracing/ANSI-escape log-injection advisory (transitive)
     "RUSTSEC-2025-0119", # number_prefix: unmaintained (transitive via indicatif progress bars; display-only)
     # bincode: unmaintained. Pulled TRANSITIVELY as bincode 2.0.1 by chia-sdk-test 0.34,
     # which chia-wallet-sdk 0.34 depends on unconditionally. It reaches this workspace only

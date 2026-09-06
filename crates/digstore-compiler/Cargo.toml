@@ -24,7 +24,7 @@ thiserror = "1"
 wat = "1"
 
 [dev-dependencies]
-wasmtime = "47.0.3"
+wasmtime = "47.0.4"
 wasmparser = "0.221"
 wat = "1"
 digstore-host = { workspace = true }
