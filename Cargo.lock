@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chain"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2707,7 +2707,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chunker"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "digstore-core",
  "hex",
@@ -2717,7 +2717,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-cli"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-core"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "aes-gcm-siv",
  "hex",
@@ -2798,7 +2798,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-crypto"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "chia-bls 0.36.1",
  "digstore-core",
@@ -2832,7 +2832,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-host"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "anyhow",
  "clap",
@@ -2857,7 +2857,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-prover"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "bincode 1.3.3",
  "digstore-core",
@@ -2873,7 +2873,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-remote"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "async-trait",
  "axum",
@@ -2902,7 +2902,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-stage"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "digstore-chunker",
  "digstore-compiler",
@@ -2918,7 +2918,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-store"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "digstore-chunker",
  "digstore-core",
@@ -2933,7 +2933,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-subscription"
-version = "0.29.7"
+version = "0.29.8"
 dependencies = [
  "async-trait",
  "digstore-core",
