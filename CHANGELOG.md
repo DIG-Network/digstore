@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.29.6] - 2026-09-06
+
+### Bug Fixes
+- **deps:** Patch wasmtime to 47.0.4, closing two RUSTSEC advisories (#67)
+
+### CI
+- **release:** Gate the stable job to workflow_dispatch only (§3.6-A) (#64)
+
 ## [0.29.1] - 2026-08-30
 
 ### Build
