@@ -15,6 +15,11 @@ pub struct MockHost {
     pub jwks: HostResult,
     pub time: u64,
     pub rand_calls: Cell<u32>,
+    /// Script `random_bytes` to fail (returning this code on every call)
+    /// instead of the default counter ramp. Regression coverage for
+    /// dig_ecosystem#2714: a host RNG failure must fail closed, never
+    /// substitute a constant buffer.
+    pub random_bytes_fails_with: Option<ErrorCode>,
 }
 
 impl Default for MockHost {
@@ -26,6 +31,7 @@ impl Default for MockHost {
             jwks: Ok(b"{}".to_vec()),
             time: 1_700_000_000,
             rand_calls: Cell::new(0),
+            random_bytes_fails_with: None,
         }
     }
 }
@@ -52,6 +58,9 @@ impl DigHost for MockHost {
     fn random_bytes(&self, count: u32) -> HostResult {
         let n = self.rand_calls.get();
         self.rand_calls.set(n + 1);
+        if let Some(code) = self.random_bytes_fails_with {
+            return Err(code);
+        }
         // distinct per call: byte i = (n*31 + i) wrapping
         Ok((0..count)
             .map(|i| (n.wrapping_mul(31).wrapping_add(i)) as u8)

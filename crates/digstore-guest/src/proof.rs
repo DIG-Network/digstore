@@ -94,10 +94,15 @@ pub fn serve_proof<H: DigHost + ?Sized>(
     } else {
         0
     };
-    let plan = build_access_plan(&entry.chunk_indices, pool_size, |c| {
-        host.random_bytes(c)
-            .unwrap_or_else(|_| alloc::vec![0u8; c as usize])
-    });
+    // Fail closed on an RNG draw failure (mirrors content.rs::gather_content): a
+    // degraded (e.g. all-zero) access plan would make the cover-traffic shuffle
+    // deterministic and defeat the privacy property it exists for, so treat it
+    // exactly like a lookup miss rather than proving real content served from
+    // bad randomness.
+    let plan = match build_access_plan(&entry.chunk_indices, pool_size, |c| host.random_bytes(c)) {
+        Ok(plan) => plan,
+        Err(_) => return ProofOutcome::Decoy(decoy_prelude(&req.retrieval_key, &root)),
+    };
     let mut gathered: Vec<Vec<u8>> = Vec::with_capacity(plan.order.len());
     for idx in &plan.order {
         gathered.push(read_chunk(ds, *idx).unwrap_or_default());

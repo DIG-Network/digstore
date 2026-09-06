@@ -23,16 +23,25 @@ pub struct AccessPlan {
 /// slots with deterministic cover indices drawn from `[0, pool_size)`, then
 /// Fisher-Yates shuffle using bytes from `rand` (the host RNG, re-randomized per
 /// call). Cover reads + shuffle hide which/how-many indices are real.
-pub fn build_access_plan<F>(real: &[u32], pool_size: u32, mut rand: F) -> AccessPlan
+///
+/// `rand` is FALLIBLE by construction: the host RNG is the only source of the
+/// randomness this cover-traffic scheme depends on, and there is no safe
+/// placeholder for "randomness that could not be obtained" — a constant (e.g.
+/// all-zero) bytes buffer would make the shuffle/cover-index draw deterministic,
+/// which defeats the whole point of hiding the access pattern from the host. A
+/// draw failure therefore propagates as `Err`, and callers fail closed (treat it
+/// the same as any other gate failure) rather than serving real content built
+/// from degraded randomness.
+pub fn build_access_plan<F, E>(real: &[u32], pool_size: u32, mut rand: F) -> Result<AccessPlan, E>
 where
-    F: FnMut(u32) -> Vec<u8>,
+    F: FnMut(u32) -> Result<Vec<u8>, E>,
 {
     let bucket = padded_count(real.len());
     let mut slots: Vec<u32> = real.to_vec();
     // Fill cover slots with pseudo-random pool indices (distinct intent, may repeat).
     let need = bucket - slots.len();
     if need > 0 && pool_size > 0 {
-        let cover_bytes = rand((need as u32) * 4);
+        let cover_bytes = rand((need as u32) * 4)?;
         for i in 0..need {
             let b = i * 4;
             let v = u32::from_be_bytes([
@@ -45,12 +54,12 @@ where
         }
     } else {
         // even when no cover needed, consume a draw to keep RNG cadence uniform
-        let _ = rand(4);
+        rand(4)?;
     }
 
     // Track where each real index currently sits, then shuffle and follow it.
     let mut positions: Vec<usize> = (0..real.len()).collect();
-    let shuffle_bytes = rand((bucket as u32) * 4);
+    let shuffle_bytes = rand((bucket as u32) * 4)?;
     // Fisher-Yates from the end.
     for i in (1..slots.len()).rev() {
         let b = (i % bucket) * 4;
@@ -70,8 +79,8 @@ where
             }
         }
     }
-    AccessPlan {
+    Ok(AccessPlan {
         order: slots,
         real_positions: positions,
-    }
+    })
 }
