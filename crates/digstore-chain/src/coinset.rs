@@ -1549,6 +1549,39 @@ mod tests {
         );
     }
 
+    /// Accept a connection within `deadline`, polling non-blocking rather than
+    /// calling the blocking `TcpListener::accept` directly.
+    ///
+    /// Used ONLY for a connection this test expects to be made available by a
+    /// FIX; if a regression reintroduces the pre-#47 bug (never asks for page
+    /// 2), the server thread would otherwise block in `accept()` forever and
+    /// the test would hang rather than fail — this turns that hang into a
+    /// clean, fast panic instead.
+    fn accept_with_deadline(
+        listener: &std::net::TcpListener,
+        deadline: Duration,
+    ) -> std::net::TcpStream {
+        listener.set_nonblocking(true).expect("set_nonblocking");
+        let start = std::time::Instant::now();
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false).expect("set_nonblocking(false)");
+                    return stream;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        start.elapsed() <= deadline,
+                        "no second connection arrived within {deadline:?} — a regression that \
+                         stops paging after the first (truncated) page never asks for it"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => panic!("accept failed: {e}"),
+            }
+        }
+    }
+
     // Acceptance, end-to-end through the REAL reqwest path (mirrors
     // `coinset_retries_truncated_body_then_succeeds` above): a real
     // coinset-shaped JSON response claiming truncated=true + a next_cursor on
@@ -1566,7 +1599,7 @@ mod tests {
             let mut buf = [0u8; 8192];
 
             // Page 1: one unspent coin (amount 111), truncated + a cursor to resume from.
-            let (mut s1, _) = listener.accept().unwrap();
+            let mut s1 = accept_with_deadline(&listener, Duration::from_secs(5));
             let n1 = s1.read(&mut buf).unwrap();
             let req1 = String::from_utf8_lossy(&buf[..n1]).to_string();
             let body1 = concat!(
@@ -1587,7 +1620,7 @@ mod tests {
             drop(s1);
 
             // Page 2: the record the truncation was hiding. truncated=false ends the scan.
-            let (mut s2, _) = listener.accept().unwrap();
+            let mut s2 = accept_with_deadline(&listener, Duration::from_secs(5));
             let n2 = s2.read(&mut buf).unwrap();
             let req2 = String::from_utf8_lossy(&buf[..n2]).to_string();
             let body2 = concat!(
