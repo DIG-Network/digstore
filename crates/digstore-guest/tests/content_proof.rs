@@ -89,6 +89,49 @@ fn hit_returns_real_content_response() {
     }
 }
 
+// Regression: dig_ecosystem#2714. Same real HIT fixture as
+// `hit_returns_real_content_response` above (a valid retrieval_key present in
+// the table, real chunk bytes in the pool) so a lookup miss cannot be the
+// reason for a Decoy here -- only the RNG failure can be. Before the fix, a
+// host RNG error during the oblivious gather fell back to an all-zero buffer
+// and this hit still returned `Real` (built from a deterministic, non-hidden
+// access plan); the fixed code must fail closed to `Decoy`, matching how a
+// gate failure or a lookup miss already behave.
+#[test]
+fn hit_with_failing_host_rng_returns_decoy_not_real() {
+    let key = Bytes32([0x11; 32]);
+    let entry = KeyTableEntry {
+        static_key: key,
+        generation: Bytes32([0xBB; 32]),
+        chunk_indices: vec![0, 1, 2, 3],
+        total_size: 20,
+    };
+    let table = encode_key_table(&[entry]);
+    let pool = fixtures::pack_pool(&[b"alpha", b"beta_", b"gamma", b"delta"]);
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let ds = DataSection::parse(&blob).unwrap();
+
+    let host = MockHost {
+        random_bytes_fails_with: Some(digstore_core::ErrorCode::GeneralError),
+        ..MockHost::default()
+    };
+    let req = ContentRequest {
+        retrieval_key: key,
+        root_hash: None,
+        range: None,
+        jwt: None,
+        window: None,
+    };
+    assert!(
+        matches!(
+            serve_content(&host, &ds, &req, &gate_config()),
+            ContentOutcome::Decoy(_)
+        ),
+        "a host RNG failure on a real hit must fail closed to Decoy, never serve Real \
+         content built from a degraded (e.g. all-zero) access plan"
+    );
+}
+
 #[test]
 fn miss_returns_decoy() {
     let table = encode_key_table(&[]); // empty table => every key misses
@@ -523,6 +566,42 @@ fn proof_hit_returns_prelude_binding_output_and_nonce() {
         }
         ProofOutcome::Decoy(_) => panic!("hit must return Real"),
     }
+}
+
+// Regression: dig_ecosystem#2714, proof-path sibling of
+// `hit_with_failing_host_rng_returns_decoy_not_real` above. Same real HIT
+// fixture as `proof_hit_returns_prelude_binding_output_and_nonce`, so only the
+// RNG failure -- never a lookup miss -- can explain a Decoy outcome here.
+#[test]
+fn proof_hit_with_failing_host_rng_returns_decoy_not_real() {
+    let key = Bytes32([0x11; 32]);
+    let entry = KeyTableEntry {
+        static_key: key,
+        generation: Bytes32([0xBB; 32]),
+        chunk_indices: vec![0],
+        total_size: 5,
+    };
+    let table = encode_key_table(&[entry]);
+    let pool = fixtures::pack_pool(&[b"alpha"]);
+    let blob = fixtures::section_keytable_and_pool([0xAA; 32], [0xBB; 32], &table, &pool);
+    let ds = DataSection::parse(&blob).unwrap();
+    let host = MockHost {
+        random_bytes_fails_with: Some(digstore_core::ErrorCode::GeneralError),
+        ..MockHost::default()
+    };
+    let req = ProofRequest {
+        retrieval_key: key,
+        root_hash: None,
+        client_nonce: [3u8; 32],
+    };
+    assert!(
+        matches!(
+            serve_proof(&host, &ds, &req, &gate_config()),
+            ProofOutcome::Decoy(_)
+        ),
+        "a host RNG failure on a real hit must fail closed to Decoy, never prove Real \
+         content served from a degraded (e.g. all-zero) access plan"
+    );
 }
 
 #[test]

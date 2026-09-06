@@ -260,10 +260,14 @@ fn gather_content<H: DigHost + ?Sized>(
     } else {
         0
     };
-    let plan = build_access_plan(&entry.chunk_indices, pool_size, |c| {
-        host.random_bytes(c)
-            .unwrap_or_else(|_| alloc::vec![0u8; c as usize])
-    });
+    // Fail closed on an RNG draw failure: a degraded (e.g. all-zero) access plan
+    // would make the cover-traffic shuffle deterministic and defeat the privacy
+    // property it exists for, so treat it exactly like a gate failure or a
+    // lookup miss rather than serving real content built from bad randomness.
+    let plan = match build_access_plan(&entry.chunk_indices, pool_size, |c| host.random_bytes(c)) {
+        Ok(plan) => plan,
+        Err(_) => return GatheredOutcome::Decoy(decoy_content_response(&req.retrieval_key, &root)),
+    };
 
     // Read EVERY slot in the plan (cover + real) so the access pattern is uniform,
     // then keep only the real chunks in original order.

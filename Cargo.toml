@@ -5,7 +5,7 @@ exclude = ["crates/digstore-prover/guest", "crates/dig-client-wasm"]
 
 [workspace.package]
 edition = "2021"
-version = "0.29.8"
+version = "0.29.9"
 license = "GPL-2.0-only"
 
 [workspace.dependencies]
@@ -28,17 +28,17 @@ license = "GPL-2.0-only"
 # The version MUST equal `[workspace.package].version`, because every member inherits
 # that value. `scripts/check-workspace-dep-versions.sh` enforces it in CI, so a release
 # bump can never silently leave a published crate pointing at the previous version.
-digstore-core = { path = "crates/digstore-core", version = "0.29.8" }
-digstore-chain = { path = "crates/digstore-chain", version = "0.29.8" }
-digstore-chunker = { path = "crates/digstore-chunker", version = "0.29.8" }
-digstore-crypto = { path = "crates/digstore-crypto", version = "0.29.8" }
-digstore-store = { path = "crates/digstore-store", version = "0.29.8" }
-digstore-prover = { path = "crates/digstore-prover", version = "0.29.8" }
-digstore-host = { path = "crates/digstore-host", version = "0.29.8" }
-digstore-stage = { path = "crates/digstore-stage", version = "0.29.8" }
-digstore-remote = { path = "crates/digstore-remote", version = "0.29.8" }
-digstore-cli = { path = "crates/digstore-cli", version = "0.29.8" }
-digstore-subscription = { path = "crates/digstore-subscription", version = "0.29.8" }
+digstore-core = { path = "crates/digstore-core", version = "0.29.9" }
+digstore-chain = { path = "crates/digstore-chain", version = "0.29.9" }
+digstore-chunker = { path = "crates/digstore-chunker", version = "0.29.9" }
+digstore-crypto = { path = "crates/digstore-crypto", version = "0.29.9" }
+digstore-store = { path = "crates/digstore-store", version = "0.29.9" }
+digstore-prover = { path = "crates/digstore-prover", version = "0.29.9" }
+digstore-host = { path = "crates/digstore-host", version = "0.29.9" }
+digstore-stage = { path = "crates/digstore-stage", version = "0.29.9" }
+digstore-remote = { path = "crates/digstore-remote", version = "0.29.9" }
+digstore-cli = { path = "crates/digstore-cli", version = "0.29.9" }
+digstore-subscription = { path = "crates/digstore-subscription", version = "0.29.9" }
 
 sha2 = "0.10"
 proptest = "1"
