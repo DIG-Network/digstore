@@ -441,6 +441,11 @@ pub fn build_update_unsigned(
 ) -> Result<UpdateUnsigned> {
     // `update_store_metadata` REPLACES the singleton metadata, so label/description must be
     // re-sent on every update or they'd be cleared. Callers pass the values persisted at init.
+    // The store's existing on-chain size + size-proof are REPLACED the same way — carry them
+    // forward from `store`'s own CURRENT metadata, or any value set by another CHIP-0035
+    // tool (hub.dig.net, Sage, the reference `dl` CLI) is silently erased on every commit.
+    let prev_bytes = store.info.metadata.bytes;
+    let prev_size_proof = store.info.metadata.size_proof.clone();
     let SuccessResponse {
         coin_spends: update_spends,
         new_datastore,
@@ -449,8 +454,8 @@ pub fn build_update_unsigned(
         new_root,
         label,
         description,
-        None,
-        None,
+        prev_bytes,
+        prev_size_proof,
         DataStoreInnerSpend::Owner(keys.synthetic_pk),
     )
     .map_err(|e| ChainError::Chain(format!("update_store_metadata: {e}")))?;
@@ -486,6 +491,11 @@ pub fn build_update_unsigned_multi(
     fee: u64,
 ) -> Result<UpdateUnsigned> {
     // Re-send label/description (update REPLACES metadata; see build_update_unsigned).
+    // Same for the store's existing on-chain size + size-proof: carry them forward from
+    // `store`'s own CURRENT metadata rather than hard-coding None (data-loss regression —
+    // see build_update_unsigned's comment for why this matters).
+    let prev_bytes = store.info.metadata.bytes;
+    let prev_size_proof = store.info.metadata.size_proof.clone();
     let SuccessResponse {
         coin_spends: update_spends,
         new_datastore,
@@ -494,8 +504,8 @@ pub fn build_update_unsigned_multi(
         new_root,
         label,
         description,
-        None,
-        None,
+        prev_bytes,
+        prev_size_proof,
         DataStoreInnerSpend::Owner(owner_pk),
     )
     .map_err(|e| ChainError::Chain(format!("update_store_metadata: {e}")))?;
@@ -627,6 +637,11 @@ pub fn build_update_unsigned_writer(
     fee: u64,
 ) -> Result<UpdateUnsigned> {
     // Writer-authorized metadata update (REPLACES metadata, so re-send label/desc).
+    // Same for the store's existing on-chain size + size-proof: carry them forward from
+    // `store`'s own CURRENT metadata rather than hard-coding None (data-loss regression —
+    // see build_update_unsigned's comment for why this matters).
+    let prev_bytes = store.info.metadata.bytes;
+    let prev_size_proof = store.info.metadata.size_proof.clone();
     let SuccessResponse {
         coin_spends: update_spends,
         new_datastore,
@@ -635,8 +650,8 @@ pub fn build_update_unsigned_writer(
         new_root,
         label,
         description,
-        None,
-        None,
+        prev_bytes,
+        prev_size_proof,
         DataStoreInnerSpend::Writer(writer_synthetic_pk),
     )
     .map_err(|e| ChainError::Chain(format!("update_store_metadata (writer): {e}")))?;
@@ -1095,6 +1110,50 @@ mod tests {
         assert!(result.is_err(), "expected error with empty fee coins");
     }
 
+    /// REGRESSION (data-loss): a store may already carry a real on-chain size +
+    /// size-proof — set by a DIFFERENT CHIP-0035-compliant tool (hub.dig.net's
+    /// chip35_dl_coin builder, the reference `dl` CLI, Sage) — before this crate
+    /// ever touches it. `update_store_metadata` REPLACES the whole metadata
+    /// condition on every spend (exactly like label/description above), so a
+    /// caller that doesn't re-send `bytes`/`size_proof` silently WIPES them.
+    /// `build_update_unsigned` had no way to pass them through at all: fix it to
+    /// carry the store's OWN previous values forward instead of hard-coding None.
+    #[test]
+    fn build_update_preserves_existing_on_chain_size_and_size_proof() {
+        let keys = derive_wallet_keys(ABANDON).unwrap();
+        let mint_coin = Coin::new(Bytes32::default(), keys.owner_puzzle_hash, 1_000_000);
+        let mb = build_mint(&keys, &[mint_coin], Bytes32::default(), None, None, 0).unwrap();
+
+        // Simulate a store that already carries a real on-chain size (mint never
+        // sets one itself, but a prior update from another tool may have).
+        let mut seeded = mb.datastore;
+        seeded.info.metadata.bytes = Some(123_456_789);
+        seeded.info.metadata.size_proof = Some("existing-proof-blob".to_string());
+
+        let fee_coin = Coin::new(Bytes32::new([7u8; 32]), keys.owner_puzzle_hash, 1_000_000);
+        let built = build_update(
+            &keys,
+            seeded,
+            Bytes32::new([1u8; 32]),
+            None,
+            None,
+            &[fee_coin],
+            1_000,
+        )
+        .unwrap();
+
+        assert_eq!(
+            built.datastore.info.metadata.bytes,
+            Some(123_456_789),
+            "commit must not clear the store's existing on-chain size"
+        );
+        assert_eq!(
+            built.datastore.info.metadata.size_proof,
+            Some("existing-proof-blob".to_string()),
+            "commit must not clear the store's existing on-chain size-proof"
+        );
+    }
+
     #[test]
     fn build_mint_produces_signed_bundle_and_launcher() {
         let keys = derive_wallet_keys(ABANDON).unwrap();
@@ -1252,6 +1311,125 @@ mod tests {
         assert!(
             res.is_err(),
             "writer update on an un-delegated store must fail"
+        );
+        Ok(())
+    }
+
+    /// REGRESSION (data-loss): `build_update_unsigned_multi` is the function
+    /// `digstore commit` ACTUALLY calls (via `anchor::build_advance_store_bundle`).
+    /// A store already carrying a real on-chain size + size-proof (set by a
+    /// different CHIP-0035-compliant tool) must keep them across an owner-authorized
+    /// root advance — `update_store_metadata` replaces the whole metadata condition,
+    /// so the previous values must be re-sent, not hard-coded to `None`. Proven with
+    /// a real simulator-validated spend, not just the returned struct.
+    #[test]
+    fn owner_update_preserves_existing_on_chain_size_on_simulator() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DatastoreMetadata {
+                root_hash: Bytes32::default(),
+                label: None,
+                description: None,
+                bytes: Some(123_456_789),
+                size_proof: Some("existing-proof-blob".into()),
+            },
+            owner.puzzle_hash.into(),
+            vec![],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        let new_root = Bytes32::new([0xcd; 32]);
+        let upd = build_update_unsigned_multi(owner.pk, store, new_root, None, None, &[], 0)?;
+        let sig = sign_coin_spends(&upd.coin_spends, std::slice::from_ref(&owner.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(upd.coin_spends, sig))?;
+
+        assert_eq!(upd.datastore.info.metadata.root_hash, new_root);
+        assert_eq!(
+            upd.datastore.info.metadata.bytes,
+            Some(123_456_789),
+            "commit must not clear the store's existing on-chain size"
+        );
+        assert_eq!(
+            upd.datastore.info.metadata.size_proof,
+            Some("existing-proof-blob".to_string()),
+            "commit must not clear the store's existing on-chain size-proof"
+        );
+        Ok(())
+    }
+
+    /// REGRESSION (data-loss): the writer-delegate variant of the same commit path
+    /// (`--writer-key`) shares the identical `update_store_metadata` call shape as
+    /// the owner path above, and must preserve the store's existing on-chain size +
+    /// size-proof the same way.
+    #[test]
+    fn writer_update_preserves_existing_on_chain_size_on_simulator() -> anyhow::Result<()> {
+        use chia_sdk_test::Simulator;
+        use chia_wallet_sdk::driver::{Launcher, SpendContext, StandardLayer};
+
+        let mut sim = Simulator::new();
+        let ctx = &mut SpendContext::new();
+
+        let owner = sim.bls(2);
+        let owner_p2 = StandardLayer::new(owner.pk);
+        let writer = sim.bls(0);
+        let writer_dp = writer_delegated_puzzle(writer.pk);
+
+        let (launch, store) = Launcher::new(owner.coin.coin_id(), 1).mint_datastore(
+            ctx,
+            DatastoreMetadata {
+                root_hash: Bytes32::default(),
+                label: None,
+                description: None,
+                bytes: Some(987_654_321),
+                size_proof: Some("writer-path-proof-blob".into()),
+            },
+            owner.puzzle_hash.into(),
+            vec![writer_dp],
+        )?;
+        owner_p2.spend(ctx, owner.coin, launch)?;
+        sim.spend_coins(ctx.take(), std::slice::from_ref(&owner.sk))?;
+
+        let owner_keys = WalletKeys {
+            synthetic_sk: owner.sk.clone(),
+            synthetic_pk: owner.pk,
+            owner_puzzle_hash: owner.puzzle_hash,
+        };
+        let new_root = Bytes32::new([0xef; 32]);
+        let upd = build_update_unsigned_writer(
+            writer.pk,
+            store,
+            new_root,
+            None,
+            None,
+            &owner_keys,
+            &[],
+            0,
+        )?;
+        let sig = sign_coin_spends(&upd.coin_spends, std::slice::from_ref(&writer.sk), true)
+            .map_err(|e| anyhow::anyhow!("sign: {e}"))?;
+        sim.new_transaction(SpendBundle::new(upd.coin_spends, sig))?;
+
+        assert_eq!(upd.datastore.info.metadata.root_hash, new_root);
+        assert_eq!(
+            upd.datastore.info.metadata.bytes,
+            Some(987_654_321),
+            "writer-authorized commit must not clear the store's existing on-chain size"
+        );
+        assert_eq!(
+            upd.datastore.info.metadata.size_proof,
+            Some("writer-path-proof-blob".to_string()),
+            "writer-authorized commit must not clear the store's existing on-chain size-proof"
         );
         Ok(())
     }
