@@ -6,9 +6,11 @@
 # It replaces the old "tag-and-release-on-every-merge-to-main" model. Releases are no longer cut
 # per merge; they are batched to a nightly cron (+ manual dispatch), across two channels:
 #
-#   • STABLE channel  (job `stable`): the unchanged changelog+tag logic, now driven by the cron
-#     instead of push-to-main. It reads the version from Cargo.toml and cuts `vX.Y.Z` ONLY when
-#     that tag does not already exist — i.e. only when the version file was bumped since the last
+#   • STABLE channel  (job `stable`): the unchanged changelog+tag logic, reachable ONLY from a
+#     manual `workflow_dispatch` selecting `channel: stable` or `channel: both` — NEVER from the
+#     `schedule` trigger (dig_ecosystem#698 / digs#63: the midnight cron must never cut a stable
+#     release unattended). It reads the version from Cargo.toml and cuts `vX.Y.Z` ONLY when that
+#     tag does not already exist — i.e. only when the version file was bumped since the last
 #     release (an unchanged version = the tag exists = a no-op). Cutting the tag = git-cliff
 #     regenerates CHANGELOG.md, commits it to main, tags that commit `vX.Y.Z`, and pushes both
 #     with RELEASE_TOKEN. The pushed `v*` tag then fires the STABLE binary build+publish
@@ -77,7 +79,8 @@ jobs:
     if: >-
       ${{
         !startsWith(github.event.head_commit.message, 'chore(release):') &&
-        (github.event_name == 'schedule' || inputs.channel == 'stable' || inputs.channel == 'both')
+        github.event_name == 'workflow_dispatch' &&
+        (inputs.channel == 'stable' || inputs.channel == 'both')
       }}
     runs-on: ubuntu-latest
     steps:

@@ -15,6 +15,9 @@
 //!      `latest`, and prunes old dated nightlies down to a retention window.
 //!   5. Both channels preserve the RELEASE_TOKEN posture: no token configured => a clean
 //!      no-op with a warning, never a half-release.
+//!   6. The STABLE job is reachable ONLY from a manual `workflow_dispatch` — the midnight
+//!      `schedule` trigger runs the nightly channel and NEVER cuts a stable `vX.Y.Z` release
+//!      unattended (CLAUDE.md §3.6-A; dig_ecosystem#698 / digs#63).
 //!
 //! The guard reads the workflow as text (not a YAML parser) on purpose: the invariants are
 //! about the literal trigger/step shape a maintainer reads, and a text guard has no external
@@ -66,6 +69,66 @@ fn triggers_block(workflow: &str) -> String {
     lines.join("\n")
 }
 
+/// Isolate a single job's `if:` condition, deliberately excluding the job's name, comments, and
+/// every other step — so a comment that merely *mentions* `schedule` (or `workflow_dispatch`)
+/// cannot decide the verdict; only the literal expression the runner evaluates counts.
+///
+/// This workflow writes every gated job's condition in the same folded-scalar shape:
+///
+/// ```yaml
+///   <job_name>:
+///     name: ...
+///     # comment lines, any length, never captured
+///     if: >-
+///       ${{
+///         ...expression...
+///       }}
+///     runs-on: ...
+/// ```
+///
+/// so capture starts at the `if:` key (4-space indent) and ends at the closing `}}` line: no
+/// YAML parser needed, and it fails loudly (via the trailing `assert!`) if the shape ever changes
+/// enough that no `if:` is found before the next top-level (2-space indent) job key.
+fn job_condition(workflow: &str, job_name: &str) -> String {
+    let job_header = format!("  {job_name}:");
+    let mut lines = workflow.lines();
+    let found = lines.by_ref().any(|line| line == job_header);
+    assert!(
+        found,
+        "job `{job_name}` not found — looked for the line `{job_header}`"
+    );
+
+    let mut condition: Vec<&str> = Vec::new();
+    let mut in_if = false;
+    for line in lines {
+        // A sibling job (exactly 2-space indent, e.g. `  nightly-meta:`) ends this job's body
+        // before an `if:` was ever found — this job has none, which is itself a finding the
+        // trailing assert reports.
+        if !in_if
+            && line.starts_with("  ")
+            && !line.starts_with("   ")
+            && line.trim_end().ends_with(':')
+        {
+            break;
+        }
+        if !in_if && line.trim_start().starts_with("if:") {
+            in_if = true;
+        }
+        if in_if {
+            condition.push(line);
+            if line.trim() == "}}" {
+                break;
+            }
+        }
+    }
+    assert!(
+        !condition.is_empty(),
+        "could not isolate an `if:` condition for job `{job_name}` — the workflow shape may have \
+         changed; update `job_condition`'s parsing to match"
+    );
+    condition.join("\n")
+}
+
 #[test]
 fn tagger_no_longer_triggers_on_push_to_main() {
     let on = triggers_block(&nightly_release());
@@ -106,6 +169,48 @@ fn manual_dispatch_offers_channel_and_force_inputs() {
         on.contains("force:"),
         "workflow_dispatch must expose a `force` input (re-cut a stable release even if the \
          version is unchanged). `on:` block:\n{on}"
+    );
+}
+
+/// dig_ecosystem#698 / digs#63: the `stable` job's `if:` used to accept
+/// `github.event_name == 'schedule'` as an alternative to the dispatch inputs, so the
+/// midnight-UTC cron cut a real, tagged, PUBLISHED `vX.Y.Z` unattended — no human, no dispatch,
+/// no gate beyond ordinary CI (CLAUDE.md §3.6-A: "the cron MUST NEVER cut a stable `vX.Y.Z`").
+///
+/// Two assertions, not one, because either alone is passable by a wrong fix: requiring
+/// `workflow_dispatch` while STILL ORing `schedule` back in leaves the cron able to let itself
+/// in; forbidding the word `'schedule'` without requiring `workflow_dispatch` leaves the job
+/// gated by nothing at all (e.g. a stray `if: true`).
+#[test]
+fn stable_job_is_reachable_only_from_a_manual_dispatch() {
+    let wf = nightly_release();
+    let cond = job_condition(&wf, "stable");
+    assert!(
+        cond.contains("github.event_name == 'workflow_dispatch'"),
+        "the `stable` job's `if:` must require `github.event_name == 'workflow_dispatch'` — a \
+         stable release must never be cut by the unattended midnight cron. Condition read:\n{cond}"
+    );
+    assert!(
+        !cond.contains("'schedule'"),
+        "the `stable` job's `if:` must NOT name the `'schedule'` event anywhere — permitting it \
+         alongside a workflow_dispatch requirement still lets the cron OR its way in. \
+         Condition read:\n{cond}"
+    );
+}
+
+/// Companion to the guard above: only the STABLE job's reachability changes. The nightly channel
+/// is exactly what the cron is FOR, and a fix that over-corrects by stripping `schedule` from the
+/// whole file (rather than from just the stable job) would silently stop nightlies too — this
+/// pins that `nightly-meta` keeps running on the schedule trigger.
+#[test]
+fn nightly_meta_job_still_runs_on_the_schedule() {
+    let wf = nightly_release();
+    let cond = job_condition(&wf, "nightly-meta");
+    assert!(
+        cond.contains("github.event_name == 'schedule'"),
+        "the `nightly-meta` job must still run on the schedule trigger — only the STABLE job is \
+         restricted to workflow_dispatch; nightlies must keep cutting on the midnight cron. \
+         Condition read:\n{cond}"
     );
 }
 

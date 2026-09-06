@@ -575,29 +575,33 @@ Two channels ship from one orchestrator (`.github/workflows/nightly-release.yml`
 The orchestrator triggers ONLY on:
 
 - `schedule: cron '0 0 * * *'` — **midnight UTC** (GitHub Actions cron is always UTC; a top-of-hour
-  cron MAY be delayed under load — acceptable, since both channels are idempotent), and
+  cron MAY be delayed under load — acceptable, since the nightly channel is idempotent), and
 - `workflow_dispatch` with two inputs: `channel` (`both` | `stable` | `nightly`, default `both`) and
   `force` (boolean, default `false`).
 
-It MUST NOT trigger on `push` to `main`. A schedule run exercises BOTH channels; a dispatch runs the
-selected channel(s).
+It MUST NOT trigger on `push` to `main`. **A schedule run exercises ONLY the nightly channel — the
+stable channel MUST be reachable ONLY from a manual `workflow_dispatch` selecting `channel: stable`
+or `channel: both`.** Cutting a stable release is a deliberate act; the cron MUST NEVER perform one
+unattended (dig_ecosystem#698 / digs#63).
 
 **60-day auto-disable caveat.** GitHub auto-disables a `schedule:` trigger after 60 days with no
 repo activity on a public repo, with no auto-re-enable — and since this cron is the ONLY automatic
-release trigger, a quiet repo can silently stop releasing with no error. Detect it with
+trigger for the **nightly** channel (the stable channel is never automatic, disabled or not), a
+quiet repo can silently stop shipping nightlies with no error. Detect it with
 `gh api repos/DIG-Network/digs/actions/workflows/nightly-release.yml --jq .state` (a value of
 `disabled_inactivity` means it was auto-disabled) and recover with `gh workflow enable
 nightly-release.yml` (see `runbooks/release.md`). Any repo activity resets the 60-day counter.
 
 ### 12.2 Stable channel
 
-Cuts a semver `vX.Y.Z` **stable** release when — and only when — the `[workspace.package].version`
-in the root `Cargo.toml` has advanced beyond the newest `vX.Y.Z` tag (the skip-if-already-tagged
-check IS the version-changed check). Cutting a release means: `git-cliff` regenerates
-`CHANGELOG.md`, commits it to `main` as `chore(release): vX.Y.Z`, tags THAT commit (so the changelog
-is inside the tag), and pushes commit + tag with `RELEASE_TOKEN`. The pushed `v*` tag fires
-`release.yml`, which builds every OS/arch (both asset shapes) and publishes the GitHub Release. It
-ALSO uploads the Linux x86_64 binary to the dighub S3 artifact bucket for the hub compile-worker
+Cuts a semver `vX.Y.Z` **stable** release ONLY on a manual `workflow_dispatch` (never the
+`schedule` trigger — §12.1) selecting `channel: stable` or `channel: both`, and only when the
+`[workspace.package].version` in the root `Cargo.toml` has advanced beyond the newest `vX.Y.Z` tag
+(the skip-if-already-tagged check IS the version-changed check). Cutting a release means: `git-cliff`
+regenerates `CHANGELOG.md`, commits it to `main` as `chore(release): vX.Y.Z`, tags THAT commit (so
+the changelog is inside the tag), and pushes commit + tag with `RELEASE_TOKEN`. The pushed `v*` tag
+fires `release.yml`, which builds every OS/arch (both asset shapes) and publishes the GitHub Release.
+It ALSO uploads the Linux x86_64 binary to the dighub S3 artifact bucket for the hub compile-worker
 (tag-only — a nightly never moves the `latest` binary the worker reads).
 
 `force: true` on a manual dispatch bypasses the skip-if-tagged guard and re-cuts the current version

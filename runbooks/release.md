@@ -6,11 +6,12 @@ normative contract is `SPEC.md` §12.
 
 ## TL;DR
 
-- Releases are **NOT cut on merge to `main`**. They are batched to a **nightly cron at midnight UTC**
-  plus **manual dispatch**.
-- **Stable** (`vX.Y.Z`): cut automatically when the `[workspace.package].version` was bumped
-  (detected as "the `vX.Y.Z` tag doesn't exist yet"), or on demand. Publishes bare per-OS binaries
-  (+ `digs`) + apt `.tar.gz`, AND uploads the Linux x86_64 binary to the dighub S3 bucket.
+- Releases are **NOT cut on merge to `main`**. Nightlies are batched to a **nightly cron at
+  midnight UTC**; a **stable** release is cut ONLY by **manual dispatch** — the cron never cuts one.
+- **Stable** (`vX.Y.Z`): cut ONLY on a manual `workflow_dispatch(channel: stable|both)`, and only
+  when the `[workspace.package].version` was bumped (detected as "the `vX.Y.Z` tag doesn't exist
+  yet"). Publishes bare per-OS binaries (+ `digs`) + apt `.tar.gz`, AND uploads the Linux x86_64
+  binary to the dighub S3 bucket.
 - **Nightly**: built every night from `main` HEAD as a **pre-release** under a dated tag
   `nightly-YYYYMMDD` + a rolling `nightly` tag. `prerelease: true`, never `latest`, no S3 upload.
   Keeps 14.
@@ -27,8 +28,9 @@ normative contract is `SPEC.md` §12.
 ## If nightlies silently stop — check for the 60-day cron auto-disable
 
 GitHub disables a `schedule:` trigger after **60 days of no repo activity** on a public repo, with
-**no automatic re-enable** — and since this cron is the *only* automatic release trigger, a quiet
-repo can go dark with no error. If nightlies (or a long-overdue stable release) stop appearing:
+**no automatic re-enable** — and since this cron is the *only* automatic trigger for the **nightly**
+channel (a stable release is never automatic, disabled or not), a quiet repo can go dark on
+nightlies with no error. If nightlies stop appearing:
 
 ```bash
 gh api repos/DIG-Network/digs/actions/workflows/nightly-release.yml --jq .state
@@ -38,12 +40,16 @@ gh workflow enable nightly-release.yml --repo DIG-Network/digs
 
 Any repo activity (a merged PR, a manual dispatch) resets the 60-day counter.
 
-## Cut a STABLE release (the normal path)
+## Cut a STABLE release (always a manual step)
+
+The `stable` job is reachable ONLY from a manual `workflow_dispatch` — the midnight cron builds and
+publishes nightlies but NEVER cuts a stable `vX.Y.Z` (CLAUDE.md §3.6-A). A merged version bump sits
+on `main`, tagged and unreleased, until a maintainer deliberately dispatches the stable channel.
 
 1. In your feature PR, bump `[workspace.package].version` in the root `Cargo.toml` per SemVer and run
    `cargo update --workspace` so `Cargo.lock` matches. Merge the PR (squash).
-2. Nothing releases on merge. At the next **midnight UTC** the `nightly-release.yml` cron runs its
-   **stable** job: it sees the new version has no `vX.Y.Z` tag, regenerates `CHANGELOG.md`, commits
+2. Actions → **Nightly + stable release** → **Run workflow** → `channel: stable` (or `both`). The
+   job sees the new version has no `vX.Y.Z` tag, regenerates `CHANGELOG.md`, commits
    `chore(release): vX.Y.Z` to `main`, tags it, and pushes with `RELEASE_TOKEN`.
 3. The pushed `v*` tag fires `release.yml`, which builds every OS/arch (guest-wasm prereq first),
    publishes the GitHub Release (bare binaries + `digs` + apt tarballs), and uploads the Linux
@@ -57,13 +63,12 @@ Any repo activity (a merged PR, a manual dispatch) resets the 60-day counter.
 > (it is the compile-worker's contract). Drop the legacy stem + symlink in a later release once both
 > installers have cut over.
 
-### Cut a stable release NOW / re-cut
+### Re-cut a stable release (failed build)
 
-- Now: Actions → **Nightly + stable release** → **Run workflow** → `channel: stable` (or `both`).
-- Re-cut (failed build): same, with **`force: true`**. `force` REFUSES (non-zero exit) when the tag
-  already has a PUBLISHED release AND points at a different commit than this run would build — it
-  only proceeds for a same-commit retry or a tag with no published release. To ship new code, bump
-  `Cargo.toml` instead.
+- Same dispatch, with **`force: true`**. `force` REFUSES (non-zero exit) when the tag already has a
+  PUBLISHED release AND points at a different commit than this run would build — it only proceeds
+  for a same-commit retry or a tag with no published release. To ship new code, bump `Cargo.toml`
+  instead.
 
 ## Cut a NIGHTLY on demand
 
@@ -80,7 +85,7 @@ Actions → **Nightly + stable release** → **Run workflow** → `channel: nigh
 
 | File | Trigger | Role |
 |---|---|---|
-| `nightly-release.yml` | midnight-UTC cron + `workflow_dispatch` | Orchestrator: stable (changelog + tag) + nightly (build + pre-release + prune). |
+| `nightly-release.yml` | midnight-UTC cron (nightly only) + `workflow_dispatch` (either channel) | Orchestrator: nightly (build + pre-release + prune) runs on schedule; stable (changelog + tag) runs ONLY on manual dispatch. |
 | `release.yml` | `push: tags: v*` (+ dispatch canary) | Builds + publishes the stable Release + the S3 hub-worker binary for a `vX.Y.Z` tag. |
 | `build-binaries.yml` | `workflow_call` | Reusable cross-OS build (guest-wasm prereq + `digs`); both channels call it. |
 | `ci.yml` | PR + push to main | fmt/clippy/test/coverage (pre-merge). NOTE: `ubuntu-latest` + `windows-latest` — macOS builds are first exercised by the nightly channel / release, not PR CI (SPEC §12). |
