@@ -384,7 +384,10 @@ where
         let resp = fetch_page(cursor.take()).await?;
 
         if !resp.success {
-            return Err(ChainError::Chain(format!("{label} failed: {:?}", resp.error)));
+            return Err(ChainError::Chain(format!(
+                "{label} failed: {:?}",
+                resp.error
+            )));
         }
         let page = resp.coin_records.ok_or_else(|| {
             ChainError::Chain(format!("{label}: success=true but coin_records absent"))
@@ -1500,7 +1503,11 @@ mod tests {
                     error: None,
                     success: true,
                     truncated: Some(!last),
-                    next_cursor: if last { None } else { Some(format!("cursor-{n}")) },
+                    next_cursor: if last {
+                        None
+                    } else {
+                        Some(format!("cursor-{n}"))
+                    },
                 })
             }
         })
@@ -1566,7 +1573,9 @@ mod tests {
         loop {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    stream.set_nonblocking(false).expect("set_nonblocking(false)");
+                    stream
+                        .set_nonblocking(false)
+                        .expect("set_nonblocking(false)");
                     return stream;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
