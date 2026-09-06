@@ -1385,6 +1385,258 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // #47: coinset silently truncates a get_coin_records_by_* response at its
+    // own `scan_max_keys_per_stream` limit; chia-sdk-coinset 0.34+ added
+    // `truncated`/`next_cursor` to GetCoinRecordsResponse precisely so a
+    // caller can tell. Before this fix every ChainReads::Coinset method read
+    // neither field, so a truncated page was indistinguishable from a
+    // complete one — an under-reported balance, an invisible store
+    // launcher, a spend built on a partial UTXO set, with no error and no
+    // warning. `drain_coin_record_pages` is the ONE place that now resolves
+    // it for every call site; these prove the property directly. A reader
+    // that ignores `truncated`/`next_cursor` (the pre-#47 shape) returns
+    // only the FIRST page's records below — never the union of both — so
+    // asserting the full, multi-page total is what actually distinguishes
+    // the fix from the defect (not merely "the list is non-empty").
+    // -----------------------------------------------------------------------
+
+    /// Build a `chia_sdk_coinset::CoinRecord` fixture distinguishable by amount, for
+    /// feeding synthetic `GetCoinRecordsResponse` pages to `drain_coin_record_pages`.
+    fn sdk_coin_record(amount: u64) -> chia_sdk_coinset::CoinRecord {
+        chia_sdk_coinset::CoinRecord {
+            coin: Coin::new(Bytes32::default(), Bytes32::default(), amount),
+            coinbase: false,
+            confirmed_block_index: 100,
+            spent: false,
+            spent_block_index: 0,
+            timestamp: 1_700_000_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn drain_coin_record_pages_follows_next_cursor_to_a_complete_answer() {
+        let seen_cursors = std::cell::RefCell::new(Vec::new());
+        let calls = std::cell::Cell::new(0u32);
+
+        let result = drain_coin_record_pages("test", |cursor| {
+            seen_cursors.borrow_mut().push(cursor);
+            let n = calls.get();
+            calls.set(n + 1);
+            async move {
+                if n == 0 {
+                    // First page: ONE record, and coinset says there is more.
+                    Ok(GetCoinRecordsResponse {
+                        coin_records: Some(vec![sdk_coin_record(111)]),
+                        error: None,
+                        success: true,
+                        truncated: Some(true),
+                        next_cursor: Some("page-2-cursor".to_string()),
+                    })
+                } else {
+                    // Second page: the record the truncation was hiding.
+                    Ok(GetCoinRecordsResponse {
+                        coin_records: Some(vec![sdk_coin_record(222)]),
+                        error: None,
+                        success: true,
+                        truncated: Some(false),
+                        next_cursor: None,
+                    })
+                }
+            }
+        })
+        .await
+        .expect("must follow next_cursor to a complete answer");
+
+        let mut amounts: Vec<u64> = result.iter().map(|cr| cr.coin.amount).collect();
+        amounts.sort_unstable();
+        assert_eq!(
+            amounts,
+            vec![111, 222],
+            "must return BOTH pages' records — a reader that ignores \
+             truncated/next_cursor returns only [111]"
+        );
+        assert_eq!(
+            seen_cursors.into_inner(),
+            vec![None, Some("page-2-cursor".to_string())],
+            "the SECOND page request must carry the cursor the FIRST page returned"
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_coin_record_pages_fails_closed_when_truncated_with_no_cursor() {
+        let result = drain_coin_record_pages("test", |_cursor| async {
+            Ok(GetCoinRecordsResponse {
+                coin_records: Some(vec![sdk_coin_record(1)]),
+                error: None,
+                success: true,
+                truncated: Some(true),
+                next_cursor: None,
+            })
+        })
+        .await;
+
+        assert!(
+            result.is_err(),
+            "truncated=true with no next_cursor must fail closed, never silently \
+             return the partial page: got {result:?}"
+        );
+    }
+
+    // MAX_COIN_RECORD_PAGES is a published numeric bound — pin it from BOTH
+    // sides: the AT-bound case (the answer completes on exactly the last
+    // permitted page) must succeed, and the OVER-bound case (still
+    // truncated through the last permitted page) must fail. A bound tested
+    // only from below could pass by coincidence at any threshold.
+    #[tokio::test]
+    async fn drain_coin_record_pages_bound_at_exactly_the_limit_succeeds() {
+        let calls = std::cell::Cell::new(0u32);
+        let result = drain_coin_record_pages("test", |_cursor| {
+            let n = calls.get();
+            calls.set(n + 1);
+            async move {
+                let last = n as usize == MAX_COIN_RECORD_PAGES - 1;
+                Ok(GetCoinRecordsResponse {
+                    coin_records: Some(vec![sdk_coin_record(u64::from(n))]),
+                    error: None,
+                    success: true,
+                    truncated: Some(!last),
+                    next_cursor: if last { None } else { Some(format!("cursor-{n}")) },
+                })
+            }
+        })
+        .await
+        .expect("completing on exactly the last permitted page must succeed");
+
+        assert_eq!(result.len(), MAX_COIN_RECORD_PAGES);
+        assert_eq!(calls.get() as usize, MAX_COIN_RECORD_PAGES);
+    }
+
+    #[tokio::test]
+    async fn drain_coin_record_pages_one_page_past_the_limit_fails_closed() {
+        // Every page up to and including the MAX_COIN_RECORD_PAGES-th is
+        // STILL truncated, so a complete answer needs one page more than
+        // the bound allows. Wrapped in a timeout: if a future change
+        // dropped the bound, this would hang forever rather than fail fast.
+        let calls = std::cell::Cell::new(0u32);
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            drain_coin_record_pages("test", |_cursor| {
+                let n = calls.get();
+                calls.set(n + 1);
+                async move {
+                    Ok(GetCoinRecordsResponse {
+                        coin_records: Some(vec![sdk_coin_record(u64::from(n))]),
+                        error: None,
+                        success: true,
+                        truncated: Some(true),
+                        next_cursor: Some(format!("cursor-{n}")),
+                    })
+                }
+            }),
+        )
+        .await
+        .expect("must fail within the timeout, never hang");
+
+        assert!(
+            result.is_err(),
+            "a query that never stops claiming truncated must fail closed at the \
+             bound, not return a partial answer: got {result:?}"
+        );
+        assert_eq!(
+            calls.get() as usize,
+            MAX_COIN_RECORD_PAGES,
+            "must stop at exactly the bound, neither short nor over"
+        );
+    }
+
+    // Acceptance, end-to-end through the REAL reqwest path (mirrors
+    // `coinset_retries_truncated_body_then_succeeds` above): a real
+    // coinset-shaped JSON response claiming truncated=true + a next_cursor on
+    // the first connection, and the completing page on the second —
+    // `unspent_coins` must return coins from BOTH pages, not just the first
+    // (truncated) one.
+    #[tokio::test]
+    async fn unspent_coins_paginates_across_a_truncated_page() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+
+            // Page 1: one unspent coin (amount 111), truncated + a cursor to resume from.
+            let (mut s1, _) = listener.accept().unwrap();
+            let n1 = s1.read(&mut buf).unwrap();
+            let req1 = String::from_utf8_lossy(&buf[..n1]).to_string();
+            let body1 = concat!(
+                "{\"success\": true, \"truncated\": true, \"next_cursor\": \"CURSOR-XYZ\",",
+                " \"coin_records\": [{\"coin\": {\"amount\": 111,",
+                " \"parent_coin_info\": \"0x0000000000000000000000000000000000000000000000000000000000000000\",",
+                " \"puzzle_hash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"},",
+                " \"confirmed_block_index\": 100, \"spent_block_index\": 0, \"spent\": false,",
+                " \"coinbase\": false, \"timestamp\": 1700000000}]}"
+            );
+            let hdr1 = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body1.len()
+            );
+            let _ = s1.write_all(hdr1.as_bytes());
+            let _ = s1.write_all(body1.as_bytes());
+            let _ = s1.flush();
+            drop(s1);
+
+            // Page 2: the record the truncation was hiding. truncated=false ends the scan.
+            let (mut s2, _) = listener.accept().unwrap();
+            let n2 = s2.read(&mut buf).unwrap();
+            let req2 = String::from_utf8_lossy(&buf[..n2]).to_string();
+            let body2 = concat!(
+                "{\"success\": true, \"truncated\": false,",
+                " \"coin_records\": [{\"coin\": {\"amount\": 222,",
+                " \"parent_coin_info\": \"0x0000000000000000000000000000000000000000000000000000000000000001\",",
+                " \"puzzle_hash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"},",
+                " \"confirmed_block_index\": 101, \"spent_block_index\": 0, \"spent\": false,",
+                " \"coinbase\": false, \"timestamp\": 1700000100}]}"
+            );
+            let hdr2 = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body2.len()
+            );
+            let _ = s2.write_all(hdr2.as_bytes());
+            let _ = s2.write_all(body2.as_bytes());
+            let _ = s2.flush();
+
+            (req1, req2)
+        });
+
+        let cs = Coinset::with_url(format!("http://{addr}")).with_retry_config(fast_cfg(5));
+        let coins = cs
+            .unspent_coins(Bytes32::default())
+            .await
+            .expect("must page through the truncated response, not error or short-return");
+
+        let (req1, req2) = handle.join().unwrap();
+        assert!(
+            !req1.contains("CURSOR-XYZ"),
+            "the first request must not already carry a cursor nobody has sent yet: {req1}"
+        );
+        assert!(
+            req2.contains("CURSOR-XYZ"),
+            "the second request must carry the cursor page 1 returned — proves next_cursor \
+             is genuinely threaded through, not merely a second unconditional retry: {req2}"
+        );
+
+        let mut amounts: Vec<u64> = coins.iter().map(|c| c.amount).collect();
+        amounts.sort_unstable();
+        assert_eq!(
+            amounts,
+            vec![111, 222],
+            "must return coins from BOTH pages — a pre-#47 reader stops at the first \
+             (truncated) page and returns only [111]"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // #231: oversized-bundle pre-flight guard. A bundle whose generator bytes
     // alone exceed the per-block cost limit is TERMINAL — `push` must refuse it
     // up-front (not broadcast, not retry, not misreport as a coinset hiccup).
