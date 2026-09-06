@@ -12,38 +12,66 @@ use axum::{
 use digstore_core::{Bytes32, Bytes96};
 use std::collections::HashMap;
 
-pub async fn head_module(State(s): State<AppState>, Path(id): Path<String>) -> Response {
+/// Parse the optional whole-module-read `?root=` query parameter (SPEC §4.4.2
+/// row 2): present-but-malformed (empty, wrong length, non-hex) is a validation
+/// error the caller maps to `422`, evaluated BEFORE any backend call; absent is
+/// a rootless request (`Ok(None)`). Shared by `get_module`/`head_module` so the
+/// two routes cannot drift on what counts as a well-formed root.
+fn parse_requested_root(q: &HashMap<String, String>) -> Result<Option<Bytes32>, RemoteError> {
+    q.get("root").map(|r| parse_b32(r)).transpose()
+}
+
+pub async fn head_module(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
     let store_id = match parse_store_id(&id) {
         Ok(v) => v,
         Err(e) => return e.into_response(),
     };
+    // SPEC §4.4.2 row 2: a malformed root is 422 before any backend call.
+    let requested_root = match parse_requested_root(&q) {
+        Ok(r) => r,
+        Err(e) => return e.into_response(),
+    };
     let backend = s.backend.clone();
     let res = run_blocking(move || backend.head_state(&store_id)).await;
-    match res {
-        Ok(hs) => {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::ETAG,
-                etag_for_root(&hs.served_root).parse().unwrap(),
-            );
-            headers.insert(
-                header::CONTENT_LENGTH,
-                hs.served_size.to_string().parse().unwrap(),
-            );
-            headers.insert(header::CONTENT_TYPE, "application/wasm".parse().unwrap());
-            (StatusCode::OK, headers).into_response()
-        }
-        Err(e) => e.into_response(),
+    let hs = match res {
+        Ok(hs) => hs,
+        Err(e) => return e.into_response(), // row 3: unknown store -> 404
+    };
+    // SPEC §4.4.2 row 4 / §4.4.6: a well-formed, non-head root 404s — a rooted
+    // HEAD is never silently downgraded to describing the served head.
+    if matches!(requested_root, Some(r) if r != hs.served_root) {
+        return RemoteError::UnknownRoot.into_response();
     }
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::ETAG,
+        etag_for_root(&hs.served_root).parse().unwrap(),
+    );
+    headers.insert(
+        header::CONTENT_LENGTH,
+        hs.served_size.to_string().parse().unwrap(),
+    );
+    headers.insert(header::CONTENT_TYPE, "application/wasm".parse().unwrap());
+    (StatusCode::OK, headers).into_response()
 }
 
 pub async fn get_module(
     State(s): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
     let store_id = match parse_store_id(&id) {
         Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+    // SPEC §4.4.2 row 2: a malformed root is 422 before any backend call.
+    let requested_root = match parse_requested_root(&q) {
+        Ok(r) => r,
         Err(e) => return e.into_response(),
     };
     let backend = s.backend.clone();
@@ -54,10 +82,18 @@ pub async fn get_module(
     .await
     {
         Ok(h) => h,
-        Err(e) => return e.into_response(),
+        Err(e) => return e.into_response(), // row 3: unknown store -> 404
     };
 
-    // §21.7: If-None-Match equal to current root -> 304.
+    // SPEC §4.4.2 row 4 / §4.4.6: a well-formed, non-head root 404s outright —
+    // never downgraded to serving the head under its own ETag — and this runs
+    // BEFORE the row-5 conditional-GET check below, so a stale/foreign root can
+    // never ride an `If-None-Match` to a 304 either.
+    if matches!(requested_root, Some(r) if r != head.served_root) {
+        return RemoteError::UnknownRoot.into_response();
+    }
+
+    // §21.7 row 5: If-None-Match equal to the served root -> 304 (GET only).
     if let Some(inm) = headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
@@ -71,7 +107,10 @@ pub async fn get_module(
         }
     }
 
-    let res = run_blocking(move || backend.module_bytes(&store_id, None)).await;
+    // Row 6: `requested_root` is `None` (rootless: serve the head) or `Some(r)`
+    // with `r == head.served_root` (the only way past the row-4 gate above).
+    let res =
+        run_blocking(move || backend.module_bytes(&store_id, requested_root.as_ref())).await;
     match res {
         Ok(bytes) => (
             StatusCode::OK,
