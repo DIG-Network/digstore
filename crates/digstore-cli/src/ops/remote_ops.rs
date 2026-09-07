@@ -385,9 +385,15 @@ pub async fn clone_from(
     // corrupted module therefore fails closed instead of being installed and
     // executed. Publisher authorization of the head is checked separately below.
     let pb = ui.progress_bar(0, "Downloading");
+    // Pin the download to the head `fetch` just resolved (SPEC digstore-remote
+    // §4.7): the server refuses (before this closure or the progress callback
+    // ever runs) any generation but `remote_root`, so a head that advances
+    // between `fetch` and this call surfaces as a clean error instead of
+    // silently installing a newer generation than the one reported above.
     let (etag_root, module) = client
-        .clone_store(
+        .clone_store_at(
             &store_id,
+            Some(&remote_root),
             |bytes, served_root| {
                 let id = digstore_compiler::verify_module_root(bytes, &store_id)
                     .map_err(|e| format!("module identity verification failed: {e:?}"))?;

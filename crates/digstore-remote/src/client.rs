@@ -307,15 +307,27 @@ impl DigClient {
         })
     }
 
-    /// §21.3 clone: download + verify the module. `verify` is called with
-    /// (module_bytes, served_root) and must return Ok(()) when the module
+    /// §21.3 clone, optionally pinned to a specific generation root (SPEC §4.2).
+    ///
+    /// `root = Some(r)` requests exactly that generation
+    /// (`GET /stores/{id}/module?root=<r as lowercase hex>`) and refuses any
+    /// response whose `ETag` names a different root: the pin is checked on the
+    /// response HEADERS, before the body is downloaded, so a mismatched answer
+    /// never reaches `on_progress` or `verify` (§4.2.5). `root = None` requests
+    /// the remote's current served head — byte-identical to the pre-#1903
+    /// rootless request — and the caller learns which root was served only from
+    /// the returned `ETag`.
+    ///
+    /// `verify` is called with `(module_bytes, served_root)` — the served root,
+    /// which equals `r` when pinned — and must return `Ok(())` when the module
     /// validates to that root (full merkle verification lives in the caller).
     ///
     /// `on_progress`, when `Some`, is called as `(bytes_done, total_bytes)` after
     /// each received chunk (total is 0 when the server omits Content-Length).
-    pub async fn clone_store<V>(
+    pub async fn clone_store_at<V>(
         &self,
         store_id: &Bytes32,
+        root: Option<&Bytes32>,
         verify: V,
         on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
     ) -> Result<(Bytes32, Vec<u8>), ClientError>
@@ -323,12 +335,12 @@ impl DigClient {
         V: FnOnce(&[u8], &Bytes32) -> Result<(), String>,
     {
         let id = store_id.to_hex();
+        let path = match root {
+            Some(r) => format!("/stores/{id}/module?root={}", r.to_hex()),
+            None => format!("/stores/{id}/module"),
+        };
         let resp = self
-            .authed(
-                self.http.get(self.url(&format!("/stores/{id}/module"))),
-                "module",
-                store_id,
-            )?
+            .authed(self.http.get(self.url(&path)), "module", store_id)?
             .send()
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))?;
@@ -340,14 +352,53 @@ impl DigClient {
             .get(reqwest::header::ETAG)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let root = etag
+        let served_root = etag
             .as_deref()
             .and_then(parse_if_none_match)
             .ok_or_else(|| ClientError::Verification("missing/invalid ETag".into()))?;
+        // §4.2.5 the pin: enforced on the headers, BEFORE the body is read, so a
+        // server that answers a request for `r` with a different generation is
+        // refused before that generation's bytes ever reach `on_progress` or the
+        // caller's `verify`.
+        if let Some(r) = root {
+            if served_root != *r {
+                return Err(ClientError::Verification(format!(
+                    "served root {} != requested root {}",
+                    served_root.to_hex(),
+                    r.to_hex()
+                )));
+            }
+        }
         let total = resp.content_length().unwrap_or(0);
         let bytes = download_with_progress(resp, total, on_progress).await?;
-        verify(&bytes, &root).map_err(ClientError::Verification)?;
-        Ok((root, bytes))
+        verify(&bytes, &served_root).map_err(ClientError::Verification)?;
+        Ok((served_root, bytes))
+    }
+
+    /// §21.3 clone: download + verify the module at the remote's current served
+    /// head. `verify` is called with (module_bytes, served_root) and must return
+    /// Ok(()) when the module validates to that root (full merkle verification
+    /// lives in the caller).
+    ///
+    /// `on_progress`, when `Some`, is called as `(bytes_done, total_bytes)` after
+    /// each received chunk (total is 0 when the server omits Content-Length).
+    ///
+    /// Delegates to [`Self::clone_store_at`] with `root = None` (SPEC §4.2.1);
+    /// callers that already hold the head (every caller that has run `fetch`)
+    /// SHOULD call `clone_store_at(.., Some(&head), ..)` directly instead, since
+    /// a rootless read against a redirecting gateway fails with `Status(307)`
+    /// (SPEC §4.2.3/§4.5).
+    pub async fn clone_store<V>(
+        &self,
+        store_id: &Bytes32,
+        verify: V,
+        on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+    ) -> Result<(Bytes32, Vec<u8>), ClientError>
+    where
+        V: FnOnce(&[u8], &Bytes32) -> Result<(), String>,
+    {
+        self.clone_store_at(store_id, None, verify, on_progress)
+            .await
     }
 
     /// §21.4 pull: advance the local head. `local_root` is the client's current
@@ -399,9 +450,15 @@ impl DigClient {
                 // fall through to full module on non-success delta.
             }
         }
-        // full module download with conditional request.
+        // Full module download, pinned to the remote head this call already
+        // resolved (SPEC §4.3.1) — never today's rootless GET. A head advance
+        // between `fetch` and this GET now surfaces as `Status(404)` against a
+        // root-pinning server (§4.4) rather than silently downloading a newer
+        // generation than the one this call reports; the caller re-runs `pull`.
+        let remote_root_hex = remote_root.to_hex();
         let mut req = self.authed(
-            self.http.get(self.url(&format!("/stores/{id}/module"))),
+            self.http
+                .get(self.url(&format!("/stores/{id}/module?root={remote_root_hex}"))),
             "module",
             store_id,
         )?;
@@ -420,6 +477,23 @@ impl DigClient {
         }
         if !resp.status().is_success() {
             return Err(ClientError::Status(resp.status().as_u16()));
+        }
+        // SPEC §4.3.3: the ETag MUST agree with the root this request pinned —
+        // missing, unparsable, or mismatching all fail closed, and the body is
+        // not returned. `PullResult::Module` therefore carries a root the served
+        // `ETag` itself agreed with, not merely the descriptor's earlier claim.
+        let etag_root = resp
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_if_none_match);
+        if etag_root != Some(remote_root) {
+            return Err(ClientError::Verification(format!(
+                "served root {} != remote head {remote_root_hex}",
+                etag_root
+                    .map(|r| r.to_hex())
+                    .unwrap_or_else(|| "<missing/invalid ETag>".into())
+            )));
         }
         let total = resp.content_length().unwrap_or(0);
         let bytes = download_with_progress(resp, total, on_progress).await?;
