@@ -2,7 +2,9 @@ mod test_helpers;
 use test_helpers::*;
 
 use digstore_core::Bytes32;
-use digstore_remote::{ClientError, DigClient, InMemoryBackend, PullResult, PushResult, RemoteServer};
+use digstore_remote::{
+    ClientError, DigClient, InMemoryBackend, PullResult, PushResult, RemoteServer,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -287,8 +289,7 @@ async fn spawn_pull_probe_server(
             }))
         }
     };
-    let roots =
-        |Path(_id): Path<String>| async move { Json(serde_json::json!({ "roots": [] })) };
+    let roots = |Path(_id): Path<String>| async move { Json(serde_json::json!({ "roots": [] })) };
     let etag = format!("\"{}\"", served_etag_root.to_hex());
     let module = move |Path(_id): Path<String>, uri: OriginalUri| {
         let etag = etag.clone();
@@ -465,7 +466,10 @@ async fn rooted_get_of_a_held_non_head_generation_is_404() {
     let base = spawn_server(be).await;
     let http = reqwest::Client::new();
     let resp = http
-        .get(format!("{base}/stores/{hex}/module?root={}", b32(0x10).to_hex()))
+        .get(format!(
+            "{base}/stores/{hex}/module?root={}",
+            b32(0x10).to_hex()
+        ))
         .send()
         .await
         .unwrap();
@@ -478,7 +482,10 @@ async fn rooted_get_of_a_never_existed_root_is_404() {
     let base = spawn_server(be).await;
     let http = reqwest::Client::new();
     let resp = http
-        .get(format!("{base}/stores/{hex}/module?root={}", b32(0x99).to_hex()))
+        .get(format!(
+            "{base}/stores/{hex}/module?root={}",
+            b32(0x99).to_hex()
+        ))
         .send()
         .await
         .unwrap();
@@ -514,7 +521,10 @@ async fn head_rooted_at_the_served_head_is_200_with_etag() {
     let base = spawn_server(be).await;
     let http = reqwest::Client::new();
     let resp = http
-        .head(format!("{base}/stores/{hex}/module?root={}", b32(0x10).to_hex()))
+        .head(format!(
+            "{base}/stores/{hex}/module?root={}",
+            b32(0x10).to_hex()
+        ))
         .send()
         .await
         .unwrap();
@@ -543,7 +553,10 @@ async fn head_rooted_at_a_non_head_root_is_404() {
     let base = spawn_server(be).await;
     let http = reqwest::Client::new();
     let resp = http
-        .head(format!("{base}/stores/{hex}/module?root={}", b32(0x10).to_hex()))
+        .head(format!(
+            "{base}/stores/{hex}/module?root={}",
+            b32(0x10).to_hex()
+        ))
         .send()
         .await
         .unwrap();

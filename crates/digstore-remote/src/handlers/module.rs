@@ -109,8 +109,7 @@ pub async fn get_module(
 
     // Row 6: `requested_root` is `None` (rootless: serve the head) or `Some(r)`
     // with `r == head.served_root` (the only way past the row-4 gate above).
-    let res =
-        run_blocking(move || backend.module_bytes(&store_id, requested_root.as_ref())).await;
+    let res = run_blocking(move || backend.module_bytes(&store_id, requested_root.as_ref())).await;
     match res {
         Ok(bytes) => (
             StatusCode::OK,
