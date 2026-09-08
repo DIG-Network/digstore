@@ -1,10 +1,10 @@
-mod continuation_guard;
 pub mod beacon;
 pub mod branding;
 pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod context;
+mod continuation_guard;
 pub mod dig_toml;
 pub mod error;
 pub mod ops;
