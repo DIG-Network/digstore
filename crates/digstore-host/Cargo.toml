@@ -5,6 +5,9 @@ version.workspace = true
 edition = "2021"
 description = "wasmtime runtime for serving compiled Digstore WASM modules (paper 6.3, 6.4, 18)."
 
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
 [dependencies]
 digstore-core = { workspace = true }
 digstore-crypto = { workspace = true }

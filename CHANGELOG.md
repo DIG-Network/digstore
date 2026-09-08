@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [Unreleased]
+
+### Features
+- **icon:** Embed the canonical branded DIG icon in `digs`/`dig-store`, `dig-resolver` and `dighost` on Windows, gated on a vendored sha256 pin (#2917)
+
 ## [0.29.6] - 2026-09-06
 
 ### Bug Fixes
