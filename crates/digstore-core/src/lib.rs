@@ -2,6 +2,8 @@
 
 extern crate alloc;
 
+mod continuation_guard;
+
 pub mod abi;
 pub mod bytes;
 pub mod capsule;

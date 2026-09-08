@@ -1,5 +1,7 @@
 //! Seed management and (later) Chia anchoring for digstore.
 
+mod continuation_guard;
+
 pub mod anchor;
 pub mod cat;
 pub mod chip0002;

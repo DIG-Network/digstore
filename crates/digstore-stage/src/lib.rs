@@ -28,6 +28,8 @@
 //! §21 push are the wallet method + remote push respectively — Pass C is the
 //! staging/compile half.
 
+mod continuation_guard;
+
 use std::path::{Path, PathBuf};
 
 use digstore_chunker::{chunk_slice, Chunk};

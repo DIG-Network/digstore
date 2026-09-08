@@ -1,3 +1,4 @@
+mod continuation_guard;
 pub mod beacon;
 pub mod branding;
 pub mod cli;

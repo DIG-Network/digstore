@@ -5,6 +5,8 @@
 //! produced here are consumed by `digstore-compiler` (which owns §8.3 pool
 //! ordering and §19.3 byte-identical compilation) and `digstore-guest`.
 
+mod continuation_guard;
+
 mod chunkstore;
 mod clock;
 mod config;

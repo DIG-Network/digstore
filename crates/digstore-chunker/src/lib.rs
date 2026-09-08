@@ -14,6 +14,8 @@
 //!   `ChunkerConfig::min_size` (no cut below it) and `ChunkerConfig::max_size`
 //!   (forced cut at it).
 
+mod continuation_guard;
+
 mod boundary;
 mod chunk;
 mod chunker;

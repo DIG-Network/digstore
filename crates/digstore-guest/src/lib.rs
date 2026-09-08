@@ -24,6 +24,8 @@
 
 extern crate alloc;
 
+mod continuation_guard;
+
 pub mod allocator;
 pub mod host;
 

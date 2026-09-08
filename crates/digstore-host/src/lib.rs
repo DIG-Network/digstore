@@ -6,6 +6,8 @@
 //! swappable TEE-alternative attestation hook (§13.6). The host NEVER decrypts
 //! or inspects served payloads.
 
+mod continuation_guard;
+
 mod clock;
 mod config;
 mod error;

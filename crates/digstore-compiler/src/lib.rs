@@ -28,6 +28,8 @@
 //! crate reads from the same offset. The compiler's old private `SEG_*` format is
 //! deleted: core is the single source of truth.
 
+mod continuation_guard;
+
 mod atomic_write;
 mod chunk_index;
 mod config;
