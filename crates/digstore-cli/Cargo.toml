@@ -24,6 +24,9 @@ path = "src/bin/digs.rs"
 name = "digstore_cli"
 path = "src/lib.rs"
 
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
 [dependencies]
 digstore-core = { workspace = true }
 digstore-chain = { workspace = true }

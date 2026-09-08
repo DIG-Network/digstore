@@ -2550,6 +2550,7 @@ version = "0.1.0"
 dependencies = [
  "chia-protocol",
  "digstore-chain",
+ "embed-resource",
  "hex",
  "tokio",
 ]
@@ -2665,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chain"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2707,7 +2708,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-chunker"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "digstore-core",
  "hex",
@@ -2717,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-cli"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
@@ -2743,6 +2744,7 @@ dependencies = [
  "digstore-stage",
  "digstore-store",
  "dirs",
+ "embed-resource",
  "flate2",
  "getrandom 0.2.17",
  "globset",
@@ -2786,7 +2788,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-core"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "aes-gcm-siv",
  "hex",
@@ -2798,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-crypto"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "chia-bls 0.36.1",
  "digstore-core",
@@ -2832,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-host"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -2840,6 +2842,7 @@ dependencies = [
  "digstore-core",
  "digstore-crypto",
  "digstore-prover",
+ "embed-resource",
  "futures",
  "hex",
  "httpmock",
@@ -2857,7 +2860,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-prover"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "bincode 1.3.3",
  "digstore-core",
@@ -2873,7 +2876,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-remote"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "async-trait",
  "axum",
@@ -2902,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-stage"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "digstore-chunker",
  "digstore-compiler",
@@ -2918,7 +2921,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-store"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "digstore-chunker",
  "digstore-core",
@@ -2933,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "digstore-subscription"
-version = "0.29.9"
+version = "0.29.10"
 dependencies = [
  "async-trait",
  "digstore-core",
@@ -3080,6 +3083,20 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "embed-resource"
+version = "3.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbfdaacccebec3b28e4866b8973543c7647797db5ada1bdab552e48fe665fbbd"
+dependencies = [
+ "cc",
+ "memchr",
+ "rustc_version",
+ "toml 1.1.2+spec-1.1.0",
+ "vswhom",
+ "winreg",
 ]
 
 [[package]]
@@ -7023,6 +7040,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81f3d15e84cbcd896376e6730314d59fb5a87f31e4b038454184435cd57defee"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned 1.1.1",
+ "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 1.0.3",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7406,6 +7438,26 @@ name = "virtue"
 version = "0.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
+
+[[package]]
+name = "vswhom"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be979b7f07507105799e854203b470ff7c78a1639e330a58f183b5fea574608b"
+dependencies = [
+ "libc",
+ "vswhom-sys",
+]
+
+[[package]]
+name = "vswhom-sys"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
+dependencies = [
+ "cc",
+ "libc",
+]
 
 [[package]]
 name = "wait-timeout"
@@ -8178,6 +8230,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winreg"
+version = "0.55.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb5a765337c50e9ec252c2069be9bf91c7df47afb103b642ba3a53bf8101be97"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

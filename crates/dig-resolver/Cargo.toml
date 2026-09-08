@@ -9,6 +9,9 @@ description = "Resolve a DIG store's current (tip) root from coinset.org by walk
 name = "dig-resolver"
 path = "src/main.rs"
 
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
 [dependencies]
 digstore-chain = { workspace = true }
 chia-protocol = "0.36.1"
