@@ -11,6 +11,9 @@
 //! `digstore_crypto::{push_signing_message, verify_push}` with argument order
 //! `(root, store_id)` (message = `SHA-256(root || store_id)`), the single source
 //! of truth shared with `digstore-cli`.
+
+mod continuation_guard;
+
 pub mod auth;
 pub mod backend;
 pub mod backend_inmem;

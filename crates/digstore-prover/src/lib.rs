@@ -8,6 +8,8 @@
 //! default backend so the rest of the system is fully functional while the
 //! real risc0 circuit matures.
 
+mod continuation_guard;
+
 pub mod chain;
 pub mod coinset;
 pub mod commitment;

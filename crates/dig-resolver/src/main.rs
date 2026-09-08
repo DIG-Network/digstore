@@ -11,6 +11,8 @@
 //! never from the serving node) behind the scenes. Exit codes: 0 = printed the
 //! root; 1 = resolution failed (see stderr); 2 = bad usage/argument.
 
+mod continuation_guard;
+
 use chia_protocol::Bytes32;
 use digstore_chain::coinset::Coinset;
 use digstore_chain::singleton::sync_datastore;

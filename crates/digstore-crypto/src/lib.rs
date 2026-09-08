@@ -27,6 +27,8 @@
 //! `BlsPublicKey`). All public byte material uses canonical `digstore-core`
 //! types (`Bytes32`/`Bytes48`/`Bytes96`/`SecretSalt`).
 
+mod continuation_guard;
+
 pub mod aead;
 pub mod bls;
 pub mod error;

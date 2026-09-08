@@ -31,6 +31,8 @@
 
 #![forbid(unsafe_code)]
 
+mod continuation_guard;
+
 pub mod decide;
 pub mod lineage;
 pub mod reconcile;
